@@ -1,0 +1,4 @@
+Stdin closed, daemon shutting down (zombie prevention)
+\.chainlink
+Flush interval: 30 seconds
+Daemon exiting due to parent termination
