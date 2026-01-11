@@ -61,7 +61,7 @@ crossterm = "0.28"
 arboard = "3"
 
 # TUI framework
-ratatui = "0.29"
+ratatui = "0.30"
 
 # SQLite for stateful memory
 rusqlite = { version = "0.32", features = ["bundled"] }

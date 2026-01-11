@@ -6,7 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+- Fix lru crate Stacked Borrows vulnerability by updating to 0.16.3 (#99)
+
 ### Added
+- Add comprehensive README documentation (#98)
 - Add system prompt module for Claudia's core personality (#97)
 - Add web search tool for knowledge retrieval (#92)
 - Add dedicated chainlink tool for task management (#86)
