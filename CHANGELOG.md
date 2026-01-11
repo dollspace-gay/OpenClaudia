@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Add system prompt module for Claudia's core personality (#97)
 - Add web search tool for knowledge retrieval (#92)
 - Add dedicated chainlink tool for task management (#86)
 - Improve Windows shell compatibility by using Git Bash instead of PowerShell (#85)

@@ -1,2 +1,4 @@
 /target/
 tool_struggles.txt
+.chainlink/issues.db
+.chainlink/daemon.pid

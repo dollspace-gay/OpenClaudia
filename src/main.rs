@@ -9,6 +9,7 @@ mod hooks;
 mod mcp;
 mod memory;
 mod plugins;
+mod prompt;
 mod providers;
 mod proxy;
 mod rules;
@@ -2308,6 +2309,33 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                             "content": rules_content
                         }));
                     }
+                }
+
+                // Build and inject Claudia's core system prompt
+                // Collect any hook instructions that were injected as system messages
+                let hook_instructions: Option<String> = chat_session.messages.iter()
+                    .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+                    .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
+                    .filter(|c| !c.contains("You are Claudia")) // Don't include our own prompt
+                    .map(|s| s.to_string())
+                    .reduce(|acc, s| format!("{}\n\n{}", acc, s));
+
+                let system_prompt = prompt::build_system_prompt(
+                    hook_instructions.as_deref(),
+                    None, // Custom instructions could come from config in future
+                    memory_db.as_ref(),
+                );
+
+                // Insert core system prompt at position 0 (becomes first message)
+                if !chat_session.messages.iter().any(|m| {
+                    m.get("content").and_then(|c| c.as_str())
+                        .map(|s| s.contains("You are Claudia"))
+                        .unwrap_or(false)
+                }) {
+                    chat_session.messages.insert(0, serde_json::json!({
+                        "role": "system",
+                        "content": system_prompt
+                    }));
                 }
 
                 // Build request with streaming enabled and tools
