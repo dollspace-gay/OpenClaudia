@@ -401,7 +401,12 @@ async fn cmd_doctor() -> anyhow::Result<()> {
         println!("OK ({} loaded)", plugin_manager.count());
         for plugin in plugin_manager.all() {
             let root = plugin.root();
-            println!("  - {} v{} ({})", plugin.name(), plugin.manifest.version, root.display());
+            println!(
+                "  - {} v{} ({})",
+                plugin.name(),
+                plugin.manifest.version,
+                root.display()
+            );
 
             // Show plugin env vars
             let env_vars = plugin.env_vars();
@@ -425,14 +430,23 @@ async fn cmd_doctor() -> anyhow::Result<()> {
         if !all_mcp.is_empty() {
             println!("\n  MCP Servers from plugins:");
             for (plugin, server) in all_mcp {
-                println!("    - {} from {} ({})", server.name, plugin.name(), server.transport);
+                println!(
+                    "    - {} from {} ({})",
+                    server.name,
+                    plugin.name(),
+                    server.transport
+                );
             }
         }
 
         // Test plugin resolve_path method
         for plugin in plugin_manager.all() {
             let resolved = plugin.resolve_path("scripts/init.sh");
-            info!("Plugin {} script path: {}", plugin.name(), resolved.display());
+            info!(
+                "Plugin {} script path: {}",
+                plugin.name(),
+                resolved.display()
+            );
         }
     } else if !errors.is_empty() {
         println!("ERRORS");
@@ -453,15 +467,28 @@ async fn cmd_doctor() -> anyhow::Result<()> {
 
     // Test is_connected (should return false for nonexistent)
     let is_connected = mcp_manager.is_connected("test-server");
-    println!("{}", if is_connected { "connected" } else { "no servers" });
+    println!(
+        "{}",
+        if is_connected {
+            "connected"
+        } else {
+            "no servers"
+        }
+    );
 
     // Test get_server_info
     if let Some((name, supports_list_changed)) = mcp_manager.get_server_info("test-server") {
-        println!("  Server: {} (list_changed: {})", name, supports_list_changed);
+        println!(
+            "  Server: {} (list_changed: {})",
+            name, supports_list_changed
+        );
     }
 
     // Test call_tool (will fail gracefully - server not connected)
-    match mcp_manager.call_tool("test_tool", serde_json::json!({})).await {
+    match mcp_manager
+        .call_tool("test_tool", serde_json::json!({}))
+        .await
+    {
         Ok(result) => println!("  Tool result: {}", result),
         Err(e) => info!("  Expected error (no server): {}", e),
     }
@@ -490,10 +517,9 @@ async fn cmd_doctor() -> anyhow::Result<()> {
     if !sessions.is_empty() {
         println!("  Previous sessions: {}", sessions.len());
         for session in sessions.iter().take(3) {
-            println!("    - {} ({:?}, {} requests)",
-                session.id,
-                session.mode,
-                session.request_count
+            println!(
+                "    - {} ({:?}, {} requests)",
+                session.id, session.mode, session.request_count
             );
         }
         if sessions.len() > 10 {
@@ -564,7 +590,10 @@ async fn cmd_doctor() -> anyhow::Result<()> {
     let custom_paths = vec![PathBuf::from(".openclaudia/plugins")];
     let mut custom_plugin_manager = PluginManager::with_paths(custom_paths);
     let _ = custom_plugin_manager.discover();
-    info!("Custom plugin manager: {} plugins", custom_plugin_manager.count());
+    info!(
+        "Custom plugin manager: {} plugins",
+        custom_plugin_manager.count()
+    );
 
     // Test plugin manager methods
     if let Some(plugin) = custom_plugin_manager.get("test-plugin") {
@@ -589,12 +618,8 @@ async fn cmd_doctor() -> anyhow::Result<()> {
     let mcp_for_proxy = std::sync::Arc::new(tokio::sync::RwLock::new(McpManager::new()));
 
     // Test handle_mcp_tool_call
-    match crate::proxy::handle_mcp_tool_call(
-        &mcp_for_proxy,
-        "test_tool",
-        serde_json::json!({}),
-    )
-    .await
+    match crate::proxy::handle_mcp_tool_call(&mcp_for_proxy, "test_tool", serde_json::json!({}))
+        .await
     {
         Ok(result) => info!("MCP tool result: {}", result),
         Err(e) => info!("Expected MCP error: {}", e),

@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Add Z.AI/GLM provider support for OpenAI-compatible API (#21)
 - Add plugin API with manifest validation and loading (#10)
 - Add MCP integration layer for external tool servers (#9)
 - Add provider adapters for Anthropic, OpenAI, and Google APIs (#8)

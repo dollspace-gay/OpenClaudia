@@ -505,7 +505,10 @@ pub async fn handle_mcp_tool_call(
     // Call the tool
     match mcp.call_tool(tool_name, arguments).await {
         Ok(result) => Ok(result),
-        Err(e) => Err(ProxyError::InvalidBody(format!("MCP tool call failed: {}", e))),
+        Err(e) => Err(ProxyError::InvalidBody(format!(
+            "MCP tool call failed: {}",
+            e
+        ))),
     }
 }
 
@@ -624,12 +627,25 @@ async fn proxy_passthrough(
 
 /// Determine which provider to use based on model name
 fn determine_provider(model: &str, config: &AppConfig) -> String {
-    if model.starts_with("claude") || model.starts_with("anthropic") {
+    let model_lower = model.to_lowercase();
+    if model_lower.starts_with("claude") || model_lower.starts_with("anthropic") {
         "anthropic".to_string()
-    } else if model.starts_with("gpt") || model.starts_with("o1") || model.starts_with("o3") {
+    } else if model_lower.starts_with("gpt")
+        || model_lower.starts_with("o1")
+        || model_lower.starts_with("o3")
+    {
         "openai".to_string()
-    } else if model.starts_with("gemini") {
+    } else if model_lower.starts_with("gemini") {
         "google".to_string()
+    } else if model_lower.starts_with("glm") {
+        // Z.AI/GLM models (OpenAI-compatible)
+        "zai".to_string()
+    } else if model_lower.starts_with("deepseek") {
+        // DeepSeek models (OpenAI-compatible)
+        "deepseek".to_string()
+    } else if model_lower.starts_with("qwen") {
+        // Alibaba Qwen models (OpenAI-compatible)
+        "qwen".to_string()
     } else {
         // Fall back to configured target
         config.proxy.target.clone()
@@ -786,20 +802,30 @@ pub async fn start_server(config: AppConfig) -> anyhow::Result<()> {
                     if let Some(command) = &server.command {
                         let args: Vec<&str> = server.args.iter().map(|s| s.as_str()).collect();
                         match mcp.connect_stdio(&server.name, command, &args).await {
-                            Ok(()) => info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (stdio)"),
-                            Err(e) => warn!(server = %server.name, error = %e, "MCP connect failed"),
+                            Ok(()) => {
+                                info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (stdio)")
+                            }
+                            Err(e) => {
+                                warn!(server = %server.name, error = %e, "MCP connect failed")
+                            }
                         }
                     }
                 }
                 "http" => {
                     if let Some(url) = &server.url {
                         match mcp.connect_http(&server.name, url).await {
-                            Ok(()) => info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (http)"),
-                            Err(e) => warn!(server = %server.name, error = %e, "MCP connect failed"),
+                            Ok(()) => {
+                                info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (http)")
+                            }
+                            Err(e) => {
+                                warn!(server = %server.name, error = %e, "MCP connect failed")
+                            }
                         }
                     }
                 }
-                _ => warn!(server = %server.name, transport = %server.transport, "Unknown MCP transport"),
+                _ => {
+                    warn!(server = %server.name, transport = %server.transport, "Unknown MCP transport")
+                }
             }
         }
         if mcp.server_count() > 0 {

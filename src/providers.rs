@@ -524,12 +524,58 @@ impl ProviderAdapter for GoogleAdapter {
     }
 }
 
+/// Z.AI/GLM API adapter (OpenAI-compatible with different endpoint path)
+pub struct ZaiAdapter;
+
+impl ZaiAdapter {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for ZaiAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl ProviderAdapter for ZaiAdapter {
+    fn name(&self) -> &str {
+        "zai"
+    }
+
+    fn transform_request(&self, request: &ChatCompletionRequest) -> Result<Value, ProviderError> {
+        // Z.AI uses OpenAI-compatible format
+        serde_json::to_value(request).map_err(|e| ProviderError::RequestFailed(e.to_string()))
+    }
+
+    fn transform_response(&self, response: Value, _stream: bool) -> Result<Value, ProviderError> {
+        // Response is already in OpenAI format
+        Ok(response)
+    }
+
+    fn chat_endpoint(&self) -> &str {
+        // Z.AI base URL includes version, so no /v1/ prefix needed
+        "/chat/completions"
+    }
+
+    fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {
+        vec![
+            ("Authorization".to_string(), format!("Bearer {}", api_key)),
+            ("content-type".to_string(), "application/json".to_string()),
+        ]
+    }
+}
+
 /// Get the appropriate adapter for a provider name
 pub fn get_adapter(provider: &str) -> Box<dyn ProviderAdapter> {
     match provider.to_lowercase().as_str() {
         "anthropic" => Box::new(AnthropicAdapter::new()),
         "google" | "gemini" => Box::new(GoogleAdapter::new()),
-        _ => Box::new(OpenAIAdapter::new()), // Default to OpenAI
+        "zai" | "glm" | "zhipu" => Box::new(ZaiAdapter::new()),
+        // DeepSeek, Qwen, and other OpenAI-compatible providers use OpenAI adapter
+        _ => Box::new(OpenAIAdapter::new()),
     }
 }
 
@@ -632,7 +678,29 @@ mod tests {
         assert_eq!(get_adapter("anthropic").name(), "anthropic");
         assert_eq!(get_adapter("google").name(), "google");
         assert_eq!(get_adapter("openai").name(), "openai");
+        assert_eq!(get_adapter("zai").name(), "zai");
+        assert_eq!(get_adapter("glm").name(), "zai");
+        assert_eq!(get_adapter("zhipu").name(), "zai");
         assert_eq!(get_adapter("unknown").name(), "openai"); // Default
+    }
+
+    #[test]
+    fn test_zai_adapter() {
+        let adapter = ZaiAdapter::new();
+        assert_eq!(adapter.name(), "zai");
+        // Z.AI uses /chat/completions without /v1/ prefix
+        assert_eq!(adapter.chat_endpoint(), "/chat/completions");
+    }
+
+    #[test]
+    fn test_zai_transform_request() {
+        let adapter = ZaiAdapter::new();
+        let request = create_test_request();
+        let result = adapter.transform_request(&request).unwrap();
+
+        // Should preserve OpenAI-compatible structure
+        assert_eq!(result["model"], "gpt-4");
+        assert!(result["messages"].is_array());
     }
 
     #[test]
@@ -687,7 +755,10 @@ mod tests {
 
         let result = adapter.transform_response(response, false).unwrap();
         assert_eq!(result["object"], "chat.completion");
-        assert_eq!(result["choices"][0]["message"]["content"], "Hello from Gemini!");
+        assert_eq!(
+            result["choices"][0]["message"]["content"],
+            "Hello from Gemini!"
+        );
         assert_eq!(result["choices"][0]["finish_reason"], "stop");
     }
 

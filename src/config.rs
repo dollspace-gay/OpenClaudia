@@ -162,6 +162,18 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
         .set_default(
             "providers.google.base_url",
             "https://generativelanguage.googleapis.com",
+        )?
+        // Z.AI/GLM (OpenAI-compatible)
+        .set_default(
+            "providers.zai.base_url",
+            "https://api.z.ai/api/coding/paas/v4",
+        )?
+        // DeepSeek (OpenAI-compatible)
+        .set_default("providers.deepseek.base_url", "https://api.deepseek.com")?
+        // Qwen/Alibaba (OpenAI-compatible)
+        .set_default(
+            "providers.qwen.base_url",
+            "https://dashscope.aliyuncs.com/compatible-mode",
         )?;
 
     // Load from project config file
