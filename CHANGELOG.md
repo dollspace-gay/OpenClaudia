@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix lru crate Stacked Borrows vulnerability by updating to 0.16.3 (#99)
 
 ### Added
+- Add thinking/reasoning mode support for all compatible providers (#110)
 - Add /activity command to show recent session activities (#106)
 - Add automatic database migration for short-term memory tables (#105)
 - Add short-term memory for session continuity across restarts (#100)
@@ -49,6 +50,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix TUI welcome screen box drawing alignment (#59)
 
 ### Changed
+- Add thinking support for Qwen QwQ (#116)
+- Add thinking support for DeepSeek R1 (#115)
+- Add thinking support for Google Gemini (#113)
+- Add reasoning support for OpenAI o1/o3 models (#112)
+- Add extended thinking support for Anthropic Claude (#111)
+- Add thinking support for Z.AI GLM-4.7 (#114)
 - Add graceful shutdown and autosave for session memory (#109)
 - Fix short-term memory not persisting even with --stateful flag (#108)
 - Fix short-term memory not persisting across terminal restarts (#107)

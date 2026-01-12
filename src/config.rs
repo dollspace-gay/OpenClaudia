@@ -47,6 +47,30 @@ fn default_target() -> String {
     "anthropic".to_string()
 }
 
+/// Thinking/reasoning mode configuration
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct ThinkingConfig {
+    /// Enable thinking mode (default: true for supported providers)
+    #[serde(default = "default_thinking_enabled")]
+    pub enabled: bool,
+    /// Token budget for thinking (provider-specific)
+    /// - Anthropic: min 1024, no max
+    /// - Google Gemini 2.5: 128-32768
+    /// - Z.AI/GLM: no explicit budget
+    #[serde(default)]
+    pub budget_tokens: Option<u32>,
+    /// Preserve thinking across turns (Z.AI/GLM specific)
+    #[serde(default)]
+    pub preserve_across_turns: bool,
+    /// Reasoning effort level for OpenAI o1/o3: "low", "medium", "high"
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+}
+
+fn default_thinking_enabled() -> bool {
+    true
+}
+
 /// Provider configuration (Anthropic, OpenAI, Google, etc.)
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProviderConfig {
@@ -56,6 +80,8 @@ pub struct ProviderConfig {
     pub model: Option<String>,
     #[serde(default)]
     pub headers: HashMap<String, String>,
+    #[serde(default)]
+    pub thinking: ThinkingConfig,
 }
 
 /// Hooks configuration

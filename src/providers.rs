@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 use tracing::debug;
 
+use crate::config::ThinkingConfig;
 use crate::proxy::{ChatCompletionRequest, ChatMessage, MessageContent};
 
 /// Errors that can occur during provider operations
@@ -35,6 +36,17 @@ pub trait ProviderAdapter: Send + Sync {
 
     /// Transform an OpenAI-compatible request to provider format
     fn transform_request(&self, request: &ChatCompletionRequest) -> Result<Value, ProviderError>;
+
+    /// Transform request with thinking config applied
+    fn transform_request_with_thinking(
+        &self,
+        request: &ChatCompletionRequest,
+        thinking: &ThinkingConfig,
+    ) -> Result<Value, ProviderError> {
+        // Default: ignore thinking config, just call transform_request
+        let _ = thinking;
+        self.transform_request(request)
+    }
 
     /// Transform a provider response to OpenAI-compatible format
     fn transform_response(&self, response: Value, stream: bool) -> Result<Value, ProviderError>;
@@ -173,6 +185,28 @@ impl ProviderAdapter for AnthropicAdapter {
         Ok(body)
     }
 
+    fn transform_request_with_thinking(
+        &self,
+        request: &ChatCompletionRequest,
+        thinking: &ThinkingConfig,
+    ) -> Result<Value, ProviderError> {
+        let mut body = self.transform_request(request)?;
+
+        // Add Anthropic extended thinking params if enabled
+        // See: https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking
+        if thinking.enabled {
+            // Budget tokens must be at least 1024 for Anthropic
+            let budget = thinking.budget_tokens.unwrap_or(10000).max(1024);
+            body["thinking"] = json!({
+                "type": "enabled",
+                "budget_tokens": budget
+            });
+            debug!("Added Anthropic thinking params: enabled=true, budget={}", budget);
+        }
+
+        Ok(body)
+    }
+
     fn transform_response(&self, response: Value, _stream: bool) -> Result<Value, ProviderError> {
         // Convert Anthropic response to OpenAI format
         let content = response
@@ -287,6 +321,26 @@ impl ProviderAdapter for OpenAIAdapter {
     fn transform_request(&self, request: &ChatCompletionRequest) -> Result<Value, ProviderError> {
         // OpenAI format is our canonical format, so minimal transformation
         serde_json::to_value(request).map_err(|e| ProviderError::RequestFailed(e.to_string()))
+    }
+
+    fn transform_request_with_thinking(
+        &self,
+        request: &ChatCompletionRequest,
+        thinking: &ThinkingConfig,
+    ) -> Result<Value, ProviderError> {
+        let mut body = serde_json::to_value(request)
+            .map_err(|e| ProviderError::RequestFailed(e.to_string()))?;
+
+        // Add OpenAI o1/o3 reasoning_effort if enabled
+        // See: https://platform.openai.com/docs/guides/reasoning
+        if thinking.enabled {
+            // Use configured effort or default to "medium"
+            let effort = thinking.reasoning_effort.as_deref().unwrap_or("medium");
+            body["reasoning_effort"] = json!(effort);
+            debug!("Added OpenAI reasoning params: effort={}", effort);
+        }
+
+        Ok(body)
     }
 
     fn transform_response(&self, response: Value, _stream: bool) -> Result<Value, ProviderError> {
@@ -428,6 +482,33 @@ impl ProviderAdapter for GoogleAdapter {
         Ok(body)
     }
 
+    fn transform_request_with_thinking(
+        &self,
+        request: &ChatCompletionRequest,
+        thinking: &ThinkingConfig,
+    ) -> Result<Value, ProviderError> {
+        let mut body = self.transform_request(request)?;
+
+        // Add Google Gemini 2.5 thinking config if enabled
+        // See: https://ai.google.dev/gemini-api/docs/thinking
+        if thinking.enabled {
+            // Budget range: 0-32768, default to 8192
+            let budget = thinking.budget_tokens.unwrap_or(8192).min(32768);
+
+            // Ensure generationConfig exists
+            if body.get("generationConfig").is_none() {
+                body["generationConfig"] = json!({});
+            }
+
+            body["generationConfig"]["thinkingConfig"] = json!({
+                "thinkingBudget": budget
+            });
+            debug!("Added Google thinking params: budget={}", budget);
+        }
+
+        Ok(body)
+    }
+
     fn transform_response(&self, response: Value, _stream: bool) -> Result<Value, ProviderError> {
         // Extract content from Gemini response
         let candidate = response
@@ -550,8 +631,39 @@ impl ProviderAdapter for ZaiAdapter {
         serde_json::to_value(request).map_err(|e| ProviderError::RequestFailed(e.to_string()))
     }
 
+    fn transform_request_with_thinking(
+        &self,
+        request: &ChatCompletionRequest,
+        thinking: &ThinkingConfig,
+    ) -> Result<Value, ProviderError> {
+        let mut body = serde_json::to_value(request)
+            .map_err(|e| ProviderError::RequestFailed(e.to_string()))?;
+
+        // Add GLM-4.7 thinking params if enabled
+        // See: https://docs.z.ai/guides/llm/glm-4.7
+        if thinking.enabled {
+            body["thinking"] = json!({
+                "type": "enabled"
+            });
+
+            // Preserve thinking across turns if configured
+            if thinking.preserve_across_turns {
+                body["clear_thinking"] = json!(false);
+            }
+
+            debug!("Added GLM thinking params: enabled=true, preserve={}", thinking.preserve_across_turns);
+        } else {
+            body["thinking"] = json!({
+                "type": "disabled"
+            });
+        }
+
+        Ok(body)
+    }
+
     fn transform_response(&self, response: Value, _stream: bool) -> Result<Value, ProviderError> {
         // Response is already in OpenAI format
+        // Note: reasoning_content field contains the thinking output
         Ok(response)
     }
 
@@ -568,14 +680,138 @@ impl ProviderAdapter for ZaiAdapter {
     }
 }
 
+/// DeepSeek API adapter (OpenAI-compatible with thinking support)
+pub struct DeepSeekAdapter;
+
+impl DeepSeekAdapter {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for DeepSeekAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl ProviderAdapter for DeepSeekAdapter {
+    fn name(&self) -> &str {
+        "deepseek"
+    }
+
+    fn transform_request(&self, request: &ChatCompletionRequest) -> Result<Value, ProviderError> {
+        serde_json::to_value(request).map_err(|e| ProviderError::RequestFailed(e.to_string()))
+    }
+
+    fn transform_request_with_thinking(
+        &self,
+        request: &ChatCompletionRequest,
+        thinking: &ThinkingConfig,
+    ) -> Result<Value, ProviderError> {
+        let mut body = serde_json::to_value(request)
+            .map_err(|e| ProviderError::RequestFailed(e.to_string()))?;
+
+        // Add DeepSeek R1 thinking params if enabled
+        // See: https://api-docs.deepseek.com/guides/reasoning_model
+        if thinking.enabled {
+            body["enable_thinking"] = json!(true);
+            debug!("Added DeepSeek thinking params: enable_thinking=true");
+        }
+
+        Ok(body)
+    }
+
+    fn transform_response(&self, response: Value, _stream: bool) -> Result<Value, ProviderError> {
+        // Response is OpenAI format, reasoning_content contains thinking
+        Ok(response)
+    }
+
+    fn chat_endpoint(&self) -> &str {
+        "/v1/chat/completions"
+    }
+
+    fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {
+        vec![
+            ("Authorization".to_string(), format!("Bearer {}", api_key)),
+            ("content-type".to_string(), "application/json".to_string()),
+        ]
+    }
+}
+
+/// Qwen/Alibaba API adapter (OpenAI-compatible with thinking support)
+pub struct QwenAdapter;
+
+impl QwenAdapter {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for QwenAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl ProviderAdapter for QwenAdapter {
+    fn name(&self) -> &str {
+        "qwen"
+    }
+
+    fn transform_request(&self, request: &ChatCompletionRequest) -> Result<Value, ProviderError> {
+        serde_json::to_value(request).map_err(|e| ProviderError::RequestFailed(e.to_string()))
+    }
+
+    fn transform_request_with_thinking(
+        &self,
+        request: &ChatCompletionRequest,
+        thinking: &ThinkingConfig,
+    ) -> Result<Value, ProviderError> {
+        let mut body = serde_json::to_value(request)
+            .map_err(|e| ProviderError::RequestFailed(e.to_string()))?;
+
+        // Add Qwen QwQ thinking params if enabled
+        // See: https://help.aliyun.com/zh/model-studio/user-guide/qwq
+        if thinking.enabled {
+            body["enable_thinking"] = json!(true);
+            debug!("Added Qwen thinking params: enable_thinking=true");
+        } else {
+            body["enable_thinking"] = json!(false);
+        }
+
+        Ok(body)
+    }
+
+    fn transform_response(&self, response: Value, _stream: bool) -> Result<Value, ProviderError> {
+        // Response is OpenAI format
+        Ok(response)
+    }
+
+    fn chat_endpoint(&self) -> &str {
+        "/v1/chat/completions"
+    }
+
+    fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {
+        vec![
+            ("Authorization".to_string(), format!("Bearer {}", api_key)),
+            ("content-type".to_string(), "application/json".to_string()),
+        ]
+    }
+}
+
 /// Get the appropriate adapter for a provider name
 pub fn get_adapter(provider: &str) -> Box<dyn ProviderAdapter> {
     match provider.to_lowercase().as_str() {
         "anthropic" => Box::new(AnthropicAdapter::new()),
         "google" | "gemini" => Box::new(GoogleAdapter::new()),
         "zai" | "glm" | "zhipu" => Box::new(ZaiAdapter::new()),
-        // OpenAI-compatible providers (explicit)
-        "openai" | "deepseek" | "qwen" => Box::new(OpenAIAdapter::new()),
+        "deepseek" => Box::new(DeepSeekAdapter::new()),
+        "qwen" | "alibaba" => Box::new(QwenAdapter::new()),
+        // OpenAI-compatible providers (default)
+        "openai" => Box::new(OpenAIAdapter::new()),
         // Default fallback for unknown providers (assume OpenAI-compatible)
         _ => Box::new(OpenAIAdapter::new()),
     }
@@ -683,9 +919,10 @@ mod tests {
         assert_eq!(get_adapter("zai").name(), "zai");
         assert_eq!(get_adapter("glm").name(), "zai");
         assert_eq!(get_adapter("zhipu").name(), "zai");
-        // DeepSeek and Qwen use OpenAI-compatible adapter
-        assert_eq!(get_adapter("deepseek").name(), "openai");
-        assert_eq!(get_adapter("qwen").name(), "openai");
+        // DeepSeek and Qwen have dedicated adapters for thinking support
+        assert_eq!(get_adapter("deepseek").name(), "deepseek");
+        assert_eq!(get_adapter("qwen").name(), "qwen");
+        assert_eq!(get_adapter("alibaba").name(), "qwen");
         assert_eq!(get_adapter("unknown").name(), "openai"); // Default
     }
 

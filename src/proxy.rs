@@ -465,9 +465,9 @@ async fn proxy_chat_completions(
 
     let is_stream = request.stream.unwrap_or(false);
 
-    // Transform request to provider format
+    // Transform request to provider format with thinking config
     let transformed_request = adapter
-        .transform_request(&request)
+        .transform_request_with_thinking(&request, &provider.thinking)
         .map_err(|e| ProxyError::InvalidBody(e.to_string()))?;
 
     // Forward to provider with transformed request
