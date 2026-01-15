@@ -8,6 +8,7 @@ mod context;
 mod hooks;
 mod mcp;
 mod memory;
+mod oauth;
 mod plugins;
 mod prompt;
 mod providers;
@@ -51,6 +52,17 @@ enum Commands {
         /// Force overwrite existing configuration
         #[arg(short, long)]
         force: bool,
+    },
+
+    /// Authenticate with Claude Max subscription via OAuth
+    Auth {
+        /// Show current auth status instead of starting new auth
+        #[arg(long)]
+        status: bool,
+
+        /// Log out and clear stored OAuth session
+        #[arg(long)]
+        logout: bool,
     },
 
     /// Start the OpenClaudia proxy server
@@ -111,6 +123,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         None => cmd_chat(cli.model, cli.stateful).await,
         Some(Commands::Init { force }) => cmd_init(force),
+        Some(Commands::Auth { status, logout }) => cmd_auth(status, logout).await,
         Some(Commands::Start { port, host, target }) => cmd_start(port, host, target).await,
         Some(Commands::Config) => cmd_config(),
         Some(Commands::Doctor) => cmd_doctor().await,
@@ -273,6 +286,183 @@ These rules are injected into every conversation.
     info!("");
     info!("Start the chat:");
     info!("  openclaudia");
+
+    Ok(())
+}
+
+/// Authenticate with Claude Max subscription via OAuth
+async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
+    use crate::oauth::{OAuthClient, OAuthStore, PkceParams, parse_auth_code};
+    use std::io::{self, Write};
+
+    let store = OAuthStore::new();
+
+    // Handle --status flag
+    if status {
+        let sessions: Vec<_> = {
+            // Check if any sessions exist by trying to load from disk
+            let _store = OAuthStore::new();
+            // We can't easily enumerate sessions, so just check persistence path
+            let persist_path = dirs::data_local_dir()
+                .map(|d| d.join("openclaudia").join("oauth_sessions.json"));
+
+            if let Some(path) = persist_path {
+                if path.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        if let Ok(sessions) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&content) {
+                            sessions.into_iter().collect()
+                        } else {
+                            vec![]
+                        }
+                    } else {
+                        vec![]
+                    }
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![]
+            }
+        };
+
+        if sessions.is_empty() {
+            println!("Not authenticated with Claude Max.");
+            println!("Run 'openclaudia auth' to authenticate.");
+        } else {
+            println!("Authenticated with Claude Max.");
+            println!("Sessions: {}", sessions.len());
+            for (id, data) in &sessions {
+                let expires = data.get("credentials")
+                    .and_then(|c| c.get("expires_at"))
+                    .and_then(|e| e.as_str())
+                    .unwrap_or("unknown");
+                println!("  {} (expires: {})", &id[..8], expires);
+            }
+        }
+        return Ok(());
+    }
+
+    // Handle --logout flag
+    if logout {
+        let persist_path = dirs::data_local_dir()
+            .map(|d| d.join("openclaudia").join("oauth_sessions.json"));
+
+        if let Some(path) = persist_path {
+            if path.exists() {
+                std::fs::remove_file(&path)?;
+                println!("Logged out. OAuth sessions cleared.");
+            } else {
+                println!("No OAuth sessions to clear.");
+            }
+        }
+        return Ok(());
+    }
+
+    // Start OAuth device flow
+    println!("=== Claude Max OAuth Authentication ===\n");
+
+    let pkce = PkceParams::generate();
+    let auth_url = pkce.build_auth_url();
+
+    println!("Step 1: Open this URL in your browser:\n");
+    println!("  {}\n", auth_url);
+
+    // Try to open browser automatically
+    #[cfg(target_os = "windows")]
+    {
+        // Use rundll32 with url.dll for reliable URL opening on Windows
+        // This handles special characters in URLs better than 'start' command
+        let _ = std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", &auth_url])
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg(&auth_url)
+            .spawn();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("xdg-open")
+            .arg(&auth_url)
+            .spawn();
+    }
+
+    println!("Step 2: Sign in to Claude and authorize the application.");
+    println!("Step 3: Copy the code shown (format: CODE#STATE)\n");
+
+    print!("Paste the authorization code here: ");
+    io::stdout().flush()?;
+
+    let mut code_input = String::new();
+    io::stdin().read_line(&mut code_input)?;
+    let code_input = code_input.trim();
+
+    if code_input.is_empty() {
+        eprintln!("No code provided. Authentication cancelled.");
+        return Ok(());
+    }
+
+    // Parse the code (handles CODE#STATE format)
+    let (code, parsed_state) = parse_auth_code(code_input);
+
+    // Verify state matches
+    let expected_state = &pkce.state;
+    if let Some(ref state) = parsed_state {
+        if state != expected_state {
+            eprintln!("State mismatch! This could be a CSRF attack. Authentication cancelled.");
+            return Ok(());
+        }
+    }
+
+    println!("\nExchanging code for tokens...");
+
+    let client = OAuthClient::new();
+    let token_response = client.exchange_code(&code, &pkce).await?;
+
+    // Create session from token response
+    let mut session = crate::oauth::OAuthSession::from_token_response(token_response);
+
+    // Try to create API key only if we have the required scope
+    // Personal Claude Max accounts don't get org:create_api_key, so they use Bearer token directly
+    if session.can_create_api_key() {
+        println!("Creating API key from OAuth token...");
+        match client.create_api_key(&session.credentials.access_token).await {
+            Ok(api_key) => {
+                session.api_key = Some(api_key);
+                println!("✓ API key created successfully");
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to create API key: {}", e);
+                eprintln!("Falling back to Bearer token authentication.");
+                session.auth_mode = crate::oauth::AuthMode::BearerToken;
+            }
+        }
+    } else {
+        println!("Using Bearer token authentication (personal Claude Max account)");
+        println!("  Granted scopes: {}", session.granted_scopes.join(", "));
+    }
+
+    let session_id = session.id.clone();
+    let auth_mode = session.auth_mode.clone();
+    store.store_session(session);
+
+    println!("\n✓ Authentication successful!");
+    println!("  Session ID: {}", &session_id[..8]);
+    match auth_mode {
+        crate::oauth::AuthMode::ApiKey => {
+            println!("  Auth mode: API key (organization account)");
+        }
+        crate::oauth::AuthMode::BearerToken => {
+            println!("  Auth mode: Bearer token (personal account)");
+        }
+        crate::oauth::AuthMode::ProxyMode => {
+            println!("  Auth mode: Proxy (via anthropic-proxy)");
+        }
+    }
+    println!("\nYour session has been saved. OpenClaudia will now use your");
+    println!("Claude Max subscription automatically when target is 'anthropic'.");
 
     Ok(())
 }
@@ -2133,6 +2323,129 @@ fn get_random_tip() -> &'static str {
     TIPS[(seed as usize) % TIPS.len()]
 }
 
+/// Result of OAuth flow: proxy URL and session ID
+struct OAuthFlowResult {
+    proxy_url: String,
+    session_id: String,
+}
+
+/// Fully automatic OAuth setup using OpenClaudia's built-in proxy.
+///
+/// Steps:
+/// 1. Start OpenClaudia proxy if not running
+/// 2. Open browser for OAuth login
+/// 3. Poll until auth completes
+///
+/// Returns proxy URL and session ID when ready - NO MANUAL INPUT REQUIRED.
+async fn start_builtin_oauth_flow(config: &config::AppConfig) -> Option<OAuthFlowResult> {
+    let proxy_port = config.proxy.port;
+    let proxy_url = format!("http://localhost:{}", proxy_port);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .ok()?;
+
+    // Step 1: Check if our proxy is already running
+    let proxy_running = client.get(format!("{}/health", proxy_url)).send().await.is_ok();
+
+    if !proxy_running {
+        println!("🚀 Starting OpenClaudia proxy on port {}...", proxy_port);
+
+        // Start our own proxy in a background task
+        let config_clone = config.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::proxy::start_server(config_clone).await {
+                tracing::error!("Proxy server error: {}", e);
+            }
+        });
+
+        // Wait for proxy to start (up to 5 seconds)
+        for i in 0..10 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            if client.get(format!("{}/health", proxy_url)).send().await.is_ok() {
+                println!("✓ Proxy started on port {}", proxy_port);
+                break;
+            }
+            if i == 9 {
+                eprintln!("❌ Failed to start proxy");
+                return None;
+            }
+        }
+    } else {
+        println!("✓ Proxy already running on port {}", proxy_port);
+    }
+
+    // Step 2: Check if already authenticated AND token actually works
+    if let Ok(resp) = client.get(format!("{}/auth/status", proxy_url)).send().await {
+        if let Ok(status) = resp.json::<serde_json::Value>().await {
+            if status["authenticated"].as_bool() == Some(true) {
+                if let Some(session_id) = status["session_id"].as_str() {
+                    // Verify the token works by hitting /v1/models
+                    println!("   Verifying existing session...");
+                    let test_resp = client
+                        .get(format!("{}/v1/models", proxy_url))
+                        .header("Cookie", format!("anthropic_session={}", session_id))
+                        .send()
+                        .await;
+
+                    if let Ok(r) = test_resp {
+                        if r.status().is_success() {
+                            println!("✓ Already logged in!");
+                            return Some(OAuthFlowResult {
+                                proxy_url: proxy_url.clone(),
+                                session_id: session_id.to_string(),
+                            });
+                        } else {
+                            println!("   Existing session invalid, need to re-authenticate...");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Step 3: Open browser to OAuth device flow page
+    println!("🔐 Opening browser for Claude login...");
+    let auth_url = format!("{}/auth/device", proxy_url);
+
+    #[cfg(target_os = "windows")]
+    { let _ = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", &auth_url]).spawn(); }
+    #[cfg(target_os = "macos")]
+    { let _ = std::process::Command::new("open").arg(&auth_url).spawn(); }
+    #[cfg(target_os = "linux")]
+    { let _ = std::process::Command::new("xdg-open").arg(&auth_url).spawn(); }
+
+    // Step 4: Poll /auth/status until authenticated (5 min timeout)
+    println!("   Waiting for you to log in at: {}", auth_url);
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(300);
+
+    while start.elapsed() < timeout {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // Check auth status and get session ID
+        if let Ok(resp) = client.get(format!("{}/auth/status", proxy_url)).send().await {
+            if let Ok(status) = resp.json::<serde_json::Value>().await {
+                if status["authenticated"].as_bool() == Some(true) {
+                    if let Some(session_id) = status["session_id"].as_str() {
+                        println!("\n✓ Logged in! Starting chat...");
+                        return Some(OAuthFlowResult {
+                            proxy_url: proxy_url.clone(),
+                            session_id: session_id.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+        print!(".");
+        std::io::Write::flush(&mut std::io::stdout()).ok();
+    }
+
+    eprintln!("\n❌ Login timed out (5 min)");
+    None
+}
+
 /// Interactive chat mode (default command)
 async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Result<()> {
     use crate::hooks::{load_claude_code_hooks, merge_hooks_config, HookEngine, HookEvent, HookInput};
@@ -2161,24 +2474,60 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
         }
     };
 
-    let api_key = match &provider.api_key {
-        Some(k) => k.clone(),
-        None => {
-            let env_var = match config.proxy.target.as_str() {
-                "anthropic" => "ANTHROPIC_API_KEY",
-                "openai" => "OPENAI_API_KEY",
-                "google" => "GOOGLE_API_KEY",
-                "zai" => "ZAI_API_KEY",
-                "deepseek" => "DEEPSEEK_API_KEY",
-                "qwen" => "QWEN_API_KEY",
-                _ => "API_KEY",
-            };
-            eprintln!(
-                "No API key configured for '{}'. Set {} or add to config.",
-                config.proxy.target, env_var
-            );
-            return Ok(());
+    // For Anthropic: Check anthropic-proxy FIRST (auto-start, auto-auth)
+    // This is the primary auth method for Claude Max subscriptions
+    let mut oauth_session: Option<crate::oauth::OAuthSession> = None;
+    let mut proxy_url: Option<String> = None;
+
+    let api_key = if config.proxy.target == "anthropic" && provider.api_key.is_none() {
+        // No API key configured - use built-in OAuth proxy (AUTOMATIC)
+        eprintln!("[debug] Anthropic provider with no API key - starting OAuth flow...");
+        match start_builtin_oauth_flow(&config).await {
+            Some(result) => {
+                // Store proxy URL and create session with actual session ID
+                eprintln!("✓ Connected via OpenClaudia proxy");
+                eprintln!("[debug] Proxy URL: {}", result.proxy_url);
+                eprintln!("[debug] Session ID: {}", result.session_id);
+                proxy_url = Some(result.proxy_url);
+                let proxy_session = crate::oauth::OAuthSession {
+                    id: result.session_id,  // ACTUAL session ID, not proxy URL!
+                    credentials: crate::oauth::OAuthCredentials {
+                        access_token: String::new(),
+                        refresh_token: None,
+                        expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
+                    },
+                    api_key: None,
+                    auth_mode: crate::oauth::AuthMode::ProxyMode,
+                    granted_scopes: vec![],
+                    created_at: chrono::Utc::now(),
+                    user_id: None,
+                };
+                oauth_session = Some(proxy_session);
+                "proxy-session".to_string()
+            }
+            None => {
+                // check_anthropic_proxy already printed the error
+                return Ok(());
+            }
         }
+    } else if let Some(k) = &provider.api_key {
+        // API key configured - use it directly
+        k.clone()
+    } else {
+        // Non-Anthropic provider with no API key
+        let env_var = match config.proxy.target.as_str() {
+            "openai" => "OPENAI_API_KEY",
+            "google" => "GOOGLE_API_KEY",
+            "zai" => "ZAI_API_KEY",
+            "deepseek" => "DEEPSEEK_API_KEY",
+            "qwen" => "QWEN_API_KEY",
+            _ => "API_KEY",
+        };
+        eprintln!(
+            "No API key configured for '{}'. Set {} or add to config.",
+            config.proxy.target, env_var
+        );
+        return Ok(());
     };
 
     // Determine model
@@ -2581,18 +2930,83 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                     }));
                 }
 
-                // Build request with streaming enabled and tools
-                let request_body = serde_json::json!({
-                    "model": model,
-                    "messages": chat_session.messages,
-                    "max_tokens": 4096,
-                    "stream": true,
-                    "tools": tools::get_all_tool_definitions(stateful)
-                });
+                // Check if we're using our built-in proxy mode (must check before building request)
+                let using_proxy = oauth_session.as_ref()
+                    .map(|s| s.auth_mode == crate::oauth::AuthMode::ProxyMode)
+                    .unwrap_or(false);
 
-                // Get endpoint and headers
-                let endpoint = format!("{}{}", provider.base_url, adapter.chat_endpoint());
-                let headers = adapter.get_headers(&api_key);
+                // Build request - proxy mode sends minimal request (no tools, no extra fields)
+                // This matches exactly what the working curl command sends
+                let request_body = if using_proxy {
+                    // Extract system message to top-level (Claude API requirement)
+                    let system_msg = chat_session.messages.iter()
+                        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+                        .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                        .map(String::from);
+
+                    // Filter out system messages from the array
+                    let user_messages: Vec<_> = chat_session.messages.iter()
+                        .filter(|m| m.get("role").and_then(|r| r.as_str()) != Some("system"))
+                        .cloned()
+                        .collect();
+
+                    // Minimal request like curl - NO tools, NO system identifier injection
+                    let mut req = serde_json::json!({
+                        "model": model,
+                        "messages": user_messages,
+                        "max_tokens": 4096,
+                        "stream": true
+                    });
+
+                    // Add system as top-level parameter if present
+                    if let Some(sys) = system_msg {
+                        req["system"] = serde_json::json!(sys);
+                    }
+
+                    req
+                } else {
+                    serde_json::json!({
+                        "model": model,
+                        "messages": chat_session.messages,
+                        "max_tokens": 4096,
+                        "stream": true,
+                        "tools": tools::get_all_tool_definitions(stateful)
+                    })
+                };
+
+                // Get endpoint - proxy mode uses our local proxy, which handles OAuth internally
+                let endpoint = if using_proxy {
+                    // Use the stored proxy_url for the endpoint
+                    if let Some(ref url) = proxy_url {
+                        eprintln!("[debug] Using built-in proxy at: {}", url);
+                        format!("{}/v1/messages", url)
+                    } else {
+                        format!("{}{}", provider.base_url, adapter.chat_endpoint())
+                    }
+                } else {
+                    format!("{}{}", provider.base_url, adapter.chat_endpoint())
+                };
+
+                // Build headers based on auth mode
+                let headers: Vec<(String, String)> = if using_proxy {
+                    // Proxy mode: send Cookie header with session ID so proxy uses stored OAuth
+                    if let Some(ref session) = oauth_session {
+                        eprintln!("[debug] Proxy mode - sending Cookie: anthropic_session={}", session.id);
+                        vec![
+                            ("anthropic-version".to_string(), "2023-06-01".to_string()),
+                            ("content-type".to_string(), "application/json".to_string()),
+                            ("Cookie".to_string(), format!("anthropic_session={}", session.id)),
+                        ]
+                    } else {
+                        eprintln!("[debug] Proxy mode - no session, proxy will use any stored session");
+                        vec![
+                            ("anthropic-version".to_string(), "2023-06-01".to_string()),
+                            ("content-type".to_string(), "application/json".to_string()),
+                        ]
+                    }
+                } else {
+                    adapter.get_headers(&api_key)
+                };
 
                 // Show spinner while connecting
                 let spinner = ProgressBar::new_spinner();
@@ -2676,10 +3090,22 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                     break;
                                                 }
 
-                                                // Parse JSON and extract delta content
+                                                // Parse JSON
                                                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                                                    // Anthropic format: content_block_delta with delta.text
+                                                    if json.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
+                                                        if let Some(text) = json
+                                                            .get("delta")
+                                                            .and_then(|d| d.get("text"))
+                                                            .and_then(|t| t.as_str())
+                                                        {
+                                                            print!("{}", text);
+                                                            std::io::stdout().flush().ok();
+                                                            full_content.push_str(text);
+                                                        }
+                                                    }
                                                     // OpenAI format: choices[0].delta.content
-                                                    if let Some(delta) = json
+                                                    else if let Some(delta) = json
                                                         .get("choices")
                                                         .and_then(|c| c.get(0))
                                                         .and_then(|c| c.get("delta"))
@@ -2716,8 +3142,13 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                             let mut iteration = 0;
                             let mut current_content = full_content;
 
-                            while tool_accumulator.has_tool_calls() && !cancelled && iteration < max_iterations {
+                            // Check for tool calls
+                            let has_tools = tool_accumulator.has_tool_calls();
+
+                            while has_tools && !cancelled && iteration < max_iterations {
                                 iteration += 1;
+
+                                // Get tool calls
                                 let tool_calls = tool_accumulator.finalize();
 
                                 // Add assistant message with tool calls
@@ -2813,13 +3244,40 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                 println!("\n\x1b[90mContinuing with tool results...\x1b[0m\n");
 
                                 // Build new request with tool results
-                                let request_body = serde_json::json!({
-                                    "model": model,
-                                    "messages": chat_session.messages,
-                                    "max_tokens": 4096,
-                                    "stream": true,
-                                    "tools": tools::get_all_tool_definitions(stateful)
-                                });
+                                // Use minimal format for proxy, native for direct OAuth
+                                let request_body = if using_proxy {
+                                    // Extract system message to top-level
+                                    let system_msg = chat_session.messages.iter()
+                                        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+                                        .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                                        .map(String::from);
+
+                                    let user_messages: Vec<_> = chat_session.messages.iter()
+                                        .filter(|m| m.get("role").and_then(|r| r.as_str()) != Some("system"))
+                                        .cloned()
+                                        .collect();
+
+                                    let mut req = serde_json::json!({
+                                        "model": model,
+                                        "messages": user_messages,
+                                        "max_tokens": 4096,
+                                        "stream": true
+                                    });
+
+                                    if let Some(sys) = system_msg {
+                                        req["system"] = serde_json::json!(sys);
+                                    }
+
+                                    req
+                                } else {
+                                    serde_json::json!({
+                                        "model": model,
+                                        "messages": chat_session.messages,
+                                        "max_tokens": 4096,
+                                        "stream": true,
+                                        "tools": tools::get_all_tool_definitions(stateful)
+                                    })
+                                };
 
                                 // Send follow-up request
                                 let mut req = client.post(&endpoint).json(&request_body);
@@ -2852,7 +3310,20 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                         }
 
                                                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                                                            if let Some(delta) = json
+                                                            // Anthropic format: content_block_delta
+                                                            if json.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
+                                                                if let Some(text) = json
+                                                                    .get("delta")
+                                                                    .and_then(|d| d.get("text"))
+                                                                    .and_then(|t| t.as_str())
+                                                                {
+                                                                    print!("{}", text);
+                                                                    std::io::stdout().flush().ok();
+                                                                    current_content.push_str(text);
+                                                                }
+                                                            }
+                                                            // OpenAI format: choices[0].delta.content
+                                                            else if let Some(delta) = json
                                                                 .get("choices")
                                                                 .and_then(|c| c.get(0))
                                                                 .and_then(|c| c.get("delta"))
@@ -2999,7 +3470,7 @@ async fn cmd_start(
         config.proxy.target = t;
     }
 
-    // Validate we have an API key for the target provider
+    // Check for API key - warn if missing but allow startup for OAuth mode
     if let Some(provider) = config.active_provider() {
         if provider.api_key.is_none() {
             let env_var = match config.proxy.target.as_str() {
@@ -3011,11 +3482,20 @@ async fn cmd_start(
                 "qwen" => "QWEN_API_KEY",
                 _ => "API_KEY",
             };
-            error!(
-                "No API key configured for provider '{}'. Set {} environment variable.",
-                config.proxy.target, env_var
-            );
-            return Ok(());
+            // For Anthropic, OAuth authentication is available
+            if config.proxy.target == "anthropic" {
+                tracing::warn!(
+                    "No API key configured for '{}'. OAuth authentication is available.",
+                    config.proxy.target
+                );
+                info!("Visit http://localhost:{}/auth/device to authenticate with Claude Max", config.proxy.port);
+            } else {
+                error!(
+                    "No API key configured for provider '{}'. Set {} environment variable.",
+                    config.proxy.target, env_var
+                );
+                return Ok(());
+            }
         }
     }
 

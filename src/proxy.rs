@@ -27,6 +27,7 @@ use crate::hooks::{
     HookResult,
 };
 use crate::mcp::McpManager;
+use crate::oauth::OAuthStore;
 use crate::plugins::PluginManager;
 use crate::providers::get_adapter;
 use crate::rules::{extract_extensions_from_tool_input, RulesEngine};
@@ -43,6 +44,8 @@ pub struct ProxyState {
     pub session_manager: Arc<RwLock<SessionManager>>,
     pub plugin_manager: Arc<PluginManager>,
     pub mcp_manager: Arc<RwLock<McpManager>>,
+    /// OAuth session store for Claude Max authentication
+    pub oauth_store: Arc<OAuthStore>,
 }
 
 /// Errors that can occur in the proxy
@@ -145,6 +148,11 @@ pub fn create_router(state: ProxyState) -> Router {
     Router::new()
         // Health check
         .route("/health", get(health_check))
+        // Auth routes (device flow for Claude Max OAuth)
+        .route("/auth/device", get(auth_device_page))
+        .route("/auth/device/start", axum::routing::post(auth_device_start))
+        .route("/auth/device/submit", axum::routing::post(auth_device_submit))
+        .route("/auth/status", get(auth_status))
         // OpenAI-compatible endpoints
         .route("/v1/chat/completions", any(proxy_chat_completions))
         .route("/v1/completions", any(proxy_completions))
@@ -163,6 +171,124 @@ async fn health_check() -> impl IntoResponse {
         "service": "openclaudia",
         "version": env!("CARGO_PKG_VERSION")
     }))
+}
+
+/// Device flow page - HTML UI for OAuth authentication
+async fn auth_device_page() -> impl IntoResponse {
+    axum::response::Html(include_str!("../assets/device_flow.html"))
+}
+
+/// Start device authorization flow
+async fn auth_device_start(
+    State(state): State<ProxyState>,
+) -> Result<impl IntoResponse, ProxyError> {
+    use crate::oauth::{PkceParams, ANTHROPIC_CLIENT_ID, ANTHROPIC_REDIRECT_URI};
+
+    let pkce = PkceParams::generate();
+    let oauth_state = pkce.state.clone();
+
+    // Store PKCE for later verification
+    state.oauth_store.store_challenge(pkce.clone());
+
+    // Build authorization URL
+    let auth_url = format!(
+        "https://claude.ai/oauth/authorize?code=true&client_id={}&response_type=code&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256&state={}",
+        ANTHROPIC_CLIENT_ID,
+        urlencoding::encode(ANTHROPIC_REDIRECT_URI),
+        urlencoding::encode("org:create_api_key user:profile user:inference"),
+        pkce.challenge,
+        oauth_state
+    );
+
+    info!("Device flow auth URL generated");
+
+    Ok(Json(serde_json::json!({
+        "auth_url": auth_url,
+        "state": oauth_state
+    })))
+}
+
+/// Submit authorization code from device flow
+async fn auth_device_submit(
+    State(state): State<ProxyState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, ProxyError> {
+    use crate::oauth::{OAuthClient, OAuthSession, parse_auth_code};
+
+    let mut code = payload["code"].as_str().unwrap_or("").to_string();
+    let mut oauth_state = payload["state"].as_str().unwrap_or("").to_string();
+
+    // Handle combined code#state format
+    if code.contains('#') {
+        let (parsed_code, parsed_state) = parse_auth_code(&code);
+        code = parsed_code;
+        if let Some(s) = parsed_state {
+            oauth_state = s;
+        }
+    }
+
+    // Get PKCE challenge
+    let pkce = state.oauth_store.take_challenge(&oauth_state)
+        .ok_or_else(|| ProxyError::InvalidBody("Invalid state parameter".to_string()))?;
+
+    // Exchange code for tokens
+    let client = OAuthClient::new();
+    let token_response = client.exchange_code(&code, &pkce).await
+        .map_err(|e| ProxyError::InvalidBody(format!("Token exchange failed: {}", e)))?;
+
+    // Create session
+    let mut session = OAuthSession::from_token_response(token_response);
+
+    // Try to create API key if we have the scope
+    if session.can_create_api_key() {
+        if let Ok(api_key) = client.create_api_key(&session.credentials.access_token).await {
+            session.api_key = Some(api_key);
+        }
+    }
+
+    let session_id = session.id.clone();
+    state.oauth_store.store_session(session);
+
+    info!("Device flow authentication successful, session: {}", session_id);
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Authentication successful",
+        "session_id": session_id
+    })))
+}
+
+/// Check authentication status
+async fn auth_status(
+    State(state): State<ProxyState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    // Check for session from cookie first
+    let session = headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split(';').find_map(|cookie| {
+                let cookie = cookie.trim();
+                cookie.strip_prefix("anthropic_session=")
+                    .map(|s| s.to_string())
+            })
+        })
+        .and_then(|session_id| state.oauth_store.get_session(&session_id));
+
+    // If no cookie, check for ANY valid session (for CLI polling during OAuth flow)
+    let session = session.or_else(|| state.oauth_store.get_any_valid_session());
+
+    match session {
+        Some(s) => Json(serde_json::json!({
+            "authenticated": true,
+            "session_id": s.id
+        })),
+        None => Json(serde_json::json!({
+            "authenticated": false,
+            "session_id": null
+        }))
+    }
 }
 
 /// List available models (returns configured provider's models)
@@ -560,12 +686,13 @@ async fn proxy_completions(
 }
 
 /// Proxy Anthropic messages endpoint
+/// Handles OAuth Bearer token auth with Claude Code system prompt injection (like anthropic-proxy)
 async fn proxy_anthropic_messages(
     State(state): State<ProxyState>,
     headers: HeaderMap,
     body: String,
 ) -> Result<Response, ProxyError> {
-    let request: Value =
+    let mut request: Value =
         serde_json::from_str(&body).map_err(|e| ProxyError::InvalidBody(e.to_string()))?;
 
     let provider = state
@@ -573,6 +700,70 @@ async fn proxy_anthropic_messages(
         .get_provider("anthropic")
         .ok_or_else(|| ProxyError::ProviderNotConfigured("anthropic".to_string()))?;
 
+    // Check for OAuth session from cookie first
+    let session = headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split(';').find_map(|cookie| {
+                let cookie = cookie.trim();
+                cookie.strip_prefix("anthropic_session=")
+                    .map(|s| s.to_string())
+            })
+        })
+        .and_then(|session_id| {
+            debug!("[/v1/messages] Looking up session from cookie: {}", session_id);
+            state.oauth_store.get_session(&session_id)
+        });
+
+    // Fallback: check for ANY valid session if no cookie provided
+    let session = session.or_else(|| {
+        debug!("[/v1/messages] No cookie session, checking for any valid session...");
+        state.oauth_store.get_any_valid_session()
+    });
+
+    // If we have an OAuth session, use Bearer token auth with Claude Code prompt injection
+    if let Some(session) = session {
+        info!("[/v1/messages] Using OAuth session: {}", session.id);
+
+        // CRITICAL: Inject Claude Code system prompt (this is what makes OAuth work!)
+        // The API validates that requests contain this identifier
+        let claude_code_obj = serde_json::json!({
+            "type": "text",
+            "text": "You are Claude Code, Anthropic's official CLI for Claude."
+        });
+
+        match request.get_mut("system") {
+            Some(Value::Array(system_array)) => {
+                system_array.insert(0, claude_code_obj);
+            }
+            Some(Value::String(existing_str)) => {
+                let existing_obj = serde_json::json!({
+                    "type": "text",
+                    "text": existing_str.clone()
+                });
+                request["system"] = serde_json::json!([claude_code_obj, existing_obj]);
+            }
+            _ => {
+                request["system"] = serde_json::json!([claude_code_obj]);
+            }
+        }
+
+        let url = format!("{}/v1/messages", provider.base_url);
+        let response = state.client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", session.credentials.access_token))
+            .header("anthropic-beta", "oauth-2025-04-20,computer-use-2025-01-24,fine-grained-tool-streaming-2025-05-14")
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&request)
+            .send()
+            .await?;
+
+        return convert_response(response).await;
+    }
+
+    // Fallback to API key auth (no system prompt injection needed)
     let api_key = extract_api_key(&headers)
         .or_else(|| provider.api_key.clone())
         .ok_or_else(|| ProxyError::NoApiKey("anthropic".to_string()))?;
@@ -840,6 +1031,9 @@ pub async fn start_server(config: AppConfig) -> anyhow::Result<()> {
         }
     }
 
+    // Initialize OAuth store for Claude Max authentication
+    let oauth_store = Arc::new(OAuthStore::new());
+
     let state = ProxyState {
         config: Arc::new(config),
         client,
@@ -849,6 +1043,7 @@ pub async fn start_server(config: AppConfig) -> anyhow::Result<()> {
         session_manager,
         plugin_manager,
         mcp_manager,
+        oauth_store,
     };
 
     // Fire SessionStart hook and inject session context
@@ -916,6 +1111,9 @@ pub async fn start_server_with_shutdown(
     // Initialize MCP manager
     let mcp_manager = Arc::new(RwLock::new(McpManager::new()));
 
+    // Initialize OAuth store for Claude Max authentication
+    let oauth_store = Arc::new(OAuthStore::new());
+
     let state = ProxyState {
         config: Arc::new(config),
         client,
@@ -925,6 +1123,7 @@ pub async fn start_server_with_shutdown(
         session_manager,
         plugin_manager,
         mcp_manager,
+        oauth_store,
     };
 
     let app = create_router(state);

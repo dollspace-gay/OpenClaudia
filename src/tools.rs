@@ -11,7 +11,7 @@
 //! - memory_search: Search archival memory
 //! - memory_update: Update existing memory
 //! - core_memory_update: Update core memory sections
-
+//!
 use crate::memory::{MemoryDb, SECTION_PERSONA, SECTION_PROJECT_INFO, SECTION_USER_PREFS};
 use crate::web::{self, WebConfig};
 use serde::{Deserialize, Serialize};
@@ -50,7 +50,7 @@ pub struct ToolResult {
     pub is_error: bool,
 }
 
-/// Get all tool definitions for the API request
+/// Get all tool definitions for the API request (OpenAI function format)
 pub fn get_tool_definitions() -> Value {
     json!([
         {

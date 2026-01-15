@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix lru crate Stacked Borrows vulnerability by updating to 0.16.3 (#99)
 
 ### Added
+- Emulate Claude Code native tool format for OAuth requests (#125)
+- Add auth command for direct Claude Max OAuth login (#124)
+- Update available models list to current 2025-2026 models (#123)
+- Add Claude Max OAuth authentication for subscription-based API access (#117)
 - Add thinking/reasoning mode support for all compatible providers (#110)
 - Add /activity command to show recent session activities (#106)
 - Add automatic database migration for short-term memory tables (#105)
@@ -50,6 +54,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix TUI welcome screen box drawing alignment (#59)
 
 ### Changed
+- Add automatic OAuth flow when starting OpenClaudia with Anthropic provider (#127)
+- Add Claude Code system prompt injection for OAuth requests (#122)
+- Add OAuth token refresh and proxy integration (#121)
+- Add device flow authentication endpoints (#120)
+- Add OAuth session storage with token persistence (#119)
+- Add OAuth types and PKCE utilities in src/oauth.rs (#118)
 - Add thinking support for Qwen QwQ (#116)
 - Add thinking support for DeepSeek R1 (#115)
 - Add thinking support for Google Gemini (#113)

@@ -54,6 +54,12 @@ dirs = "6"
 # Regex for hook matchers
 regex = "1"
 
+# OAuth and cryptography
+base64 = "0.22"
+sha2 = "0.10"
+rand = "0.8"
+urlencoding = "2"
+
 # CLI enhancements
 rustyline = { version = "14", features = ["derive"] }
 indicatif = "0.17"
