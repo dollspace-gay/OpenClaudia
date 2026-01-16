@@ -21,8 +21,8 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use tokio::runtime::Handle;
 use uuid::Uuid;
@@ -88,11 +88,9 @@ impl BackgroundShellManager {
             let finished_clone = Arc::clone(&finished);
             thread::spawn(move || {
                 let reader = BufReader::new(stdout);
-                for line in reader.lines() {
-                    if let Ok(line) = line {
-                        if let Ok(mut buf) = buffer.lock() {
-                            buf.push(line);
-                        }
+                for line in reader.lines().map_while(Result::ok) {
+                    if let Ok(mut buf) = buffer.lock() {
+                        buf.push(line);
                     }
                 }
                 finished_clone.store(true, Ordering::SeqCst);
@@ -104,11 +102,9 @@ impl BackgroundShellManager {
             let buffer = Arc::clone(&stderr_buffer);
             thread::spawn(move || {
                 let reader = BufReader::new(stderr);
-                for line in reader.lines() {
-                    if let Ok(line) = line {
-                        if let Ok(mut buf) = buffer.lock() {
-                            buf.push(line);
-                        }
+                for line in reader.lines().map_while(Result::ok) {
+                    if let Ok(mut buf) = buffer.lock() {
+                        buf.push(line);
                     }
                 }
             });
@@ -145,7 +141,9 @@ impl BackgroundShellManager {
     /// Get output from a background shell (returns new output since last call)
     fn get_output(&self, shell_id: &str) -> Result<(String, bool, Option<i32>), String> {
         let shells = self.shells.lock().map_err(|_| "Failed to lock shells")?;
-        let shell = shells.get(shell_id).ok_or_else(|| format!("Shell '{}' not found", shell_id))?;
+        let shell = shells
+            .get(shell_id)
+            .ok_or_else(|| format!("Shell '{}' not found", shell_id))?;
 
         let mut output = String::new();
 
@@ -181,7 +179,10 @@ impl BackgroundShellManager {
 
         if let Some(shell) = shells.remove(shell_id) {
             shell.finished.store(true, Ordering::SeqCst);
-            Ok(format!("Shell '{}' terminated (command: {})", shell_id, shell.command))
+            Ok(format!(
+                "Shell '{}' terminated (command: {})",
+                shell_id, shell.command
+            ))
         } else {
             Err(format!("Shell '{}' not found", shell_id))
         }
@@ -190,13 +191,16 @@ impl BackgroundShellManager {
     /// List all background shells
     fn list(&self) -> Vec<(String, String, bool)> {
         if let Ok(shells) = self.shells.lock() {
-            shells.iter().map(|(id, shell)| {
-                (
-                    id.clone(),
-                    shell.command.clone(),
-                    !shell.finished.load(Ordering::SeqCst),
-                )
-            }).collect()
+            shells
+                .iter()
+                .map(|(id, shell)| {
+                    (
+                        id.clone(),
+                        shell.command.clone(),
+                        !shell.finished.load(Ordering::SeqCst),
+                    )
+                })
+                .collect()
         } else {
             Vec::new()
         }
@@ -531,19 +535,13 @@ fn execute_bash(args: &HashMap<String, Value>) -> (String, bool) {
         #[cfg(windows)]
         let output = {
             match find_git_bash() {
-                Some(git_bash) => Command::new(git_bash)
-                    .args(["-c", command])
-                    .output(),
-                None => Command::new("bash")
-                    .args(["-c", command])
-                    .output(),
+                Some(git_bash) => Command::new(git_bash).args(["-c", command]).output(),
+                None => Command::new("bash").args(["-c", command]).output(),
             }
         };
 
         #[cfg(not(windows))]
-        let output = Command::new("bash")
-            .args(["-c", command])
-            .output();
+        let output = Command::new("bash").args(["-c", command]).output();
 
         match output {
             Ok(output) => {
@@ -567,8 +565,11 @@ fn execute_bash(args: &HashMap<String, Value>) -> (String, bool) {
 
                 // Truncate if too long
                 if result.len() > 50000 {
-                    result = format!("{}...\n(output truncated, {} total chars)",
-                        &result[..50000], result.len());
+                    result = format!(
+                        "{}...\n(output truncated, {} total chars)",
+                        &result[..50000],
+                        result.len()
+                    );
                 }
 
                 (result, !output.status.success())
@@ -646,13 +647,15 @@ fn execute_read_file(args: &HashMap<String, Value>) -> (String, bool) {
     };
 
     // Get optional offset (1-indexed line number to start from)
-    let offset = args.get("offset")
+    let offset = args
+        .get("offset")
         .and_then(|v| v.as_u64())
         .map(|n| n.saturating_sub(1) as usize) // Convert to 0-indexed
         .unwrap_or(0);
 
     // Get optional limit (max lines to read)
-    let limit = args.get("limit")
+    let limit = args
+        .get("limit")
         .and_then(|v| v.as_u64())
         .map(|n| n as usize);
 
@@ -681,15 +684,25 @@ fn execute_read_file(args: &HashMap<String, Value>) -> (String, bool) {
             let context = if offset > 0 || limit.is_some() {
                 let shown_start = offset + 1;
                 let shown_end = offset + selected_lines.len();
-                format!("\n(showing lines {}-{} of {} total)", shown_start, shown_end, total_lines)
+                format!(
+                    "\n(showing lines {}-{} of {} total)",
+                    shown_start, shown_end, total_lines
+                )
             } else {
                 String::new()
             };
 
             // Truncate if too long
             if result.len() > 100000 {
-                (format!("{}...\n(file truncated, {} total chars){}",
-                    &result[..100000], result.len(), context), false)
+                (
+                    format!(
+                        "{}...\n(file truncated, {} total chars){}",
+                        &result[..100000],
+                        result.len(),
+                        context
+                    ),
+                    false,
+                )
             } else {
                 (format!("{}{}", result, context), false)
             }
@@ -720,7 +733,10 @@ fn execute_write_file(args: &HashMap<String, Value>) -> (String, bool) {
     }
 
     match fs::write(path, content) {
-        Ok(()) => (format!("Successfully wrote {} bytes to '{}'", content.len(), path), false),
+        Ok(()) => (
+            format!("Successfully wrote {} bytes to '{}'", content.len(), path),
+            false,
+        ),
         Err(e) => (format!("Failed to write file '{}': {}", path, e), true),
     }
 }
@@ -750,7 +766,13 @@ fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
 
     // Check if old_string exists
     if !content.contains(old_string) {
-        return (format!("Could not find the specified text in '{}'. Make sure old_string matches exactly.", path), true);
+        return (
+            format!(
+                "Could not find the specified text in '{}'. Make sure old_string matches exactly.",
+                path
+            ),
+            true,
+        );
     }
 
     // Count occurrences
@@ -764,26 +786,32 @@ fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
 
     // Write back
     match fs::write(path, &new_content) {
-        Ok(()) => (format!("Successfully edited '{}'. Replaced {} chars with {} chars.",
-            path, old_string.len(), new_string.len()), false),
+        Ok(()) => (
+            format!(
+                "Successfully edited '{}'. Replaced {} chars with {} chars.",
+                path,
+                old_string.len(),
+                new_string.len()
+            ),
+            false,
+        ),
         Err(e) => (format!("Failed to write file '{}': {}", path, e), true),
     }
 }
 
 /// List files in a directory
 fn execute_list_files(args: &HashMap<String, Value>) -> (String, bool) {
-    let path = args.get("path")
-        .and_then(|v| v.as_str())
-        .unwrap_or(".");
+    let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
 
     match fs::read_dir(path) {
         Ok(entries) => {
             let mut items: Vec<String> = Vec::new();
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                let file_type = entry.file_type().map(|ft| {
-                    if ft.is_dir() { "/" } else { "" }
-                }).unwrap_or("");
+                let file_type = entry
+                    .file_type()
+                    .map(|ft| if ft.is_dir() { "/" } else { "" })
+                    .unwrap_or("");
                 items.push(format!("{}{}", name, file_type));
             }
             items.sort();
@@ -825,8 +853,9 @@ fn execute_chainlink(args: &HashMap<String, Value>) -> (String, bool) {
             let stderr = String::from_utf8_lossy(&output.stderr);
 
             // Check if chainlink wasn't found
-            if !output.status.success() &&
-               (stderr.contains("command not found") || stderr.contains("not recognized")) {
+            if !output.status.success()
+                && (stderr.contains("command not found") || stderr.contains("not recognized"))
+            {
                 let show_install_help = !CHAINLINK_INSTALL_SHOWN.swap(true, Ordering::Relaxed);
                 if show_install_help {
                     return (
@@ -877,7 +906,9 @@ pub struct PartialToolCall {
 
 impl ToolCallAccumulator {
     pub fn new() -> Self {
-        Self { tool_calls: Vec::new() }
+        Self {
+            tool_calls: Vec::new(),
+        }
     }
 
     /// Process a delta from streaming response
@@ -919,7 +950,11 @@ impl ToolCallAccumulator {
             .filter(|tc| !tc.id.is_empty() && !tc.function_name.is_empty())
             .map(|tc| ToolCall {
                 id: tc.id.clone(),
-                call_type: if tc.call_type.is_empty() { "function".to_string() } else { tc.call_type.clone() },
+                call_type: if tc.call_type.is_empty() {
+                    "function".to_string()
+                } else {
+                    tc.call_type.clone()
+                },
                 function: FunctionCall {
                     name: tc.function_name.clone(),
                     arguments: tc.function_arguments.clone(),
@@ -1040,7 +1075,7 @@ pub fn get_all_tool_definitions(stateful: bool) -> Value {
     if stateful {
         if let (Some(base_arr), Some(memory_arr)) = (
             tools.as_array_mut(),
-            get_memory_tool_definitions().as_array().cloned()
+            get_memory_tool_definitions().as_array().cloned(),
         ) {
             base_arr.extend(memory_arr);
         }
@@ -1051,8 +1086,8 @@ pub fn get_all_tool_definitions(stateful: bool) -> Value {
 
 /// Execute a tool call, with optional memory database for stateful mode
 pub fn execute_tool_with_memory(tool_call: &ToolCall, memory_db: Option<&MemoryDb>) -> ToolResult {
-    let args: HashMap<String, Value> = serde_json::from_str(&tool_call.function.arguments)
-        .unwrap_or_default();
+    let args: HashMap<String, Value> =
+        serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
 
     let (content, is_error) = match tool_call.function.name.as_str() {
         // Standard tools
@@ -1070,28 +1105,40 @@ pub fn execute_tool_with_memory(tool_call: &ToolCall, memory_db: Option<&MemoryD
             if let Some(db) = memory_db {
                 execute_memory_save(&args, db)
             } else {
-                ("Memory tools require stateful mode (--stateful flag)".to_string(), true)
+                (
+                    "Memory tools require stateful mode (--stateful flag)".to_string(),
+                    true,
+                )
             }
         }
         "memory_search" => {
             if let Some(db) = memory_db {
                 execute_memory_search(&args, db)
             } else {
-                ("Memory tools require stateful mode (--stateful flag)".to_string(), true)
+                (
+                    "Memory tools require stateful mode (--stateful flag)".to_string(),
+                    true,
+                )
             }
         }
         "memory_update" => {
             if let Some(db) = memory_db {
                 execute_memory_update(&args, db)
             } else {
-                ("Memory tools require stateful mode (--stateful flag)".to_string(), true)
+                (
+                    "Memory tools require stateful mode (--stateful flag)".to_string(),
+                    true,
+                )
             }
         }
         "core_memory_update" => {
             if let Some(db) = memory_db {
                 execute_core_memory_update(&args, db)
             } else {
-                ("Memory tools require stateful mode (--stateful flag)".to_string(), true)
+                (
+                    "Memory tools require stateful mode (--stateful flag)".to_string(),
+                    true,
+                )
             }
         }
 
@@ -1128,7 +1175,10 @@ fn execute_memory_save(args: &HashMap<String, Value>, db: &MemoryDb) -> (String,
         .unwrap_or_default();
 
     match db.memory_save(content, &tags) {
-        Ok(id) => (format!("Memory saved with ID {}. Tags: {:?}", id, tags), false),
+        Ok(id) => (
+            format!("Memory saved with ID {}. Tags: {:?}", id, tags),
+            false,
+        ),
         Err(e) => (format!("Failed to save memory: {}", e), true),
     }
 }
@@ -1140,10 +1190,7 @@ fn execute_memory_search(args: &HashMap<String, Value>, db: &MemoryDb) -> (Strin
         None => return ("Missing 'query' argument".to_string(), true),
     };
 
-    let limit = args
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(10) as usize;
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
 
     match db.memory_search(query, limit) {
         Ok(memories) => {
@@ -1192,8 +1239,13 @@ fn execute_core_memory_update(args: &HashMap<String, Value>, db: &MemoryDb) -> (
 
     // Validate section name
     if ![SECTION_PERSONA, SECTION_PROJECT_INFO, SECTION_USER_PREFS].contains(&section) {
-        return (format!("Invalid section '{}'. Must be: {}, {}, or {}",
-            section, SECTION_PERSONA, SECTION_PROJECT_INFO, SECTION_USER_PREFS), true);
+        return (
+            format!(
+                "Invalid section '{}'. Must be: {}, {}, or {}",
+                section, SECTION_PERSONA, SECTION_PROJECT_INFO, SECTION_USER_PREFS
+            ),
+            true,
+        );
     }
 
     let content = match args.get("content").and_then(|v| v.as_str()) {
@@ -1218,16 +1270,17 @@ fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool) {
 
     // Validate URL format
     if !url.starts_with("http://") && !url.starts_with("https://") {
-        return ("Invalid URL: must start with http:// or https://".to_string(), true);
+        return (
+            "Invalid URL: must start with http:// or https://".to_string(),
+            true,
+        );
     }
 
     // Use tokio runtime to execute async function
     let result = match Handle::try_current() {
         Ok(handle) => {
             // We're in an async context, use block_in_place
-            tokio::task::block_in_place(|| {
-                handle.block_on(web::fetch_url(url))
-            })
+            tokio::task::block_in_place(|| handle.block_on(web::fetch_url(url)))
         }
         Err(_) => {
             // Create a new runtime for sync context
@@ -1249,8 +1302,11 @@ fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool) {
 
             // Truncate if too long
             if output.len() > 50000 {
-                output = format!("{}...\n\n(content truncated, {} total chars)",
-                    &output[..50000], output.len());
+                output = format!(
+                    "{}...\n\n(content truncated, {} total chars)",
+                    &output[..50000],
+                    output.len()
+                );
             }
 
             (output, false)
@@ -1266,10 +1322,7 @@ fn execute_web_search(args: &HashMap<String, Value>) -> (String, bool) {
         None => return ("Missing 'query' argument".to_string(), true),
     };
 
-    let limit = args
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(5) as usize;
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
 
     // Load web config from environment
     // Falls back to DuckDuckGo with headless browser if no API keys configured
@@ -1278,16 +1331,12 @@ fn execute_web_search(args: &HashMap<String, Value>) -> (String, bool) {
     // Use tokio runtime to execute async function
     let result = match Handle::try_current() {
         Ok(handle) => {
-            tokio::task::block_in_place(|| {
-                handle.block_on(web::search_web(query, &config, limit))
-            })
+            tokio::task::block_in_place(|| handle.block_on(web::search_web(query, &config, limit)))
         }
-        Err(_) => {
-            match tokio::runtime::Runtime::new() {
-                Ok(rt) => rt.block_on(web::search_web(query, &config, limit)),
-                Err(e) => return (format!("Failed to create runtime: {}", e), true),
-            }
-        }
+        Err(_) => match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt.block_on(web::search_web(query, &config, limit)),
+            Err(e) => return (format!("Failed to create runtime: {}", e), true),
+        },
     };
 
     match result {
@@ -1306,7 +1355,10 @@ fn execute_web_browser(args: &HashMap<String, Value>) -> (String, bool) {
 
     // Validate URL format
     if !url.starts_with("http://") && !url.starts_with("https://") {
-        return ("Invalid URL: must start with http:// or https://".to_string(), true);
+        return (
+            "Invalid URL: must start with http:// or https://".to_string(),
+            true,
+        );
     }
 
     match web::fetch_with_browser(url) {
@@ -1320,8 +1372,11 @@ fn execute_web_browser(args: &HashMap<String, Value>) -> (String, bool) {
 
             // Truncate if too long
             if output.len() > 50000 {
-                output = format!("{}...\n\n(content truncated, {} total chars)",
-                    &output[..50000], output.len());
+                output = format!(
+                    "{}...\n\n(content truncated, {} total chars)",
+                    &output[..50000],
+                    output.len()
+                );
             }
 
             (output, false)

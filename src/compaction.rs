@@ -714,4 +714,347 @@ mod tests {
         assert!(result.summary.is_some());
         assert!(result.new_tokens < result.original_tokens);
     }
+
+    // ========================================================================
+    // Extended Compaction Tests
+    // ========================================================================
+
+    #[test]
+    fn test_compaction_config_for_model() {
+        let config = CompactionConfig::for_model("claude-3-opus");
+        assert_eq!(config.max_context_tokens, CLAUDE_OPUS_CONTEXT);
+
+        let config = CompactionConfig::for_model("gpt-4o-mini");
+        assert_eq!(config.max_context_tokens, GPT4O_CONTEXT);
+
+        let config = CompactionConfig::for_model("gemini-1.5-pro");
+        assert_eq!(config.max_context_tokens, GEMINI_PRO_CONTEXT);
+    }
+
+    #[test]
+    fn test_estimate_tokens_empty() {
+        assert_eq!(estimate_tokens(""), 0);
+    }
+
+    #[test]
+    fn test_estimate_tokens_unicode() {
+        // Unicode characters should still be counted
+        let unicode = "Hello 世界 🦀";
+        let tokens = estimate_tokens(unicode);
+        assert!(tokens > 0);
+    }
+
+    #[test]
+    fn test_estimate_message_tokens_with_name() {
+        let mut msg = create_test_message("user", "Hello");
+        msg.name = Some("John".to_string());
+
+        let tokens = estimate_message_tokens(&msg);
+        let msg_no_name = create_test_message("user", "Hello");
+        let tokens_no_name = estimate_message_tokens(&msg_no_name);
+
+        // Message with name should have more tokens
+        assert!(tokens > tokens_no_name);
+    }
+
+    #[test]
+    fn test_estimate_message_tokens_with_parts() {
+        use crate::proxy::ContentPart;
+
+        let msg = ChatMessage {
+            role: "user".to_string(),
+            content: MessageContent::Parts(vec![
+                ContentPart {
+                    content_type: "text".to_string(),
+                    text: Some("Hello world".to_string()),
+                    image_url: None,
+                },
+                ContentPart {
+                    content_type: "text".to_string(),
+                    text: Some("How are you?".to_string()),
+                    image_url: None,
+                },
+            ]),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+
+        let tokens = estimate_message_tokens(&msg);
+        assert!(tokens > 0);
+    }
+
+    #[test]
+    fn test_estimate_message_tokens_with_image() {
+        use crate::proxy::ContentPart;
+
+        let msg = ChatMessage {
+            role: "user".to_string(),
+            content: MessageContent::Parts(vec![ContentPart {
+                content_type: "image_url".to_string(),
+                text: None,
+                image_url: Some(serde_json::json!({
+                    "url": "data:image/png;base64,iVBORw0..."
+                })),
+            }]),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+
+        let tokens = estimate_message_tokens(&msg);
+        // Images should cost approximately 1000 tokens
+        assert!(tokens >= 1000);
+    }
+
+    #[test]
+    fn test_estimate_request_tokens_with_tools() {
+        let messages = vec![create_test_message("user", "Help me write code")];
+        let mut request = create_test_request(messages);
+
+        // Add some tools
+        request.tools = Some(vec![
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "description": "Read a file from disk",
+                    "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}
+                }
+            }),
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "description": "Write a file to disk",
+                    "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}}
+                }
+            }),
+        ]);
+
+        let tokens_with_tools = estimate_request_tokens(&request);
+
+        request.tools = None;
+        let tokens_without_tools = estimate_request_tokens(&request);
+
+        assert!(tokens_with_tools > tokens_without_tools);
+    }
+
+    #[test]
+    fn test_categorize_preserves_tool_messages() {
+        let messages = vec![
+            create_test_message("system", "You are helpful"),
+            create_test_message("user", "Run a command"),
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: MessageContent::Text("I'll run ls".to_string()),
+                name: None,
+                tool_calls: Some(vec![
+                    serde_json::json!({"id": "call_1", "type": "function", "function": {"name": "bash", "arguments": "{\"command\":\"ls\"}"}}),
+                ]),
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: MessageContent::Text("file1.txt\nfile2.txt".to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: Some("call_1".to_string()),
+            },
+            create_test_message("user", "Recent message"),
+        ];
+
+        let config = CompactionConfig {
+            preserve_tool_calls: true,
+            preserve_recent: 1,
+            preserve_system: true,
+            ..Default::default()
+        };
+
+        let compactor = ContextCompactor::new(config);
+        let (preserve, summarize) = compactor.categorize_messages(&messages);
+
+        // Should preserve system (0), tool calls (2), tool results (3), and recent (4)
+        assert!(preserve.contains(&0)); // system
+        assert!(preserve.contains(&2)); // tool call
+        assert!(preserve.contains(&3)); // tool result
+        assert!(preserve.contains(&4)); // recent
+
+        // Should summarize user message (1)
+        assert!(summarize.contains(&1));
+    }
+
+    #[test]
+    fn test_categorize_no_preserve_tool_calls() {
+        let messages = vec![
+            create_test_message("system", "You are helpful"),
+            create_test_message("user", "Old message"),
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: MessageContent::Text("I'll run ls".to_string()),
+                name: None,
+                tool_calls: Some(vec![serde_json::json!({"id": "call_1"})]),
+                tool_call_id: None,
+            },
+            create_test_message("user", "Recent message"),
+        ];
+
+        let config = CompactionConfig {
+            preserve_tool_calls: false,
+            preserve_recent: 1,
+            preserve_system: true,
+            ..Default::default()
+        };
+
+        let compactor = ContextCompactor::new(config);
+        let (_preserve, summarize) = compactor.categorize_messages(&messages);
+
+        // Tool call message should be in summarize when preserve_tool_calls is false
+        assert!(summarize.contains(&2));
+    }
+
+    #[test]
+    fn test_generate_summary_with_tool_markers() {
+        let messages = vec![
+            create_test_message("user", "Run ls command"),
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: MessageContent::Text("Running ls".to_string()),
+                name: None,
+                tool_calls: Some(vec![serde_json::json!({"id": "1"})]),
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: MessageContent::Text("file.txt".to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: Some("1".to_string()),
+            },
+        ];
+
+        let compactor = ContextCompactor::new(CompactionConfig::default());
+        let msg_refs: Vec<&ChatMessage> = messages.iter().collect();
+        let summary = compactor.generate_summary(&msg_refs);
+
+        assert!(summary.contains("[Used tools]"));
+        assert!(summary.contains("[Tool result]"));
+    }
+
+    #[test]
+    fn test_truncate_for_summary_edge_cases() {
+        // Exactly at limit
+        let text = "a".repeat(100);
+        let truncated = truncate_for_summary(&text, 100);
+        assert_eq!(truncated, text);
+        assert!(!truncated.ends_with("..."));
+
+        // One over limit
+        let text = "a".repeat(101);
+        let truncated = truncate_for_summary(&text, 100);
+        assert!(truncated.ends_with("..."));
+        assert!(truncated.len() <= 103); // 100 + "..."
+
+        // Empty string
+        let truncated = truncate_for_summary("", 100);
+        assert_eq!(truncated, "");
+    }
+
+    #[test]
+    fn test_capitalize() {
+        assert_eq!(capitalize("user"), "User");
+        assert_eq!(capitalize("assistant"), "Assistant");
+        assert_eq!(capitalize(""), "");
+        assert_eq!(capitalize("ALREADY"), "ALREADY");
+        assert_eq!(capitalize("a"), "A");
+    }
+
+    #[test]
+    fn test_compaction_config_default() {
+        let config = CompactionConfig::default();
+        assert_eq!(config.max_context_tokens, DEFAULT_CONTEXT);
+        assert_eq!(config.threshold, COMPACTION_THRESHOLD);
+        assert_eq!(config.preserve_recent, 4);
+        assert!(config.preserve_system);
+        assert!(config.preserve_tool_calls);
+        assert!(config.summary_prompt.is_none());
+    }
+
+    #[test]
+    fn test_context_compactor_config_access() {
+        let config = CompactionConfig {
+            max_context_tokens: 50000,
+            ..Default::default()
+        };
+
+        let mut compactor = ContextCompactor::new(config.clone());
+        assert_eq!(compactor.config().max_context_tokens, 50000);
+
+        // Update config
+        let new_config = CompactionConfig {
+            max_context_tokens: 100000,
+            ..Default::default()
+        };
+        compactor.set_config(new_config);
+        assert_eq!(compactor.config().max_context_tokens, 100000);
+    }
+
+    #[test]
+    fn test_analysis_structure() {
+        let messages = vec![
+            create_test_message("system", "System prompt"),
+            create_test_message("user", "Hello"),
+            create_test_message("assistant", "Hi"),
+        ];
+
+        let request = create_test_request(messages);
+        let compactor = ContextCompactor::new(CompactionConfig::default());
+        let analysis = compactor.analyze(&request);
+
+        // Analysis should have valid values
+        assert!(analysis.current_tokens > 0);
+        assert_eq!(analysis.max_tokens, DEFAULT_CONTEXT);
+        assert!(!analysis.needs_compaction); // Small request
+        assert_eq!(analysis.tokens_to_free, 0);
+
+        // All messages should be in preserve (small request)
+        assert!(!analysis.messages_to_preserve.is_empty());
+    }
+
+    #[test]
+    fn test_get_context_window_edge_cases() {
+        // Test model name variations
+        assert_eq!(get_context_window("CLAUDE-3-OPUS"), CLAUDE_OPUS_CONTEXT);
+        assert_eq!(get_context_window("Claude-Sonnet"), CLAUDE_SONNET_CONTEXT);
+        assert_eq!(get_context_window("GPT-4O-2024-05-13"), GPT4O_CONTEXT);
+        assert_eq!(get_context_window("gpt-3.5-turbo-16k"), GPT35_CONTEXT);
+        assert_eq!(get_context_window("o1-preview"), GPT4O_CONTEXT);
+        assert_eq!(get_context_window("o3-mini"), GPT4O_CONTEXT);
+    }
+
+    #[test]
+    fn test_compaction_result_fields() {
+        let result = CompactionResult {
+            compacted: true,
+            original_tokens: 50000,
+            new_tokens: 20000,
+            messages_summarized: 10,
+            summary: Some("Summary content".to_string()),
+        };
+
+        assert!(result.compacted);
+        assert_eq!(result.original_tokens, 50000);
+        assert_eq!(result.new_tokens, 20000);
+        assert_eq!(result.messages_summarized, 10);
+        assert!(result.summary.is_some());
+    }
+
+    #[test]
+    fn test_compaction_error_display() {
+        let hook_err = CompactionError::HookBlocked("Hook prevented compaction".to_string());
+        assert!(format!("{}", hook_err).contains("Hook prevented compaction"));
+
+        let failed_err = CompactionError::Failed("Insufficient tokens freed".to_string());
+        assert!(format!("{}", failed_err).contains("Insufficient tokens freed"));
+    }
 }

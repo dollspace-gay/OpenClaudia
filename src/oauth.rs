@@ -45,7 +45,8 @@ pub const API_KEY_ENDPOINT: &str = "https://api.anthropic.com/api/oauth/claude_c
 
 /// OAuth scopes required for API access
 /// Must include user:sessions:claude_code to get org:create_api_key permission
-pub const OAUTH_SCOPES: &str = "org:create_api_key user:profile user:inference user:sessions:claude_code";
+pub const OAUTH_SCOPES: &str =
+    "org:create_api_key user:profile user:inference user:sessions:claude_code";
 
 // ============================================================================
 // PKCE (Proof Key for Code Exchange) Implementation
@@ -216,7 +217,9 @@ impl OAuthSession {
         };
 
         if auth_mode == AuthMode::BearerToken {
-            info!("Personal account detected (no org:create_api_key scope) - using Bearer token auth");
+            info!(
+                "Personal account detected (no org:create_api_key scope) - using Bearer token auth"
+            );
         }
 
         Self {
@@ -236,7 +239,9 @@ impl OAuthSession {
 
     /// Check if this session can create API keys
     pub fn can_create_api_key(&self) -> bool {
-        self.granted_scopes.iter().any(|s| s == "org:create_api_key")
+        self.granted_scopes
+            .iter()
+            .any(|s| s == "org:create_api_key")
     }
 }
 
@@ -259,8 +264,8 @@ impl Default for OAuthStore {
 impl OAuthStore {
     /// Create new OAuth store with optional persistence
     pub fn new() -> Self {
-        let persist_path = dirs::data_local_dir()
-            .map(|d| d.join("openclaudia").join("oauth_sessions.json"));
+        let persist_path =
+            dirs::data_local_dir().map(|d| d.join("openclaudia").join("oauth_sessions.json"));
 
         let store = Self {
             sessions: RwLock::new(HashMap::new()),
@@ -311,7 +316,12 @@ impl OAuthStore {
         let sessions = self.sessions.read().unwrap();
         for (id, session) in sessions.iter() {
             let expired = session.credentials.is_expired();
-            tracing::debug!("Session {}: expired={}, expires_at={:?}", id, expired, session.credentials.expires_at);
+            tracing::debug!(
+                "Session {}: expired={}, expires_at={:?}",
+                id,
+                expired,
+                session.credentials.expires_at
+            );
         }
         sessions
             .values()
@@ -321,7 +331,9 @@ impl OAuthStore {
 
     /// Load sessions from disk, filtering out expired ones
     fn load_from_disk(&self) {
-        let Some(path) = &self.persist_path else { return };
+        let Some(path) = &self.persist_path else {
+            return;
+        };
 
         match fs::read_to_string(path) {
             Ok(data) => {
@@ -355,7 +367,9 @@ impl OAuthStore {
 
     /// Persist sessions to disk
     fn persist_to_disk(&self) {
-        let Some(path) = &self.persist_path else { return };
+        let Some(path) = &self.persist_path else {
+            return;
+        };
 
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
@@ -444,7 +458,10 @@ impl OAuthClient {
                     })
                 }
                 Err(e) => {
-                    tracing::warn!("Immediate token refresh failed: {:?}, using original tokens", e);
+                    tracing::warn!(
+                        "Immediate token refresh failed: {:?}, using original tokens",
+                        e
+                    );
                     Ok(initial_response)
                 }
             }

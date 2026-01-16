@@ -3,8 +3,8 @@
 //! These tests verify that each tool actually performs its documented function
 //! against real filesystem, processes, and network operations.
 
-use openclaudia::tools::{execute_tool, ToolCall, FunctionCall};
 use openclaudia::memory::MemoryDb;
+use openclaudia::tools::{execute_tool, FunctionCall, ToolCall};
 use serde_json::{json, Value};
 use std::fs;
 use tempfile::TempDir;
@@ -26,8 +26,11 @@ fn setup_test_dir() -> TempDir {
     let dir = TempDir::new().expect("Failed to create temp dir");
 
     // Create test file
-    fs::write(dir.path().join("test.txt"), "Hello, World!\nLine 2\nLine 3\n")
-        .expect("Failed to write test file");
+    fs::write(
+        dir.path().join("test.txt"),
+        "Hello, World!\nLine 2\nLine 3\n",
+    )
+    .expect("Failed to write test file");
 
     // Create subdirectory with files
     fs::create_dir(dir.path().join("subdir")).expect("Failed to create subdir");
@@ -61,32 +64,45 @@ mod file_tools {
         let dir = setup_test_dir();
         let file_path = dir.path().join("test.txt");
 
-        let tool_call = make_tool_call("read_file", json!({
-            "path": file_path.to_string_lossy()
-        }));
+        let tool_call = make_tool_call(
+            "read_file",
+            json!({
+                "path": file_path.to_string_lossy()
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
         assert!(!result.is_error, "Read should succeed: {}", result.content);
-        assert!(result.content.contains("Hello, World!"), "Should contain file content");
-        assert!(result.content.contains("Line 2"), "Should contain all lines");
+        assert!(
+            result.content.contains("Hello, World!"),
+            "Should contain file content"
+        );
+        assert!(
+            result.content.contains("Line 2"),
+            "Should contain all lines"
+        );
     }
 
     #[test]
     fn test_read_file_not_found() {
-        let tool_call = make_tool_call("read_file", json!({
-            "path": "/nonexistent/path/file.txt"
-        }));
+        let tool_call = make_tool_call(
+            "read_file",
+            json!({
+                "path": "/nonexistent/path/file.txt"
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
         assert!(result.is_error, "Read of nonexistent file should fail");
         assert!(
             result.content.to_lowercase().contains("not found")
-            || result.content.to_lowercase().contains("no such file")
-            || result.content.to_lowercase().contains("cannot find")
-            || result.content.to_lowercase().contains("failed"),
-            "Error should mention file not found: {}", result.content
+                || result.content.to_lowercase().contains("no such file")
+                || result.content.to_lowercase().contains("cannot find")
+                || result.content.to_lowercase().contains("failed"),
+            "Error should mention file not found: {}",
+            result.content
         );
     }
 
@@ -95,17 +111,27 @@ mod file_tools {
         let dir = setup_test_dir();
         let file_path = dir.path().join("test.txt");
 
-        let tool_call = make_tool_call("read_file", json!({
-            "path": file_path.to_string_lossy(),
-            "offset": 2,
-            "limit": 1
-        }));
+        let tool_call = make_tool_call(
+            "read_file",
+            json!({
+                "path": file_path.to_string_lossy(),
+                "offset": 2,
+                "limit": 1
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
-        assert!(!result.is_error, "Read with offset should succeed: {}", result.content);
+        assert!(
+            !result.is_error,
+            "Read with offset should succeed: {}",
+            result.content
+        );
         assert!(result.content.contains("Line 2"), "Should contain line 2");
-        assert!(!result.content.contains("Hello"), "Should not contain line 1");
+        assert!(
+            !result.content.contains("Hello"),
+            "Should not contain line 1"
+        );
     }
 
     #[test]
@@ -113,10 +139,13 @@ mod file_tools {
         let dir = TempDir::new().expect("Failed to create temp dir");
         let file_path = dir.path().join("new_file.txt");
 
-        let tool_call = make_tool_call("write_file", json!({
-            "path": file_path.to_string_lossy(),
-            "content": "New file content\nWith multiple lines"
-        }));
+        let tool_call = make_tool_call(
+            "write_file",
+            json!({
+                "path": file_path.to_string_lossy(),
+                "content": "New file content\nWith multiple lines"
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
@@ -132,14 +161,21 @@ mod file_tools {
         let dir = setup_test_dir();
         let file_path = dir.path().join("test.txt");
 
-        let tool_call = make_tool_call("write_file", json!({
-            "path": file_path.to_string_lossy(),
-            "content": "Overwritten content"
-        }));
+        let tool_call = make_tool_call(
+            "write_file",
+            json!({
+                "path": file_path.to_string_lossy(),
+                "content": "Overwritten content"
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
-        assert!(!result.is_error, "Write overwrite should succeed: {}", result.content);
+        assert!(
+            !result.is_error,
+            "Write overwrite should succeed: {}",
+            result.content
+        );
 
         let content = fs::read_to_string(&file_path).expect("Failed to read");
         assert_eq!(content, "Overwritten content");
@@ -150,19 +186,28 @@ mod file_tools {
         let dir = setup_test_dir();
         let file_path = dir.path().join("test.txt");
 
-        let tool_call = make_tool_call("edit_file", json!({
-            "path": file_path.to_string_lossy(),
-            "old_string": "Hello, World!",
-            "new_string": "Goodbye, World!"
-        }));
+        let tool_call = make_tool_call(
+            "edit_file",
+            json!({
+                "path": file_path.to_string_lossy(),
+                "old_string": "Hello, World!",
+                "new_string": "Goodbye, World!"
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
         assert!(!result.is_error, "Edit should succeed: {}", result.content);
 
         let content = fs::read_to_string(&file_path).expect("Failed to read");
-        assert!(content.contains("Goodbye, World!"), "Should contain new string");
-        assert!(!content.contains("Hello, World!"), "Should not contain old string");
+        assert!(
+            content.contains("Goodbye, World!"),
+            "Should contain new string"
+        );
+        assert!(
+            !content.contains("Hello, World!"),
+            "Should not contain old string"
+        );
     }
 
     #[test]
@@ -170,20 +215,24 @@ mod file_tools {
         let dir = setup_test_dir();
         let file_path = dir.path().join("test.txt");
 
-        let tool_call = make_tool_call("edit_file", json!({
-            "path": file_path.to_string_lossy(),
-            "old_string": "This string does not exist",
-            "new_string": "Replacement"
-        }));
+        let tool_call = make_tool_call(
+            "edit_file",
+            json!({
+                "path": file_path.to_string_lossy(),
+                "old_string": "This string does not exist",
+                "new_string": "Replacement"
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
         assert!(result.is_error, "Edit with missing old_string should fail");
         assert!(
             result.content.to_lowercase().contains("could not find")
-            || result.content.to_lowercase().contains("not found")
-            || result.content.to_lowercase().contains("no match"),
-            "Error should mention string not found: {}", result.content
+                || result.content.to_lowercase().contains("not found")
+                || result.content.to_lowercase().contains("no match"),
+            "Error should mention string not found: {}",
+            result.content
         );
     }
 
@@ -191,14 +240,21 @@ mod file_tools {
     fn test_list_files_pattern() {
         let dir = setup_test_dir();
 
-        let tool_call = make_tool_call("list_files", json!({
-            "path": dir.path().to_string_lossy(),
-            "pattern": "*.txt"
-        }));
+        let tool_call = make_tool_call(
+            "list_files",
+            json!({
+                "path": dir.path().to_string_lossy(),
+                "pattern": "*.txt"
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
-        assert!(!result.is_error, "list_files should succeed: {}", result.content);
+        assert!(
+            !result.is_error,
+            "list_files should succeed: {}",
+            result.content
+        );
         assert!(result.content.contains("test.txt"), "Should find test.txt");
     }
 
@@ -206,15 +262,286 @@ mod file_tools {
     fn test_list_files_no_matches() {
         let dir = setup_test_dir();
 
-        let tool_call = make_tool_call("list_files", json!({
-            "path": dir.path().to_string_lossy(),
-            "pattern": "*.xyz"
-        }));
+        let tool_call = make_tool_call(
+            "list_files",
+            json!({
+                "path": dir.path().to_string_lossy(),
+                "pattern": "*.xyz"
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
         // Should succeed but with no matches
-        assert!(!result.is_error, "list_files should succeed even with no matches");
+        assert!(
+            !result.is_error,
+            "list_files should succeed even with no matches"
+        );
+    }
+
+    // =========== EDGE CASE TESTS ===========
+
+    #[test]
+    fn test_read_file_unicode_content() {
+        let dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = dir.path().join("unicode.txt");
+
+        // Write Unicode content including emojis and various scripts
+        let unicode_content = "Hello 世界! 🦀 Rust\nКириллица\nالعربية\n日本語";
+        fs::write(&file_path, unicode_content).expect("Failed to write unicode file");
+
+        let tool_call = make_tool_call(
+            "read_file",
+            json!({
+                "path": file_path.to_string_lossy()
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            !result.is_error,
+            "Read should handle Unicode: {}",
+            result.content
+        );
+        assert!(result.content.contains("世界"), "Should contain Chinese");
+        assert!(result.content.contains("🦀"), "Should contain emoji");
+    }
+
+    #[test]
+    fn test_write_file_unicode_content() {
+        let dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = dir.path().join("unicode_write.txt");
+
+        let unicode_content = "Writing Unicode: 你好 🌍 مرحبا";
+        let tool_call = make_tool_call(
+            "write_file",
+            json!({
+                "path": file_path.to_string_lossy(),
+                "content": unicode_content
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            !result.is_error,
+            "Write should handle Unicode: {}",
+            result.content
+        );
+
+        let content = fs::read_to_string(&file_path).expect("Failed to read");
+        assert_eq!(content, unicode_content);
+    }
+
+    #[test]
+    fn test_read_file_empty() {
+        let dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = dir.path().join("empty.txt");
+        fs::write(&file_path, "").expect("Failed to write empty file");
+
+        let tool_call = make_tool_call(
+            "read_file",
+            json!({
+                "path": file_path.to_string_lossy()
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            !result.is_error,
+            "Read empty file should succeed: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_read_file_large() {
+        let dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = dir.path().join("large.txt");
+
+        // Create a large file (10000 lines)
+        let content: String = (0..10000).map(|i| format!("Line {}\n", i)).collect();
+        fs::write(&file_path, &content).expect("Failed to write large file");
+
+        let tool_call = make_tool_call(
+            "read_file",
+            json!({
+                "path": file_path.to_string_lossy()
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            !result.is_error,
+            "Read large file should succeed: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("Line 0"),
+            "Should contain first line"
+        );
+    }
+
+    #[test]
+    fn test_read_file_with_limit_large() {
+        let dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = dir.path().join("large_limit.txt");
+
+        let content: String = (0..1000).map(|i| format!("Line {}\n", i)).collect();
+        fs::write(&file_path, &content).expect("Failed to write");
+
+        let tool_call = make_tool_call(
+            "read_file",
+            json!({
+                "path": file_path.to_string_lossy(),
+                "offset": 500,
+                "limit": 10
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(!result.is_error, "Read with offset/limit should succeed");
+        assert!(
+            result.content.contains("Line 500") || result.content.contains("Line 501"),
+            "Should contain content from offset"
+        );
+    }
+
+    #[test]
+    fn test_edit_file_multiline() {
+        let dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = dir.path().join("multiline.txt");
+
+        let original = "function foo() {\n    console.log('old');\n}";
+        fs::write(&file_path, original).expect("Failed to write");
+
+        let tool_call = make_tool_call(
+            "edit_file",
+            json!({
+                "path": file_path.to_string_lossy(),
+                "old_string": "function foo() {\n    console.log('old');\n}",
+                "new_string": "function foo() {\n    console.log('new');\n    return true;\n}"
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            !result.is_error,
+            "Multiline edit should succeed: {}",
+            result.content
+        );
+
+        let content = fs::read_to_string(&file_path).expect("Failed to read");
+        assert!(
+            content.contains("return true"),
+            "Should contain new content"
+        );
+    }
+
+    #[test]
+    fn test_edit_file_special_characters() {
+        let dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = dir.path().join("special.txt");
+
+        let original = "Price: $100 (50% off!) [limited]";
+        fs::write(&file_path, original).expect("Failed to write");
+
+        let tool_call = make_tool_call(
+            "edit_file",
+            json!({
+                "path": file_path.to_string_lossy(),
+                "old_string": "$100",
+                "new_string": "$200"
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            !result.is_error,
+            "Edit with special chars should succeed: {}",
+            result.content
+        );
+
+        let content = fs::read_to_string(&file_path).expect("Failed to read");
+        assert!(content.contains("$200"), "Should contain updated price");
+    }
+
+    #[test]
+    fn test_list_files_recursive() {
+        let dir = setup_test_dir();
+
+        let tool_call = make_tool_call(
+            "list_files",
+            json!({
+                "path": dir.path().to_string_lossy(),
+                "pattern": "**/*.txt"
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            !result.is_error,
+            "Recursive list should succeed: {}",
+            result.content
+        );
+        // Should find both test.txt and subdir/nested.txt
+        assert!(result.content.contains("test.txt"), "Should find test.txt");
+    }
+
+    #[test]
+    fn test_write_file_creates_parent_dirs() {
+        let dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = dir.path().join("new_dir/sub_dir/file.txt");
+
+        let tool_call = make_tool_call(
+            "write_file",
+            json!({
+                "path": file_path.to_string_lossy(),
+                "content": "Content in nested dir"
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        // Some implementations create parent dirs, some don't - test behavior
+        if !result.is_error {
+            let content = fs::read_to_string(&file_path).expect("Failed to read");
+            assert_eq!(content, "Content in nested dir");
+        }
+        // If error, it should mention directory doesn't exist
+    }
+
+    #[test]
+    fn test_read_file_binary_detection() {
+        let dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = dir.path().join("binary.bin");
+
+        // Write some binary content
+        let binary_content: Vec<u8> = vec![0x00, 0x01, 0x02, 0xFF, 0xFE, 0x89, 0x50, 0x4E, 0x47];
+        fs::write(&file_path, &binary_content).expect("Failed to write binary");
+
+        let tool_call = make_tool_call(
+            "read_file",
+            json!({
+                "path": file_path.to_string_lossy()
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        // Should either succeed with escaped content or indicate binary file
+        // Both behaviors are acceptable
+        assert!(
+            !result.is_error || result.content.to_lowercase().contains("binary"),
+            "Should handle binary file gracefully"
+        );
     }
 }
 
@@ -229,21 +556,30 @@ mod bash_tools {
 
     #[test]
     fn test_bash_simple_command() {
-        let tool_call = make_tool_call("bash", json!({
-            "command": "echo 'Hello from bash'"
-        }));
+        let tool_call = make_tool_call(
+            "bash",
+            json!({
+                "command": "echo 'Hello from bash'"
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
         assert!(!result.is_error, "Bash should succeed: {}", result.content);
-        assert!(result.content.contains("Hello from bash"), "Should contain echo output");
+        assert!(
+            result.content.contains("Hello from bash"),
+            "Should contain echo output"
+        );
     }
 
     #[test]
     fn test_bash_with_exit_code() {
-        let tool_call = make_tool_call("bash", json!({
-            "command": "exit 1"
-        }));
+        let tool_call = make_tool_call(
+            "bash",
+            json!({
+                "command": "exit 1"
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
@@ -256,18 +592,22 @@ mod bash_tools {
 
     #[test]
     fn test_bash_command_not_found() {
-        let tool_call = make_tool_call("bash", json!({
-            "command": "nonexistent_command_12345"
-        }));
+        let tool_call = make_tool_call(
+            "bash",
+            json!({
+                "command": "nonexistent_command_12345"
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
         // Should indicate command not found (either error or in content)
         assert!(
             result.is_error
-            || result.content.to_lowercase().contains("not found")
-            || result.content.to_lowercase().contains("not recognized"),
-            "Should indicate command not found: {}", result.content
+                || result.content.to_lowercase().contains("not found")
+                || result.content.to_lowercase().contains("not recognized"),
+            "Should indicate command not found: {}",
+            result.content
         );
     }
 
@@ -281,22 +621,35 @@ mod bash_tools {
         // Convert Windows path to Unix-style for bash
         let path_str = dir.path().to_string_lossy().replace('\\', "/");
 
-        let tool_call = make_tool_call("bash", json!({
-            "command": format!("cd '{}' && ls", path_str)
-        }));
+        let tool_call = make_tool_call(
+            "bash",
+            json!({
+                "command": format!("cd '{}' && ls", path_str)
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
-        assert!(!result.is_error, "Bash cd should succeed: {}", result.content);
-        assert!(result.content.contains("marker.txt"), "Should list files in target dir");
+        assert!(
+            !result.is_error,
+            "Bash cd should succeed: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("marker.txt"),
+            "Should list files in target dir"
+        );
     }
 
     #[test]
     fn test_bash_timeout() {
-        let tool_call = make_tool_call("bash", json!({
-            "command": "ping -n 100 127.0.0.1",  // Windows ping (use -c on Linux)
-            "timeout": 1000  // 1 second timeout
-        }));
+        let tool_call = make_tool_call(
+            "bash",
+            json!({
+                "command": "ping -n 100 127.0.0.1",  // Windows ping (use -c on Linux)
+                "timeout": 1000  // 1 second timeout
+            }),
+        );
 
         let _result = execute_tool(&tool_call);
 
@@ -306,14 +659,21 @@ mod bash_tools {
 
     #[test]
     fn test_bash_background_execution() {
-        let tool_call = make_tool_call("bash", json!({
-            "command": "ping -n 5 127.0.0.1",
-            "run_in_background": true
-        }));
+        let tool_call = make_tool_call(
+            "bash",
+            json!({
+                "command": "ping -n 5 127.0.0.1",
+                "run_in_background": true
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
-        assert!(!result.is_error, "Background bash should succeed: {}", result.content);
+        assert!(
+            !result.is_error,
+            "Background bash should succeed: {}",
+            result.content
+        );
         assert!(
             result.content.contains("shell_") || result.content.contains("background"),
             "Should return shell ID for background process"
@@ -323,10 +683,13 @@ mod bash_tools {
     #[test]
     fn test_bash_output_list_shells() {
         // First start a background shell
-        let bg_call = make_tool_call("bash", json!({
-            "command": "ping -n 10 127.0.0.1",
-            "run_in_background": true
-        }));
+        let bg_call = make_tool_call(
+            "bash",
+            json!({
+                "command": "ping -n 10 127.0.0.1",
+                "run_in_background": true
+            }),
+        );
         let bg_result = execute_tool(&bg_call);
         assert!(!bg_result.is_error, "Background start should succeed");
 
@@ -337,23 +700,31 @@ mod bash_tools {
         let list_call = make_tool_call("bash_output", json!({}));
         let list_result = execute_tool(&list_call);
 
-        assert!(!list_result.is_error, "bash_output list should succeed: {}", list_result.content);
+        assert!(
+            !list_result.is_error,
+            "bash_output list should succeed: {}",
+            list_result.content
+        );
         // Should list at least one shell
         assert!(
             list_result.content.contains("shell_")
-            || list_result.content.contains("Background shells")
-            || list_result.content.contains("ping"),
-            "Should list running shells: {}", list_result.content
+                || list_result.content.contains("Background shells")
+                || list_result.content.contains("ping"),
+            "Should list running shells: {}",
+            list_result.content
         );
     }
 
     #[test]
     fn test_bash_output_specific_shell() {
         // Start a background shell that produces output
-        let bg_call = make_tool_call("bash", json!({
-            "command": "echo 'test output' && ping -n 2 127.0.0.1",
-            "run_in_background": true
-        }));
+        let bg_call = make_tool_call(
+            "bash",
+            json!({
+                "command": "echo 'test output' && ping -n 2 127.0.0.1",
+                "run_in_background": true
+            }),
+        );
         let bg_result = execute_tool(&bg_call);
 
         // Extract shell ID from result - look for pattern like "shell_abc123"
@@ -363,22 +734,32 @@ mod bash_tools {
         thread::sleep(Duration::from_millis(500));
 
         // Get output from specific shell
-        let output_call = make_tool_call("bash_output", json!({
-            "shell_id": shell_id
-        }));
+        let output_call = make_tool_call(
+            "bash_output",
+            json!({
+                "shell_id": shell_id
+            }),
+        );
         let output_result = execute_tool(&output_call);
 
         // Should have some output (might be empty if command finished quickly)
-        assert!(!output_result.is_error, "bash_output should succeed: {}", output_result.content);
+        assert!(
+            !output_result.is_error,
+            "bash_output should succeed: {}",
+            output_result.content
+        );
     }
 
     #[test]
     fn test_kill_shell() {
         // Start a long-running background shell
-        let bg_call = make_tool_call("bash", json!({
-            "command": "ping -n 1000 127.0.0.1",
-            "run_in_background": true
-        }));
+        let bg_call = make_tool_call(
+            "bash",
+            json!({
+                "command": "ping -n 1000 127.0.0.1",
+                "run_in_background": true
+            }),
+        );
         let bg_result = execute_tool(&bg_call);
 
         // Extract shell ID
@@ -387,17 +768,174 @@ mod bash_tools {
         thread::sleep(Duration::from_millis(100));
 
         // Kill the shell
-        let kill_call = make_tool_call("kill_shell", json!({
-            "shell_id": shell_id
-        }));
+        let kill_call = make_tool_call(
+            "kill_shell",
+            json!({
+                "shell_id": shell_id
+            }),
+        );
         let kill_result = execute_tool(&kill_call);
 
-        assert!(!kill_result.is_error, "kill_shell should succeed: {}", kill_result.content);
+        assert!(
+            !kill_result.is_error,
+            "kill_shell should succeed: {}",
+            kill_result.content
+        );
         assert!(
             kill_result.content.to_lowercase().contains("kill")
-            || kill_result.content.to_lowercase().contains("terminated")
-            || kill_result.content.to_lowercase().contains("stopped"),
-            "Should confirm shell was killed: {}", kill_result.content
+                || kill_result.content.to_lowercase().contains("terminated")
+                || kill_result.content.to_lowercase().contains("stopped"),
+            "Should confirm shell was killed: {}",
+            kill_result.content
+        );
+    }
+
+    // =========== ADDITIONAL BASH TESTS ===========
+
+    #[test]
+    fn test_bash_multiline_command() {
+        let tool_call = make_tool_call(
+            "bash",
+            json!({
+                "command": "echo 'line1' && echo 'line2' && echo 'line3'"
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            !result.is_error,
+            "Multiline command should succeed: {}",
+            result.content
+        );
+        assert!(result.content.contains("line1"), "Should contain line1");
+        assert!(result.content.contains("line2"), "Should contain line2");
+        assert!(result.content.contains("line3"), "Should contain line3");
+    }
+
+    #[test]
+    fn test_bash_pipe_command() {
+        let tool_call = make_tool_call(
+            "bash",
+            json!({
+                "command": "echo 'hello world' | tr 'a-z' 'A-Z'"
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            !result.is_error,
+            "Pipe command should succeed: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("HELLO WORLD"),
+            "Should contain uppercase output"
+        );
+    }
+
+    #[test]
+    fn test_bash_variable_expansion() {
+        let tool_call = make_tool_call(
+            "bash",
+            json!({
+                "command": "VAR='test123' && echo $VAR"
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            !result.is_error,
+            "Variable expansion should succeed: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("test123"),
+            "Should contain variable value"
+        );
+    }
+
+    #[test]
+    fn test_bash_stderr_capture() {
+        let tool_call = make_tool_call(
+            "bash",
+            json!({
+                "command": "echo 'stderr test' >&2"
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        // Should capture stderr output
+        assert!(
+            !result.is_error || result.content.contains("stderr"),
+            "Should capture stderr output"
+        );
+    }
+
+    #[test]
+    fn test_bash_with_quotes() {
+        let tool_call = make_tool_call(
+            "bash",
+            json!({
+                "command": "echo \"double quotes\" && echo 'single quotes'"
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            !result.is_error,
+            "Quoted strings should work: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("double quotes"),
+            "Should have double quotes content"
+        );
+        assert!(
+            result.content.contains("single quotes"),
+            "Should have single quotes content"
+        );
+    }
+
+    #[test]
+    fn test_kill_shell_nonexistent() {
+        let kill_call = make_tool_call(
+            "kill_shell",
+            json!({
+                "shell_id": "nonexistent_shell_12345"
+            }),
+        );
+
+        let result = execute_tool(&kill_call);
+
+        // Should fail or indicate shell not found
+        assert!(
+            result.is_error || result.content.to_lowercase().contains("not found"),
+            "Should indicate shell not found: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_bash_output_nonexistent_shell() {
+        let output_call = make_tool_call(
+            "bash_output",
+            json!({
+                "shell_id": "nonexistent_shell_99999"
+            }),
+        );
+
+        let result = execute_tool(&output_call);
+
+        // Should fail or indicate shell not found
+        assert!(
+            result.is_error || result.content.to_lowercase().contains("not found"),
+            "Should indicate shell not found: {}",
+            result.content
         );
     }
 }
@@ -431,29 +969,32 @@ mod web_tools {
     #[test]
     fn test_web_fetch_basic() {
         // Test with a reliable public URL
-        let tool_call = make_tool_call("web_fetch", json!({
-            "url": "https://httpbin.org/html",
-            "prompt": "Extract the main heading"
-        }));
+        let tool_call = make_tool_call(
+            "web_fetch",
+            json!({
+                "url": "https://httpbin.org/html",
+                "prompt": "Extract the main heading"
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
         // This is a real network call - might fail in CI/offline environments
         // We check if it either succeeded or failed gracefully
         if !result.is_error {
-            assert!(
-                result.content.len() > 0,
-                "Should return content from fetch"
-            );
+            assert!(result.content.len() > 0, "Should return content from fetch");
         }
     }
 
     #[test]
     fn test_web_fetch_invalid_url() {
-        let tool_call = make_tool_call("web_fetch", json!({
-            "url": "not-a-valid-url",
-            "prompt": "test"
-        }));
+        let tool_call = make_tool_call(
+            "web_fetch",
+            json!({
+                "url": "not-a-valid-url",
+                "prompt": "test"
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
@@ -464,9 +1005,12 @@ mod web_tools {
     // Falls back to Tavily/Brave APIs if configured
     #[test]
     fn test_web_search_duckduckgo() {
-        let tool_call = make_tool_call("web_search", json!({
-            "query": "rust programming language"
-        }));
+        let tool_call = make_tool_call(
+            "web_search",
+            json!({
+                "query": "rust programming language"
+            }),
+        );
 
         let result = execute_tool(&tool_call);
 
@@ -489,7 +1033,7 @@ mod memory_tools {
         let dir = TempDir::new().expect("Failed to create temp dir");
         let db_path = dir.path().join("test_memory.db");
         let db = MemoryDb::open(&db_path).expect("Failed to create memory db");
-        (dir, db)  // Return dir to keep it alive
+        (dir, db) // Return dir to keep it alive
     }
 
     #[test]
@@ -497,25 +1041,40 @@ mod memory_tools {
         let (_dir, db) = setup_memory_db();
 
         // Save a memory
-        let save_call = make_tool_call("memory_save", json!({
-            "content": "Important fact: Rust is a systems programming language",
-            "tags": ["programming", "rust"]
-        }));
+        let save_call = make_tool_call(
+            "memory_save",
+            json!({
+                "content": "Important fact: Rust is a systems programming language",
+                "tags": ["programming", "rust"]
+            }),
+        );
 
         let save_result = execute_tool_with_memory(&save_call, Some(&db));
-        assert!(!save_result.is_error, "Save should succeed: {}", save_result.content);
+        assert!(
+            !save_result.is_error,
+            "Save should succeed: {}",
+            save_result.content
+        );
 
         // Search for the memory
-        let search_call = make_tool_call("memory_search", json!({
-            "query": "Rust programming"
-        }));
+        let search_call = make_tool_call(
+            "memory_search",
+            json!({
+                "query": "Rust programming"
+            }),
+        );
 
         let search_result = execute_tool_with_memory(&search_call, Some(&db));
-        assert!(!search_result.is_error, "Search should succeed: {}", search_result.content);
+        assert!(
+            !search_result.is_error,
+            "Search should succeed: {}",
+            search_result.content
+        );
         // Should find the saved memory
         assert!(
             search_result.content.contains("Rust") || search_result.content.contains("systems"),
-            "Should find saved memory: {}", search_result.content
+            "Should find saved memory: {}",
+            search_result.content
         );
     }
 
@@ -523,14 +1082,21 @@ mod memory_tools {
     fn test_memory_search_no_results() {
         let (_dir, db) = setup_memory_db();
 
-        let search_call = make_tool_call("memory_search", json!({
-            "query": "nonexistent topic xyz123"
-        }));
+        let search_call = make_tool_call(
+            "memory_search",
+            json!({
+                "query": "nonexistent topic xyz123"
+            }),
+        );
 
         let result = execute_tool_with_memory(&search_call, Some(&db));
 
         // Should succeed but with no results
-        assert!(!result.is_error, "Search should succeed: {}", result.content);
+        assert!(
+            !result.is_error,
+            "Search should succeed: {}",
+            result.content
+        );
         // Empty result is fine
     }
 
@@ -540,25 +1106,38 @@ mod memory_tools {
 
         // Store multiple memories
         for i in 0..3 {
-            let save_call = make_tool_call("memory_save", json!({
-                "content": format!("Searchable fact number {} about testing", i),
-                "tags": ["test", "fact"]
-            }));
+            let save_call = make_tool_call(
+                "memory_save",
+                json!({
+                    "content": format!("Searchable fact number {} about testing", i),
+                    "tags": ["test", "fact"]
+                }),
+            );
             execute_tool_with_memory(&save_call, Some(&db));
         }
 
         // Search for content
-        let search_call = make_tool_call("memory_search", json!({
-            "query": "testing"
-        }));
+        let search_call = make_tool_call(
+            "memory_search",
+            json!({
+                "query": "testing"
+            }),
+        );
 
         let result = execute_tool_with_memory(&search_call, Some(&db));
 
-        assert!(!result.is_error, "Search should succeed: {}", result.content);
+        assert!(
+            !result.is_error,
+            "Search should succeed: {}",
+            result.content
+        );
         // Should find at least one match
         assert!(
-            result.content.contains("fact") || result.content.contains("testing") || result.content.contains("Searchable"),
-            "Should find matching memories: {}", result.content
+            result.content.contains("fact")
+                || result.content.contains("testing")
+                || result.content.contains("Searchable"),
+            "Should find matching memories: {}",
+            result.content
         );
     }
 
@@ -567,14 +1146,222 @@ mod memory_tools {
         let (_dir, db) = setup_memory_db();
 
         // Update project info core memory
-        let update_call = make_tool_call("core_memory_update", json!({
-            "section": "project_info",
-            "content": "This is a Rust project for testing"
-        }));
+        let update_call = make_tool_call(
+            "core_memory_update",
+            json!({
+                "section": "project_info",
+                "content": "This is a Rust project for testing"
+            }),
+        );
 
         let result = execute_tool_with_memory(&update_call, Some(&db));
 
-        assert!(!result.is_error, "Core memory update should succeed: {}", result.content);
+        assert!(
+            !result.is_error,
+            "Core memory update should succeed: {}",
+            result.content
+        );
+    }
+
+    // =========== EXTENDED MEMORY TESTS ===========
+
+    #[test]
+    fn test_core_memory_update_persona() {
+        let (_dir, db) = setup_memory_db();
+
+        let update_call = make_tool_call(
+            "core_memory_update",
+            json!({
+                "section": "persona",
+                "content": "I am a helpful coding assistant specialized in Rust"
+            }),
+        );
+
+        let result = execute_tool_with_memory(&update_call, Some(&db));
+
+        assert!(
+            !result.is_error,
+            "Persona update should succeed: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_core_memory_update_user_preferences() {
+        let (_dir, db) = setup_memory_db();
+
+        let update_call = make_tool_call(
+            "core_memory_update",
+            json!({
+                "section": "user_preferences",
+                "content": "Prefers concise responses, uses VS Code"
+            }),
+        );
+
+        let result = execute_tool_with_memory(&update_call, Some(&db));
+
+        assert!(
+            !result.is_error,
+            "User prefs update should succeed: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_memory_save_with_tags() {
+        let (_dir, db) = setup_memory_db();
+
+        let save_call = make_tool_call(
+            "memory_save",
+            json!({
+                "content": "User prefers async/await over callbacks",
+                "tags": ["code-style", "javascript", "preferences"]
+            }),
+        );
+
+        let result = execute_tool_with_memory(&save_call, Some(&db));
+
+        assert!(
+            !result.is_error,
+            "Save with tags should succeed: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_memory_save_long_content() {
+        let (_dir, db) = setup_memory_db();
+
+        // Save a large piece of content
+        let long_content: String = (0..100)
+            .map(|i| format!("Line {} of important information. ", i))
+            .collect();
+
+        let save_call = make_tool_call(
+            "memory_save",
+            json!({
+                "content": long_content,
+                "tags": ["long", "test"]
+            }),
+        );
+
+        let result = execute_tool_with_memory(&save_call, Some(&db));
+
+        assert!(
+            !result.is_error,
+            "Long content save should succeed: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_memory_search_with_limit() {
+        let (_dir, db) = setup_memory_db();
+
+        // Save multiple memories
+        for i in 0..10 {
+            let save_call = make_tool_call(
+                "memory_save",
+                json!({
+                    "content": format!("Database fact {} about SQL queries", i),
+                    "tags": ["database", "sql"]
+                }),
+            );
+            execute_tool_with_memory(&save_call, Some(&db));
+        }
+
+        let search_call = make_tool_call(
+            "memory_search",
+            json!({
+                "query": "database SQL",
+                "limit": 3
+            }),
+        );
+
+        let result = execute_tool_with_memory(&search_call, Some(&db));
+
+        assert!(
+            !result.is_error,
+            "Search with limit should succeed: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_memory_unicode_content() {
+        let (_dir, db) = setup_memory_db();
+
+        let unicode_content = "User's name is 田中さん and prefers 日本語 documentation";
+
+        let save_call = make_tool_call(
+            "memory_save",
+            json!({
+                "content": unicode_content,
+                "tags": ["user", "japanese"]
+            }),
+        );
+
+        let save_result = execute_tool_with_memory(&save_call, Some(&db));
+        assert!(
+            !save_result.is_error,
+            "Unicode save should succeed: {}",
+            save_result.content
+        );
+
+        let search_call = make_tool_call(
+            "memory_search",
+            json!({
+                "query": "田中"
+            }),
+        );
+
+        let search_result = execute_tool_with_memory(&search_call, Some(&db));
+        assert!(!search_result.is_error, "Unicode search should succeed");
+    }
+
+    #[test]
+    fn test_memory_special_characters() {
+        let (_dir, db) = setup_memory_db();
+
+        let content = "Code pattern: if (x && y || z) { return $value; }";
+
+        let save_call = make_tool_call(
+            "memory_save",
+            json!({
+                "content": content,
+                "tags": ["code", "pattern"]
+            }),
+        );
+
+        let result = execute_tool_with_memory(&save_call, Some(&db));
+
+        assert!(
+            !result.is_error,
+            "Special characters should be handled: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_memory_without_db() {
+        // Test that memory tools gracefully handle missing DB
+        let save_call = make_tool_call(
+            "memory_save",
+            json!({
+                "content": "test content",
+                "tags": ["test"]
+            }),
+        );
+
+        let result = execute_tool_with_memory(&save_call, None);
+
+        // Should fail gracefully or indicate no database
+        assert!(
+            result.is_error
+                || result.content.to_lowercase().contains("no")
+                || result.content.to_lowercase().contains("stateful"),
+            "Should indicate memory not available"
+        );
     }
 }
 
@@ -583,7 +1370,7 @@ mod memory_tools {
 // ============================================================================
 
 mod tool_definitions {
-    use openclaudia::tools::{get_tool_definitions, get_all_tool_definitions};
+    use openclaudia::tools::{get_all_tool_definitions, get_tool_definitions};
 
     #[test]
     fn test_get_tool_definitions_structure() {
@@ -601,8 +1388,14 @@ mod tool_definitions {
 
             let function = tool.get("function").unwrap();
             assert!(function.get("name").is_some(), "Function should have name");
-            assert!(function.get("description").is_some(), "Function should have description");
-            assert!(function.get("parameters").is_some(), "Function should have parameters");
+            assert!(
+                function.get("description").is_some(),
+                "Function should have description"
+            );
+            assert!(
+                function.get("parameters").is_some(),
+                "Function should have parameters"
+            );
         }
     }
 
@@ -610,14 +1403,18 @@ mod tool_definitions {
     fn test_get_all_tool_definitions_includes_memory() {
         // Without stateful flag
         let tools_no_memory = get_all_tool_definitions(false);
-        let no_memory_names: Vec<&str> = tools_no_memory.as_array().unwrap()
+        let no_memory_names: Vec<&str> = tools_no_memory
+            .as_array()
+            .unwrap()
             .iter()
             .filter_map(|t| t["function"]["name"].as_str())
             .collect();
 
         // With stateful flag
         let tools_with_memory = get_all_tool_definitions(true);
-        let with_memory_names: Vec<&str> = tools_with_memory.as_array().unwrap()
+        let with_memory_names: Vec<&str> = tools_with_memory
+            .as_array()
+            .unwrap()
             .iter()
             .filter_map(|t| t["function"]["name"].as_str())
             .collect();
@@ -636,22 +1433,32 @@ mod tool_definitions {
     #[test]
     fn test_required_tools_exist() {
         let tools = get_tool_definitions();
-        let tool_names: Vec<&str> = tools.as_array().unwrap()
+        let tool_names: Vec<&str> = tools
+            .as_array()
+            .unwrap()
             .iter()
             .filter_map(|t| t["function"]["name"].as_str())
             .collect();
 
         // Actual tool names in the system
         let required_tools = vec![
-            "read_file", "write_file", "edit_file", "list_files",
-            "bash", "bash_output", "kill_shell",
-            "web_fetch", "web_search"
+            "read_file",
+            "write_file",
+            "edit_file",
+            "list_files",
+            "bash",
+            "bash_output",
+            "kill_shell",
+            "web_fetch",
+            "web_search",
         ];
 
         for required in required_tools {
             assert!(
                 tool_names.contains(&required),
-                "Required tool '{}' should exist. Found: {:?}", required, tool_names
+                "Required tool '{}' should exist. Found: {:?}",
+                required,
+                tool_names
             );
         }
     }

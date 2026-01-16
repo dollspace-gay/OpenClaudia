@@ -277,7 +277,7 @@ These rules are injected into every conversation.
 
 /// Authenticate with Claude Max subscription via OAuth
 async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
-    use openclaudia::oauth::{OAuthClient, OAuthStore, PkceParams, parse_auth_code};
+    use openclaudia::oauth::{parse_auth_code, OAuthClient, OAuthStore, PkceParams};
     use std::io::{self, Write};
 
     let store = OAuthStore::new();
@@ -288,13 +288,16 @@ async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
             // Check if any sessions exist by trying to load from disk
             let _store = OAuthStore::new();
             // We can't easily enumerate sessions, so just check persistence path
-            let persist_path = dirs::data_local_dir()
-                .map(|d| d.join("openclaudia").join("oauth_sessions.json"));
+            let persist_path =
+                dirs::data_local_dir().map(|d| d.join("openclaudia").join("oauth_sessions.json"));
 
             if let Some(path) = persist_path {
                 if path.exists() {
                     if let Ok(content) = std::fs::read_to_string(&path) {
-                        if let Ok(sessions) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&content) {
+                        if let Ok(sessions) = serde_json::from_str::<
+                            std::collections::HashMap<String, serde_json::Value>,
+                        >(&content)
+                        {
                             sessions.into_iter().collect()
                         } else {
                             vec![]
@@ -317,7 +320,8 @@ async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
             println!("Authenticated with Claude Max.");
             println!("Sessions: {}", sessions.len());
             for (id, data) in &sessions {
-                let expires = data.get("credentials")
+                let expires = data
+                    .get("credentials")
                     .and_then(|c| c.get("expires_at"))
                     .and_then(|e| e.as_str())
                     .unwrap_or("unknown");
@@ -329,8 +333,8 @@ async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
 
     // Handle --logout flag
     if logout {
-        let persist_path = dirs::data_local_dir()
-            .map(|d| d.join("openclaudia").join("oauth_sessions.json"));
+        let persist_path =
+            dirs::data_local_dir().map(|d| d.join("openclaudia").join("oauth_sessions.json"));
 
         if let Some(path) = persist_path {
             if path.exists() {
@@ -363,9 +367,7 @@ async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("open")
-            .arg(&auth_url)
-            .spawn();
+        let _ = std::process::Command::new("open").arg(&auth_url).spawn();
     }
     #[cfg(target_os = "linux")]
     {
@@ -413,7 +415,10 @@ async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
     // Personal Claude Max accounts don't get org:create_api_key, so they use Bearer token directly
     if session.can_create_api_key() {
         println!("Creating API key from OAuth token...");
-        match client.create_api_key(&session.credentials.access_token).await {
+        match client
+            .create_api_key(&session.credentials.access_token)
+            .await
+        {
             Ok(api_key) => {
                 session.api_key = Some(api_key);
                 println!("✓ API key created successfully");
@@ -503,7 +508,6 @@ impl AgentMode {
     }
 }
 
-
 /// A saved chat session with messages
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct ChatSession {
@@ -578,9 +582,11 @@ impl ChatSession {
 
     fn update_title(&mut self) {
         // Set title from first user message
-        if let Some(first_user) = self.messages.iter().find(|m| {
-            m.get("role").and_then(|r| r.as_str()) == Some("user")
-        }) {
+        if let Some(first_user) = self
+            .messages
+            .iter()
+            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+        {
             if let Some(content) = first_user.get("content").and_then(|c| c.as_str()) {
                 let title = if content.len() > 50 {
                     format!("{}...", &content[..47])
@@ -703,29 +709,19 @@ fn get_available_models(provider: &str) -> Vec<&'static str> {
             "gemini-1.5-flash",
             "gemini-2.0-flash-exp",
         ],
-        "zai" => vec![
-            "glm-4.7",
-            "glm-4-plus",
-            "glm-4-air",
-            "glm-4-flash",
-        ],
-        "deepseek" => vec![
-            "deepseek-chat",
-            "deepseek-coder",
-            "deepseek-reasoner",
-        ],
-        "qwen" => vec![
-            "qwen-turbo",
-            "qwen-plus",
-            "qwen-max",
-            "qwen-long",
-        ],
+        "zai" => vec!["glm-4.7", "glm-4-plus", "glm-4-air", "glm-4-flash"],
+        "deepseek" => vec!["deepseek-chat", "deepseek-coder", "deepseek-reasoner"],
+        "qwen" => vec!["qwen-turbo", "qwen-plus", "qwen-max", "qwen-long"],
         _ => vec!["gpt-4"],
     }
 }
 
 /// Prompt user for permission to perform a sensitive operation
-fn prompt_permission(operation: &str, details: &str, always_allowed: &mut std::collections::HashSet<String>) -> bool {
+fn prompt_permission(
+    operation: &str,
+    details: &str,
+    always_allowed: &mut std::collections::HashSet<String>,
+) -> bool {
     use std::io::{self, Write};
 
     let key = format!("{}:{}", operation, details);
@@ -776,7 +772,10 @@ fn prompt_permission(operation: &str, details: &str, always_allowed: &mut std::c
 }
 
 /// Execute a shell command and print output (with permission check)
-fn execute_shell_command_with_permission(cmd: &str, permissions: &mut std::collections::HashSet<String>) {
+fn execute_shell_command_with_permission(
+    cmd: &str,
+    permissions: &mut std::collections::HashSet<String>,
+) {
     // Check for dangerous commands
     let dangerous_patterns = ["rm -rf", "del /f", "format", "mkfs", "> /dev/", "sudo rm"];
     let is_dangerous = dangerous_patterns.iter().any(|p| cmd.contains(p));
@@ -824,10 +823,14 @@ fn execute_shell_command_internal(cmd: &str) {
 
 /// Estimate tokens in a chat session (rough: ~4 chars per token)
 fn estimate_session_tokens(session: &ChatSession) -> usize {
-    session.messages.iter().map(|msg| {
-        let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
-        content.len() / 4 + 4 // content tokens + overhead
-    }).sum()
+    session
+        .messages
+        .iter()
+        .map(|msg| {
+            let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
+            content.len() / 4 + 4 // content tokens + overhead
+        })
+        .sum()
 }
 
 /// Open external editor for composing a message
@@ -839,9 +842,13 @@ fn open_external_editor() -> Option<String> {
         .or_else(|_| std::env::var("EDITOR"))
         .unwrap_or_else(|_| {
             #[cfg(windows)]
-            { "notepad".to_string() }
+            {
+                "notepad".to_string()
+            }
             #[cfg(not(windows))]
-            { "vim".to_string() }
+            {
+                "vim".to_string()
+            }
         });
 
     // Create temp file
@@ -857,9 +864,7 @@ fn open_external_editor() -> Option<String> {
         .status();
 
     #[cfg(not(windows))]
-    let status = Command::new(&editor)
-        .arg(&temp_file)
-        .status();
+    let status = Command::new(&editor).arg(&temp_file).status();
 
     match status {
         Ok(s) if s.success() => {
@@ -910,11 +915,8 @@ fn expand_file_references(input: &str) -> String {
         // Try to read the file
         match fs::read_to_string(path) {
             Ok(content) => {
-                let file_context = format!(
-                    "\n<file path=\"{}\">\n{}\n</file>\n",
-                    path,
-                    content.trim()
-                );
+                let file_context =
+                    format!("\n<file path=\"{}\">\n{}\n</file>\n", path, content.trim());
                 replacements.push((full_match.to_string(), file_context));
             }
             Err(e) => {
@@ -1052,7 +1054,12 @@ fn compact_chat_session(session: &mut ChatSession) -> (usize, usize) {
     );
 
     // Create new message list: summary + preserved messages
-    let preserved: Vec<_> = session.messages.iter().skip(to_summarize).cloned().collect();
+    let preserved: Vec<_> = session
+        .messages
+        .iter()
+        .skip(to_summarize)
+        .cloned()
+        .collect();
 
     session.messages.clear();
     session.messages.push(serde_json::json!({
@@ -1074,10 +1081,7 @@ fn export_chat_session(session: &ChatSession) {
         return;
     }
 
-    let filename = format!(
-        "chat_{}.md",
-        session.created_at.format("%Y%m%d_%H%M%S")
-    );
+    let filename = format!("chat_{}.md", session.created_at.format("%Y%m%d_%H%M%S"));
     let path = exports_dir.join(&filename);
 
     let mut content = String::new();
@@ -1091,7 +1095,10 @@ fn export_chat_session(session: &ChatSession) {
     content.push_str("---\n\n");
 
     for msg in &session.messages {
-        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("unknown");
+        let role = msg
+            .get("role")
+            .and_then(|r| r.as_str())
+            .unwrap_or("unknown");
         let msg_content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
 
         match role {
@@ -1167,7 +1174,9 @@ fn save_session_to_short_term_memory(session: &ChatSession, memory_db: Option<&m
     let summary = summary_parts.join("\n");
 
     // Get files modified and issues worked from activity log
-    let files_modified = db.get_session_files_modified(&session.id).unwrap_or_default();
+    let files_modified = db
+        .get_session_files_modified(&session.id)
+        .unwrap_or_default();
     let issues_worked = db.get_session_issues(&session.id).unwrap_or_default();
 
     // Save to short-term memory
@@ -1190,13 +1199,22 @@ fn save_session_to_short_term_memory(session: &ChatSession, memory_db: Option<&m
     // Cleanup expired entries
     if let Ok((sessions, activities)) = db.cleanup_expired_short_term() {
         if sessions > 0 || activities > 0 {
-            tracing::debug!("Cleaned up {} expired sessions, {} activities", sessions, activities);
+            tracing::debug!(
+                "Cleaned up {} expired sessions, {} activities",
+                sessions,
+                activities
+            );
         }
     }
 }
 
 /// Handle slash commands, returns true if command was handled
-fn handle_slash_command(input: &str, messages: &mut Vec<serde_json::Value>, provider: &str, current_model: &str) -> Option<SlashCommandResult> {
+fn handle_slash_command(
+    input: &str,
+    messages: &mut Vec<serde_json::Value>,
+    provider: &str,
+    current_model: &str,
+) -> Option<SlashCommandResult> {
     if !input.starts_with('/') {
         return None;
     }
@@ -1288,7 +1306,13 @@ fn handle_slash_command(input: &str, messages: &mut Vec<serde_json::Value>, prov
                 for (i, session) in sessions.iter().take(10).enumerate() {
                     let date = session.updated_at.format("%Y-%m-%d %H:%M");
                     let msg_count = session.messages.len();
-                    println!("  {}. [{}] {} ({} messages)", i + 1, date, session.title, msg_count);
+                    println!(
+                        "  {}. [{}] {} ({} messages)",
+                        i + 1,
+                        date,
+                        session.title,
+                        msg_count
+                    );
                 }
                 if sessions.len() > 10 {
                     println!("  ... and {} more", sessions.len() - 10);
@@ -1314,16 +1338,16 @@ fn handle_slash_command(input: &str, messages: &mut Vec<serde_json::Value>, prov
                     println!("\nContinuing: {}\n", session.title);
                     return Some(SlashCommandResult::LoadSession(session.id.clone()));
                 } else {
-                    println!("\nInvalid session number. Use /sessions to see available sessions.\n");
+                    println!(
+                        "\nInvalid session number. Use /sessions to see available sessions.\n"
+                    );
                 }
             } else {
                 println!("\nUsage: /continue <number>\n");
             }
             Some(SlashCommandResult::Handled)
         }
-        "exit" | "quit" | "q" => {
-            Some(SlashCommandResult::Exit)
-        }
+        "exit" | "quit" | "q" => Some(SlashCommandResult::Exit),
         "history" => {
             if messages.is_empty() {
                 println!("\nNo messages in conversation.\n");
@@ -1370,12 +1394,8 @@ fn handle_slash_command(input: &str, messages: &mut Vec<serde_json::Value>, prov
             println!("\nUse /model <name> to switch models.\n");
             Some(SlashCommandResult::Handled)
         }
-        "export" => {
-            Some(SlashCommandResult::Export)
-        }
-        "compact" | "summarize" => {
-            Some(SlashCommandResult::Compact)
-        }
+        "export" => Some(SlashCommandResult::Export),
+        "compact" | "summarize" => Some(SlashCommandResult::Compact),
         "editor" | "edit" | "e" => {
             // Open external editor and return content if provided
             if let Some(content) = open_external_editor() {
@@ -1384,25 +1404,21 @@ fn handle_slash_command(input: &str, messages: &mut Vec<serde_json::Value>, prov
                 Some(SlashCommandResult::Handled)
             }
         }
-        "undo" => {
-            Some(SlashCommandResult::Undo)
-        }
-        "redo" => {
-            Some(SlashCommandResult::Redo)
-        }
+        "undo" => Some(SlashCommandResult::Undo),
+        "redo" => Some(SlashCommandResult::Redo),
         "copy" | "yank" | "y" => {
             // Copy last assistant message to clipboard
-            if let Some(last_assistant) = messages.iter().rev().find(|m| {
-                m.get("role").and_then(|r| r.as_str()) == Some("assistant")
-            }) {
+            if let Some(last_assistant) = messages
+                .iter()
+                .rev()
+                .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
+            {
                 if let Some(content) = last_assistant.get("content").and_then(|c| c.as_str()) {
                     match arboard::Clipboard::new() {
-                        Ok(mut clipboard) => {
-                            match clipboard.set_text(content) {
-                                Ok(()) => println!("\nCopied {} chars to clipboard.\n", content.len()),
-                                Err(e) => eprintln!("\nFailed to copy to clipboard: {}\n", e),
-                            }
-                        }
+                        Ok(mut clipboard) => match clipboard.set_text(content) {
+                            Ok(()) => println!("\nCopied {} chars to clipboard.\n", content.len()),
+                            Err(e) => eprintln!("\nFailed to copy to clipboard: {}\n", e),
+                        },
                         Err(e) => eprintln!("\nClipboard not available: {}\n", e),
                     }
                 } else {
@@ -1421,9 +1437,7 @@ fn handle_slash_command(input: &str, messages: &mut Vec<serde_json::Value>, prov
             review_git_changes(args);
             Some(SlashCommandResult::Handled)
         }
-        "status" | "info" => {
-            Some(SlashCommandResult::Status)
-        }
+        "status" | "info" => Some(SlashCommandResult::Status),
         "connect" | "auth" => {
             configure_provider_api_key();
             Some(SlashCommandResult::Handled)
@@ -1432,12 +1446,8 @@ fn handle_slash_command(input: &str, messages: &mut Vec<serde_json::Value>, prov
             handle_theme_command(args);
             Some(SlashCommandResult::Handled)
         }
-        "mode" => {
-            Some(SlashCommandResult::ToggleMode)
-        }
-        "keybindings" | "keys" | "bindings" => {
-            Some(SlashCommandResult::Keybindings)
-        }
+        "mode" => Some(SlashCommandResult::ToggleMode),
+        "keybindings" | "keys" | "bindings" => Some(SlashCommandResult::Keybindings),
         "rename" | "title" => {
             if args.is_empty() {
                 println!("\nUsage: /rename <new title>\n");
@@ -1452,7 +1462,11 @@ fn handle_slash_command(input: &str, messages: &mut Vec<serde_json::Value>, prov
             println!();
             println!("Repository: {}", env!("CARGO_PKG_REPOSITORY"));
             println!("License:    {}", env!("CARGO_PKG_LICENSE"));
-            println!("Platform:   {} / {}", std::env::consts::OS, std::env::consts::ARCH);
+            println!(
+                "Platform:   {} / {}",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            );
             println!();
             Some(SlashCommandResult::Handled)
         }
@@ -1465,10 +1479,16 @@ fn handle_slash_command(input: &str, messages: &mut Vec<serde_json::Value>, prov
             println!("Configuration Paths:");
             println!("  Project:    .openclaudia/config.yaml");
             if let Some(home) = dirs::home_dir() {
-                println!("  User:       {}", home.join(".openclaudia/config.yaml").display());
+                println!(
+                    "  User:       {}",
+                    home.join(".openclaudia/config.yaml").display()
+                );
             }
             if let Some(config_dir) = dirs::config_dir() {
-                println!("  System:     {}", config_dir.join("openclaudia/config.yaml").display());
+                println!(
+                    "  System:     {}",
+                    config_dir.join("openclaudia/config.yaml").display()
+                );
             }
             println!();
             println!("Data Directories:");
@@ -1477,9 +1497,20 @@ fn handle_slash_command(input: &str, messages: &mut Vec<serde_json::Value>, prov
             println!("  Data:       {}", get_data_dir().display());
             println!();
             println!("Environment Variables:");
-            for var in &["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
-                         "DEEPSEEK_API_KEY", "QWEN_API_KEY", "ZAI_API_KEY", "EDITOR"] {
-                let status = if std::env::var(var).is_ok() { "set" } else { "not set" };
+            for var in &[
+                "ANTHROPIC_API_KEY",
+                "OPENAI_API_KEY",
+                "GOOGLE_API_KEY",
+                "DEEPSEEK_API_KEY",
+                "QWEN_API_KEY",
+                "ZAI_API_KEY",
+                "EDITOR",
+            ] {
+                let status = if std::env::var(var).is_ok() {
+                    "set"
+                } else {
+                    "not set"
+                };
                 println!("  {}: {}", var, status);
             }
             println!();
@@ -1494,7 +1525,10 @@ fn handle_slash_command(input: &str, messages: &mut Vec<serde_json::Value>, prov
             Some(SlashCommandResult::Activity(args.to_string()))
         }
         _ => {
-            eprintln!("Unknown command: /{}. Type /help for available commands.\n", cmd);
+            eprintln!(
+                "Unknown command: /{}. Type /help for available commands.\n",
+                cmd
+            );
             Some(SlashCommandResult::Handled)
         }
     }
@@ -1569,7 +1603,11 @@ fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
                     if memories.is_empty() {
                         println!("\nNo memories found matching '{}'.\n", subargs);
                     } else {
-                        println!("\n=== Search Results for '{}' ({}) ===\n", subargs, memories.len());
+                        println!(
+                            "\n=== Search Results for '{}' ({}) ===\n",
+                            subargs,
+                            memories.len()
+                        );
                         for mem in memories {
                             let preview = if mem.content.len() > 100 {
                                 format!("{}...", &mem.content[..97])
@@ -1639,18 +1677,19 @@ fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
                 Err(e) => eprintln!("\nFailed to delete memory: {}\n", e),
             }
         }
-        "core" => {
-            match db.get_core_memory() {
-                Ok(sections) => {
-                    println!("\n=== Core Memory ===\n");
-                    for section in sections {
-                        println!("\x1b[35m[{}]\x1b[0m (updated: {})", section.section, section.updated_at);
-                        println!("{}\n", section.content);
-                    }
+        "core" => match db.get_core_memory() {
+            Ok(sections) => {
+                println!("\n=== Core Memory ===\n");
+                for section in sections {
+                    println!(
+                        "\x1b[35m[{}]\x1b[0m (updated: {})",
+                        section.section, section.updated_at
+                    );
+                    println!("{}\n", section.content);
                 }
-                Err(e) => eprintln!("\nFailed to get core memory: {}\n", e),
             }
-        }
+            Err(e) => eprintln!("\nFailed to get core memory: {}\n", e),
+        },
         "clear" => {
             // Clear only archival memory, keep core memory
             if subargs == "confirm" || subargs == "yes" {
@@ -1692,7 +1731,11 @@ fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
 }
 
 /// Handle /activity command for viewing recent session activities
-fn handle_activity_command(args: &str, current_session_id: &str, memory_db: Option<&memory::MemoryDb>) {
+fn handle_activity_command(
+    args: &str,
+    current_session_id: &str,
+    memory_db: Option<&memory::MemoryDb>,
+) {
     let db = match memory_db {
         Some(db) => db,
         None => {
@@ -1714,7 +1757,10 @@ fn handle_activity_command(args: &str, current_session_id: &str, memory_db: Opti
                     if activities.is_empty() {
                         println!("\nNo activities recorded in this session yet.\n");
                     } else {
-                        println!("\n=== Current Session Activities ({}) ===", activities.len());
+                        println!(
+                            "\n=== Current Session Activities ({}) ===",
+                            activities.len()
+                        );
                         println!("Session: {}\n", current_session_id);
                         for activity in activities.iter().take(20) {
                             let icon = match activity.activity_type.as_str() {
@@ -1734,9 +1780,19 @@ fn handle_activity_command(args: &str, current_session_id: &str, memory_db: Opti
                                 format!(" ({})", details)
                             };
                             // Use all fields: id, session_id, activity_type, target, details, created_at
-                            println!("  \x1b[90m[{}]\x1b[0m {} \x1b[36m{}\x1b[0m {}{}",
-                                activity.created_at, icon, activity.activity_type, activity.target, details_str);
-                            println!("       \x1b[90mID: {} | Session: {}\x1b[0m", activity.id, &activity.session_id[..8]);
+                            println!(
+                                "  \x1b[90m[{}]\x1b[0m {} \x1b[36m{}\x1b[0m {}{}",
+                                activity.created_at,
+                                icon,
+                                activity.activity_type,
+                                activity.target,
+                                details_str
+                            );
+                            println!(
+                                "       \x1b[90mID: {} | Session: {}\x1b[0m",
+                                activity.id,
+                                &activity.session_id[..8]
+                            );
                         }
                         if activities.len() > 20 {
                             println!("\n  ... and {} more activities", activities.len() - 20);
@@ -1758,8 +1814,13 @@ fn handle_activity_command(args: &str, current_session_id: &str, memory_db: Opti
                         println!("\n=== Recent Sessions ({}) ===\n", sessions.len());
                         for (i, session) in sessions.iter().enumerate() {
                             // Use session.id field
-                            println!("  \x1b[36m{}.\x1b[0m [ID:{}] Session {} (ended {})",
-                                i + 1, session.id, &session.session_id[..8], session.ended_at);
+                            println!(
+                                "  \x1b[36m{}.\x1b[0m [ID:{}] Session {} (ended {})",
+                                i + 1,
+                                session.id,
+                                &session.session_id[..8],
+                                session.ended_at
+                            );
                             println!("     Started: {}", session.started_at);
 
                             // Show summary (first 100 chars)
@@ -1861,7 +1922,11 @@ fn display_keybindings(keybindings: &config::KeybindingsConfig) {
     for (action, description) in actions {
         let keys = keybindings.get_keys_for_action(&action);
         if !keys.is_empty() {
-            let key_str = keys.iter().map(|k| k.as_str()).collect::<Vec<_>>().join(", ");
+            let key_str = keys
+                .iter()
+                .map(|k| k.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
             println!("  {:20} {}", key_str, description);
         }
     }
@@ -1890,7 +1955,8 @@ fn detect_project_type() -> Vec<(&'static str, &'static str)> {
     if std::path::Path::new("package.json").exists() {
         detected.push(("node", "Node.js project detected (package.json)"));
     }
-    if std::path::Path::new("pyproject.toml").exists() || std::path::Path::new("setup.py").exists() {
+    if std::path::Path::new("pyproject.toml").exists() || std::path::Path::new("setup.py").exists()
+    {
         detected.push(("python", "Python project detected"));
     }
     if std::path::Path::new("go.mod").exists() {
@@ -2019,9 +2085,7 @@ fn review_git_changes(args: &str) {
     if args.is_empty() {
         // Show uncommitted changes (staged and unstaged)
         println!("=== Git Status ===\n");
-        let status = Command::new("git")
-            .args(["status", "--short"])
-            .output();
+        let status = Command::new("git").args(["status", "--short"]).output();
 
         match status {
             Ok(output) => {
@@ -2039,9 +2103,7 @@ fn review_git_changes(args: &str) {
         }
 
         println!("=== Uncommitted Changes ===\n");
-        let diff = Command::new("git")
-            .args(["diff", "HEAD"])
-            .output();
+        let diff = Command::new("git").args(["diff", "HEAD"]).output();
 
         match diff {
             Ok(output) => {
@@ -2055,7 +2117,10 @@ fn review_git_changes(args: &str) {
                         for line in lines.iter().take(100) {
                             println!("{}", line);
                         }
-                        println!("\n... ({} more lines, use git diff directly for full output)\n", lines.len() - 100);
+                        println!(
+                            "\n... ({} more lines, use git diff directly for full output)\n",
+                            lines.len() - 100
+                        );
                     } else {
                         println!("{}", stdout);
                     }
@@ -2227,9 +2292,19 @@ fn handle_theme_command(args: &str) {
 
     // Available themes with their color schemes
     let themes: &[(&str, &str, Color, Color)] = &[
-        ("default", "Default terminal colors", Color::Reset, Color::Reset),
+        (
+            "default",
+            "Default terminal colors",
+            Color::Reset,
+            Color::Reset,
+        ),
         ("ocean", "Cool blue tones", Color::Cyan, Color::Blue),
-        ("forest", "Earthy green tones", Color::Green, Color::DarkGreen),
+        (
+            "forest",
+            "Earthy green tones",
+            Color::Green,
+            Color::DarkGreen,
+        ),
         ("sunset", "Warm orange tones", Color::Yellow, Color::Red),
         ("mono", "Monochrome grayscale", Color::White, Color::Grey),
         ("neon", "Bright vibrant colors", Color::Magenta, Color::Cyan),
@@ -2249,18 +2324,31 @@ fn handle_theme_command(args: &str) {
     } else {
         let theme_name = args.trim().to_lowercase();
 
-        if let Some((name, desc, primary, _)) = themes.iter().find(|(n, _, _, _)| *n == theme_name) {
+        if let Some((name, desc, primary, _)) = themes.iter().find(|(n, _, _, _)| *n == theme_name)
+        {
             println!();
-            println!("{}", format!("Switched to '{}' theme: {}", name, desc).with(*primary));
-            println!("{}", "Theme preview: This is how messages will appear.".with(*primary));
+            println!(
+                "{}",
+                format!("Switched to '{}' theme: {}", name, desc).with(*primary)
+            );
+            println!(
+                "{}",
+                "Theme preview: This is how messages will appear.".with(*primary)
+            );
             println!();
 
             // Note: In a full implementation, you'd store the theme preference
             // and apply it to prompts and responses throughout the app
         } else {
             eprintln!("\nUnknown theme: '{}'\n", theme_name);
-            eprintln!("Available themes: {}\n",
-                themes.iter().map(|(n, _, _, _)| *n).collect::<Vec<_>>().join(", "));
+            eprintln!(
+                "Available themes: {}\n",
+                themes
+                    .iter()
+                    .map(|(n, _, _, _)| *n)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
         }
     }
 }
@@ -2332,7 +2420,11 @@ async fn start_builtin_oauth_flow(config: &config::AppConfig) -> Option<OAuthFlo
         .ok()?;
 
     // Step 1: Check if our proxy is already running
-    let proxy_running = client.get(format!("{}/health", proxy_url)).send().await.is_ok();
+    let proxy_running = client
+        .get(format!("{}/health", proxy_url))
+        .send()
+        .await
+        .is_ok();
 
     if !proxy_running {
         println!("🚀 Starting OpenClaudia proxy on port {}...", proxy_port);
@@ -2348,7 +2440,12 @@ async fn start_builtin_oauth_flow(config: &config::AppConfig) -> Option<OAuthFlo
         // Wait for proxy to start (up to 5 seconds)
         for i in 0..10 {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            if client.get(format!("{}/health", proxy_url)).send().await.is_ok() {
+            if client
+                .get(format!("{}/health", proxy_url))
+                .send()
+                .await
+                .is_ok()
+            {
                 println!("✓ Proxy started on port {}", proxy_port);
                 break;
             }
@@ -2362,7 +2459,11 @@ async fn start_builtin_oauth_flow(config: &config::AppConfig) -> Option<OAuthFlo
     }
 
     // Step 2: Check if already authenticated AND token actually works
-    if let Ok(resp) = client.get(format!("{}/auth/status", proxy_url)).send().await {
+    if let Ok(resp) = client
+        .get(format!("{}/auth/status", proxy_url))
+        .send()
+        .await
+    {
         if let Ok(status) = resp.json::<serde_json::Value>().await {
             if status["authenticated"].as_bool() == Some(true) {
                 if let Some(session_id) = status["session_id"].as_str() {
@@ -2395,11 +2496,21 @@ async fn start_builtin_oauth_flow(config: &config::AppConfig) -> Option<OAuthFlo
     let auth_url = format!("{}/auth/device", proxy_url);
 
     #[cfg(target_os = "windows")]
-    { let _ = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", &auth_url]).spawn(); }
+    {
+        let _ = std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", &auth_url])
+            .spawn();
+    }
     #[cfg(target_os = "macos")]
-    { let _ = std::process::Command::new("open").arg(&auth_url).spawn(); }
+    {
+        let _ = std::process::Command::new("open").arg(&auth_url).spawn();
+    }
     #[cfg(target_os = "linux")]
-    { let _ = std::process::Command::new("xdg-open").arg(&auth_url).spawn(); }
+    {
+        let _ = std::process::Command::new("xdg-open")
+            .arg(&auth_url)
+            .spawn();
+    }
 
     // Step 4: Poll /auth/status until authenticated (5 min timeout)
     println!("   Waiting for you to log in at: {}", auth_url);
@@ -2410,7 +2521,11 @@ async fn start_builtin_oauth_flow(config: &config::AppConfig) -> Option<OAuthFlo
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
         // Check auth status and get session ID
-        if let Ok(resp) = client.get(format!("{}/auth/status", proxy_url)).send().await {
+        if let Ok(resp) = client
+            .get(format!("{}/auth/status", proxy_url))
+            .send()
+            .await
+        {
             if let Ok(status) = resp.json::<serde_json::Value>().await {
                 if status["authenticated"].as_bool() == Some(true) {
                     if let Some(session_id) = status["session_id"].as_str() {
@@ -2433,10 +2548,12 @@ async fn start_builtin_oauth_flow(config: &config::AppConfig) -> Option<OAuthFlo
 
 /// Interactive chat mode (default command)
 async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Result<()> {
-    use openclaudia::hooks::{load_claude_code_hooks, merge_hooks_config, HookEngine, HookEvent, HookInput};
-    use openclaudia::providers::{get_adapter, convert_tools_to_anthropic};
-    use openclaudia::rules::RulesEngine;
     use indicatif::{ProgressBar, ProgressStyle};
+    use openclaudia::hooks::{
+        load_claude_code_hooks, merge_hooks_config, HookEngine, HookEvent, HookInput,
+    };
+    use openclaudia::providers::{convert_tools_to_anthropic, get_adapter};
+    use openclaudia::rules::RulesEngine;
     use rustyline::error::ReadlineError;
     use rustyline::DefaultEditor;
 
@@ -2454,7 +2571,10 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
     let provider = match config.active_provider() {
         Some(p) => p,
         None => {
-            eprintln!("No provider configured for target '{}'", config.proxy.target);
+            eprintln!(
+                "No provider configured for target '{}'",
+                config.proxy.target
+            );
             return Ok(());
         }
     };
@@ -2475,7 +2595,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                 eprintln!("[debug] Session ID: {}", result.session_id);
                 proxy_url = Some(result.proxy_url);
                 let proxy_session = crate::oauth::OAuthSession {
-                    id: result.session_id,  // ACTUAL session ID, not proxy URL!
+                    id: result.session_id, // ACTUAL session ID, not proxy URL!
                     credentials: crate::oauth::OAuthCredentials {
                         access_token: String::new(),
                         refresh_token: None,
@@ -2553,11 +2673,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
 
     // Clear screen and render TUI welcome screen
     let _ = tui::clear_screen();
-    let welcome = tui::WelcomeScreen::new(
-        env!("CARGO_PKG_VERSION"),
-        &config.proxy.target,
-        &model,
-    );
+    let welcome = tui::WelcomeScreen::new(env!("CARGO_PKG_VERSION"), &config.proxy.target, &model);
     if let Err(e) = welcome.render() {
         // Fallback to simple output if TUI fails
         eprintln!("TUI render failed: {}, using simple output", e);
@@ -2579,11 +2695,17 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
             // Show short-term memory status
             let recent_count = db.get_recent_sessions(10).map(|s| s.len()).unwrap_or(0);
             if recent_count > 0 {
-                println!("\x1b[90m📝 {} recent session(s) loaded from memory\x1b[0m", recent_count);
+                println!(
+                    "\x1b[90m📝 {} recent session(s) loaded from memory\x1b[0m",
+                    recent_count
+                );
             }
 
             if stateful {
-                println!("\x1b[35m🧠 Stateful mode enabled\x1b[0m - Memory: {}", db.path().display());
+                println!(
+                    "\x1b[35m🧠 Stateful mode enabled\x1b[0m - Memory: {}",
+                    db.path().display()
+                );
 
                 // Inject core memory into session at start (only in full stateful mode)
                 if let Ok(core_memory) = db.format_core_memory_for_prompt() {
@@ -2649,7 +2771,12 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                 let input = input.as_str();
 
                 // Handle slash commands
-                if let Some(result) = handle_slash_command(input, &mut chat_session.messages, &config.proxy.target, &model) {
+                if let Some(result) = handle_slash_command(
+                    input,
+                    &mut chat_session.messages,
+                    &config.proxy.target,
+                    &model,
+                ) {
                     match result {
                         SlashCommandResult::Exit => {
                             // Save session to short-term memory before exiting
@@ -2666,7 +2793,10 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                             // Load the requested session
                             if let Some(loaded) = load_chat_session(&session_id) {
                                 chat_session = loaded;
-                                println!("Loaded {} messages from previous session.\n", chat_session.messages.len());
+                                println!(
+                                    "Loaded {} messages from previous session.\n",
+                                    chat_session.messages.len()
+                                );
                             }
                             continue;
                         }
@@ -2707,7 +2837,10 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                         }
                         SlashCommandResult::Undo => {
                             if chat_session.undo() {
-                                println!("\nUndone last exchange. {} messages remaining.\n", chat_session.messages.len());
+                                println!(
+                                    "\nUndone last exchange. {} messages remaining.\n",
+                                    chat_session.messages.len()
+                                );
                                 if let Err(e) = save_chat_session(&chat_session) {
                                     tracing::warn!("Failed to save session: {}", e);
                                 }
@@ -2718,7 +2851,10 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                         }
                         SlashCommandResult::Redo => {
                             if chat_session.redo() {
-                                println!("\nRedone last exchange. {} messages now.\n", chat_session.messages.len());
+                                println!(
+                                    "\nRedone last exchange. {} messages now.\n",
+                                    chat_session.messages.len()
+                                );
                                 if let Err(e) = save_chat_session(&chat_session) {
                                     tracing::warn!("Failed to save session: {}", e);
                                 }
@@ -2736,7 +2872,8 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                             // Display session status
                             let tokens = estimate_session_tokens(&chat_session);
                             let msg_count = chat_session.messages.len();
-                            let duration = chrono::Utc::now().signed_duration_since(chat_session.created_at);
+                            let duration =
+                                chrono::Utc::now().signed_duration_since(chat_session.created_at);
                             let mins = duration.num_minutes();
 
                             println!("\n=== Session Status ===");
@@ -2744,19 +2881,28 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                             println!("  Title:      {}", chat_session.title);
                             println!("  Provider:   {}", chat_session.provider);
                             println!("  Model:      {}", chat_session.model);
-                            println!("  Mode:       {} ({})", chat_session.mode.display(), chat_session.mode.description());
+                            println!(
+                                "  Mode:       {} ({})",
+                                chat_session.mode.display(),
+                                chat_session.mode.description()
+                            );
                             println!("  Messages:   {}", msg_count);
                             println!("  Est tokens: ~{}", tokens);
                             println!("  Duration:   {} min", mins);
-                            println!("  Created:    {}", chat_session.created_at.format("%Y-%m-%d %H:%M UTC"));
+                            println!(
+                                "  Created:    {}",
+                                chat_session.created_at.format("%Y-%m-%d %H:%M UTC")
+                            );
                             println!();
                             continue;
                         }
                         SlashCommandResult::ToggleMode => {
                             chat_session.mode = chat_session.mode.toggle();
-                            println!("\nSwitched to {} mode: {}\n",
+                            println!(
+                                "\nSwitched to {} mode: {}\n",
                                 chat_session.mode.display(),
-                                chat_session.mode.description());
+                                chat_session.mode.description()
+                            );
                             continue;
                         }
                         SlashCommandResult::Keybindings => {
@@ -2833,12 +2979,16 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                     chat_session.clear_undo_stack();
 
                     // Run UserPromptSubmit hooks
-                    let hook_input = HookInput::new(HookEvent::UserPromptSubmit)
-                        .with_prompt(&expanded_input);
-                    let hook_result = hook_engine.run(HookEvent::UserPromptSubmit, &hook_input).await;
+                    let hook_input =
+                        HookInput::new(HookEvent::UserPromptSubmit).with_prompt(&expanded_input);
+                    let hook_result = hook_engine
+                        .run(HookEvent::UserPromptSubmit, &hook_input)
+                        .await;
 
                     if !hook_result.allowed {
-                        let reason = hook_result.outputs.first()
+                        let reason = hook_result
+                            .outputs
+                            .first()
                             .and_then(|o| o.reason.clone())
                             .unwrap_or_else(|| "Request blocked by hook".to_string());
                         eprintln!("\nBlocked: {}\n", reason);
@@ -2850,19 +3000,25 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                     // Inject hook context into messages if any
                     for output in &hook_result.outputs {
                         if let Some(sys_msg) = &output.system_message {
-                            chat_session.messages.insert(0, serde_json::json!({
-                                "role": "system",
-                                "content": sys_msg
-                            }));
+                            chat_session.messages.insert(
+                                0,
+                                serde_json::json!({
+                                    "role": "system",
+                                    "content": sys_msg
+                                }),
+                            );
                         }
                     }
                 }
 
                 // Extract file extensions from messages and inject rules
-                let extensions: Vec<String> = chat_session.messages.iter()
+                let extensions: Vec<String> = chat_session
+                    .messages
+                    .iter()
                     .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
                     .flat_map(|text| {
-                        ext_regex.captures_iter(text)
+                        ext_regex
+                            .captures_iter(text)
                             .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_lowercase()))
                             .collect::<Vec<_>>()
                     })
@@ -2873,24 +3029,32 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                 // Inject rules if we found file extensions
                 if !extensions.is_empty() {
                     let rules_content = rules_engine.get_combined_rules(
-                        &extensions.iter().map(|s| s.as_str()).collect::<Vec<_>>()
+                        &extensions.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
                     );
-                    if !rules_content.is_empty() && !chat_session.messages.iter().any(|m| {
-                        m.get("content").and_then(|c| c.as_str())
-                            .map(|s| s.contains("## Rules"))
-                            .unwrap_or(false)
-                    }) {
+                    if !rules_content.is_empty()
+                        && !chat_session.messages.iter().any(|m| {
+                            m.get("content")
+                                .and_then(|c| c.as_str())
+                                .map(|s| s.contains("## Rules"))
+                                .unwrap_or(false)
+                        })
+                    {
                         // Add rules as system message at the start
-                        chat_session.messages.insert(0, serde_json::json!({
-                            "role": "system",
-                            "content": rules_content
-                        }));
+                        chat_session.messages.insert(
+                            0,
+                            serde_json::json!({
+                                "role": "system",
+                                "content": rules_content
+                            }),
+                        );
                     }
                 }
 
                 // Build and inject Claudia's core system prompt
                 // Collect any hook instructions that were injected as system messages
-                let hook_instructions: Option<String> = chat_session.messages.iter()
+                let hook_instructions: Option<String> = chat_session
+                    .messages
+                    .iter()
                     .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
                     .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
                     .filter(|c| !c.contains("You are Claudia")) // Don't include our own prompt
@@ -2905,18 +3069,23 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
 
                 // Insert core system prompt at position 0 (becomes first message)
                 if !chat_session.messages.iter().any(|m| {
-                    m.get("content").and_then(|c| c.as_str())
+                    m.get("content")
+                        .and_then(|c| c.as_str())
                         .map(|s| s.contains("You are Claudia"))
                         .unwrap_or(false)
                 }) {
-                    chat_session.messages.insert(0, serde_json::json!({
-                        "role": "system",
-                        "content": system_prompt
-                    }));
+                    chat_session.messages.insert(
+                        0,
+                        serde_json::json!({
+                            "role": "system",
+                            "content": system_prompt
+                        }),
+                    );
                 }
 
                 // Check if we're using our built-in proxy mode (must check before building request)
-                let using_proxy = oauth_session.as_ref()
+                let using_proxy = oauth_session
+                    .as_ref()
                     .map(|s| s.auth_mode == crate::oauth::AuthMode::ProxyMode)
                     .unwrap_or(false);
 
@@ -2924,13 +3093,17 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                 // This matches exactly what the working curl command sends
                 let request_body = if using_proxy {
                     // Extract system message to top-level (Claude API requirement)
-                    let system_msg = chat_session.messages.iter()
+                    let system_msg = chat_session
+                        .messages
+                        .iter()
                         .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
                         .and_then(|m| m.get("content").and_then(|c| c.as_str()))
                         .map(String::from);
 
                     // Filter out system messages from the array
-                    let user_messages: Vec<_> = chat_session.messages.iter()
+                    let user_messages: Vec<_> = chat_session
+                        .messages
+                        .iter()
                         .filter(|m| m.get("role").and_then(|r| r.as_str()) != Some("system"))
                         .cloned()
                         .collect();
@@ -2952,7 +3125,9 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                 } else if config.proxy.target == "anthropic" {
                     // Anthropic direct API mode - need proper Anthropic format
                     // Extract system message to top-level (Anthropic API requirement)
-                    let system_msg = chat_session.messages.iter()
+                    let system_msg = chat_session
+                        .messages
+                        .iter()
                         .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
                         .and_then(|m| m.get("content").and_then(|c| c.as_str()))
                         .map(String::from);
@@ -2982,9 +3157,8 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
 
                     // Get tools in OpenAI format and convert to Anthropic format
                     let openai_tools = tools::get_all_tool_definitions(stateful);
-                    let anthropic_tools = convert_tools_to_anthropic(
-                        openai_tools.as_array().unwrap_or(&vec![])
-                    );
+                    let anthropic_tools =
+                        convert_tools_to_anthropic(openai_tools.as_array().unwrap_or(&vec![]));
 
                     let mut req = serde_json::json!({
                         "model": model,
@@ -3032,14 +3206,22 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                 let headers: Vec<(String, String)> = if using_proxy {
                     // Proxy mode: send Cookie header with session ID so proxy uses stored OAuth
                     if let Some(ref session) = oauth_session {
-                        eprintln!("[debug] Proxy mode - sending Cookie: anthropic_session={}", session.id);
+                        eprintln!(
+                            "[debug] Proxy mode - sending Cookie: anthropic_session={}",
+                            session.id
+                        );
                         vec![
                             ("anthropic-version".to_string(), "2023-06-01".to_string()),
                             ("content-type".to_string(), "application/json".to_string()),
-                            ("Cookie".to_string(), format!("anthropic_session={}", session.id)),
+                            (
+                                "Cookie".to_string(),
+                                format!("anthropic_session={}", session.id),
+                            ),
                         ]
                     } else {
-                        eprintln!("[debug] Proxy mode - no session, proxy will use any stored session");
+                        eprintln!(
+                            "[debug] Proxy mode - no session, proxy will use any stored session"
+                        );
                         vec![
                             ("anthropic-version".to_string(), "2023-06-01".to_string()),
                             ("content-type".to_string(), "application/json".to_string()),
@@ -3054,7 +3236,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                 spinner.set_style(
                     ProgressStyle::default_spinner()
                         .template("{spinner:.cyan} {msg}")
-                        .expect("Invalid spinner template")
+                        .expect("Invalid spinner template"),
                 );
                 spinner.set_message("Connecting...");
                 spinner.enable_steady_tick(std::time::Duration::from_millis(80));
@@ -3085,13 +3267,18 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
 
                             while let Some(chunk_result) = stream.next().await {
                                 // Check for configured keybindings during streaming
-                                if event::poll(std::time::Duration::from_millis(1)).unwrap_or(false) {
+                                if event::poll(std::time::Duration::from_millis(1)).unwrap_or(false)
+                                {
                                     if let Ok(Event::Key(key_event)) = event::read() {
                                         if key_event.kind == KeyEventKind::Press {
                                             // Convert key event to binding string and look up action
-                                            if let Some(key_str) = key_event_to_string(&key_event, false) {
+                                            if let Some(key_str) =
+                                                key_event_to_string(&key_event, false)
+                                            {
                                                 if config.keybindings.is_bound(&key_str) {
-                                                    let action = config.keybindings.get_action_or_default(&key_str);
+                                                    let action = config
+                                                        .keybindings
+                                                        .get_action_or_default(&key_str);
                                                     // Cancel immediately stops streaming
                                                     if action == config::KeyAction::Cancel {
                                                         cancelled = true;
@@ -3100,7 +3287,9 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                         break;
                                                     }
                                                     // Other actions queued for after streaming completes
-                                                    if let Some(result) = execute_key_action(&action) {
+                                                    if let Some(result) =
+                                                        execute_key_action(&action)
+                                                    {
                                                         pending_action = Some(result);
                                                     }
                                                 }
@@ -3132,9 +3321,13 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                 }
 
                                                 // Parse JSON
-                                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                                                if let Ok(json) =
+                                                    serde_json::from_str::<serde_json::Value>(data)
+                                                {
                                                     // Anthropic format: content_block_delta with delta.text
-                                                    if json.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
+                                                    if json.get("type").and_then(|t| t.as_str())
+                                                        == Some("content_block_delta")
+                                                    {
                                                         if let Some(text) = json
                                                             .get("delta")
                                                             .and_then(|d| d.get("text"))
@@ -3152,7 +3345,10 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                         .and_then(|c| c.get("delta"))
                                                     {
                                                         // Handle text content
-                                                        if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
+                                                        if let Some(content) = delta
+                                                            .get("content")
+                                                            .and_then(|c| c.as_str())
+                                                        {
                                                             print!("{}", content);
                                                             std::io::stdout().flush().ok();
                                                             full_content.push_str(content);
@@ -3193,16 +3389,19 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                 let tool_calls = tool_accumulator.finalize();
 
                                 // Add assistant message with tool calls
-                                let tool_calls_json: Vec<serde_json::Value> = tool_calls.iter().map(|tc| {
-                                    serde_json::json!({
-                                        "id": tc.id,
-                                        "type": tc.call_type,
-                                        "function": {
-                                            "name": tc.function.name,
-                                            "arguments": tc.function.arguments
-                                        }
+                                let tool_calls_json: Vec<serde_json::Value> = tool_calls
+                                    .iter()
+                                    .map(|tc| {
+                                        serde_json::json!({
+                                            "id": tc.id,
+                                            "type": tc.call_type,
+                                            "function": {
+                                                "name": tc.function.name,
+                                                "arguments": tc.function.arguments
+                                            }
+                                        })
                                     })
-                                }).collect();
+                                    .collect();
 
                                 chat_session.messages.push(serde_json::json!({
                                     "role": "assistant",
@@ -3212,7 +3411,10 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
 
                                 // Execute each tool and collect results
                                 for tool_call in &tool_calls {
-                                    println!("\n\x1b[36m⚡ Running {}...\x1b[0m", tool_call.function.name);
+                                    println!(
+                                        "\n\x1b[36m⚡ Running {}...\x1b[0m",
+                                        tool_call.function.name
+                                    );
 
                                     // Use appropriate tool executor based on stateful mode
                                     let result = if let Some(ref db) = memory_db {
@@ -3230,20 +3432,38 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                             "bash" => "bash_command",
                                             "chainlink" => {
                                                 // Parse chainlink subcommand
-                                                if let Ok(args) = serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments) {
-                                                    if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
-                                                        if cmd.starts_with("create") { "issue_created" }
-                                                        else if cmd.starts_with("close") { "issue_closed" }
-                                                        else if cmd.starts_with("comment") { "issue_comment" }
-                                                        else { "chainlink" }
-                                                    } else { "chainlink" }
-                                                } else { "chainlink" }
+                                                if let Ok(args) =
+                                                    serde_json::from_str::<serde_json::Value>(
+                                                        &tool_call.function.arguments,
+                                                    )
+                                                {
+                                                    if let Some(cmd) =
+                                                        args.get("command").and_then(|v| v.as_str())
+                                                    {
+                                                        if cmd.starts_with("create") {
+                                                            "issue_created"
+                                                        } else if cmd.starts_with("close") {
+                                                            "issue_closed"
+                                                        } else if cmd.starts_with("comment") {
+                                                            "issue_comment"
+                                                        } else {
+                                                            "chainlink"
+                                                        }
+                                                    } else {
+                                                        "chainlink"
+                                                    }
+                                                } else {
+                                                    "chainlink"
+                                                }
                                             }
                                             other => other,
                                         };
 
                                         // Extract target from args
-                                        let target = if let Ok(args) = serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments) {
+                                        let target = if let Ok(args) =
+                                            serde_json::from_str::<serde_json::Value>(
+                                                &tool_call.function.arguments,
+                                            ) {
                                             args.get("path")
                                                 .or_else(|| args.get("file_path"))
                                                 .or_else(|| args.get("command"))
@@ -3263,11 +3483,23 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                     }
 
                                     // Show result preview
-                                    let preview: String = result.content.lines().take(5).collect::<Vec<_>>().join("\n");
+                                    let preview: String = result
+                                        .content
+                                        .lines()
+                                        .take(5)
+                                        .collect::<Vec<_>>()
+                                        .join("\n");
                                     if result.is_error {
                                         println!("\x1b[31m✗ Error:\x1b[0m {}", preview);
                                     } else {
-                                        println!("\x1b[32m✓\x1b[0m {}", if preview.len() > 200 { format!("{}...", &preview[..200]) } else { preview });
+                                        println!(
+                                            "\x1b[32m✓\x1b[0m {}",
+                                            if preview.len() > 200 {
+                                                format!("{}...", &preview[..200])
+                                            } else {
+                                                preview
+                                            }
+                                        );
                                     }
 
                                     // Add tool result to messages
@@ -3288,13 +3520,21 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                 // Use minimal format for proxy, native for direct OAuth
                                 let request_body = if using_proxy {
                                     // Extract system message to top-level
-                                    let system_msg = chat_session.messages.iter()
-                                        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+                                    let system_msg = chat_session
+                                        .messages
+                                        .iter()
+                                        .find(|m| {
+                                            m.get("role").and_then(|r| r.as_str()) == Some("system")
+                                        })
                                         .and_then(|m| m.get("content").and_then(|c| c.as_str()))
                                         .map(String::from);
 
-                                    let user_messages: Vec<_> = chat_session.messages.iter()
-                                        .filter(|m| m.get("role").and_then(|r| r.as_str()) != Some("system"))
+                                    let user_messages: Vec<_> = chat_session
+                                        .messages
+                                        .iter()
+                                        .filter(|m| {
+                                            m.get("role").and_then(|r| r.as_str()) != Some("system")
+                                        })
                                         .cloned()
                                         .collect();
 
@@ -3338,21 +3578,31 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                 buffer.push_str(&String::from_utf8_lossy(&chunk));
 
                                                 while let Some(line_end) = buffer.find('\n') {
-                                                    let line = buffer[..line_end].trim().to_string();
+                                                    let line =
+                                                        buffer[..line_end].trim().to_string();
                                                     buffer = buffer[line_end + 1..].to_string();
 
                                                     if line.is_empty() || line.starts_with(':') {
                                                         continue;
                                                     }
 
-                                                    if let Some(data) = line.strip_prefix("data: ") {
+                                                    if let Some(data) = line.strip_prefix("data: ")
+                                                    {
                                                         if data == "[DONE]" {
                                                             break;
                                                         }
 
-                                                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                                                        if let Ok(json) = serde_json::from_str::<
+                                                            serde_json::Value,
+                                                        >(
+                                                            data
+                                                        ) {
                                                             // Anthropic format: content_block_delta
-                                                            if json.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
+                                                            if json
+                                                                .get("type")
+                                                                .and_then(|t| t.as_str())
+                                                                == Some("content_block_delta")
+                                                            {
                                                                 if let Some(text) = json
                                                                     .get("delta")
                                                                     .and_then(|d| d.get("text"))
@@ -3370,13 +3620,18 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                                 .and_then(|c| c.get("delta"))
                                                             {
                                                                 // Handle text content
-                                                                if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
+                                                                if let Some(content) = delta
+                                                                    .get("content")
+                                                                    .and_then(|c| c.as_str())
+                                                                {
                                                                     print!("{}", content);
                                                                     std::io::stdout().flush().ok();
-                                                                    current_content.push_str(content);
+                                                                    current_content
+                                                                        .push_str(content);
                                                                 }
                                                                 // Accumulate tool calls for next iteration
-                                                                tool_accumulator.process_delta(delta);
+                                                                tool_accumulator
+                                                                    .process_delta(delta);
                                                             }
                                                         }
                                                     }
@@ -3406,7 +3661,9 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                 if let Err(e) = save_chat_session(&chat_session) {
                                     tracing::warn!("Failed to save session: {}", e);
                                 }
-                            } else if current_content.is_empty() && !tool_accumulator.has_tool_calls() {
+                            } else if current_content.is_empty()
+                                && !tool_accumulator.has_tool_calls()
+                            {
                                 // No content and no tool calls - remove the failed user message
                                 chat_session.messages.pop();
                             }
@@ -3424,18 +3681,23 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                     }
                                     SlashCommandResult::ToggleMode => {
                                         chat_session.mode = chat_session.mode.toggle();
-                                        println!("\nSwitched to {} mode: {}\n",
+                                        println!(
+                                            "\nSwitched to {} mode: {}\n",
                                             chat_session.mode.display(),
-                                            chat_session.mode.description());
+                                            chat_session.mode.description()
+                                        );
                                     }
                                     SlashCommandResult::Status => {
                                         let tokens = estimate_session_tokens(&chat_session);
-                                        let duration = chrono::Utc::now().signed_duration_since(chat_session.created_at);
-                                        println!("\n[{}] {} | ~{} tokens | {} min\n",
+                                        let duration = chrono::Utc::now()
+                                            .signed_duration_since(chat_session.created_at);
+                                        println!(
+                                            "\n[{}] {} | ~{} tokens | {} min\n",
                                             chat_session.mode.display(),
                                             chat_session.model,
                                             tokens,
-                                            duration.num_minutes());
+                                            duration.num_minutes()
+                                        );
                                     }
                                     SlashCommandResult::Export => {
                                         export_chat_session(&chat_session);
@@ -3529,7 +3791,10 @@ async fn cmd_start(
                     "No API key configured for '{}'. OAuth authentication is available.",
                     config.proxy.target
                 );
-                info!("Visit http://localhost:{}/auth/device to authenticate with Claude Max", config.proxy.port);
+                info!(
+                    "Visit http://localhost:{}/auth/device to authenticate with Claude Max",
+                    config.proxy.port
+                );
             } else {
                 error!(
                     "No API key configured for provider '{}'. Set {} environment variable.",

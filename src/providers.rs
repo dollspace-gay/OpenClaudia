@@ -232,7 +232,10 @@ impl ProviderAdapter for AnthropicAdapter {
                 "type": "enabled",
                 "budget_tokens": budget
             });
-            debug!("Added Anthropic thinking params: enabled=true, budget={}", budget);
+            debug!(
+                "Added Anthropic thinking params: enabled=true, budget={}",
+                budget
+            );
         }
 
         Ok(body)
@@ -682,7 +685,10 @@ impl ProviderAdapter for ZaiAdapter {
                 body["clear_thinking"] = json!(false);
             }
 
-            debug!("Added GLM thinking params: enabled=true, preserve={}", thinking.preserve_across_turns);
+            debug!(
+                "Added GLM thinking params: enabled=true, preserve={}",
+                thinking.preserve_across_turns
+            );
         } else {
             body["thinking"] = json!({
                 "type": "disabled"
@@ -974,7 +980,10 @@ impl ProviderAdapter for OllamaAdapter {
         }
 
         // Determine finish reason
-        let done = response.get("done").and_then(|d| d.as_bool()).unwrap_or(true);
+        let done = response
+            .get("done")
+            .and_then(|d| d.as_bool())
+            .unwrap_or(true);
         let finish_reason = if !done {
             "length"
         } else if openai_message.get("tool_calls").is_some() {
@@ -984,8 +993,14 @@ impl ProviderAdapter for OllamaAdapter {
         };
 
         // Extract token counts if available
-        let prompt_tokens = response.get("prompt_eval_count").and_then(|c| c.as_u64()).unwrap_or(0);
-        let completion_tokens = response.get("eval_count").and_then(|c| c.as_u64()).unwrap_or(0);
+        let prompt_tokens = response
+            .get("prompt_eval_count")
+            .and_then(|c| c.as_u64())
+            .unwrap_or(0);
+        let completion_tokens = response
+            .get("eval_count")
+            .and_then(|c| c.as_u64())
+            .unwrap_or(0);
 
         Ok(json!({
             "id": format!("ollama-{}", uuid::Uuid::new_v4()),
@@ -1227,7 +1242,10 @@ mod tests {
         let result = adapter.transform_response(response, false).unwrap();
         assert_eq!(result["object"], "chat.completion");
         assert_eq!(result["model"], "llama3");
-        assert_eq!(result["choices"][0]["message"]["content"], "Hello from Ollama!");
+        assert_eq!(
+            result["choices"][0]["message"]["content"],
+            "Hello from Ollama!"
+        );
         assert_eq!(result["choices"][0]["finish_reason"], "stop");
         assert_eq!(result["usage"]["prompt_tokens"], 10);
         assert_eq!(result["usage"]["completion_tokens"], 5);

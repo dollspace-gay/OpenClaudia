@@ -215,22 +215,14 @@ mod tests {
 
     #[test]
     fn test_build_prompt_with_hook_instructions() {
-        let prompt = build_system_prompt(
-            Some("Always run tests before committing"),
-            None,
-            None,
-        );
+        let prompt = build_system_prompt(Some("Always run tests before committing"), None, None);
         assert!(prompt.contains("Active Instructions"));
         assert!(prompt.contains("Always run tests"));
     }
 
     #[test]
     fn test_build_prompt_with_custom_instructions() {
-        let prompt = build_system_prompt(
-            None,
-            Some("Use TypeScript for all new files"),
-            None,
-        );
+        let prompt = build_system_prompt(None, Some("Use TypeScript for all new files"), None);
         assert!(prompt.contains("Custom Instructions"));
         assert!(prompt.contains("TypeScript"));
     }

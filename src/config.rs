@@ -366,4 +366,403 @@ mod tests {
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.target, "anthropic");
     }
+
+    // ========================================================================
+    // ProxyConfig Tests
+    // ========================================================================
+
+    #[test]
+    fn test_proxy_config_default_values() {
+        let config = ProxyConfig::default();
+        assert_eq!(config.port, default_port());
+        assert_eq!(config.host, default_host());
+        assert_eq!(config.target, default_target());
+    }
+
+    // ========================================================================
+    // ThinkingConfig Tests
+    // ========================================================================
+
+    #[test]
+    fn test_thinking_config_default() {
+        // Note: #[derive(Default)] uses bool::default() = false
+        // The serde default only applies during deserialization
+        let config = ThinkingConfig::default();
+        assert!(!config.enabled); // derive(Default) uses bool default = false
+        assert!(config.budget_tokens.is_none());
+        assert!(!config.preserve_across_turns);
+        assert!(config.reasoning_effort.is_none());
+    }
+
+    #[test]
+    fn test_thinking_config_serde_default() {
+        // When deserializing, the serde default function is used
+        let config: ThinkingConfig = serde_json::from_str("{}").unwrap();
+        assert!(config.enabled); // serde uses default_thinking_enabled() = true
+        assert!(config.budget_tokens.is_none());
+    }
+
+    #[test]
+    fn test_thinking_config_with_budget() {
+        let json = r#"{
+            "enabled": true,
+            "budget_tokens": 10000,
+            "preserve_across_turns": true,
+            "reasoning_effort": "high"
+        }"#;
+
+        let config: ThinkingConfig = serde_json::from_str(json).unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.budget_tokens, Some(10000));
+        assert!(config.preserve_across_turns);
+        assert_eq!(config.reasoning_effort, Some("high".to_string()));
+    }
+
+    // ========================================================================
+    // SessionConfig Tests
+    // ========================================================================
+
+    #[test]
+    fn test_session_config_default() {
+        let config = SessionConfig::default();
+        assert_eq!(config.timeout_minutes, 30);
+        assert_eq!(config.persist_path, PathBuf::from(".openclaudia/session"));
+    }
+
+    #[test]
+    fn test_session_config_from_json() {
+        let json = r#"{
+            "timeout_minutes": 60,
+            "persist_path": "/custom/path"
+        }"#;
+
+        let config: SessionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.timeout_minutes, 60);
+        assert_eq!(config.persist_path, PathBuf::from("/custom/path"));
+    }
+
+    // ========================================================================
+    // KeyAction Tests
+    // ========================================================================
+
+    #[test]
+    fn test_key_action_serialization() {
+        let action = KeyAction::NewSession;
+        let json = serde_json::to_string(&action).unwrap();
+        assert_eq!(json, "\"new_session\"");
+
+        let action2: KeyAction = serde_json::from_str("\"toggle_mode\"").unwrap();
+        assert_eq!(action2, KeyAction::ToggleMode);
+    }
+
+    #[test]
+    fn test_key_action_all_variants() {
+        // Ensure all variants can be serialized/deserialized
+        let actions = vec![
+            ("\"new_session\"", KeyAction::NewSession),
+            ("\"list_sessions\"", KeyAction::ListSessions),
+            ("\"export\"", KeyAction::Export),
+            ("\"copy_response\"", KeyAction::CopyResponse),
+            ("\"editor\"", KeyAction::Editor),
+            ("\"models\"", KeyAction::Models),
+            ("\"toggle_mode\"", KeyAction::ToggleMode),
+            ("\"cancel\"", KeyAction::Cancel),
+            ("\"status\"", KeyAction::Status),
+            ("\"help\"", KeyAction::Help),
+            ("\"clear\"", KeyAction::Clear),
+            ("\"exit\"", KeyAction::Exit),
+            ("\"undo\"", KeyAction::Undo),
+            ("\"redo\"", KeyAction::Redo),
+            ("\"compact\"", KeyAction::Compact),
+            ("\"none\"", KeyAction::None),
+        ];
+
+        for (json, expected) in actions {
+            let parsed: KeyAction = serde_json::from_str(json).unwrap();
+            assert_eq!(parsed, expected);
+        }
+    }
+
+    // ========================================================================
+    // KeybindingsConfig Tests
+    // ========================================================================
+
+    #[test]
+    fn test_keybindings_config_default() {
+        let config = KeybindingsConfig::default();
+
+        // Verify default bindings exist
+        assert_eq!(
+            config.bindings.get("ctrl-x n"),
+            Some(&KeyAction::NewSession)
+        );
+        assert_eq!(
+            config.bindings.get("ctrl-x l"),
+            Some(&KeyAction::ListSessions)
+        );
+        assert_eq!(config.bindings.get("ctrl-x x"), Some(&KeyAction::Export));
+        assert_eq!(config.bindings.get("f2"), Some(&KeyAction::Models));
+        assert_eq!(config.bindings.get("tab"), Some(&KeyAction::ToggleMode));
+        assert_eq!(config.bindings.get("escape"), Some(&KeyAction::Cancel));
+    }
+
+    #[test]
+    fn test_keybindings_get_action() {
+        let config = KeybindingsConfig::default();
+
+        // Case-insensitive lookup
+        assert_eq!(config.get_action("ctrl-x n"), Some(&KeyAction::NewSession));
+        assert_eq!(config.get_action("CTRL-X N"), Some(&KeyAction::NewSession));
+
+        // Unknown key returns None
+        assert_eq!(config.get_action("unknown-key"), None);
+    }
+
+    #[test]
+    fn test_keybindings_is_bound() {
+        let mut config = KeybindingsConfig::default();
+
+        // Regular binding is bound
+        assert!(config.is_bound("ctrl-x n"));
+
+        // Unknown key is not bound
+        assert!(!config.is_bound("unknown-key"));
+
+        // Explicitly disabled key (set to None) is not bound
+        config
+            .bindings
+            .insert("disabled-key".to_string(), KeyAction::None);
+        assert!(!config.is_bound("disabled-key"));
+    }
+
+    #[test]
+    fn test_keybindings_get_keys_for_action() {
+        let config = KeybindingsConfig::default();
+
+        // Models has two bindings in default config
+        let model_keys = config.get_keys_for_action(&KeyAction::Models);
+        assert!(model_keys.contains(&&"ctrl-x m".to_string()));
+        assert!(model_keys.contains(&&"f2".to_string()));
+    }
+
+    #[test]
+    fn test_keybindings_get_action_or_default() {
+        let config = KeybindingsConfig::default();
+
+        // Known key returns its action
+        assert_eq!(
+            config.get_action_or_default("ctrl-x n"),
+            KeyAction::NewSession
+        );
+
+        // Unknown key returns None action
+        assert_eq!(config.get_action_or_default("unknown"), KeyAction::None);
+    }
+
+    // ========================================================================
+    // HooksConfig Tests
+    // ========================================================================
+
+    #[test]
+    fn test_hooks_config_default() {
+        let config = HooksConfig::default();
+        assert!(config.session_start.is_empty());
+        assert!(config.session_end.is_empty());
+        assert!(config.pre_tool_use.is_empty());
+        assert!(config.post_tool_use.is_empty());
+        assert!(config.user_prompt_submit.is_empty());
+        assert!(config.stop.is_empty());
+    }
+
+    #[test]
+    fn test_hook_entry_with_matcher() {
+        let json = r#"{
+            "matcher": "Write|Edit",
+            "hooks": []
+        }"#;
+
+        let entry: HookEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.matcher, Some("Write|Edit".to_string()));
+    }
+
+    #[test]
+    fn test_hook_command_type() {
+        let json = r#"{
+            "type": "command",
+            "command": "echo test",
+            "timeout": 30
+        }"#;
+
+        let hook: Hook = serde_json::from_str(json).unwrap();
+        match hook {
+            Hook::Command { command, timeout } => {
+                assert_eq!(command, "echo test");
+                assert_eq!(timeout, 30);
+            }
+            _ => panic!("Expected Command hook"),
+        }
+    }
+
+    #[test]
+    fn test_hook_prompt_type() {
+        let json = r#"{
+            "type": "prompt",
+            "prompt": "Always be helpful",
+            "timeout": 10
+        }"#;
+
+        let hook: Hook = serde_json::from_str(json).unwrap();
+        match hook {
+            Hook::Prompt { prompt, timeout } => {
+                assert_eq!(prompt, "Always be helpful");
+                assert_eq!(timeout, 10);
+            }
+            _ => panic!("Expected Prompt hook"),
+        }
+    }
+
+    #[test]
+    fn test_hook_default_timeouts() {
+        // Command hook default timeout
+        let cmd_json = r#"{"type": "command", "command": "test"}"#;
+        let cmd_hook: Hook = serde_json::from_str(cmd_json).unwrap();
+        match cmd_hook {
+            Hook::Command { timeout, .. } => assert_eq!(timeout, 60), // default
+            _ => panic!("Expected Command"),
+        }
+
+        // Prompt hook default timeout
+        let prompt_json = r#"{"type": "prompt", "prompt": "test"}"#;
+        let prompt_hook: Hook = serde_json::from_str(prompt_json).unwrap();
+        match prompt_hook {
+            Hook::Prompt { timeout, .. } => assert_eq!(timeout, 30), // default
+            _ => panic!("Expected Prompt"),
+        }
+    }
+
+    // ========================================================================
+    // ProviderConfig Tests
+    // ========================================================================
+
+    #[test]
+    fn test_provider_config_minimal() {
+        let json = r#"{
+            "base_url": "https://api.example.com"
+        }"#;
+
+        let config: ProviderConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.base_url, "https://api.example.com");
+        assert!(config.api_key.is_none());
+        assert!(config.model.is_none());
+        assert!(config.headers.is_empty());
+    }
+
+    #[test]
+    fn test_provider_config_full() {
+        let json = r#"{
+            "base_url": "https://api.example.com",
+            "api_key": "sk-test123",
+            "model": "gpt-4",
+            "headers": {"X-Custom": "value"},
+            "thinking": {
+                "enabled": true,
+                "budget_tokens": 5000
+            }
+        }"#;
+
+        let config: ProviderConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.base_url, "https://api.example.com");
+        assert_eq!(config.api_key, Some("sk-test123".to_string()));
+        assert_eq!(config.model, Some("gpt-4".to_string()));
+        assert_eq!(config.headers.get("X-Custom"), Some(&"value".to_string()));
+        assert!(config.thinking.enabled);
+        assert_eq!(config.thinking.budget_tokens, Some(5000));
+    }
+
+    // ========================================================================
+    // AppConfig Tests
+    // ========================================================================
+
+    #[test]
+    fn test_app_config_active_provider() {
+        let mut providers = HashMap::new();
+        providers.insert(
+            "anthropic".to_string(),
+            ProviderConfig {
+                api_key: Some("key".to_string()),
+                base_url: "https://api.anthropic.com".to_string(),
+                model: None,
+                headers: HashMap::new(),
+                thinking: ThinkingConfig::default(),
+            },
+        );
+
+        let config = AppConfig {
+            proxy: ProxyConfig {
+                target: "anthropic".to_string(),
+                ..Default::default()
+            },
+            providers,
+            hooks: HooksConfig::default(),
+            session: SessionConfig::default(),
+            keybindings: KeybindingsConfig::default(),
+        };
+
+        let active = config.active_provider();
+        assert!(active.is_some());
+        assert_eq!(active.unwrap().api_key, Some("key".to_string()));
+    }
+
+    #[test]
+    fn test_app_config_get_provider() {
+        let mut providers = HashMap::new();
+        providers.insert(
+            "openai".to_string(),
+            ProviderConfig {
+                api_key: Some("openai-key".to_string()),
+                base_url: "https://api.openai.com".to_string(),
+                model: None,
+                headers: HashMap::new(),
+                thinking: ThinkingConfig::default(),
+            },
+        );
+        providers.insert(
+            "anthropic".to_string(),
+            ProviderConfig {
+                api_key: Some("anthropic-key".to_string()),
+                base_url: "https://api.anthropic.com".to_string(),
+                model: None,
+                headers: HashMap::new(),
+                thinking: ThinkingConfig::default(),
+            },
+        );
+
+        let config = AppConfig {
+            proxy: ProxyConfig::default(),
+            providers,
+            hooks: HooksConfig::default(),
+            session: SessionConfig::default(),
+            keybindings: KeybindingsConfig::default(),
+        };
+
+        assert!(config.get_provider("openai").is_some());
+        assert!(config.get_provider("anthropic").is_some());
+        assert!(config.get_provider("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_app_config_active_provider_not_found() {
+        let config = AppConfig {
+            proxy: ProxyConfig {
+                target: "nonexistent".to_string(),
+                ..Default::default()
+            },
+            providers: HashMap::new(),
+            hooks: HooksConfig::default(),
+            session: SessionConfig::default(),
+            keybindings: KeybindingsConfig::default(),
+        };
+
+        assert!(config.active_provider().is_none());
+    }
 }

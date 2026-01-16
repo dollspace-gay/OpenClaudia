@@ -94,7 +94,10 @@ impl WelcomeScreen {
 
         // Create the main block with title
         let title = Line::from(vec![
-            Span::styled("OpenClaudia", Style::default().fg(PURPLE).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "OpenClaudia",
+                Style::default().fg(PURPLE).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(format!(" v{}", self.version), Style::default().fg(GOLD)),
         ]);
 
@@ -138,7 +141,10 @@ impl WelcomeScreen {
         // Right column content
         let right_text = vec![
             Line::from(Span::styled("Tips", Style::default().fg(GOLD))),
-            Line::from(Span::styled(get_tips()[0], Style::default().fg(Color::White))),
+            Line::from(Span::styled(
+                get_tips()[0],
+                Style::default().fg(Color::White),
+            )),
             Line::from(""),
             Line::from(Span::styled("Recent activity", Style::default().fg(GOLD))),
             Line::from(Span::styled("No recent activity", Style::default().fg(DIM))),
@@ -154,13 +160,26 @@ pub fn render_input_prompt(mode: &str) -> io::Result<()> {
     let (term_width, _) = terminal::size().unwrap_or((80, 24));
 
     let left_hint = "? for shortcuts";
-    let right_hint = format!("Tab for {} mode", if mode == "build" { "Plan" } else { "Build" });
+    let right_hint = format!(
+        "Tab for {} mode",
+        if mode == "build" { "Plan" } else { "Build" }
+    );
 
     // Use crossterm for simple colored text
-    use crossterm::style::{SetForegroundColor, ResetColor};
-    stdout.execute(SetForegroundColor(crossterm::style::Color::Rgb { r: 128, g: 128, b: 128 }))?;
+    use crossterm::style::{ResetColor, SetForegroundColor};
+    stdout.execute(SetForegroundColor(crossterm::style::Color::Rgb {
+        r: 128,
+        g: 128,
+        b: 128,
+    }))?;
     let padding = (term_width as usize).saturating_sub(left_hint.len() + right_hint.len() + 4);
-    writeln!(stdout, "  {}{}  {}", left_hint, " ".repeat(padding), right_hint)?;
+    writeln!(
+        stdout,
+        "  {}{}  {}",
+        left_hint,
+        " ".repeat(padding),
+        right_hint
+    )?;
     stdout.execute(ResetColor)?;
 
     stdout.flush()?;

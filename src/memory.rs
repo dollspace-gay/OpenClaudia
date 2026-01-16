@@ -86,8 +86,12 @@ impl MemoryDb {
     /// Open or create memory database in .openclaudia directory
     pub fn open_for_project(project_dir: &Path) -> Result<Self> {
         let openclaudia_dir = project_dir.join(".openclaudia");
-        std::fs::create_dir_all(&openclaudia_dir)
-            .with_context(|| format!("Failed to create .openclaudia directory at {:?}", openclaudia_dir))?;
+        std::fs::create_dir_all(&openclaudia_dir).with_context(|| {
+            format!(
+                "Failed to create .openclaudia directory at {:?}",
+                openclaudia_dir
+            )
+        })?;
 
         let db_path = openclaudia_dir.join(MEMORY_DB_NAME);
         Self::open(&db_path)
@@ -107,13 +111,22 @@ impl MemoryDb {
         )?;
 
         // Get current version (0 if table is empty = new db or pre-versioning db)
-        let current_version: i64 = self.conn
-            .query_row("SELECT COALESCE(MAX(version), 0) FROM schema_version", [], |row| row.get(0))
+        let current_version: i64 = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+                [],
+                |row| row.get(0),
+            )
             .unwrap_or(0);
 
         // Run migrations
         if current_version < SCHEMA_VERSION {
-            tracing::info!("Migrating memory database from version {} to {}", current_version, SCHEMA_VERSION);
+            tracing::info!(
+                "Migrating memory database from version {} to {}",
+                current_version,
+                SCHEMA_VERSION
+            );
             self.run_migrations(current_version)?;
         }
 
@@ -138,7 +151,10 @@ impl MemoryDb {
             params![SCHEMA_VERSION],
         )?;
 
-        tracing::info!("Database migration complete. Now at version {}", SCHEMA_VERSION);
+        tracing::info!(
+            "Database migration complete. Now at version {}",
+            SCHEMA_VERSION
+        );
         Ok(())
     }
 
@@ -203,8 +219,9 @@ impl MemoryDb {
     /// Migration v2: Add short-term memory tables
     fn migrate_v2(&mut self) -> Result<()> {
         tracing::debug!("Running migration v2: short-term memory tables");
-        self.conn.execute_batch(
-            r#"
+        self.conn
+            .execute_batch(
+                r#"
             -- Short-term memory: Recent session summaries
             CREATE TABLE IF NOT EXISTS recent_sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -229,7 +246,8 @@ impl MemoryDb {
             CREATE INDEX IF NOT EXISTS idx_recent_activity_created ON recent_activity(created_at);
             CREATE INDEX IF NOT EXISTS idx_recent_activity_session ON recent_activity(session_id);
             "#,
-        ).context("Failed to create v2 schema (short-term memory)")?;
+            )
+            .context("Failed to create v2 schema (short-term memory)")?;
 
         Ok(())
     }
@@ -265,7 +283,8 @@ impl MemoryDb {
                 Ok(ArchivalMemory {
                     id: row.get(0)?,
                     content: row.get(1)?,
-                    tags: row.get::<_, String>(2)?
+                    tags: row
+                        .get::<_, String>(2)?
                         .split(',')
                         .filter(|s| !s.is_empty())
                         .map(String::from)
@@ -290,7 +309,8 @@ impl MemoryDb {
                 Ok(ArchivalMemory {
                     id: row.get(0)?,
                     content: row.get(1)?,
-                    tags: row.get::<_, String>(2)?
+                    tags: row
+                        .get::<_, String>(2)?
                         .split(',')
                         .filter(|s| !s.is_empty())
                         .map(String::from)
@@ -315,10 +335,9 @@ impl MemoryDb {
 
     /// Delete a memory entry
     pub fn memory_delete(&self, id: i64) -> Result<bool> {
-        let rows = self.conn.execute(
-            "DELETE FROM archival_memory WHERE id = ?1",
-            params![id],
-        )?;
+        let rows = self
+            .conn
+            .execute("DELETE FROM archival_memory WHERE id = ?1", params![id])?;
         Ok(rows > 0)
     }
 
@@ -333,7 +352,8 @@ impl MemoryDb {
                 Ok(ArchivalMemory {
                     id: row.get(0)?,
                     content: row.get(1)?,
-                    tags: row.get::<_, String>(2)?
+                    tags: row
+                        .get::<_, String>(2)?
                         .split(',')
                         .filter(|s| !s.is_empty())
                         .map(String::from)
@@ -349,11 +369,9 @@ impl MemoryDb {
 
     /// Get memory statistics
     pub fn memory_stats(&self) -> Result<MemoryStats> {
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM archival_memory",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: i64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM archival_memory", [], |row| row.get(0))?;
 
         let total_size: i64 = self.conn.query_row(
             "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM archival_memory",
@@ -361,11 +379,11 @@ impl MemoryDb {
             |row| row.get(0),
         )?;
 
-        let last_updated: Option<String> = self.conn.query_row(
-            "SELECT MAX(updated_at) FROM archival_memory",
-            [],
-            |row| row.get(0),
-        )?;
+        let last_updated: Option<String> =
+            self.conn
+                .query_row("SELECT MAX(updated_at) FROM archival_memory", [], |row| {
+                    row.get(0)
+                })?;
 
         Ok(MemoryStats {
             count: count as usize,
@@ -378,9 +396,9 @@ impl MemoryDb {
 
     /// Get all core memory sections
     pub fn get_core_memory(&self) -> Result<Vec<CoreMemory>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT section, content, updated_at FROM core_memory ORDER BY section",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT section, content, updated_at FROM core_memory ORDER BY section")?;
 
         let memories = stmt
             .query_map([], |row| {
@@ -397,9 +415,9 @@ impl MemoryDb {
 
     /// Get a specific core memory section
     pub fn get_core_memory_section(&self, section: &str) -> Result<Option<CoreMemory>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT section, content, updated_at FROM core_memory WHERE section = ?1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT section, content, updated_at FROM core_memory WHERE section = ?1")?;
 
         let memory = stmt
             .query_row(params![section], |row| {
@@ -430,7 +448,10 @@ impl MemoryDb {
         let mut output = String::from("<core_memory>\n");
 
         for mem in core {
-            output.push_str(&format!("<{}>\n{}\n</{}>\n", mem.section, mem.content, mem.section));
+            output.push_str(&format!(
+                "<{}>\n{}\n</{}>\n",
+                mem.section, mem.content, mem.section
+            ));
         }
 
         output.push_str("</core_memory>");
@@ -483,12 +504,14 @@ impl MemoryDb {
                     id: row.get(0)?,
                     session_id: row.get(1)?,
                     summary: row.get(2)?,
-                    files_modified: row.get::<_, String>(3)?
+                    files_modified: row
+                        .get::<_, String>(3)?
                         .lines()
                         .filter(|s| !s.is_empty())
                         .map(String::from)
                         .collect(),
-                    issues_worked: row.get::<_, String>(4)?
+                    issues_worked: row
+                        .get::<_, String>(4)?
                         .lines()
                         .filter(|s| !s.is_empty())
                         .map(String::from)
@@ -601,7 +624,11 @@ impl MemoryDb {
         output.push_str("The following sessions occurred recently. Use this context to maintain continuity:\n\n");
 
         for (i, session) in sessions.iter().enumerate() {
-            output.push_str(&format!("### Session {} (ended {})\n", i + 1, session.ended_at));
+            output.push_str(&format!(
+                "### Session {} (ended {})\n",
+                i + 1,
+                session.ended_at
+            ));
             output.push_str(&session.summary);
             output.push('\n');
 
@@ -671,7 +698,12 @@ mod tests {
         let db = MemoryDb::open(&db_path).unwrap();
 
         // Save a memory
-        let id = db.memory_save("The project uses Rust and tokio for async", &["rust".into(), "async".into()]).unwrap();
+        let id = db
+            .memory_save(
+                "The project uses Rust and tokio for async",
+                &["rust".into(), "async".into()],
+            )
+            .unwrap();
         assert!(id > 0);
 
         // Search for it
@@ -704,7 +736,8 @@ mod tests {
         assert_eq!(core.len(), 3);
 
         // Update persona
-        db.update_core_memory("persona", "I am the OpenClaudia assistant").unwrap();
+        db.update_core_memory("persona", "I am the OpenClaudia assistant")
+            .unwrap();
 
         let persona = db.get_core_memory_section("persona").unwrap().unwrap();
         assert_eq!(persona.content, "I am the OpenClaudia assistant");
@@ -729,13 +762,15 @@ mod tests {
         let db = MemoryDb::open(&db_path).unwrap();
 
         // Save a session summary
-        let id = db.save_session_summary(
-            "session-123",
-            "Fixed bug in authentication module",
-            &["src/auth.rs".into(), "src/main.rs".into()],
-            &["#42".into(), "#43".into()],
-            "2024-01-01 10:00:00",
-        ).unwrap();
+        let id = db
+            .save_session_summary(
+                "session-123",
+                "Fixed bug in authentication module",
+                &["src/auth.rs".into(), "src/main.rs".into()],
+                &["#42".into(), "#43".into()],
+                "2024-01-01 10:00:00",
+            )
+            .unwrap();
         assert!(id > 0);
 
         // Retrieve recent sessions
@@ -753,9 +788,22 @@ mod tests {
         let db = MemoryDb::open(&db_path).unwrap();
 
         // Log some activities
-        db.log_activity("session-123", "file_write", "src/lib.rs", Some("Created new module")).unwrap();
-        db.log_activity("session-123", "file_edit", "src/main.rs", None).unwrap();
-        db.log_activity("session-123", "issue_created", "#100", Some("Add feature X")).unwrap();
+        db.log_activity(
+            "session-123",
+            "file_write",
+            "src/lib.rs",
+            Some("Created new module"),
+        )
+        .unwrap();
+        db.log_activity("session-123", "file_edit", "src/main.rs", None)
+            .unwrap();
+        db.log_activity(
+            "session-123",
+            "issue_created",
+            "#100",
+            Some("Add feature X"),
+        )
+        .unwrap();
 
         // Get activities
         let activities = db.get_session_activities("session-123").unwrap();
@@ -790,7 +838,8 @@ mod tests {
             &["src/auth.rs".into()],
             &["#50".into()],
             "2024-01-01 10:00:00",
-        ).unwrap();
+        )
+        .unwrap();
 
         let formatted = db.format_recent_context_for_prompt().unwrap();
         assert!(formatted.contains("<recent_sessions>"));

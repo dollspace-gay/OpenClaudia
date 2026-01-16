@@ -131,7 +131,11 @@ struct BraveResult {
 }
 
 /// Search the web using DuckDuckGo (default) or configured API provider
-pub async fn search_web(query: &str, config: &WebConfig, limit: usize) -> Result<Vec<SearchResult>, String> {
+pub async fn search_web(
+    query: &str,
+    config: &WebConfig,
+    limit: usize,
+) -> Result<Vec<SearchResult>, String> {
     // Try DuckDuckGo first (free, no API key required)
     // Fall back to paid APIs only if DDG fails or browser feature disabled
     let ddg_error = match search_duckduckgo(query, limit) {
@@ -156,7 +160,11 @@ pub async fn search_web(query: &str, config: &WebConfig, limit: usize) -> Result
 }
 
 /// Search using Tavily API
-async fn search_tavily(query: &str, api_key: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
+async fn search_tavily(
+    query: &str,
+    api_key: &str,
+    limit: usize,
+) -> Result<Vec<SearchResult>, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
@@ -207,7 +215,11 @@ async fn search_tavily(query: &str, api_key: &str, limit: usize) -> Result<Vec<S
 }
 
 /// Search using Brave Search API
-async fn search_brave(query: &str, api_key: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
+async fn search_brave(
+    query: &str,
+    api_key: &str,
+    limit: usize,
+) -> Result<Vec<SearchResult>, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
@@ -289,9 +301,12 @@ pub fn search_duckduckgo(query: &str, limit: usize) -> Result<Vec<SearchResult>,
     let document = Html::parse_document(&html);
 
     // DDG HTML selectors
-    let result_selector = Selector::parse(".result").map_err(|e| format!("Invalid selector: {:?}", e))?;
-    let title_selector = Selector::parse(".result__a").map_err(|e| format!("Invalid selector: {:?}", e))?;
-    let snippet_selector = Selector::parse(".result__snippet").map_err(|e| format!("Invalid selector: {:?}", e))?;
+    let result_selector =
+        Selector::parse(".result").map_err(|e| format!("Invalid selector: {:?}", e))?;
+    let title_selector =
+        Selector::parse(".result__a").map_err(|e| format!("Invalid selector: {:?}", e))?;
+    let snippet_selector =
+        Selector::parse(".result__snippet").map_err(|e| format!("Invalid selector: {:?}", e))?;
 
     let mut results = Vec::new();
 
@@ -350,7 +365,10 @@ pub fn search_duckduckgo(query: &str, limit: usize) -> Result<Vec<SearchResult>,
     }
 
     if results.is_empty() {
-        return Err("No search results found. DuckDuckGo may have changed their HTML structure.".to_string());
+        return Err(
+            "No search results found. DuckDuckGo may have changed their HTML structure."
+                .to_string(),
+        );
     }
 
     Ok(results)
@@ -395,9 +413,7 @@ pub fn fetch_with_browser(url: &str) -> Result<FetchResult, String> {
         .map_err(|e| format!("Failed to get page content: {}", e))?;
 
     // Get title
-    let title = tab
-        .get_title()
-        .ok();
+    let title = tab.get_title().ok();
 
     Ok(FetchResult {
         content,
@@ -444,13 +460,11 @@ mod tests {
 
     #[test]
     fn test_format_search_results() {
-        let results = vec![
-            SearchResult {
-                title: "Test Result".to_string(),
-                url: "https://example.com".to_string(),
-                snippet: "This is a test result".to_string(),
-            },
-        ];
+        let results = vec![SearchResult {
+            title: "Test Result".to_string(),
+            url: "https://example.com".to_string(),
+            snippet: "This is a test result".to_string(),
+        }];
 
         let formatted = format_search_results(&results);
         assert!(formatted.contains("Test Result"));

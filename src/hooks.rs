@@ -905,4 +905,448 @@ mod tests {
         // Empty matcher should be converted to None (matches all)
         assert_eq!(config.pre_tool_use[0].matcher, None);
     }
+
+    // ========================================================================
+    // Extended HookInput Tests
+    // ========================================================================
+
+    #[test]
+    fn test_hook_input_with_prompt() {
+        let input =
+            HookInput::new(HookEvent::UserPromptSubmit).with_prompt("How do I fix this bug?");
+
+        assert_eq!(input.event, HookEvent::UserPromptSubmit);
+        assert_eq!(input.prompt, Some("How do I fix this bug?".to_string()));
+    }
+
+    #[test]
+    fn test_hook_input_with_extra() {
+        let input = HookInput::new(HookEvent::PreCompact)
+            .with_extra("current_tokens", serde_json::json!(50000))
+            .with_extra("max_tokens", serde_json::json!(100000));
+
+        assert_eq!(
+            input.extra.get("current_tokens"),
+            Some(&serde_json::json!(50000))
+        );
+        assert_eq!(
+            input.extra.get("max_tokens"),
+            Some(&serde_json::json!(100000))
+        );
+    }
+
+    #[test]
+    fn test_hook_input_cwd_populated() {
+        let input = HookInput::new(HookEvent::SessionStart);
+
+        // CWD should be populated from env
+        assert!(!input.cwd.is_empty());
+    }
+
+    #[test]
+    fn test_hook_input_serialization() {
+        let input = HookInput::new(HookEvent::PreToolUse)
+            .with_session_id("session-123")
+            .with_tool("bash", serde_json::json!({"command": "ls"}));
+
+        let json = serde_json::to_string(&input).unwrap();
+
+        assert!(json.contains("\"event\":\"pre_tool_use\""));
+        assert!(json.contains("\"session_id\":\"session-123\""));
+        assert!(json.contains("\"tool_name\":\"bash\""));
+    }
+
+    // ========================================================================
+    // Extended HookResult Tests
+    // ========================================================================
+
+    #[test]
+    fn test_hook_result_denied() {
+        let result = HookResult::denied("Action not allowed");
+
+        assert!(!result.allowed);
+        assert_eq!(result.outputs.len(), 1);
+        assert_eq!(result.outputs[0].decision, Some("deny".to_string()));
+        assert_eq!(
+            result.outputs[0].reason,
+            Some("Action not allowed".to_string())
+        );
+    }
+
+    #[test]
+    fn test_hook_result_modified_prompt() {
+        let result = HookResult {
+            allowed: true,
+            outputs: vec![HookOutput {
+                prompt: Some("Modified user prompt".to_string()),
+                ..Default::default()
+            }],
+            errors: vec![],
+        };
+
+        assert_eq!(result.modified_prompt(), Some("Modified user prompt"));
+    }
+
+    #[test]
+    fn test_hook_result_no_modified_prompt() {
+        let result = HookResult::allowed();
+        assert_eq!(result.modified_prompt(), None);
+    }
+
+    #[test]
+    fn test_hook_result_multiple_system_messages() {
+        let result = HookResult {
+            allowed: true,
+            outputs: vec![
+                HookOutput {
+                    system_message: Some("Security warning".to_string()),
+                    ..Default::default()
+                },
+                HookOutput::default(), // No message
+                HookOutput {
+                    system_message: Some("Style guide reminder".to_string()),
+                    ..Default::default()
+                },
+            ],
+            errors: vec![],
+        };
+
+        let messages = result.system_messages();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0], "Security warning");
+        assert_eq!(messages[1], "Style guide reminder");
+    }
+
+    // ========================================================================
+    // HookError Tests
+    // ========================================================================
+
+    #[test]
+    fn test_hook_error_display() {
+        let timeout_err = HookError::Timeout(30);
+        assert_eq!(
+            format!("{}", timeout_err),
+            "Hook timed out after 30 seconds"
+        );
+
+        let cmd_err = HookError::CommandFailed("Process exited with code 1".to_string());
+        assert_eq!(
+            format!("{}", cmd_err),
+            "Hook command failed: Process exited with code 1"
+        );
+
+        let parse_err = HookError::ParseError("Invalid JSON".to_string());
+        assert_eq!(
+            format!("{}", parse_err),
+            "Hook output parse error: Invalid JSON"
+        );
+
+        let blocked_err = HookError::Blocked("File write not allowed".to_string());
+        assert_eq!(
+            format!("{}", blocked_err),
+            "Hook blocked action: File write not allowed"
+        );
+
+        let matcher_err = HookError::InvalidMatcher("(unclosed".to_string());
+        assert_eq!(
+            format!("{}", matcher_err),
+            "Invalid matcher regex: (unclosed"
+        );
+    }
+
+    // ========================================================================
+    // HookEngine Matcher Tests
+    // ========================================================================
+
+    #[test]
+    fn test_hook_engine_matcher_regex() {
+        let engine = HookEngine::new(HooksConfig::default());
+
+        // Valid pattern match
+        let result = engine.validate_and_match("Write|Edit", "Write");
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+
+        // Valid pattern no match
+        let result = engine.validate_and_match("Write|Edit", "Read");
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[test]
+    fn test_hook_engine_matcher_invalid_regex() {
+        let engine = HookEngine::new(HooksConfig::default());
+
+        // Invalid regex pattern
+        let result = engine.validate_and_match("(unclosed", "test");
+        assert!(result.is_err());
+        assert!(matches!(result, Err(HookError::InvalidMatcher(_))));
+    }
+
+    #[test]
+    fn test_hook_engine_matcher_empty_pattern() {
+        let engine = HookEngine::new(HooksConfig::default());
+
+        // Empty pattern is invalid
+        let result = engine.validate_and_match("", "test");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_hook_engine_matcher_complex_patterns() {
+        let engine = HookEngine::new(HooksConfig::default());
+
+        // Case sensitive by default
+        let result = engine.validate_and_match("Write", "write");
+        assert!(result.is_ok());
+        assert!(!result.unwrap()); // Should not match (case sensitive)
+
+        // Dot matches any char
+        let result = engine.validate_and_match(".*file.*", "read_file_content");
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+
+        // Character class
+        let result = engine.validate_and_match("^(read|write)_.*", "read_file");
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+
+        let result = engine.validate_and_match("^(read|write)_.*", "delete_file");
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    // ========================================================================
+    // HookEngine Check Blocked Tests
+    // ========================================================================
+
+    #[test]
+    fn test_check_blocked_allowed() {
+        let result = HookResult::allowed();
+        assert!(HookEngine::check_blocked(&result).is_ok());
+    }
+
+    #[test]
+    fn test_check_blocked_denied() {
+        let result = HookResult::denied("Not permitted");
+        let err = HookEngine::check_blocked(&result);
+        assert!(err.is_err());
+
+        match err {
+            Err(HookError::Blocked(reason)) => {
+                assert_eq!(reason, "Not permitted");
+            }
+            _ => panic!("Expected Blocked error"),
+        }
+    }
+
+    #[test]
+    fn test_check_blocked_denied_default_reason() {
+        let result = HookResult {
+            allowed: false,
+            outputs: vec![], // No outputs with reason
+            errors: vec![],
+        };
+
+        let err = HookEngine::check_blocked(&result);
+        assert!(err.is_err());
+
+        match err {
+            Err(HookError::Blocked(reason)) => {
+                assert_eq!(reason, "Action blocked by hook");
+            }
+            _ => panic!("Expected Blocked error"),
+        }
+    }
+
+    // ========================================================================
+    // HookOutput Tests
+    // ========================================================================
+
+    #[test]
+    fn test_hook_output_default() {
+        let output = HookOutput::default();
+        assert!(output.decision.is_none());
+        assert!(output.reason.is_none());
+        assert!(output.system_message.is_none());
+        assert!(output.prompt.is_none());
+        assert!(output.extra.is_empty());
+    }
+
+    #[test]
+    fn test_hook_output_from_json() {
+        let json = r#"{
+            "decision": "allow",
+            "reason": "Validation passed",
+            "systemMessage": "Remember to test",
+            "prompt": "Modified prompt",
+            "customField": "custom value"
+        }"#;
+
+        let output: HookOutput = serde_json::from_str(json).unwrap();
+        assert_eq!(output.decision, Some("allow".to_string()));
+        assert_eq!(output.reason, Some("Validation passed".to_string()));
+        assert_eq!(output.system_message, Some("Remember to test".to_string()));
+        assert_eq!(output.prompt, Some("Modified prompt".to_string()));
+        assert_eq!(
+            output.extra.get("customField"),
+            Some(&serde_json::json!("custom value"))
+        );
+    }
+
+    #[test]
+    fn test_hook_output_partial_json() {
+        let json = r#"{"decision": "deny"}"#;
+
+        let output: HookOutput = serde_json::from_str(json).unwrap();
+        assert_eq!(output.decision, Some("deny".to_string()));
+        assert!(output.reason.is_none());
+        assert!(output.system_message.is_none());
+    }
+
+    // ========================================================================
+    // Parse Hook Output Tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_hook_output_empty() {
+        let result = HookEngine::parse_hook_output("");
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.decision.is_none());
+    }
+
+    #[test]
+    fn test_parse_hook_output_whitespace() {
+        let result = HookEngine::parse_hook_output("   \n\t  ");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_hook_output_valid_json() {
+        let result = HookEngine::parse_hook_output(r#"{"decision": "allow"}"#);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.decision, Some("allow".to_string()));
+    }
+
+    #[test]
+    fn test_parse_hook_output_invalid_json() {
+        let result = HookEngine::parse_hook_output("not valid json {");
+        assert!(result.is_err());
+        assert!(matches!(result, Err(HookError::ParseError(_))));
+    }
+
+    // ========================================================================
+    // All Hook Events Test
+    // ========================================================================
+
+    #[test]
+    fn test_all_hook_events_have_config_keys() {
+        // Verify all events return valid config keys
+        let events = vec![
+            HookEvent::SessionStart,
+            HookEvent::SessionEnd,
+            HookEvent::PreToolUse,
+            HookEvent::PostToolUse,
+            HookEvent::PostToolUseFailure,
+            HookEvent::UserPromptSubmit,
+            HookEvent::Stop,
+            HookEvent::SubagentStart,
+            HookEvent::SubagentStop,
+            HookEvent::PreCompact,
+            HookEvent::PermissionRequest,
+            HookEvent::Notification,
+        ];
+
+        for event in events {
+            let key = event.config_key();
+            assert!(
+                !key.is_empty(),
+                "Event {:?} should have non-empty config key",
+                event
+            );
+            assert!(
+                key.chars().all(|c| c.is_lowercase() || c == '_'),
+                "Config key '{}' should be snake_case",
+                key
+            );
+        }
+    }
+
+    // ========================================================================
+    // Async Hook Tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_run_with_matching_entry() {
+        let mut config = HooksConfig::default();
+        config.pre_tool_use.push(crate::config::HookEntry {
+            matcher: Some("Write".to_string()),
+            hooks: vec![crate::config::Hook::Prompt {
+                prompt: "Remember to backup".to_string(),
+                timeout: 30,
+            }],
+        });
+
+        let engine = HookEngine::new(config);
+        let input = HookInput::new(HookEvent::PreToolUse)
+            .with_tool("Write", serde_json::json!({"path": "/tmp/test"}));
+
+        let result = engine.run(HookEvent::PreToolUse, &input).await;
+
+        assert!(result.allowed);
+        assert_eq!(result.outputs.len(), 1);
+        assert_eq!(
+            result.outputs[0].system_message,
+            Some("Remember to backup".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_with_non_matching_entry() {
+        let mut config = HooksConfig::default();
+        config.pre_tool_use.push(crate::config::HookEntry {
+            matcher: Some("Write".to_string()),
+            hooks: vec![crate::config::Hook::Prompt {
+                prompt: "Should not appear".to_string(),
+                timeout: 30,
+            }],
+        });
+
+        let engine = HookEngine::new(config);
+        let input = HookInput::new(HookEvent::PreToolUse)
+            .with_tool("Read", serde_json::json!({"path": "/tmp/test"})); // Different tool
+
+        let result = engine.run(HookEvent::PreToolUse, &input).await;
+
+        assert!(result.allowed);
+        assert!(result.outputs.is_empty()); // No matching hooks ran
+    }
+
+    #[tokio::test]
+    async fn test_run_multiple_hooks() {
+        let mut config = HooksConfig::default();
+        config.pre_tool_use.push(crate::config::HookEntry {
+            matcher: None, // Matches all
+            hooks: vec![
+                crate::config::Hook::Prompt {
+                    prompt: "First instruction".to_string(),
+                    timeout: 30,
+                },
+                crate::config::Hook::Prompt {
+                    prompt: "Second instruction".to_string(),
+                    timeout: 30,
+                },
+            ],
+        });
+
+        let engine = HookEngine::new(config);
+        let input = HookInput::new(HookEvent::PreToolUse).with_tool("bash", serde_json::json!({}));
+
+        let result = engine.run(HookEvent::PreToolUse, &input).await;
+
+        assert!(result.allowed);
+        assert_eq!(result.outputs.len(), 2);
+    }
 }

@@ -151,7 +151,10 @@ pub fn create_router(state: ProxyState) -> Router {
         // Auth routes (device flow for Claude Max OAuth)
         .route("/auth/device", get(auth_device_page))
         .route("/auth/device/start", axum::routing::post(auth_device_start))
-        .route("/auth/device/submit", axum::routing::post(auth_device_submit))
+        .route(
+            "/auth/device/submit",
+            axum::routing::post(auth_device_submit),
+        )
         .route("/auth/status", get(auth_status))
         // OpenAI-compatible endpoints
         .route("/v1/chat/completions", any(proxy_chat_completions))
@@ -213,7 +216,7 @@ async fn auth_device_submit(
     State(state): State<ProxyState>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, ProxyError> {
-    use crate::oauth::{OAuthClient, OAuthSession, parse_auth_code};
+    use crate::oauth::{parse_auth_code, OAuthClient, OAuthSession};
 
     let mut code = payload["code"].as_str().unwrap_or("").to_string();
     let mut oauth_state = payload["state"].as_str().unwrap_or("").to_string();
@@ -228,12 +231,16 @@ async fn auth_device_submit(
     }
 
     // Get PKCE challenge
-    let pkce = state.oauth_store.take_challenge(&oauth_state)
+    let pkce = state
+        .oauth_store
+        .take_challenge(&oauth_state)
         .ok_or_else(|| ProxyError::InvalidBody("Invalid state parameter".to_string()))?;
 
     // Exchange code for tokens
     let client = OAuthClient::new();
-    let token_response = client.exchange_code(&code, &pkce).await
+    let token_response = client
+        .exchange_code(&code, &pkce)
+        .await
         .map_err(|e| ProxyError::InvalidBody(format!("Token exchange failed: {}", e)))?;
 
     // Create session
@@ -241,7 +248,10 @@ async fn auth_device_submit(
 
     // Try to create API key if we have the scope
     if session.can_create_api_key() {
-        if let Ok(api_key) = client.create_api_key(&session.credentials.access_token).await {
+        if let Ok(api_key) = client
+            .create_api_key(&session.credentials.access_token)
+            .await
+        {
             session.api_key = Some(api_key);
         }
     }
@@ -249,7 +259,10 @@ async fn auth_device_submit(
     let session_id = session.id.clone();
     state.oauth_store.store_session(session);
 
-    info!("Device flow authentication successful, session: {}", session_id);
+    info!(
+        "Device flow authentication successful, session: {}",
+        session_id
+    );
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -259,10 +272,7 @@ async fn auth_device_submit(
 }
 
 /// Check authentication status
-async fn auth_status(
-    State(state): State<ProxyState>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
+async fn auth_status(State(state): State<ProxyState>, headers: HeaderMap) -> impl IntoResponse {
     // Check for session from cookie first
     let session = headers
         .get(header::COOKIE)
@@ -270,7 +280,8 @@ async fn auth_status(
         .and_then(|cookies| {
             cookies.split(';').find_map(|cookie| {
                 let cookie = cookie.trim();
-                cookie.strip_prefix("anthropic_session=")
+                cookie
+                    .strip_prefix("anthropic_session=")
                     .map(|s| s.to_string())
             })
         })
@@ -287,7 +298,7 @@ async fn auth_status(
         None => Json(serde_json::json!({
             "authenticated": false,
             "session_id": null
-        }))
+        })),
     }
 }
 
@@ -707,12 +718,16 @@ async fn proxy_anthropic_messages(
         .and_then(|cookies| {
             cookies.split(';').find_map(|cookie| {
                 let cookie = cookie.trim();
-                cookie.strip_prefix("anthropic_session=")
+                cookie
+                    .strip_prefix("anthropic_session=")
                     .map(|s| s.to_string())
             })
         })
         .and_then(|session_id| {
-            debug!("[/v1/messages] Looking up session from cookie: {}", session_id);
+            debug!(
+                "[/v1/messages] Looking up session from cookie: {}",
+                session_id
+            );
             state.oauth_store.get_session(&session_id)
         });
 
@@ -750,10 +765,17 @@ async fn proxy_anthropic_messages(
         }
 
         let url = format!("{}/v1/messages", provider.base_url);
-        let response = state.client
+        let response = state
+            .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", session.credentials.access_token))
-            .header("anthropic-beta", "oauth-2025-04-20,computer-use-2025-01-24,fine-grained-tool-streaming-2025-05-14")
+            .header(
+                "Authorization",
+                format!("Bearer {}", session.credentials.access_token),
+            )
+            .header(
+                "anthropic-beta",
+                "oauth-2025-04-20,computer-use-2025-01-24,fine-grained-tool-streaming-2025-05-14",
+            )
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&request)
