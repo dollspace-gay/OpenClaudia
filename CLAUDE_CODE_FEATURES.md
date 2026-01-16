@@ -22,9 +22,9 @@ This document catalogs features from Anthropic's Claude Code CLI for replication
 ### System Operations
 | Tool | Description | Priority |
 |------|-------------|----------|
-| **Bash** | Execute shell commands with timeout | ✅ Have |
-| **BashOutput** | Retrieve output from background shells | ❌ Missing |
-| **KillShell** | Terminate background shells | ❌ Missing |
+| **Bash** | Execute shell commands with timeout, supports `run_in_background` | ✅ Have |
+| **BashOutput** | Retrieve output from background shells, lists all shells when no ID provided | ✅ Have |
+| **KillShell** | Terminate background shells by ID | ✅ Have |
 
 ### Web Operations
 | Tool | Description | Priority |
@@ -303,8 +303,7 @@ Claude Code spawns specialized subagents for complex tasks:
 
 ### Critical (Missing)
 1. **NotebookEdit** - Jupyter notebook editing
-2. **BashOutput/KillShell** - Background process management
-3. **AgentOutputTool** - Background agent result retrieval
+2. **AgentOutputTool** - Background agent result retrieval
 
 ### High Priority (Partial/Missing)
 1. **Subagent System** - Task tool with specialized agents

@@ -2,22 +2,7 @@
 //!
 //! Provides Claude Code-like capabilities for any AI agent.
 
-mod compaction;
-mod config;
-mod context;
-mod hooks;
-mod mcp;
-mod memory;
-mod oauth;
-mod plugins;
-mod prompt;
-mod providers;
-mod proxy;
-mod rules;
-mod session;
-mod tools;
-mod tui;
-mod web;
+use openclaudia::{config, memory, oauth, prompt, proxy, tools, tui};
 
 use clap::{Parser, Subcommand};
 use std::fs;
@@ -292,7 +277,7 @@ These rules are injected into every conversation.
 
 /// Authenticate with Claude Max subscription via OAuth
 async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
-    use crate::oauth::{OAuthClient, OAuthStore, PkceParams, parse_auth_code};
+    use openclaudia::oauth::{OAuthClient, OAuthStore, PkceParams, parse_auth_code};
     use std::io::{self, Write};
 
     let store = OAuthStore::new();
@@ -2448,9 +2433,9 @@ async fn start_builtin_oauth_flow(config: &config::AppConfig) -> Option<OAuthFlo
 
 /// Interactive chat mode (default command)
 async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Result<()> {
-    use crate::hooks::{load_claude_code_hooks, merge_hooks_config, HookEngine, HookEvent, HookInput};
-    use crate::providers::get_adapter;
-    use crate::rules::RulesEngine;
+    use openclaudia::hooks::{load_claude_code_hooks, merge_hooks_config, HookEngine, HookEvent, HookInput};
+    use openclaudia::providers::get_adapter;
+    use openclaudia::rules::RulesEngine;
     use indicatif::{ProgressBar, ProgressStyle};
     use rustyline::error::ReadlineError;
     use rustyline::DefaultEditor;
@@ -3547,11 +3532,11 @@ fn cmd_config() -> anyhow::Result<()> {
 
 /// Check configuration and connectivity
 async fn cmd_doctor() -> anyhow::Result<()> {
-    use crate::mcp::McpManager;
-    use crate::plugins::{PluginError, PluginManager};
-    use crate::providers::{get_adapter, ProviderError};
-    use crate::rules::RulesEngine;
-    use crate::session::SessionManager;
+    use openclaudia::mcp::McpManager;
+    use openclaudia::plugins::{PluginError, PluginManager};
+    use openclaudia::providers::{get_adapter, ProviderError};
+    use openclaudia::rules::RulesEngine;
+    use openclaudia::session::SessionManager;
     use std::time::Duration;
 
     println!("OpenClaudia Doctor\n");
@@ -3868,8 +3853,8 @@ async fn cmd_loop(
     port: Option<u16>,
     target: Option<String>,
 ) -> anyhow::Result<()> {
-    use crate::hooks::{HookEngine, HookEvent, HookInput};
-    use crate::session::SessionManager;
+    use openclaudia::hooks::{HookEngine, HookEvent, HookInput};
+    use openclaudia::session::SessionManager;
     use tokio::sync::watch;
 
     let mut config = config::load_config()?;

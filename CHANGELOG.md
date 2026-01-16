@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix lru crate Stacked Borrows vulnerability by updating to 0.16.3 (#99)
 
 ### Added
+- Add generic OpenAI-compatible local LLM support (LM Studio, LocalAI, etc) (#141)
+- Add Ollama provider support for local LLM inference (#140)
+- Add end-to-end integration test framework for all tools (#133)
 - Add WebSearch tool using DuckDuckGo and headless browser (#131)
 - Emulate Claude Code native tool format for OAuth requests (#125)
 - Add auth command for direct Claude Max OAuth login (#124)
@@ -56,6 +59,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix TUI welcome screen box drawing alignment (#59)
 
 ### Changed
+- Update README with new features (web search, background shells, memory, offset/limit) (#142)
+- Add offset and limit parameters to read_file tool (#139)
+- Add E2E tests for memory tools (#138)
+- Add E2E tests for web tools (web_fetch, web_search) (#137)
+- Add E2E tests for bash tools (bash, bash_output, kill_shell) (#136)
+- Add E2E tests for file tools (read, write, edit, glob, grep) (#135)
+- Set up integration test infrastructure with test helpers (#134)
 - Add automatic OAuth flow when starting OpenClaudia with Anthropic provider (#127)
 - Add automatic OAuth flow when starting OpenClaudia with Anthropic provider (#127)
 - Add Claude Code system prompt injection for OAuth requests (#122)

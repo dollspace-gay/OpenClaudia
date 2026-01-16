@@ -4,6 +4,11 @@
 //! - Anthropic Messages API
 //! - OpenAI Chat Completions API
 //! - Google Gemini API
+//! - DeepSeek API (with thinking/reasoning support)
+//! - Qwen/Alibaba API (with thinking support)
+//! - Z.AI/GLM API (with thinking support)
+//! - Ollama (local LLM inference)
+//! - Any OpenAI-compatible server (LM Studio, LocalAI, etc.)
 //!
 //! Handles message format translation and tool/function calling conversion.
 
@@ -802,6 +807,188 @@ impl ProviderAdapter for QwenAdapter {
     }
 }
 
+/// Ollama API adapter for local LLM inference
+/// See: https://github.com/ollama/ollama/blob/main/docs/api.md
+pub struct OllamaAdapter;
+
+impl OllamaAdapter {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Convert OpenAI messages to Ollama format
+    fn convert_messages(messages: &[ChatMessage]) -> Vec<Value> {
+        messages
+            .iter()
+            .map(|m| {
+                let content = match &m.content {
+                    MessageContent::Text(t) => t.clone(),
+                    MessageContent::Parts(parts) => parts
+                        .iter()
+                        .filter_map(|p| p.text.clone())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                };
+
+                json!({
+                    "role": m.role,
+                    "content": content
+                })
+            })
+            .collect()
+    }
+}
+
+impl Default for OllamaAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl ProviderAdapter for OllamaAdapter {
+    fn name(&self) -> &str {
+        "ollama"
+    }
+
+    fn transform_request(&self, request: &ChatCompletionRequest) -> Result<Value, ProviderError> {
+        let mut body = json!({
+            "model": &request.model,
+            "messages": Self::convert_messages(&request.messages),
+            "stream": request.stream.unwrap_or(false)
+        });
+
+        // Add options for temperature and other settings
+        let mut options = json!({});
+        if let Some(temp) = request.temperature {
+            options["temperature"] = json!(temp);
+        }
+        if let Some(max_tokens) = request.max_tokens {
+            options["num_predict"] = json!(max_tokens);
+        }
+        if options != json!({}) {
+            body["options"] = options;
+        }
+
+        // Convert tools to Ollama format if present
+        if let Some(tools) = &request.tools {
+            let ollama_tools: Vec<Value> = tools
+                .iter()
+                .filter_map(|tool| {
+                    let func = tool.get("function")?;
+                    Some(json!({
+                        "type": "function",
+                        "function": {
+                            "name": func.get("name")?,
+                            "description": func.get("description").unwrap_or(&json!("")),
+                            "parameters": func.get("parameters").unwrap_or(&json!({}))
+                        }
+                    }))
+                })
+                .collect();
+            if !ollama_tools.is_empty() {
+                body["tools"] = json!(ollama_tools);
+            }
+        }
+
+        debug!(body = %body, "Transformed request for Ollama");
+        Ok(body)
+    }
+
+    fn transform_response(&self, response: Value, _stream: bool) -> Result<Value, ProviderError> {
+        // Ollama response format:
+        // {"model": "...", "message": {"role": "assistant", "content": "..."}, "done": true, ...}
+        let message = response.get("message").ok_or_else(|| {
+            ProviderError::InvalidResponse("No message in Ollama response".to_string())
+        })?;
+
+        let content = message
+            .get("content")
+            .and_then(|c| c.as_str())
+            .unwrap_or("");
+
+        // Handle tool calls if present
+        let tool_calls: Option<Vec<Value>> = message
+            .get("tool_calls")
+            .and_then(|tc| tc.as_array())
+            .map(|calls| {
+                calls
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, call)| {
+                        let func = call.get("function")?;
+                        Some(json!({
+                            "id": format!("call_{}", i),
+                            "type": "function",
+                            "function": {
+                                "name": func.get("name")?,
+                                "arguments": func.get("arguments")
+                                    .map(|a| {
+                                        if a.is_string() {
+                                            a.as_str().unwrap_or("{}").to_string()
+                                        } else {
+                                            serde_json::to_string(a).unwrap_or_else(|_| "{}".to_string())
+                                        }
+                                    })
+                                    .unwrap_or_else(|| "{}".to_string())
+                            }
+                        }))
+                    })
+                    .collect()
+            })
+            .filter(|v: &Vec<Value>| !v.is_empty());
+
+        let mut openai_message = json!({
+            "role": "assistant",
+            "content": content
+        });
+
+        if let Some(calls) = tool_calls {
+            openai_message["tool_calls"] = json!(calls);
+        }
+
+        // Determine finish reason
+        let done = response.get("done").and_then(|d| d.as_bool()).unwrap_or(true);
+        let finish_reason = if !done {
+            "length"
+        } else if openai_message.get("tool_calls").is_some() {
+            "tool_calls"
+        } else {
+            "stop"
+        };
+
+        // Extract token counts if available
+        let prompt_tokens = response.get("prompt_eval_count").and_then(|c| c.as_u64()).unwrap_or(0);
+        let completion_tokens = response.get("eval_count").and_then(|c| c.as_u64()).unwrap_or(0);
+
+        Ok(json!({
+            "id": format!("ollama-{}", uuid::Uuid::new_v4()),
+            "object": "chat.completion",
+            "created": chrono::Utc::now().timestamp(),
+            "model": response.get("model").and_then(|m| m.as_str()).unwrap_or("unknown"),
+            "choices": [{
+                "index": 0,
+                "message": openai_message,
+                "finish_reason": finish_reason
+            }],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens
+            }
+        }))
+    }
+
+    fn chat_endpoint(&self) -> &str {
+        "/api/chat"
+    }
+
+    fn get_headers(&self, _api_key: &str) -> Vec<(String, String)> {
+        // Ollama doesn't require authentication by default
+        vec![("content-type".to_string(), "application/json".to_string())]
+    }
+}
+
 /// Get the appropriate adapter for a provider name
 pub fn get_adapter(provider: &str) -> Box<dyn ProviderAdapter> {
     match provider.to_lowercase().as_str() {
@@ -810,8 +997,10 @@ pub fn get_adapter(provider: &str) -> Box<dyn ProviderAdapter> {
         "zai" | "glm" | "zhipu" => Box::new(ZaiAdapter::new()),
         "deepseek" => Box::new(DeepSeekAdapter::new()),
         "qwen" | "alibaba" => Box::new(QwenAdapter::new()),
+        "ollama" => Box::new(OllamaAdapter::new()),
         // OpenAI-compatible providers (default)
-        "openai" => Box::new(OpenAIAdapter::new()),
+        // Includes: openai, local, lmstudio, localai, text-generation-webui, etc.
+        "openai" | "local" | "lmstudio" | "localai" => Box::new(OpenAIAdapter::new()),
         // Default fallback for unknown providers (assume OpenAI-compatible)
         _ => Box::new(OpenAIAdapter::new()),
     }
@@ -923,7 +1112,57 @@ mod tests {
         assert_eq!(get_adapter("deepseek").name(), "deepseek");
         assert_eq!(get_adapter("qwen").name(), "qwen");
         assert_eq!(get_adapter("alibaba").name(), "qwen");
+        // Ollama for local LLM inference
+        assert_eq!(get_adapter("ollama").name(), "ollama");
+        // OpenAI-compatible local providers
+        assert_eq!(get_adapter("local").name(), "openai");
+        assert_eq!(get_adapter("lmstudio").name(), "openai");
+        assert_eq!(get_adapter("localai").name(), "openai");
         assert_eq!(get_adapter("unknown").name(), "openai"); // Default
+    }
+
+    #[test]
+    fn test_ollama_adapter() {
+        let adapter = OllamaAdapter::new();
+        assert_eq!(adapter.name(), "ollama");
+        assert_eq!(adapter.chat_endpoint(), "/api/chat");
+    }
+
+    #[test]
+    fn test_ollama_transform_request() {
+        let adapter = OllamaAdapter::new();
+        let request = create_test_request();
+        let result = adapter.transform_request(&request).unwrap();
+
+        assert_eq!(result["model"], "gpt-4");
+        assert!(result["messages"].is_array());
+        // Ollama uses "options" for settings
+        let temp = result["options"]["temperature"].as_f64().unwrap();
+        assert!((temp - 0.7).abs() < 0.01);
+        assert_eq!(result["options"]["num_predict"], 1000);
+    }
+
+    #[test]
+    fn test_ollama_transform_response() {
+        let adapter = OllamaAdapter::new();
+        let response = json!({
+            "model": "llama3",
+            "message": {
+                "role": "assistant",
+                "content": "Hello from Ollama!"
+            },
+            "done": true,
+            "prompt_eval_count": 10,
+            "eval_count": 5
+        });
+
+        let result = adapter.transform_response(response, false).unwrap();
+        assert_eq!(result["object"], "chat.completion");
+        assert_eq!(result["model"], "llama3");
+        assert_eq!(result["choices"][0]["message"]["content"], "Hello from Ollama!");
+        assert_eq!(result["choices"][0]["finish_reason"], "stop");
+        assert_eq!(result["usage"]["prompt_tokens"], 10);
+        assert_eq!(result["usage"]["completion_tokens"], 5);
     }
 
     #[test]

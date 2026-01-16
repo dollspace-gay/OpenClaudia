@@ -8,9 +8,13 @@ OpenClaudia is a Rust-based CLI that transforms any LLM into an agentic coding a
 
 ## Features
 
-- **Multi-Provider Support** — Anthropic, OpenAI, Google, DeepSeek, Qwen, Z.AI (GLM)
-- **Agentic Tools** — Bash execution, file operations, web search, task tracking
+- **Multi-Provider Support** — Anthropic, OpenAI, Google, DeepSeek, Qwen, Z.AI, Ollama, and any OpenAI-compatible server
+- **Local LLM Support** — Run with Ollama, LM Studio, LocalAI, or any OpenAI-compatible endpoint
+- **Agentic Tools** — Bash execution, file operations, web search, background shells, task tracking
+- **Web Search** — DuckDuckGo (free, no API key), Tavily, or Brave APIs
 - **Stateful Memory** — Letta/MemGPT-style archival memory that persists across sessions
+- **Background Shells** — Run long-running processes, check output, and kill them on demand
+- **Thinking Mode** — Extended reasoning support for Anthropic, OpenAI o1/o3, DeepSeek R1, Qwen QwQ, GLM
 - **Hooks System** — Run custom scripts at key moments (session start, tool use, etc.)
 - **Cross-Platform** — Windows, macOS, Linux with Git Bash for consistent shell behavior
 - **Interactive TUI** — Rich terminal interface with keybindings and session management
@@ -37,11 +41,11 @@ OpenClaudia is a Rust-based CLI that transforms any LLM into an agentic coding a
 git clone https://github.com/yourusername/openclaudia.git
 cd openclaudia
 
-# Build release version
+# Build release version (includes browser/web search support by default)
 cargo build --release
 
-# Optional: Build with headless Chrome support for web scraping
-cargo build --release --features browser
+# Build without browser feature (lighter binary, no headless Chrome)
+cargo build --release --no-default-features
 
 # The binary is at target/release/openclaudia
 ```
@@ -84,7 +88,7 @@ Configuration is stored in `.openclaudia/config.yaml`:
 proxy:
   port: 8080
   host: "127.0.0.1"
-  target: anthropic  # Provider: anthropic, openai, google, deepseek, qwen, zai
+  target: anthropic  # Provider: anthropic, openai, google, deepseek, qwen, zai, ollama, local
 
 providers:
   anthropic:
@@ -93,6 +97,18 @@ providers:
     base_url: https://api.openai.com
   deepseek:
     base_url: https://api.deepseek.com
+  # Ollama for local LLM inference
+  ollama:
+    base_url: http://localhost:11434
+  # Any OpenAI-compatible local server (LM Studio, LocalAI, etc.)
+  local:
+    base_url: http://localhost:1234/v1
+
+# Thinking/reasoning mode configuration
+thinking:
+  enabled: false
+  budget_tokens: 10000        # Anthropic, Google
+  reasoning_effort: "medium"  # OpenAI o1/o3: low, medium, high
 
 session:
   timeout_minutes: 30
@@ -176,14 +192,15 @@ Claudia has access to these tools:
 
 | Tool | Description |
 |------|-------------|
-| `bash` | Execute shell commands (Git Bash on Windows) |
-| `read_file` | Read file contents |
+| `bash` | Execute shell commands with optional timeout and background mode |
+| `bash_output` | Get output from background shells or list all running shells |
+| `kill_shell` | Terminate a background shell by ID |
+| `read_file` | Read file contents with optional offset/limit for large files |
 | `write_file` | Create/overwrite files |
 | `edit_file` | Make targeted edits with string replacement |
-| `list_files` | List directory contents |
+| `list_files` | List directory contents with glob patterns |
 | `web_fetch` | Fetch web pages as markdown (via Jina Reader) |
-| `web_search` | Search the web (requires Tavily/Brave API key) |
-| `web_browser` | Full headless Chrome (requires `--features browser`) |
+| `web_search` | Search the web (DuckDuckGo free, or Tavily/Brave APIs) |
 | `chainlink` | Task and issue tracking |
 
 ### Memory Tools (Stateful Mode)
@@ -221,6 +238,15 @@ Claudia has access to these tools:
 
 ### Z.AI (GLM)
 - `glm-4.7`, `glm-4-plus`, `glm-4-air`, `glm-4-flash`
+
+### Ollama (Local)
+- Any model installed: `llama3`, `codellama`, `mistral`, `mixtral`, `phi`, `gemma`, etc.
+- Run `ollama list` to see available models
+- Install models with `ollama pull <model-name>`
+
+### OpenAI-Compatible (Local)
+- Works with LM Studio, LocalAI, text-generation-webui, vLLM, and any OpenAI-compatible server
+- Set `base_url` to your local server (e.g., `http://localhost:1234/v1`)
 
 ## Hooks
 
@@ -285,17 +311,20 @@ Claudia can save and recall information across sessions using memory tools.
 ## Building from Source
 
 ```bash
-# Development build
+# Development build (includes browser feature by default)
 cargo build
 
 # Release build
 cargo build --release
 
-# With headless Chrome support
-cargo build --release --features browser
+# Without browser feature (smaller binary, no headless Chrome)
+cargo build --release --no-default-features
 
-# Run tests
+# Run all tests
 cargo test
+
+# Run integration tests (tests real tool execution)
+cargo test --test integration_tests
 
 # Run with verbose logging
 RUST_LOG=debug cargo run
@@ -314,8 +343,9 @@ OpenClaudia is built with:
 - **crossterm** — Terminal manipulation
 - **serde** — Serialization
 
-Optional:
-- **headless_chrome** — Full browser automation (feature flag)
+Default features (can be disabled with `--no-default-features`):
+- **headless_chrome** — Headless browser for DuckDuckGo web search
+- **scraper** — HTML parsing for search result extraction
 
 ## License
 

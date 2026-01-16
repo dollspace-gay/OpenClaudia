@@ -82,6 +82,13 @@ browser = ["headless_chrome", "scraper"]
 
 [dev-dependencies]
 tempfile = "3"
+tokio-test = "0.4"
+wiremock = "0.6"
+predicates = "3"
+
+[lib]
+name = "openclaudia"
+path = "src/lib.rs"
 
 [[bin]]
 name = "openclaudia"
