@@ -266,6 +266,7 @@ impl ToolInterceptor {
     }
 
     /// Parse a shorthand tool tag like <bash>command</bash> or <write path="file">content</write>
+    /// Also handles nested element format: <write_file><path>file</path><content>...</content></write_file>
     fn parse_shorthand_tag(&self, tool_name: &str, tag_content: &str) -> Option<InterceptedToolCall> {
         let open_simple = format!("<{}>", tool_name);
         let open_attr = format!("<{} ", tool_name);
@@ -305,36 +306,48 @@ impl ToolInterceptor {
         let content_end = tag_content.len() - close_tag.len();
         let content = tag_content[content_start..content_end].to_string();
 
-        // Map shorthand content to appropriate parameter
-        match tool_name {
-            "bash" => {
-                parameters.insert("command".to_string(), content);
-            }
-            "read" | "read_file" => {
-                if !parameters.contains_key("path") && !parameters.contains_key("file_path") {
-                    parameters.insert("path".to_string(), content);
+        // Check for nested element format: <tool><param>value</param><param2>value2</param2></tool>
+        // This is used when Claude outputs things like:
+        // <write_file><path>hello.c</path><content>...</content></write_file>
+        let trimmed_content = content.trim();
+        if trimmed_content.starts_with('<') && !trimmed_content.starts_with("</") {
+            // Parse nested elements
+            self.parse_nested_elements(trimmed_content, &mut parameters);
+        }
+
+        // If no nested elements found, use the old logic for simple content
+        if parameters.is_empty() {
+            // Map shorthand content to appropriate parameter
+            match tool_name {
+                "bash" => {
+                    parameters.insert("command".to_string(), content);
                 }
-            }
-            "write" | "write_file" => {
-                // Content is the file content, path should be in attributes
-                if !content.is_empty() {
-                    parameters.insert("content".to_string(), content);
+                "read" | "read_file" => {
+                    if !parameters.contains_key("path") && !parameters.contains_key("file_path") {
+                        parameters.insert("path".to_string(), content);
+                    }
                 }
-            }
-            "edit" | "edit_file" => {
-                // Content might be used for something, but usually params are in attributes
-            }
-            "glob" => {
-                if !parameters.contains_key("pattern") {
-                    parameters.insert("pattern".to_string(), content);
+                "write" | "write_file" => {
+                    // Content is the file content, path should be in attributes
+                    if !content.is_empty() {
+                        parameters.insert("content".to_string(), content);
+                    }
                 }
-            }
-            "grep" => {
-                if !parameters.contains_key("pattern") {
-                    parameters.insert("pattern".to_string(), content);
+                "edit" | "edit_file" => {
+                    // Content might be used for something, but usually params are in attributes
                 }
+                "glob" => {
+                    if !parameters.contains_key("pattern") {
+                        parameters.insert("pattern".to_string(), content);
+                    }
+                }
+                "grep" => {
+                    if !parameters.contains_key("pattern") {
+                        parameters.insert("pattern".to_string(), content);
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
 
         Some(InterceptedToolCall {
@@ -345,6 +358,65 @@ impl ToolInterceptor {
                 Uuid::new_v4().to_string().replace("-", "")[..24].to_string()
             ),
         })
+    }
+
+    /// Parse nested XML elements like <path>value</path><content>...</content>
+    fn parse_nested_elements(&self, content: &str, parameters: &mut HashMap<String, String>) {
+        let mut search_pos = 0;
+
+        while search_pos < content.len() {
+            // Find opening tag
+            let Some(tag_start) = content[search_pos..].find('<') else {
+                break;
+            };
+            let abs_tag_start = search_pos + tag_start;
+
+            // Skip if it's a closing tag
+            if content[abs_tag_start..].starts_with("</") {
+                search_pos = abs_tag_start + 1;
+                continue;
+            }
+
+            // Find end of opening tag
+            let Some(tag_end) = content[abs_tag_start..].find('>') else {
+                break;
+            };
+            let abs_tag_end = abs_tag_start + tag_end;
+
+            // Extract element name (handle self-closing tags)
+            let tag_content = &content[abs_tag_start + 1..abs_tag_end];
+            let elem_name = tag_content.split_whitespace().next().unwrap_or("").trim_end_matches('/');
+
+            if elem_name.is_empty() {
+                search_pos = abs_tag_end + 1;
+                continue;
+            }
+
+            // Find closing tag
+            let close_tag = format!("</{}>", elem_name);
+            let Some(close_pos) = content[abs_tag_end..].find(&close_tag) else {
+                search_pos = abs_tag_end + 1;
+                continue;
+            };
+            let abs_close_pos = abs_tag_end + close_pos;
+
+            // Extract value between tags
+            let value = content[abs_tag_end + 1..abs_close_pos].to_string();
+
+            // Map element names to parameter names
+            let param_name = match elem_name {
+                "file_path" => "path",
+                "old_string" => "old_string",
+                "new_string" => "new_string",
+                "contents" => "content",  // Claude sometimes uses plural
+                _ => elem_name,
+            };
+
+            parameters.insert(param_name.to_string(), value);
+
+            // Move past this element
+            search_pos = abs_close_pos + close_tag.len();
+        }
     }
 
     /// Parse invoke tags within a function_calls block
@@ -656,5 +728,51 @@ That's the current directory."#;
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "glob");
         assert_eq!(tools[0].parameters.get("pattern"), Some(&"**/*.rs".to_string()));
+    }
+
+    #[test]
+    fn test_parse_nested_element_write_file() {
+        let mut interceptor = ToolInterceptor::new();
+
+        // Claude Code format: <write_file><path>file</path><content>...</content></write_file>
+        let content = r#"<write_file>
+<path>hello.c</path>
+<content>#include <stdio.h>
+int main() { return 0; }
+</content>
+</write_file>"#;
+
+        interceptor.push(content);
+        assert!(interceptor.has_complete_block());
+
+        let (tools, _, _) = interceptor.extract_tool_calls();
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "write_file");
+        assert_eq!(tools[0].parameters.get("path"), Some(&"hello.c".to_string()));
+        assert!(tools[0].parameters.get("content").unwrap().contains("stdio.h"));
+    }
+
+    #[test]
+    fn test_parse_nested_element_edit_file() {
+        let mut interceptor = ToolInterceptor::new();
+
+        // Claude Code format for edit
+        let content = r#"<edit_file>
+<path>src/main.rs</path>
+<old_string>fn old() {}</old_string>
+<new_string>fn new() {}</new_string>
+</edit_file>"#;
+
+        interceptor.push(content);
+        assert!(interceptor.has_complete_block());
+
+        let (tools, _, _) = interceptor.extract_tool_calls();
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "edit_file");
+        assert_eq!(tools[0].parameters.get("path"), Some(&"src/main.rs".to_string()));
+        assert_eq!(tools[0].parameters.get("old_string"), Some(&"fn old() {}".to_string()));
+        assert_eq!(tools[0].parameters.get("new_string"), Some(&"fn new() {}".to_string()));
     }
 }
