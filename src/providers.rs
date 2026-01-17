@@ -163,6 +163,104 @@ pub fn convert_tools_to_anthropic(tools: &[Value]) -> Vec<Value> {
     AnthropicAdapter::convert_tools(tools, true)
 }
 
+/// Convert messages from OpenAI format to Anthropic format
+///
+/// Handles the critical differences:
+/// - OpenAI `role: "tool"` → Anthropic `role: "user"` with `type: "tool_result"` content
+/// - OpenAI `tool_calls` array → Anthropic `type: "tool_use"` content blocks
+/// - System messages are filtered out (handled separately at top level)
+pub fn convert_messages_to_anthropic(messages: &[Value]) -> Vec<Value> {
+    let mut result = Vec::new();
+
+    for msg in messages {
+        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+
+        // Skip system messages (handled separately)
+        if role == "system" {
+            continue;
+        }
+
+        // Handle tool result messages (OpenAI format: role="tool")
+        if role == "tool" {
+            let tool_use_id = msg.get("tool_call_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let content = msg.get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            result.push(json!({
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": content
+                }]
+            }));
+            continue;
+        }
+
+        // Handle assistant messages with tool_calls
+        if role == "assistant" {
+            if let Some(tool_calls) = msg.get("tool_calls").and_then(|v| v.as_array()) {
+                let mut content_blocks: Vec<Value> = Vec::new();
+
+                // Add text content if present
+                if let Some(text) = msg.get("content").and_then(|v| v.as_str()) {
+                    if !text.is_empty() {
+                        content_blocks.push(json!({"type": "text", "text": text}));
+                    }
+                }
+
+                // Convert tool_calls to tool_use blocks
+                let empty_obj = json!({});
+                for tc in tool_calls {
+                    let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    let func = tc.get("function").unwrap_or(&empty_obj);
+                    let name = func.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let args_str = func.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}");
+
+                    // Parse arguments string to JSON object
+                    let input: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
+
+                    content_blocks.push(json!({
+                        "type": "tool_use",
+                        "id": id,
+                        "name": name,
+                        "input": input
+                    }));
+                }
+
+                result.push(json!({
+                    "role": "assistant",
+                    "content": content_blocks
+                }));
+                continue;
+            }
+        }
+
+        // Regular user or assistant message - convert content to array format
+        let content = msg.get("content")
+            .map(|c| {
+                if c.is_string() {
+                    json!([{"type": "text", "text": c.as_str().unwrap_or("")}])
+                } else if c.is_array() {
+                    c.clone()
+                } else {
+                    json!([{"type": "text", "text": ""}])
+                }
+            })
+            .unwrap_or_else(|| json!([{"type": "text", "text": ""}]));
+
+        result.push(json!({
+            "role": role,
+            "content": content
+        }));
+    }
+
+    result
+}
+
 impl Default for AnthropicAdapter {
     fn default() -> Self {
         Self::new()

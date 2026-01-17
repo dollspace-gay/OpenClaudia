@@ -2,7 +2,7 @@
 //!
 //! Provides Claude Code-like capabilities for any AI agent.
 
-use openclaudia::{config, memory, oauth, prompt, proxy, tools, tui};
+use openclaudia::{config, memory, oauth, prompt, proxy, tool_intercept, tools, tui};
 
 use clap::{Parser, Subcommand};
 use std::fs;
@@ -2552,7 +2552,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
     use openclaudia::hooks::{
         load_claude_code_hooks, merge_hooks_config, HookEngine, HookEvent, HookInput,
     };
-    use openclaudia::providers::{convert_tools_to_anthropic, get_adapter};
+    use openclaudia::providers::{convert_messages_to_anthropic, convert_tools_to_anthropic, get_adapter};
     use openclaudia::rules::RulesEngine;
     use rustyline::error::ReadlineError;
     use rustyline::DefaultEditor;
@@ -3100,18 +3100,17 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                         .and_then(|m| m.get("content").and_then(|c| c.as_str()))
                         .map(String::from);
 
-                    // Filter out system messages from the array
-                    let user_messages: Vec<_> = chat_session
-                        .messages
-                        .iter()
-                        .filter(|m| m.get("role").and_then(|r| r.as_str()) != Some("system"))
-                        .cloned()
-                        .collect();
+                    // Convert messages to Anthropic format (handles tool_calls and tool results)
+                    // Proxy mode still talks to Anthropic API, so needs proper format
+                    let anthropic_messages = convert_messages_to_anthropic(&chat_session.messages);
 
-                    // Minimal request like curl - NO tools, NO system identifier injection
+                    // NOTE: Proxy mode (OAuth credentials) does NOT support custom tools!
+                    // The OAuth session is restricted to Claude Code's native format.
+                    // Claude will use its built-in sandbox environment for tool execution.
+                    // For local tool execution, use direct API mode with ANTHROPIC_API_KEY.
                     let mut req = serde_json::json!({
                         "model": model,
-                        "messages": user_messages,
+                        "messages": anthropic_messages,
                         "max_tokens": 4096,
                         "stream": true
                     });
@@ -3132,28 +3131,8 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                         .and_then(|m| m.get("content").and_then(|c| c.as_str()))
                         .map(String::from);
 
-                    // Filter out system messages and convert to Anthropic format
-                    let anthropic_messages: Vec<serde_json::Value> = chat_session.messages.iter()
-                        .filter(|m| m.get("role").and_then(|r| r.as_str()) != Some("system"))
-                        .map(|m| {
-                            let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("user");
-                            let content = m.get("content")
-                                .map(|c| {
-                                    if c.is_string() {
-                                        // Convert string content to Anthropic array format
-                                        serde_json::json!([{"type": "text", "text": c.as_str().unwrap_or("")}])
-                                    } else {
-                                        // Already array format, keep as-is
-                                        c.clone()
-                                    }
-                                })
-                                .unwrap_or_else(|| serde_json::json!([{"type": "text", "text": ""}]));
-                            serde_json::json!({
-                                "role": role,
-                                "content": content
-                            })
-                        })
-                        .collect();
+                    // Convert messages to Anthropic format (handles tool_calls and tool results)
+                    let anthropic_messages = convert_messages_to_anthropic(&chat_session.messages);
 
                     // Get tools in OpenAI format and convert to Anthropic format
                     let openai_tools = tools::get_all_tool_definitions(stateful, true);
@@ -3374,6 +3353,144 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                 full_content.push_str("\n\n[Response interrupted by user]");
                             }
 
+                            // PROXY MODE TOOL INTERCEPTION
+                            // When using proxy mode (OAuth credentials), Claude uses XML-style
+                            // tool invocations in its text output. We intercept these and
+                            // execute them locally instead of letting Anthropic's sandbox handle them.
+                            if using_proxy && !cancelled {
+                                let mut tool_interceptor = tool_intercept::ToolInterceptor::new();
+                                tool_interceptor.push(&full_content);
+
+                                // Agentic loop for proxy mode with local tool execution
+                                let max_proxy_iterations = 10;
+                                let mut proxy_iteration = 0;
+
+                                while tool_interceptor.has_complete_block() && proxy_iteration < max_proxy_iterations {
+                                    proxy_iteration += 1;
+
+                                    // Extract tool calls from the XML
+                                    let (intercepted_tools, text_before, _text_after) = tool_interceptor.extract_tool_calls();
+
+                                    if intercepted_tools.is_empty() {
+                                        break;
+                                    }
+
+                                    // Add assistant message with the text before tools
+                                    if !text_before.trim().is_empty() {
+                                        chat_session.messages.push(serde_json::json!({
+                                            "role": "assistant",
+                                            "content": text_before.trim()
+                                        }));
+                                    }
+
+                                    // Execute tools locally
+                                    let results = tool_intercept::execute_intercepted_tools(
+                                        &intercepted_tools,
+                                        memory_db.as_ref(),
+                                    );
+
+                                    // Format results for Claude and add as user message
+                                    let results_xml = tool_intercept::format_tool_results_xml(&results);
+                                    chat_session.messages.push(serde_json::json!({
+                                        "role": "user",
+                                        "content": results_xml
+                                    }));
+
+                                    // Send follow-up request
+                                    println!("\n\x1b[90m(Sending tool results to Claude...)\x1b[0m");
+
+                                    let anthropic_messages = convert_messages_to_anthropic(&chat_session.messages);
+                                    let system_msg = chat_session
+                                        .messages
+                                        .iter()
+                                        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+                                        .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                                        .map(String::from);
+
+                                    let mut followup_req = serde_json::json!({
+                                        "model": model,
+                                        "messages": anthropic_messages,
+                                        "max_tokens": 4096,
+                                        "stream": true
+                                    });
+                                    if let Some(sys) = system_msg {
+                                        followup_req["system"] = serde_json::json!(sys);
+                                    }
+
+                                    let mut req = client.post(&endpoint).json(&followup_req);
+                                    for (key, value) in &headers {
+                                        req = req.header(key, value);
+                                    }
+
+                                    match req.send().await {
+                                        Ok(response) if response.status().is_success() => {
+                                            use futures::StreamExt;
+
+                                            let mut stream = response.bytes_stream();
+                                            let mut buffer = String::new();
+                                            let mut followup_content = String::new();
+
+                                            while let Some(chunk_result) = stream.next().await {
+                                                match chunk_result {
+                                                    Ok(chunk) => {
+                                                        buffer.push_str(&String::from_utf8_lossy(&chunk));
+                                                        while let Some(line_end) = buffer.find('\n') {
+                                                            let line = buffer[..line_end].trim().to_string();
+                                                            buffer = buffer[line_end + 1..].to_string();
+                                                            if line.is_empty() || line.starts_with(':') {
+                                                                continue;
+                                                            }
+                                                            if let Some(data) = line.strip_prefix("data: ") {
+                                                                if data == "[DONE]" {
+                                                                    break;
+                                                                }
+                                                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                                                                    if json.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
+                                                                        if let Some(text) = json.get("delta").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
+                                                                            print!("{}", text);
+                                                                            std::io::stdout().flush().ok();
+                                                                            followup_content.push_str(text);
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!("\nStream error: {}", e);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+
+                                            // Check if follow-up contains more tool calls
+                                            tool_interceptor.clear();
+                                            tool_interceptor.push(&followup_content);
+                                            full_content = followup_content;
+                                        }
+                                        Ok(response) => {
+                                            eprintln!("\nFollow-up request failed: {}", response.status());
+                                            break;
+                                        }
+                                        Err(e) => {
+                                            eprintln!("\nFollow-up request error: {}", e);
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                // Add final assistant message
+                                if !full_content.trim().is_empty() && !tool_interceptor.has_pending_tool_calls() {
+                                    chat_session.messages.push(serde_json::json!({
+                                        "role": "assistant",
+                                        "content": full_content.trim()
+                                    }));
+                                }
+
+                                println!();
+                                continue; // Skip the regular agentic loop since we handled proxy mode
+                            }
+
                             // Agentic loop - continue while there are tool calls
                             let max_iterations = 10; // Prevent infinite loops
                             let mut iteration = 0;
@@ -3517,7 +3634,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                 println!("\n\x1b[90mContinuing with tool results...\x1b[0m\n");
 
                                 // Build new request with tool results
-                                // Use minimal format for proxy, native for direct OAuth
+                                // Use minimal format for proxy, native Anthropic for direct, OpenAI for others
                                 let request_body = if using_proxy {
                                     // Extract system message to top-level
                                     let system_msg = chat_session
@@ -3529,18 +3646,14 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                         .and_then(|m| m.get("content").and_then(|c| c.as_str()))
                                         .map(String::from);
 
-                                    let user_messages: Vec<_> = chat_session
-                                        .messages
-                                        .iter()
-                                        .filter(|m| {
-                                            m.get("role").and_then(|r| r.as_str()) != Some("system")
-                                        })
-                                        .cloned()
-                                        .collect();
+                                    // Convert messages to Anthropic format (handles tool_calls and tool results)
+                                    // Proxy mode still talks to Anthropic API, so needs proper format
+                                    let anthropic_messages = convert_messages_to_anthropic(&chat_session.messages);
 
+                                    // NOTE: Proxy mode (OAuth) does NOT support custom tools - see above
                                     let mut req = serde_json::json!({
                                         "model": model,
-                                        "messages": user_messages,
+                                        "messages": anthropic_messages,
                                         "max_tokens": 4096,
                                         "stream": true
                                     });
@@ -3550,7 +3663,42 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                     }
 
                                     req
+                                } else if config.proxy.target == "anthropic" {
+                                    // Anthropic direct API - convert messages to Anthropic format
+                                    let system_msg = chat_session
+                                        .messages
+                                        .iter()
+                                        .find(|m| {
+                                            m.get("role").and_then(|r| r.as_str()) == Some("system")
+                                        })
+                                        .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                                        .map(String::from);
+
+                                    // Convert messages with proper tool_use/tool_result handling
+                                    let anthropic_messages = convert_messages_to_anthropic(&chat_session.messages);
+
+                                    let openai_tools = tools::get_all_tool_definitions(stateful, true);
+                                    let anthropic_tools = convert_tools_to_anthropic(openai_tools.as_array().unwrap_or(&vec![]));
+
+                                    let mut req = serde_json::json!({
+                                        "model": model,
+                                        "messages": anthropic_messages,
+                                        "max_tokens": 4096,
+                                        "stream": true,
+                                        "tools": anthropic_tools
+                                    });
+
+                                    if let Some(sys) = system_msg {
+                                        req["system"] = serde_json::json!([{
+                                            "type": "text",
+                                            "text": sys,
+                                            "cache_control": {"type": "ephemeral"}
+                                        }]);
+                                    }
+
+                                    req
                                 } else {
+                                    // OpenAI-compatible format for other providers
                                     serde_json::json!({
                                         "model": model,
                                         "messages": chat_session.messages,

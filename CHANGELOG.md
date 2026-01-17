@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix lru crate Stacked Borrows vulnerability by updating to 0.16.3 (#99)
 
 ### Added
+- Add TestBuilder agent that writes tests alongside coding agent (#162)
+- Add TodoWrite tool as fallback task tracker when chainlink unavailable (#160)
 - Add subagent tools documentation to system prompt (#159)
 - Add subagent system for spawning autonomous task agents (#145)
 - Add Anthropic prompt caching for system prompt and tools (#144)
@@ -52,6 +54,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Add hook engine with all 12 event types (#4)
 
 ### Fixed
+- Fix bash tool to use correct working directory (#170)
 - Clean up unused code and fix compiler warnings (#84)
 - Fix bash tool to use Git Bash instead of WSL on Windows (#90)
 - Update dependencies to fix net2 deprecation warning (#22)
@@ -62,6 +65,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix TUI welcome screen box drawing alignment (#59)
 
 ### Changed
+- Fix model not receiving bash tool output causing hallucinated responses (#171)
+- Add console logging for TestBuilder agent activity (#169)
+- Add automatic TestBuilder spawn when coding agent starts work (#168)
+- Add chainlink reopen and alert functionality for failed tests (#167)
+- Add test failure analysis to distinguish test bugs from code bugs (#166)
+- Add test runner integration (cargo test, pytest detection) (#165)
+- Add file change monitoring via git diff tracking (#164)
+- Add TestBuilder agent type with test-focused system prompt (#163)
 - Add background agent execution with async tracking (#150)
 - Add agent type configurations and system prompts (#149)
 - Add AgentOutputTool for background agent result retrieval (#148)

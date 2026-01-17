@@ -4,7 +4,7 @@
 //! against real filesystem, processes, and network operations.
 
 use openclaudia::memory::MemoryDb;
-use openclaudia::tools::{execute_tool, FunctionCall, ToolCall};
+use openclaudia::tools::{clear_todo_list, execute_tool, get_todo_list, FunctionCall, ToolCall};
 use serde_json::{json, Value};
 use std::fs;
 use tempfile::TempDir;
@@ -1451,6 +1451,8 @@ mod tool_definitions {
             "kill_shell",
             "web_fetch",
             "web_search",
+            "todo_write",
+            "todo_read",
         ];
 
         for required in required_tools {
@@ -1461,5 +1463,600 @@ mod tool_definitions {
                 tool_names
             );
         }
+    }
+
+    #[test]
+    fn test_subagent_tools_with_subagents_flag() {
+        // With subagents flag, should include task and agent_output
+        let tools_with_subagents = get_all_tool_definitions(false, true);
+        let tool_names: Vec<&str> = tools_with_subagents
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str())
+            .collect();
+
+        assert!(
+            tool_names.contains(&"task"),
+            "Subagent mode should include 'task' tool"
+        );
+        assert!(
+            tool_names.contains(&"agent_output"),
+            "Subagent mode should include 'agent_output' tool"
+        );
+    }
+}
+
+// ============================================================================
+// TODO TOOLS TESTS
+// ============================================================================
+
+mod todo_tools {
+    use super::*;
+
+    #[test]
+    fn test_todo_write_basic() {
+        // Clear any existing todos
+        clear_todo_list();
+
+        let tool_call = make_tool_call(
+            "todo_write",
+            json!({
+                "todos": [
+                    {
+                        "content": "Fix the bug",
+                        "status": "pending",
+                        "activeForm": "Fixing the bug"
+                    },
+                    {
+                        "content": "Write tests",
+                        "status": "in_progress",
+                        "activeForm": "Writing tests"
+                    }
+                ]
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            !result.is_error,
+            "todo_write should succeed: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("2 total"),
+            "Should report 2 todos: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("1 in progress"),
+            "Should have 1 in progress: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("Writing tests"),
+            "Should show current task: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_todo_write_with_completed() {
+        clear_todo_list();
+
+        let tool_call = make_tool_call(
+            "todo_write",
+            json!({
+                "todos": [
+                    {
+                        "content": "Setup project",
+                        "status": "completed",
+                        "activeForm": "Setting up project"
+                    },
+                    {
+                        "content": "Implement feature",
+                        "status": "completed",
+                        "activeForm": "Implementing feature"
+                    },
+                    {
+                        "content": "Deploy",
+                        "status": "pending",
+                        "activeForm": "Deploying"
+                    }
+                ]
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(!result.is_error, "Should succeed: {}", result.content);
+        assert!(
+            result.content.contains("2 completed"),
+            "Should have 2 completed: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("1 pending"),
+            "Should have 1 pending: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_todo_write_multiple_in_progress_warning() {
+        clear_todo_list();
+
+        let tool_call = make_tool_call(
+            "todo_write",
+            json!({
+                "todos": [
+                    {
+                        "content": "Task 1",
+                        "status": "in_progress",
+                        "activeForm": "Working on task 1"
+                    },
+                    {
+                        "content": "Task 2",
+                        "status": "in_progress",
+                        "activeForm": "Working on task 2"
+                    }
+                ]
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(!result.is_error, "Should succeed: {}", result.content);
+        assert!(
+            result.content.to_lowercase().contains("warning")
+                || result.content.contains("2 tasks marked as in_progress"),
+            "Should warn about multiple in_progress: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_todo_write_missing_field() {
+        clear_todo_list();
+
+        // Missing activeForm
+        let tool_call = make_tool_call(
+            "todo_write",
+            json!({
+                "todos": [
+                    {
+                        "content": "Task",
+                        "status": "pending"
+                    }
+                ]
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            result.is_error,
+            "Should fail with missing field: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("activeForm"),
+            "Should mention missing activeForm: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_todo_write_invalid_status() {
+        clear_todo_list();
+
+        let tool_call = make_tool_call(
+            "todo_write",
+            json!({
+                "todos": [
+                    {
+                        "content": "Task",
+                        "status": "invalid_status",
+                        "activeForm": "Working"
+                    }
+                ]
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            result.is_error,
+            "Should fail with invalid status: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("invalid")
+                || result.content.contains("pending")
+                || result.content.contains("in_progress")
+                || result.content.contains("completed"),
+            "Should mention valid statuses: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_todo_read_empty() {
+        clear_todo_list();
+
+        let tool_call = make_tool_call("todo_read", json!({}));
+        let result = execute_tool(&tool_call);
+
+        assert!(!result.is_error, "Should succeed: {}", result.content);
+        assert!(
+            result.content.to_lowercase().contains("no todos")
+                || result.content.contains("empty")
+                || result.content.is_empty(),
+            "Should indicate empty list: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_todo_read_after_write() {
+        clear_todo_list();
+
+        // Write some todos
+        let write_call = make_tool_call(
+            "todo_write",
+            json!({
+                "todos": [
+                    {
+                        "content": "Research API",
+                        "status": "completed",
+                        "activeForm": "Researching API"
+                    },
+                    {
+                        "content": "Implement endpoint",
+                        "status": "in_progress",
+                        "activeForm": "Implementing endpoint"
+                    },
+                    {
+                        "content": "Write documentation",
+                        "status": "pending",
+                        "activeForm": "Writing documentation"
+                    }
+                ]
+            }),
+        );
+        execute_tool(&write_call);
+
+        // Read them back
+        let read_call = make_tool_call("todo_read", json!({}));
+        let result = execute_tool(&read_call);
+
+        assert!(!result.is_error, "Should succeed: {}", result.content);
+        assert!(
+            result.content.contains("Research API"),
+            "Should contain first task: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("Implement endpoint"),
+            "Should contain second task: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("Write documentation"),
+            "Should contain third task: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("[x]") || result.content.contains("completed"),
+            "Should show completed status: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("[>]") || result.content.contains("in_progress"),
+            "Should show in_progress status: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_todo_list_persistence() {
+        clear_todo_list();
+
+        // Write todos
+        let write_call = make_tool_call(
+            "todo_write",
+            json!({
+                "todos": [
+                    {
+                        "content": "Persistent task",
+                        "status": "pending",
+                        "activeForm": "Working on persistent task"
+                    }
+                ]
+            }),
+        );
+        execute_tool(&write_call);
+
+        // Get the list directly using helper function
+        let todos = get_todo_list();
+
+        assert_eq!(todos.len(), 1, "Should have 1 todo");
+        assert_eq!(todos[0].content, "Persistent task");
+        assert_eq!(todos[0].status, "pending");
+        assert_eq!(todos[0].active_form, "Working on persistent task");
+    }
+
+    #[test]
+    fn test_todo_write_replaces_list() {
+        clear_todo_list();
+
+        // First write
+        let write1 = make_tool_call(
+            "todo_write",
+            json!({
+                "todos": [
+                    {
+                        "content": "Old task 1",
+                        "status": "pending",
+                        "activeForm": "Working"
+                    },
+                    {
+                        "content": "Old task 2",
+                        "status": "pending",
+                        "activeForm": "Working"
+                    }
+                ]
+            }),
+        );
+        execute_tool(&write1);
+
+        // Second write (should replace, not append)
+        let write2 = make_tool_call(
+            "todo_write",
+            json!({
+                "todos": [
+                    {
+                        "content": "New task",
+                        "status": "in_progress",
+                        "activeForm": "Working on new task"
+                    }
+                ]
+            }),
+        );
+        execute_tool(&write2);
+
+        let todos = get_todo_list();
+        assert_eq!(todos.len(), 1, "Should have replaced list with 1 todo");
+        assert_eq!(todos[0].content, "New task");
+    }
+
+    #[test]
+    fn test_todo_write_empty_list() {
+        clear_todo_list();
+
+        // First add some todos
+        let write1 = make_tool_call(
+            "todo_write",
+            json!({
+                "todos": [
+                    {
+                        "content": "Task",
+                        "status": "pending",
+                        "activeForm": "Working"
+                    }
+                ]
+            }),
+        );
+        execute_tool(&write1);
+
+        // Then clear by writing empty list
+        let write_empty = make_tool_call(
+            "todo_write",
+            json!({
+                "todos": []
+            }),
+        );
+        let result = execute_tool(&write_empty);
+
+        assert!(!result.is_error, "Should succeed: {}", result.content);
+        assert!(
+            result.content.contains("0 total"),
+            "Should report 0 todos: {}",
+            result.content
+        );
+
+        let todos = get_todo_list();
+        assert!(todos.is_empty(), "List should be empty");
+    }
+}
+
+// ============================================================================
+// SUBAGENT TOOLS TESTS
+// ============================================================================
+
+mod subagent_tools {
+    use super::*;
+
+    #[test]
+    fn test_task_tool_missing_args() {
+        // Missing all required arguments
+        let tool_call = make_tool_call("task", json!({}));
+        let result = execute_tool(&tool_call);
+
+        // Should fail because subagent tools require config context
+        assert!(
+            result.is_error,
+            "task without config should fail: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("config")
+                || result.content.contains("description")
+                || result.content.contains("require"),
+            "Should mention configuration requirement: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_agent_output_no_agents() {
+        // When no agent_id is provided, should list agents (empty list)
+        let tool_call = make_tool_call("agent_output", json!({}));
+        let result = execute_tool(&tool_call);
+
+        // Should fail because it requires config, or return empty list
+        // The behavior depends on implementation
+        if !result.is_error {
+            assert!(
+                result.content.to_lowercase().contains("no")
+                    || result.content.to_lowercase().contains("agent"),
+                "Should mention no agents: {}",
+                result.content
+            );
+        }
+    }
+
+    #[test]
+    fn test_agent_output_nonexistent_id() {
+        let tool_call = make_tool_call(
+            "agent_output",
+            json!({
+                "agent_id": "nonexistent_agent_12345"
+            }),
+        );
+        let result = execute_tool(&tool_call);
+
+        // Should fail because agent doesn't exist or config is missing
+        assert!(
+            result.is_error
+                || result.content.to_lowercase().contains("not found")
+                || result.content.to_lowercase().contains("config"),
+            "Should indicate agent not found or config missing: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_subagent_tool_definitions_exist() {
+        use openclaudia::subagent::get_subagent_tool_definitions;
+
+        let tools = get_subagent_tool_definitions();
+        let tools_array = tools.as_array().expect("Should be array");
+
+        assert_eq!(tools_array.len(), 2, "Should have 2 subagent tools");
+
+        let tool_names: Vec<&str> = tools_array
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str())
+            .collect();
+
+        assert!(tool_names.contains(&"task"), "Should have task tool");
+        assert!(
+            tool_names.contains(&"agent_output"),
+            "Should have agent_output tool"
+        );
+    }
+
+    #[test]
+    fn test_task_tool_definition_structure() {
+        use openclaudia::subagent::get_subagent_tool_definitions;
+
+        let tools = get_subagent_tool_definitions();
+        let task_tool = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["function"]["name"].as_str() == Some("task"))
+            .expect("Should find task tool");
+
+        let params = &task_tool["function"]["parameters"];
+        let required = params["required"].as_array().expect("Should have required");
+
+        assert!(
+            required.iter().any(|r| r.as_str() == Some("description")),
+            "Should require description"
+        );
+        assert!(
+            required.iter().any(|r| r.as_str() == Some("prompt")),
+            "Should require prompt"
+        );
+        assert!(
+            required.iter().any(|r| r.as_str() == Some("subagent_type")),
+            "Should require subagent_type"
+        );
+
+        // Check enum for subagent_type
+        let subagent_type_enum = &params["properties"]["subagent_type"]["enum"];
+        assert!(subagent_type_enum.is_array(), "subagent_type should have enum");
+        let types: Vec<&str> = subagent_type_enum
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(types.contains(&"general-purpose"));
+        assert!(types.contains(&"explore"));
+        assert!(types.contains(&"plan"));
+        assert!(types.contains(&"guide"));
+    }
+
+    #[test]
+    fn test_agent_output_tool_definition_structure() {
+        use openclaudia::subagent::get_subagent_tool_definitions;
+
+        let tools = get_subagent_tool_definitions();
+        let agent_output_tool = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["function"]["name"].as_str() == Some("agent_output"))
+            .expect("Should find agent_output tool");
+
+        let params = &agent_output_tool["function"]["parameters"];
+        let properties = &params["properties"];
+
+        assert!(
+            properties.get("agent_id").is_some(),
+            "Should have agent_id property"
+        );
+        assert!(
+            properties.get("block").is_some(),
+            "Should have block property"
+        );
+    }
+
+    #[test]
+    fn test_agent_type_parsing() {
+        use openclaudia::subagent::AgentType;
+
+        assert!(AgentType::parse_type("general-purpose").is_some());
+        assert!(AgentType::parse_type("explore").is_some());
+        assert!(AgentType::parse_type("plan").is_some());
+        assert!(AgentType::parse_type("guide").is_some());
+        assert!(AgentType::parse_type("EXPLORE").is_some()); // case insensitive
+        assert!(AgentType::parse_type("invalid").is_none());
+    }
+
+    #[test]
+    fn test_agent_type_allowed_tools() {
+        use openclaudia::subagent::AgentType;
+
+        // GeneralPurpose should have write access
+        let gp_tools = AgentType::GeneralPurpose.allowed_tools();
+        assert!(gp_tools.contains(&"write_file"));
+        assert!(gp_tools.contains(&"edit_file"));
+        assert!(gp_tools.contains(&"bash"));
+
+        // Explore should be read-only
+        let explore_tools = AgentType::Explore.allowed_tools();
+        assert!(explore_tools.contains(&"read_file"));
+        assert!(!explore_tools.contains(&"write_file"));
+        assert!(!explore_tools.contains(&"edit_file"));
+
+        // Guide should be most restricted
+        let guide_tools = AgentType::Guide.allowed_tools();
+        assert!(guide_tools.contains(&"read_file"));
+        assert!(!guide_tools.contains(&"bash")); // No bash for guide
     }
 }

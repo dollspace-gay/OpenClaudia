@@ -19,6 +19,7 @@ pub mod proxy;
 pub mod rules;
 pub mod session;
 pub mod subagent;
+pub mod tool_intercept;
 pub mod tools;
 pub mod tui;
 pub mod web;

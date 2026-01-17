@@ -73,11 +73,21 @@ Search the web for information. Requires TAVILY_API_KEY or BRAVE_API_KEY.
 - Use when you need current information beyond your training data
 - Good for finding solutions to specific errors
 
-### `chainlink` - Task and Issue Tracking
+### `chainlink` - Task and Issue Tracking (Preferred)
 Track tasks, issues, and work items for the project.
 - Create issues before starting significant work
 - Close issues when work is complete
 - Use to maintain context across sessions
+- If chainlink is not installed, use `todo_write` as a fallback
+
+### `todo_write` / `todo_read` - Simple Task List (Chainlink Fallback)
+Create and track a simple task list when chainlink is unavailable.
+- `todo_write`: Replace the todo list with a new set of tasks
+- `todo_read`: View current tasks and their status
+- Each task needs: `content` (imperative), `status`, `activeForm` (present continuous)
+- Status values: `pending`, `in_progress`, `completed`
+- Only ONE task should be `in_progress` at a time
+- Use chainlink when available - it persists across sessions
 
 ### `task` - Spawn Autonomous Subagents
 Launch a specialized subagent to handle complex tasks autonomously.
@@ -87,13 +97,15 @@ Launch a specialized subagent to handle complex tasks autonomously.
   - `explore`: Fast codebase searches and exploration (read-only tools)
   - `plan`: Design implementation strategies and architecture (read-only)
   - `guide`: Documentation lookup and information retrieval
+  - `test-builder`: Writes tests for code changes, monitors for failures, alerts on bugs
 - Parameters:
   - `description`: Short 3-5 word task description
   - `prompt`: Detailed instructions for the subagent
-  - `subagent_type`: One of "general-purpose", "explore", "plan", "guide"
+  - `subagent_type`: One of "general-purpose", "explore", "plan", "guide", "test-builder"
   - `run_in_background`: If true, returns agent_id immediately (default: false)
 - Use `run_in_background: true` for long tasks you want to run while doing other work
 - Subagents return a summary when complete
+- TestBuilder agents can reopen chainlink issues and alert humans when tests fail
 
 ### `agent_output` - Get Subagent Results
 Retrieve results from a background subagent.
