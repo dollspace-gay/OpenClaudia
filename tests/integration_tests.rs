@@ -1988,7 +1988,10 @@ mod subagent_tools {
 
         // Check enum for subagent_type
         let subagent_type_enum = &params["properties"]["subagent_type"]["enum"];
-        assert!(subagent_type_enum.is_array(), "subagent_type should have enum");
+        assert!(
+            subagent_type_enum.is_array(),
+            "subagent_type should have enum"
+        );
         let types: Vec<&str> = subagent_type_enum
             .as_array()
             .unwrap()

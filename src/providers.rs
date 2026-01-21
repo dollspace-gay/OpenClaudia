@@ -202,12 +202,11 @@ pub fn convert_messages_to_anthropic(messages: &[Value]) -> Vec<Value> {
 
         // Handle tool result messages (OpenAI format: role="tool")
         if role == "tool" {
-            let tool_use_id = msg.get("tool_call_id")
+            let tool_use_id = msg
+                .get("tool_call_id")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let content = msg.get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
 
             result.push(json!({
                 "role": "user",
@@ -238,7 +237,10 @@ pub fn convert_messages_to_anthropic(messages: &[Value]) -> Vec<Value> {
                     let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
                     let func = tc.get("function").unwrap_or(&empty_obj);
                     let name = func.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                    let args_str = func.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}");
+                    let args_str = func
+                        .get("arguments")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("{}");
 
                     // Parse arguments string to JSON object
                     let input: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
@@ -260,7 +262,8 @@ pub fn convert_messages_to_anthropic(messages: &[Value]) -> Vec<Value> {
         }
 
         // Regular user or assistant message - convert content to array format
-        let content = msg.get("content")
+        let content = msg
+            .get("content")
             .map(|c| {
                 if c.is_string() {
                     json!([{"type": "text", "text": c.as_str().unwrap_or("")}])
@@ -1193,7 +1196,13 @@ pub async fn fetch_models(
     }
 
     let client = reqwest::Client::new();
-    let url = format!("{}{}", base_url.trim_end_matches('/'), adapter.models_endpoint());
+
+    // Normalize base_url: strip trailing slash and /v1 suffix to avoid double /v1/v1
+    let normalized_base = base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .trim_end_matches('/');
+    let url = format!("{}{}", normalized_base, adapter.models_endpoint());
 
     let mut request = client.get(&url);
 
@@ -1216,15 +1225,16 @@ pub async fn fetch_models(
         )));
     }
 
-    let body: Value = response
-        .json()
-        .await
-        .map_err(|e| ProviderError::InvalidResponse(format!("Failed to parse models response: {}", e)))?;
+    let body: Value = response.json().await.map_err(|e| {
+        ProviderError::InvalidResponse(format!("Failed to parse models response: {}", e))
+    })?;
 
     // Parse OpenAI-style response: { "data": [...], "object": "list" }
     let models = body["data"]
         .as_array()
-        .ok_or_else(|| ProviderError::InvalidResponse("Expected 'data' array in response".to_string()))?
+        .ok_or_else(|| {
+            ProviderError::InvalidResponse("Expected 'data' array in response".to_string())
+        })?
         .iter()
         .filter_map(|m| {
             let id = m["id"].as_str()?.to_string();

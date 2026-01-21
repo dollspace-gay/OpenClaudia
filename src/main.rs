@@ -2579,7 +2579,9 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
     use openclaudia::hooks::{
         load_claude_code_hooks, merge_hooks_config, HookEngine, HookEvent, HookInput,
     };
-    use openclaudia::providers::{convert_messages_to_anthropic, convert_tools_to_anthropic, get_adapter};
+    use openclaudia::providers::{
+        convert_messages_to_anthropic, convert_tools_to_anthropic, get_adapter,
+    };
     use openclaudia::rules::RulesEngine;
     use rustyline::error::ReadlineError;
     use rustyline::DefaultEditor;
@@ -2964,10 +2966,15 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                     print!("Fetching models from {}...", provider_config.base_url);
                                     std::io::Write::flush(&mut std::io::stdout()).ok();
 
-                                    match fetch_dynamic_models(provider_config, adapter.as_ref()).await {
+                                    match fetch_dynamic_models(provider_config, adapter.as_ref())
+                                        .await
+                                    {
                                         Some(models) => {
                                             println!(" found {} models.\n", models.len());
-                                            println!("Available models for {} (live):", provider_name);
+                                            println!(
+                                                "Available models for {} (live):",
+                                                provider_name
+                                            );
                                             for (i, m) in models.iter().enumerate() {
                                                 let marker = if m == &model { " *" } else { "" };
                                                 println!("  {}. {}{}", i + 1, m, marker);
@@ -2976,7 +2983,10 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                         None => {
                                             println!(" using cached list.\n");
                                             let available = get_available_models(provider_name);
-                                            println!("Available models for {} (static):", provider_name);
+                                            println!(
+                                                "Available models for {} (static):",
+                                                provider_name
+                                            );
                                             for (i, m) in available.iter().enumerate() {
                                                 let marker = if *m == model { " *" } else { "" };
                                                 println!("  {}. {}{}", i + 1, m, marker);
@@ -3442,11 +3452,14 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                 let max_proxy_iterations = 10;
                                 let mut proxy_iteration = 0;
 
-                                while tool_interceptor.has_complete_block() && proxy_iteration < max_proxy_iterations {
+                                while tool_interceptor.has_complete_block()
+                                    && proxy_iteration < max_proxy_iterations
+                                {
                                     proxy_iteration += 1;
 
                                     // Extract tool calls from the XML
-                                    let (intercepted_tools, text_before, _text_after) = tool_interceptor.extract_tool_calls();
+                                    let (intercepted_tools, text_before, _text_after) =
+                                        tool_interceptor.extract_tool_calls();
 
                                     if intercepted_tools.is_empty() {
                                         break;
@@ -3467,20 +3480,26 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                     );
 
                                     // Format results for Claude and add as user message
-                                    let results_xml = tool_intercept::format_tool_results_xml(&results);
+                                    let results_xml =
+                                        tool_intercept::format_tool_results_xml(&results);
                                     chat_session.messages.push(serde_json::json!({
                                         "role": "user",
                                         "content": results_xml
                                     }));
 
                                     // Send follow-up request
-                                    println!("\n\x1b[90m(Sending tool results to Claude...)\x1b[0m");
+                                    println!(
+                                        "\n\x1b[90m(Sending tool results to Claude...)\x1b[0m"
+                                    );
 
-                                    let anthropic_messages = convert_messages_to_anthropic(&chat_session.messages);
+                                    let anthropic_messages =
+                                        convert_messages_to_anthropic(&chat_session.messages);
                                     let system_msg = chat_session
                                         .messages
                                         .iter()
-                                        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+                                        .find(|m| {
+                                            m.get("role").and_then(|r| r.as_str()) == Some("system")
+                                        })
                                         .and_then(|m| m.get("content").and_then(|c| c.as_str()))
                                         .map(String::from);
 
@@ -3510,23 +3529,56 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                             while let Some(chunk_result) = stream.next().await {
                                                 match chunk_result {
                                                     Ok(chunk) => {
-                                                        buffer.push_str(&String::from_utf8_lossy(&chunk));
-                                                        while let Some(line_end) = buffer.find('\n') {
-                                                            let line = buffer[..line_end].trim().to_string();
-                                                            buffer = buffer[line_end + 1..].to_string();
-                                                            if line.is_empty() || line.starts_with(':') {
+                                                        buffer.push_str(&String::from_utf8_lossy(
+                                                            &chunk,
+                                                        ));
+                                                        while let Some(line_end) = buffer.find('\n')
+                                                        {
+                                                            let line = buffer[..line_end]
+                                                                .trim()
+                                                                .to_string();
+                                                            buffer =
+                                                                buffer[line_end + 1..].to_string();
+                                                            if line.is_empty()
+                                                                || line.starts_with(':')
+                                                            {
                                                                 continue;
                                                             }
-                                                            if let Some(data) = line.strip_prefix("data: ") {
+                                                            if let Some(data) =
+                                                                line.strip_prefix("data: ")
+                                                            {
                                                                 if data == "[DONE]" {
                                                                     break;
                                                                 }
-                                                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                                                                    if json.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
-                                                                        if let Some(text) = json.get("delta").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
+                                                                if let Ok(json) =
+                                                                    serde_json::from_str::<
+                                                                        serde_json::Value,
+                                                                    >(
+                                                                        data
+                                                                    )
+                                                                {
+                                                                    if json
+                                                                        .get("type")
+                                                                        .and_then(|t| t.as_str())
+                                                                        == Some(
+                                                                            "content_block_delta",
+                                                                        )
+                                                                    {
+                                                                        if let Some(text) = json
+                                                                            .get("delta")
+                                                                            .and_then(|d| {
+                                                                                d.get("text")
+                                                                            })
+                                                                            .and_then(|t| {
+                                                                                t.as_str()
+                                                                            })
+                                                                        {
                                                                             print!("{}", text);
-                                                                            std::io::stdout().flush().ok();
-                                                                            followup_content.push_str(text);
+                                                                            std::io::stdout()
+                                                                                .flush()
+                                                                                .ok();
+                                                                            followup_content
+                                                                                .push_str(text);
                                                                         }
                                                                     }
                                                                 }
@@ -3546,7 +3598,10 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                             full_content = followup_content;
                                         }
                                         Ok(response) => {
-                                            eprintln!("\nFollow-up request failed: {}", response.status());
+                                            eprintln!(
+                                                "\nFollow-up request failed: {}",
+                                                response.status()
+                                            );
                                             break;
                                         }
                                         Err(e) => {
@@ -3557,7 +3612,9 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                 }
 
                                 // Add final assistant message
-                                if !full_content.trim().is_empty() && !tool_interceptor.has_pending_tool_calls() {
+                                if !full_content.trim().is_empty()
+                                    && !tool_interceptor.has_pending_tool_calls()
+                                {
                                     chat_session.messages.push(serde_json::json!({
                                         "role": "assistant",
                                         "content": full_content.trim()
@@ -3725,7 +3782,8 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
 
                                     // Convert messages to Anthropic format (handles tool_calls and tool results)
                                     // Proxy mode still talks to Anthropic API, so needs proper format
-                                    let anthropic_messages = convert_messages_to_anthropic(&chat_session.messages);
+                                    let anthropic_messages =
+                                        convert_messages_to_anthropic(&chat_session.messages);
 
                                     // NOTE: Proxy mode (OAuth) does NOT support custom tools - see above
                                     let mut req = serde_json::json!({
@@ -3752,10 +3810,14 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                         .map(String::from);
 
                                     // Convert messages with proper tool_use/tool_result handling
-                                    let anthropic_messages = convert_messages_to_anthropic(&chat_session.messages);
+                                    let anthropic_messages =
+                                        convert_messages_to_anthropic(&chat_session.messages);
 
-                                    let openai_tools = tools::get_all_tool_definitions(stateful, true);
-                                    let anthropic_tools = convert_tools_to_anthropic(openai_tools.as_array().unwrap_or(&vec![]));
+                                    let openai_tools =
+                                        tools::get_all_tool_definitions(stateful, true);
+                                    let anthropic_tools = convert_tools_to_anthropic(
+                                        openai_tools.as_array().unwrap_or(&vec![]),
+                                    );
 
                                     let mut req = serde_json::json!({
                                         "model": model,

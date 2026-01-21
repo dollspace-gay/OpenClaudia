@@ -1639,12 +1639,7 @@ fn execute_todo_read() -> (String, bool) {
             "pending" => "[ ]",
             _ => "[?]",
         };
-        output.push_str(&format!(
-            "{}. {} {}\n",
-            i + 1,
-            status_icon,
-            todo.content
-        ));
+        output.push_str(&format!("{}. {} {}\n", i + 1, status_icon, todo.content));
     }
 
     // Summary

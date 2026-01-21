@@ -230,10 +230,10 @@ impl AgentType {
     /// Get model preference for this agent type
     pub fn preferred_model(&self) -> Option<&'static str> {
         match self {
-            AgentType::Explore => Some("haiku"), // Fast, cheap searches
-            AgentType::Guide => Some("haiku"),   // Documentation lookup
+            AgentType::Explore => Some("haiku"),    // Fast, cheap searches
+            AgentType::Guide => Some("haiku"),      // Documentation lookup
             AgentType::TestBuilder => Some("opus"), // Use opus for adversarial reasoning
-            _ => None,                           // Use default model
+            _ => None,                              // Use default model
         }
     }
 }

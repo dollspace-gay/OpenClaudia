@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix lru crate Stacked Borrows vulnerability by updating to 0.16.3 (#99)
 
 ### Added
+- Add nested XML element format parsing for tool interception (#177)
 - Add dynamic model discovery from OpenAI-compatible endpoints (#172)
 - Add TestBuilder agent that writes tests alongside coding agent (#162)
 - Add TodoWrite tool as fallback task tracker when chainlink unavailable (#160)
@@ -55,6 +56,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Add hook engine with all 12 event types (#4)
 
 ### Fixed
+- Fix dynamic model discovery URL construction for base URLs containing /v1 suffix (#176)
 - Fix bash tool to use correct working directory (#170)
 - Clean up unused code and fix compiler warnings (#84)
 - Fix bash tool to use Git Bash instead of WSL on Windows (#90)

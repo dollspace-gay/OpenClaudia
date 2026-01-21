@@ -67,7 +67,10 @@ impl InterceptedToolCall {
                 ("grep", "path") => "path",
                 (_, k) => k,
             };
-            args.insert(internal_key.to_string(), serde_json::Value::String(value.clone()));
+            args.insert(
+                internal_key.to_string(),
+                serde_json::Value::String(value.clone()),
+            );
         }
 
         ToolCall {
@@ -121,7 +124,15 @@ impl ToolInterceptor {
 
     /// Shorthand tool tags that Claude might use (e.g., <bash>cmd</bash>)
     const SHORTHAND_TOOLS: &'static [&'static str] = &[
-        "bash", "read", "write", "edit", "glob", "grep", "read_file", "write_file", "edit_file",
+        "bash",
+        "read",
+        "write",
+        "edit",
+        "glob",
+        "grep",
+        "read_file",
+        "write_file",
+        "edit_file",
     ];
 
     /// Check if buffer contains tool invocations
@@ -164,7 +175,8 @@ impl ToolInterceptor {
             let open_tag_with_attr = format!("<{} ", tool);
             let close_tag = format!("</{}>", tool);
 
-            let has_open = self.buffer.contains(&open_tag) || self.buffer.contains(&open_tag_with_attr);
+            let has_open =
+                self.buffer.contains(&open_tag) || self.buffer.contains(&open_tag_with_attr);
             let has_close = self.buffer.contains(&close_tag);
 
             if has_open && has_close {
@@ -226,7 +238,9 @@ impl ToolInterceptor {
     }
 
     /// Try to extract tool calls in shorthand format (e.g., <bash>cmd</bash>)
-    fn try_extract_shorthand_format(&mut self) -> Option<(Vec<InterceptedToolCall>, String, String)> {
+    fn try_extract_shorthand_format(
+        &mut self,
+    ) -> Option<(Vec<InterceptedToolCall>, String, String)> {
         // Find the first shorthand tool tag
         let mut earliest_match: Option<(usize, &str)> = None;
 
@@ -267,7 +281,11 @@ impl ToolInterceptor {
 
     /// Parse a shorthand tool tag like <bash>command</bash> or <write path="file">content</write>
     /// Also handles nested element format: <write_file><path>file</path><content>...</content></write_file>
-    fn parse_shorthand_tag(&self, tool_name: &str, tag_content: &str) -> Option<InterceptedToolCall> {
+    fn parse_shorthand_tag(
+        &self,
+        tool_name: &str,
+        tag_content: &str,
+    ) -> Option<InterceptedToolCall> {
         let open_simple = format!("<{}>", tool_name);
         let open_attr = format!("<{} ", tool_name);
         let close_tag = format!("</{}>", tool_name);
@@ -385,7 +403,11 @@ impl ToolInterceptor {
 
             // Extract element name (handle self-closing tags)
             let tag_content = &content[abs_tag_start + 1..abs_tag_end];
-            let elem_name = tag_content.split_whitespace().next().unwrap_or("").trim_end_matches('/');
+            let elem_name = tag_content
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_end_matches('/');
 
             if elem_name.is_empty() {
                 search_pos = abs_tag_end + 1;
@@ -408,7 +430,7 @@ impl ToolInterceptor {
                 "file_path" => "path",
                 "old_string" => "old_string",
                 "new_string" => "new_string",
-                "contents" => "content",  // Claude sometimes uses plural
+                "contents" => "content", // Claude sometimes uses plural
                 _ => elem_name,
             };
 
@@ -487,7 +509,10 @@ impl ToolInterceptor {
             tools.push(InterceptedToolCall {
                 name: tool_name,
                 parameters,
-                id: format!("toolu_{}", Uuid::new_v4().to_string().replace("-", "")[..24].to_string()),
+                id: format!(
+                    "toolu_{}",
+                    Uuid::new_v4().to_string().replace("-", "")[..24].to_string()
+                ),
             });
 
             search_start = invoke_end + INVOKE_CLOSE.len();
@@ -516,7 +541,12 @@ pub fn execute_intercepted_tools(
         };
 
         // Show preview
-        let preview: String = result.content.lines().take(5).collect::<Vec<_>>().join("\n");
+        let preview: String = result
+            .content
+            .lines()
+            .take(5)
+            .collect::<Vec<_>>()
+            .join("\n");
         if result.is_error {
             println!("\x1b[31m✗ Error:\x1b[0m {}", preview);
         } else {
@@ -601,7 +631,10 @@ And here's some text after."#;
 
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "Bash");
-        assert_eq!(tools[0].parameters.get("command"), Some(&"ls -la".to_string()));
+        assert_eq!(
+            tools[0].parameters.get("command"),
+            Some(&"ls -la".to_string())
+        );
         assert!(before.contains("Let me check the directory"));
     }
 
@@ -711,7 +744,10 @@ That's the current directory."#;
 
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "read");
-        assert_eq!(tools[0].parameters.get("path"), Some(&"/path/to/file.txt".to_string()));
+        assert_eq!(
+            tools[0].parameters.get("path"),
+            Some(&"/path/to/file.txt".to_string())
+        );
     }
 
     #[test]
@@ -727,7 +763,10 @@ That's the current directory."#;
 
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "glob");
-        assert_eq!(tools[0].parameters.get("pattern"), Some(&"**/*.rs".to_string()));
+        assert_eq!(
+            tools[0].parameters.get("pattern"),
+            Some(&"**/*.rs".to_string())
+        );
     }
 
     #[test]
@@ -749,8 +788,15 @@ int main() { return 0; }
 
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "write_file");
-        assert_eq!(tools[0].parameters.get("path"), Some(&"hello.c".to_string()));
-        assert!(tools[0].parameters.get("content").unwrap().contains("stdio.h"));
+        assert_eq!(
+            tools[0].parameters.get("path"),
+            Some(&"hello.c".to_string())
+        );
+        assert!(tools[0]
+            .parameters
+            .get("content")
+            .unwrap()
+            .contains("stdio.h"));
     }
 
     #[test]
@@ -771,8 +817,17 @@ int main() { return 0; }
 
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "edit_file");
-        assert_eq!(tools[0].parameters.get("path"), Some(&"src/main.rs".to_string()));
-        assert_eq!(tools[0].parameters.get("old_string"), Some(&"fn old() {}".to_string()));
-        assert_eq!(tools[0].parameters.get("new_string"), Some(&"fn new() {}".to_string()));
+        assert_eq!(
+            tools[0].parameters.get("path"),
+            Some(&"src/main.rs".to_string())
+        );
+        assert_eq!(
+            tools[0].parameters.get("old_string"),
+            Some(&"fn old() {}".to_string())
+        );
+        assert_eq!(
+            tools[0].parameters.get("new_string"),
+            Some(&"fn new() {}".to_string())
+        );
     }
 }
