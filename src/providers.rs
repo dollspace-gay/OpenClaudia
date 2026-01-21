@@ -33,6 +33,16 @@ pub enum ProviderError {
     Unsupported(String),
 }
 
+/// Model information returned from provider
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ModelInfo {
+    pub id: String,
+    #[serde(default)]
+    pub owned_by: Option<String>,
+    #[serde(default)]
+    pub created: Option<i64>,
+}
+
 /// Trait for provider adapters
 #[async_trait]
 pub trait ProviderAdapter: Send + Sync {
@@ -61,6 +71,16 @@ pub trait ProviderAdapter: Send + Sync {
 
     /// Get required headers for this provider
     fn get_headers(&self, api_key: &str) -> Vec<(String, String)>;
+
+    /// Check if this provider supports model listing
+    fn supports_model_listing(&self) -> bool {
+        false
+    }
+
+    /// Get the models endpoint path (for providers that support it)
+    fn models_endpoint(&self) -> &str {
+        "/v1/models"
+    }
 }
 
 /// Anthropic Messages API adapter
@@ -489,6 +509,10 @@ impl ProviderAdapter for OpenAIAdapter {
             ("Authorization".to_string(), format!("Bearer {}", api_key)),
             ("content-type".to_string(), "application/json".to_string()),
         ]
+    }
+
+    fn supports_model_listing(&self) -> bool {
+        true
     }
 }
 
@@ -1126,6 +1150,15 @@ impl ProviderAdapter for OllamaAdapter {
         // Ollama doesn't require authentication by default
         vec![("content-type".to_string(), "application/json".to_string())]
     }
+
+    fn supports_model_listing(&self) -> bool {
+        true
+    }
+
+    fn models_endpoint(&self) -> &str {
+        // Ollama uses /api/tags for model listing, but also supports /v1/models
+        "/v1/models"
+    }
 }
 
 /// Get the appropriate adapter for a provider name
@@ -1143,6 +1176,67 @@ pub fn get_adapter(provider: &str) -> Box<dyn ProviderAdapter> {
         // Default fallback for unknown providers (assume OpenAI-compatible)
         _ => Box::new(OpenAIAdapter::new()),
     }
+}
+
+/// Fetch available models from a provider's /v1/models endpoint
+/// Works with OpenAI-compatible APIs (LM Studio, LocalAI, Ollama, etc.)
+pub async fn fetch_models(
+    base_url: &str,
+    api_key: Option<&str>,
+    adapter: &dyn ProviderAdapter,
+) -> Result<Vec<ModelInfo>, ProviderError> {
+    if !adapter.supports_model_listing() {
+        return Err(ProviderError::Unsupported(format!(
+            "Provider '{}' does not support model listing",
+            adapter.name()
+        )));
+    }
+
+    let client = reqwest::Client::new();
+    let url = format!("{}{}", base_url.trim_end_matches('/'), adapter.models_endpoint());
+
+    let mut request = client.get(&url);
+
+    // Add auth header if API key provided
+    if let Some(key) = api_key {
+        if !key.is_empty() {
+            request = request.header("Authorization", format!("Bearer {}", key));
+        }
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|e| ProviderError::RequestFailed(format!("Failed to fetch models: {}", e)))?;
+
+    if !response.status().is_success() {
+        return Err(ProviderError::RequestFailed(format!(
+            "Models endpoint returned status {}",
+            response.status()
+        )));
+    }
+
+    let body: Value = response
+        .json()
+        .await
+        .map_err(|e| ProviderError::InvalidResponse(format!("Failed to parse models response: {}", e)))?;
+
+    // Parse OpenAI-style response: { "data": [...], "object": "list" }
+    let models = body["data"]
+        .as_array()
+        .ok_or_else(|| ProviderError::InvalidResponse("Expected 'data' array in response".to_string()))?
+        .iter()
+        .filter_map(|m| {
+            let id = m["id"].as_str()?.to_string();
+            Some(ModelInfo {
+                id,
+                owned_by: m["owned_by"].as_str().map(String::from),
+                created: m["created"].as_i64(),
+            })
+        })
+        .collect();
+
+    Ok(models)
 }
 
 #[cfg(test)]

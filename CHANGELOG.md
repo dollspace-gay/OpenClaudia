@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix lru crate Stacked Borrows vulnerability by updating to 0.16.3 (#99)
 
 ### Added
+- Add dynamic model discovery from OpenAI-compatible endpoints (#172)
 - Add TestBuilder agent that writes tests alongside coding agent (#162)
 - Add TodoWrite tool as fallback task tracker when chainlink unavailable (#160)
 - Add subagent tools documentation to system prompt (#159)
@@ -65,6 +66,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix TUI welcome screen box drawing alignment (#59)
 
 ### Changed
+- Add /models command to list and select available models (#175)
+- Implement model listing for OpenAI-compatible providers (#174)
+- Add list_models method to ProviderAdapter trait (#173)
 - Fix model not receiving bash tool output causing hallucinated responses (#171)
 - Add console logging for TestBuilder agent activity (#169)
 - Add automatic TestBuilder spawn when coding agent starts work (#168)

@@ -2,7 +2,7 @@
 //!
 //! Provides Claude Code-like capabilities for any AI agent.
 
-use openclaudia::{config, memory, oauth, prompt, proxy, tool_intercept, tools, tui};
+use openclaudia::{config, memory, oauth, prompt, providers, proxy, tool_intercept, tools, tui};
 
 use clap::{Parser, Subcommand};
 use std::fs;
@@ -680,11 +680,13 @@ enum SlashCommandResult {
     Memory(String),
     /// Activity command to show recent session activities
     Activity(String),
+    /// Fetch and display available models dynamically
+    FetchModels,
     /// Show help message (already printed)
     Handled,
 }
 
-/// Get available models for a provider
+/// Get static list of models for a provider (fallback when API unavailable)
 fn get_available_models(provider: &str) -> Vec<&'static str> {
     match provider {
         "anthropic" => vec![
@@ -713,6 +715,37 @@ fn get_available_models(provider: &str) -> Vec<&'static str> {
         "deepseek" => vec!["deepseek-chat", "deepseek-coder", "deepseek-reasoner"],
         "qwen" => vec!["qwen-turbo", "qwen-plus", "qwen-max", "qwen-long"],
         _ => vec!["gpt-4"],
+    }
+}
+
+/// Fetch models dynamically from provider API (for OpenAI-compatible providers like LM Studio)
+async fn fetch_dynamic_models(
+    provider_config: &config::ProviderConfig,
+    adapter: &dyn providers::ProviderAdapter,
+) -> Option<Vec<String>> {
+    if !adapter.supports_model_listing() {
+        return None;
+    }
+
+    match providers::fetch_models(
+        &provider_config.base_url,
+        provider_config.api_key.as_deref(),
+        adapter,
+    )
+    .await
+    {
+        Ok(models) => {
+            let model_ids: Vec<String> = models.into_iter().map(|m| m.id).collect();
+            if model_ids.is_empty() {
+                None
+            } else {
+                Some(model_ids)
+            }
+        }
+        Err(e) => {
+            tracing::debug!("Failed to fetch models from API: {}", e);
+            None
+        }
     }
 }
 
@@ -1385,14 +1418,8 @@ fn handle_slash_command(
             Some(SlashCommandResult::Handled)
         }
         "models" => {
-            let available = get_available_models(provider);
-            println!("\nAvailable models for {}:", provider);
-            for (i, model) in available.iter().enumerate() {
-                let marker = if *model == current_model { " *" } else { "" };
-                println!("  {}. {}{}", i + 1, model, marker);
-            }
-            println!("\nUse /model <name> to switch models.\n");
-            Some(SlashCommandResult::Handled)
+            // Return FetchModels to trigger async model listing in the main loop
+            Some(SlashCommandResult::FetchModels)
         }
         "export" => Some(SlashCommandResult::Export),
         "compact" | "summarize" => Some(SlashCommandResult::Compact),
@@ -2924,6 +2951,56 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                         }
                         SlashCommandResult::Activity(args) => {
                             handle_activity_command(&args, &chat_session.id, memory_db.as_ref());
+                            continue;
+                        }
+                        SlashCommandResult::FetchModels => {
+                            // Try dynamic model listing first, fall back to static list
+                            let provider_name = &config.proxy.target;
+                            let adapter = providers::get_adapter(provider_name);
+
+                            if adapter.supports_model_listing() {
+                                // Get provider config for base_url
+                                if let Some(provider_config) = config.get_provider(provider_name) {
+                                    print!("Fetching models from {}...", provider_config.base_url);
+                                    std::io::Write::flush(&mut std::io::stdout()).ok();
+
+                                    match fetch_dynamic_models(provider_config, adapter.as_ref()).await {
+                                        Some(models) => {
+                                            println!(" found {} models.\n", models.len());
+                                            println!("Available models for {} (live):", provider_name);
+                                            for (i, m) in models.iter().enumerate() {
+                                                let marker = if m == &model { " *" } else { "" };
+                                                println!("  {}. {}{}", i + 1, m, marker);
+                                            }
+                                        }
+                                        None => {
+                                            println!(" using cached list.\n");
+                                            let available = get_available_models(provider_name);
+                                            println!("Available models for {} (static):", provider_name);
+                                            for (i, m) in available.iter().enumerate() {
+                                                let marker = if *m == model { " *" } else { "" };
+                                                println!("  {}. {}{}", i + 1, m, marker);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    let available = get_available_models(provider_name);
+                                    println!("\nAvailable models for {} (static):", provider_name);
+                                    for (i, m) in available.iter().enumerate() {
+                                        let marker = if *m == model { " *" } else { "" };
+                                        println!("  {}. {}{}", i + 1, m, marker);
+                                    }
+                                }
+                            } else {
+                                // Provider doesn't support dynamic listing
+                                let available = get_available_models(provider_name);
+                                println!("\nAvailable models for {}:", provider_name);
+                                for (i, m) in available.iter().enumerate() {
+                                    let marker = if *m == model { " *" } else { "" };
+                                    println!("  {}. {}{}", i + 1, m, marker);
+                                }
+                            }
+                            println!("\nUse /model <name> to switch models.\n");
                             continue;
                         }
                         SlashCommandResult::Handled => {
