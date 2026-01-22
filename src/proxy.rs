@@ -33,6 +33,16 @@ use crate::providers::get_adapter;
 use crate::rules::{extract_extensions_from_tool_input, RulesEngine};
 use crate::session::{get_session_context, SessionManager};
 
+/// Normalize base URL by stripping trailing slash and /v1 suffix.
+/// This prevents double /v1/v1 when endpoint paths include /v1 prefix.
+fn normalize_base_url(base_url: &str) -> String {
+    base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .trim_end_matches('/')
+        .to_string()
+}
+
 /// Shared state for the proxy
 #[derive(Clone)]
 pub struct ProxyState {
@@ -764,7 +774,7 @@ async fn proxy_anthropic_messages(
             }
         }
 
-        let url = format!("{}/v1/messages", provider.base_url);
+        let url = format!("{}/v1/messages", normalize_base_url(&provider.base_url));
         let response = state
             .client
             .post(&url)
@@ -820,7 +830,7 @@ async fn proxy_passthrough(
         .or_else(|| provider.api_key.clone())
         .ok_or_else(|| ProxyError::NoApiKey(state.config.proxy.target.clone()))?;
 
-    let url = format!("{}{}", provider.base_url, path);
+    let url = format!("{}{}", normalize_base_url(&provider.base_url), path);
     debug!(url = %url, "Passthrough request");
 
     let mut req_builder = state.client.request(request.method().clone(), &url);
@@ -893,7 +903,7 @@ async fn forward_to_provider<T: Serialize>(
     body: &T,
     is_stream: bool,
 ) -> Result<Response, ProxyError> {
-    let url = format!("{}{}", provider.base_url, path);
+    let url = format!("{}{}", normalize_base_url(&provider.base_url), path);
     debug!(url = %url, stream = is_stream, "Forwarding to provider");
 
     let mut req = client.post(&url).json(body);
@@ -942,7 +952,7 @@ async fn forward_to_provider_raw(
     is_stream: bool,
     custom_headers: Vec<(String, String)>,
 ) -> Result<Response, ProxyError> {
-    let url = format!("{}{}", provider.base_url, path);
+    let url = format!("{}{}", normalize_base_url(&provider.base_url), path);
     debug!(url = %url, stream = is_stream, "Forwarding to provider (raw)");
 
     let mut req = client.post(&url).json(body);

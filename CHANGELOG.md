@@ -56,6 +56,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Add hook engine with all 12 event types (#4)
 
 ### Fixed
+- Fix all provider URL construction for base URLs containing /v1 suffix (#178)
 - Fix dynamic model discovery URL construction for base URLs containing /v1 suffix (#176)
 - Fix bash tool to use correct working directory (#170)
 - Clean up unused code and fix compiler warnings (#84)
