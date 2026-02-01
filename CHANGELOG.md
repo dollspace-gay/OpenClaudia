@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix lru crate Stacked Borrows vulnerability by updating to 0.16.3 (#99)
 
 ### Added
+- Add Claude Code-compatible plugin system for installing and managing plugins (#176)
 - Add nested XML element format parsing for tool interception (#177)
 - Add dynamic model discovery from OpenAI-compatible endpoints (#172)
 - Add TestBuilder agent that writes tests alongside coding agent (#162)
@@ -69,6 +70,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix TUI welcome screen box drawing alignment (#59)
 
 ### Changed
+- Verify plugin system can install and load plugins end-to-end (#182)
+- Add marketplace support for git and local directory sources (#181)
+- Add /plugin slash command with install, uninstall, list, enable, disable subcommands (#180)
+- Add plugin component loader for commands, hooks, and MCP servers (#179)
+- Add plugin storage and installation tracking (#178)
+- Add plugin manifest and marketplace schema definitions (#177)
 - Add /models command to list and select available models (#175)
 - Implement model listing for OpenAI-compatible providers (#174)
 - Add list_models method to ProviderAdapter trait (#173)

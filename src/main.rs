@@ -2,7 +2,9 @@
 //!
 //! Provides Claude Code-like capabilities for any AI agent.
 
-use openclaudia::{config, memory, oauth, prompt, providers, proxy, tool_intercept, tools, tui};
+use openclaudia::{
+    config, memory, oauth, plugins, prompt, providers, proxy, tool_intercept, tools, tui,
+};
 
 use clap::{Parser, Subcommand};
 use std::fs;
@@ -649,6 +651,41 @@ fn list_chat_sessions() -> Vec<ChatSession> {
 }
 
 /// Slash command result
+/// Plugin slash command actions
+enum PluginAction {
+    /// Show main plugin menu / list installed plugins
+    Menu,
+    /// Show plugin help
+    Help,
+    /// Install a plugin (optionally from marketplace)
+    Install {
+        plugin: Option<String>,
+        marketplace: Option<String>,
+    },
+    /// Manage installed plugins
+    Manage,
+    /// Uninstall a plugin
+    Uninstall { plugin: String },
+    /// Enable a plugin
+    Enable { plugin: String },
+    /// Disable a plugin
+    Disable { plugin: String },
+    /// Validate a plugin manifest
+    Validate { path: Option<String> },
+    /// Marketplace subcommand
+    Marketplace {
+        action: Option<String>,
+        target: Option<String>,
+    },
+    /// Reload all plugins
+    Reload,
+    /// Execute a specific plugin command (/plugin-name:command)
+    RunCommand {
+        plugin_name: String,
+        command_name: String,
+    },
+}
+
 enum SlashCommandResult {
     /// Exit the chat
     Exit,
@@ -682,6 +719,8 @@ enum SlashCommandResult {
     Activity(String),
     /// Fetch and display available models dynamically
     FetchModels,
+    /// Plugin management command
+    Plugin(PluginAction),
     /// Show help message (already printed)
     Handled,
 }
@@ -1303,6 +1342,13 @@ fn handle_slash_command(
             println!("  /activity files  - Show files modified this session");
             println!("  /activity issues - Show issues worked this session");
             println!();
+            println!("Plugin Commands:");
+            println!("  /plugin          - List installed plugins");
+            println!("  /plugin install  - Install a plugin");
+            println!("  /plugin manage   - Manage installed plugins");
+            println!("  /plugin help     - Show all plugin commands");
+            println!("  /<plugin>:<cmd>  - Run a plugin command");
+            println!();
             println!("Shell Commands:");
             println!("  !<cmd>           - Execute shell command (e.g., !ls -la)");
             println!();
@@ -1551,7 +1597,108 @@ fn handle_slash_command(
             // Activity command - show recent session activities
             Some(SlashCommandResult::Activity(args.to_string()))
         }
+        "plugin" | "plugins" => {
+            // Parse plugin subcommand
+            let sub_parts: Vec<&str> = args.splitn(2, ' ').collect();
+            let subcmd = sub_parts.first().copied().unwrap_or("").to_lowercase();
+            let sub_args = sub_parts.get(1).copied().unwrap_or("").trim();
+
+            let action = match subcmd.as_str() {
+                "" => PluginAction::Menu,
+                "help" | "?" => PluginAction::Help,
+                "install" | "i" => {
+                    if sub_args.is_empty() {
+                        PluginAction::Install {
+                            plugin: None,
+                            marketplace: None,
+                        }
+                    } else if sub_args.contains('@') {
+                        let parts: Vec<&str> = sub_args.splitn(2, '@').collect();
+                        PluginAction::Install {
+                            plugin: Some(parts[0].to_string()),
+                            marketplace: Some(parts[1].to_string()),
+                        }
+                    } else {
+                        PluginAction::Install {
+                            plugin: Some(sub_args.to_string()),
+                            marketplace: None,
+                        }
+                    }
+                }
+                "manage" => PluginAction::Manage,
+                "uninstall" | "remove" | "rm" => {
+                    if sub_args.is_empty() {
+                        println!("\nUsage: /plugin uninstall <plugin-name>\n");
+                        return Some(SlashCommandResult::Handled);
+                    }
+                    PluginAction::Uninstall {
+                        plugin: sub_args.to_string(),
+                    }
+                }
+                "enable" => {
+                    if sub_args.is_empty() {
+                        println!("\nUsage: /plugin enable <plugin-name>\n");
+                        return Some(SlashCommandResult::Handled);
+                    }
+                    PluginAction::Enable {
+                        plugin: sub_args.to_string(),
+                    }
+                }
+                "disable" => {
+                    if sub_args.is_empty() {
+                        println!("\nUsage: /plugin disable <plugin-name>\n");
+                        return Some(SlashCommandResult::Handled);
+                    }
+                    PluginAction::Disable {
+                        plugin: sub_args.to_string(),
+                    }
+                }
+                "validate" => PluginAction::Validate {
+                    path: if sub_args.is_empty() {
+                        None
+                    } else {
+                        Some(sub_args.to_string())
+                    },
+                },
+                "marketplace" | "market" => {
+                    let market_parts: Vec<&str> = sub_args.splitn(2, ' ').collect();
+                    let market_cmd = market_parts.first().copied().unwrap_or("");
+                    let market_target = market_parts.get(1).copied().unwrap_or("").trim();
+                    PluginAction::Marketplace {
+                        action: if market_cmd.is_empty() {
+                            None
+                        } else {
+                            Some(market_cmd.to_string())
+                        },
+                        target: if market_target.is_empty() {
+                            None
+                        } else {
+                            Some(market_target.to_string())
+                        },
+                    }
+                }
+                "reload" => PluginAction::Reload,
+                _ => {
+                    println!(
+                        "\nUnknown plugin subcommand: {}. Use /plugin help.\n",
+                        subcmd
+                    );
+                    return Some(SlashCommandResult::Handled);
+                }
+            };
+            Some(SlashCommandResult::Plugin(action))
+        }
         _ => {
+            // Check for plugin command pattern: /plugin-name:command
+            if cmd.contains(':') {
+                let colon_parts: Vec<&str> = cmd.splitn(2, ':').collect();
+                if colon_parts.len() == 2 {
+                    return Some(SlashCommandResult::Plugin(PluginAction::RunCommand {
+                        plugin_name: colon_parts[0].to_string(),
+                        command_name: colon_parts[1].to_string(),
+                    }));
+                }
+            }
             eprintln!(
                 "Unknown command: /{}. Type /help for available commands.\n",
                 cmd
@@ -1916,6 +2063,440 @@ fn handle_activity_command(
         _ => {
             println!("\nUnknown activity subcommand: {}", subcmd);
             println!("Available: current, sessions, files, issues, help\n");
+        }
+    }
+}
+
+/// Handle /plugin slash command actions
+fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::PluginManager) {
+    match action {
+        PluginAction::Menu => {
+            let all: Vec<_> = plugin_manager.all().collect();
+            if all.is_empty() {
+                println!("\nNo plugins installed.");
+                println!("Use /plugin install to browse and install plugins.");
+                println!("Use /plugin help for all commands.\n");
+            } else {
+                println!("\n=== Installed Plugins ({}) ===\n", all.len());
+                for plugin in &all {
+                    let status = if plugin.enabled {
+                        "\x1b[32menabled\x1b[0m"
+                    } else {
+                        "\x1b[31mdisabled\x1b[0m"
+                    };
+                    let version = plugin.manifest.version.as_deref().unwrap_or("0.0.0");
+                    println!("  {} v{} [{}]", plugin.name(), version, status);
+                    if let Some(desc) = &plugin.manifest.description {
+                        println!("    {}", desc);
+                    }
+                    let cmd_count = plugin.command_paths.len() + plugin.command_metadata.len();
+                    let hook_count = plugin.hook_definitions.len();
+                    let mcp_count = plugin.mcp_configs.len();
+                    let mut components = Vec::new();
+                    if cmd_count > 0 {
+                        components.push(format!("{} command(s)", cmd_count));
+                    }
+                    if hook_count > 0 {
+                        components.push(format!("{} hook def(s)", hook_count));
+                    }
+                    if mcp_count > 0 {
+                        components.push(format!("{} MCP server(s)", mcp_count));
+                    }
+                    if !components.is_empty() {
+                        println!("    Components: {}", components.join(", "));
+                    }
+                    // Show available commands
+                    let commands = plugin.resolved_commands();
+                    for cmd in &commands {
+                        let desc = cmd.description.as_deref().unwrap_or("No description");
+                        println!("    /{}:{} - {}", plugin.name(), cmd.name, desc);
+                    }
+                }
+                println!("\nUse /plugin help for management commands.\n");
+            }
+        }
+        PluginAction::Help => {
+            println!("\nPlugin Commands:");
+            println!();
+            println!("  Installation:");
+            println!("    /plugin install              - Browse and install plugins");
+            println!("    /plugin install <plugin>      - Install specific plugin");
+            println!("    /plugin install <p>@<market>  - Install from marketplace");
+            println!();
+            println!("  Management:");
+            println!("    /plugin                      - List installed plugins");
+            println!("    /plugin manage               - Manage installed plugins");
+            println!("    /plugin enable <plugin>      - Enable a plugin");
+            println!("    /plugin disable <plugin>     - Disable a plugin");
+            println!("    /plugin uninstall <plugin>   - Uninstall a plugin");
+            println!("    /plugin reload               - Reload all plugins");
+            println!();
+            println!("  Marketplaces:");
+            println!("    /plugin marketplace          - Marketplace management");
+            println!("    /plugin marketplace add <p>  - Add a marketplace");
+            println!("    /plugin marketplace remove <n> - Remove a marketplace");
+            println!("    /plugin marketplace update   - Update marketplaces");
+            println!("    /plugin marketplace list     - List all marketplaces");
+            println!();
+            println!("  Validation:");
+            println!("    /plugin validate <path>      - Validate a manifest");
+            println!();
+            println!("  Plugin Commands:");
+            println!("    /<plugin-name>:<command>     - Run a plugin command");
+            println!();
+        }
+        PluginAction::Install {
+            plugin,
+            marketplace,
+        } => {
+            match (&plugin, &marketplace) {
+                (Some(p), Some(m)) => {
+                    println!("\nInstalling plugin '{}' from marketplace '{}'...", p, m);
+                    match plugin_manager.install_from_marketplace(p, m) {
+                        Ok(id) => println!("Installed '{}'. Restart to apply changes.\n", id),
+                        Err(e) => eprintln!("Failed to install: {}\n", e),
+                    }
+                }
+                (Some(p), None) => {
+                    println!("\nInstalling plugin '{}'...", p);
+                    // Check if it's a local path
+                    let path = std::path::Path::new(p.as_str());
+                    if path.exists() && path.is_dir() {
+                        match plugins::Plugin::load(path) {
+                            Ok(loaded) => {
+                                let name = loaded.name().to_string();
+                                // Copy to plugins directory
+                                let plugins_dir = std::path::PathBuf::from(".openclaudia/plugins");
+                                let dest = plugins_dir.join(&name);
+                                if let Err(e) = plugins::copy_dir_recursive(path, &dest) {
+                                    eprintln!("Failed to install plugin: {}\n", e);
+                                    return;
+                                }
+                                // Track installation
+                                let mut installed = plugins::InstalledPlugins::load();
+                                installed.upsert(
+                                    &name,
+                                    plugins::PluginInstallEntry {
+                                        scope: plugins::InstallScope::Project,
+                                        project_path: Some(
+                                            std::env::current_dir()
+                                                .unwrap_or_default()
+                                                .to_string_lossy()
+                                                .to_string(),
+                                        ),
+                                        install_path: dest.to_string_lossy().to_string(),
+                                        version: loaded.manifest.version.clone(),
+                                        installed_at: Some(chrono::Utc::now().to_rfc3339()),
+                                        last_updated: None,
+                                        git_commit_sha: None,
+                                    },
+                                );
+                                if let Err(e) = installed.save() {
+                                    tracing::warn!("Failed to save install tracking: {}", e);
+                                }
+                                // Reload plugins
+                                let _ = plugin_manager.reload();
+                                println!(
+                                    "Installed plugin '{}'. Restart to apply changes.\n",
+                                    name
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to load plugin from path: {}\n", e);
+                            }
+                        }
+                    } else if p.contains('/') || p.ends_with(".git") || p.starts_with("http") {
+                        // Treat as git URL
+                        println!("\nCloning plugin from '{}'...", p);
+                        match plugin_manager.install_from_git(p, None) {
+                            Ok(name) => {
+                                println!(
+                                    "Installed plugin '{}'. Restart to apply changes.\n",
+                                    name
+                                );
+                            }
+                            Err(e) => eprintln!("Failed to install: {}\n", e),
+                        }
+                    } else {
+                        eprintln!("\nPlugin '{}' not found as a local path.", p);
+                        println!("Try: /plugin install <git-url> or /plugin install <plugin>@<marketplace>\n");
+                    }
+                }
+                (None, _) => {
+                    // Browse available plugins from marketplaces
+                    let available = plugin_manager.list_available_plugins();
+                    if available.is_empty() {
+                        println!("\nNo marketplaces configured.");
+                        println!("Add a marketplace: /plugin marketplace add <path-or-url>");
+                        println!("Install from local directory: /plugin install /path/to/plugin");
+                        println!("Install from git: /plugin install <git-url>\n");
+                    } else {
+                        println!("\n=== Available Plugins ===\n");
+                        for (marketplace, plugin) in &available {
+                            let desc = plugin.description.as_deref().unwrap_or("No description");
+                            println!("  {}@{} - {}", plugin.name, marketplace, desc);
+                        }
+                        println!("\nInstall: /plugin install <plugin-name>@<marketplace>\n");
+                    }
+                }
+            }
+        }
+        PluginAction::Manage => {
+            let all: Vec<_> = plugin_manager.all().collect();
+            if all.is_empty() {
+                println!("\nNo plugins installed.\n");
+            } else {
+                println!("\n=== Plugin Management ===\n");
+                for plugin in &all {
+                    let status = if plugin.enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    };
+                    println!("  {} [{}]", plugin.name(), status);
+                    println!("    Path: {}", plugin.root().display());
+                }
+                println!();
+                println!("  /plugin enable <name>    - Enable a plugin");
+                println!("  /plugin disable <name>   - Disable a plugin");
+                println!("  /plugin uninstall <name> - Remove a plugin\n");
+            }
+        }
+        PluginAction::Uninstall { plugin } => {
+            // Remove from installed tracking
+            let mut installed = plugins::InstalledPlugins::load();
+            if installed.remove(&plugin) {
+                if let Err(e) = installed.save() {
+                    tracing::warn!("Failed to save install tracking: {}", e);
+                }
+                // Try to remove the plugin directory
+                let plugins_dir = std::path::PathBuf::from(".openclaudia/plugins");
+                let plugin_dir = plugins_dir.join(&plugin);
+                if plugin_dir.exists() {
+                    if let Err(e) = fs::remove_dir_all(&plugin_dir) {
+                        eprintln!("Warning: Could not remove plugin directory: {}", e);
+                    }
+                }
+                let _ = plugin_manager.reload();
+                println!(
+                    "\nUninstalled plugin '{}'. Restart to apply changes.\n",
+                    plugin
+                );
+            } else {
+                eprintln!("\nPlugin '{}' not found in install tracking.\n", plugin);
+            }
+        }
+        PluginAction::Enable { plugin } => match plugin_manager.enable(&plugin) {
+            Ok(()) => println!("\nEnabled plugin '{}'. Restart to apply changes.\n", plugin),
+            Err(e) => eprintln!("\nFailed to enable plugin: {}\n", e),
+        },
+        PluginAction::Disable { plugin } => match plugin_manager.disable(&plugin) {
+            Ok(()) => println!(
+                "\nDisabled plugin '{}'. Restart to apply changes.\n",
+                plugin
+            ),
+            Err(e) => eprintln!("\nFailed to disable plugin: {}\n", e),
+        },
+        PluginAction::Validate { path } => {
+            let target = path.unwrap_or_else(|| ".".to_string());
+            let target_path = std::path::Path::new(&target);
+
+            if target_path.is_dir() {
+                match plugins::Plugin::load(target_path) {
+                    Ok(plugin) => {
+                        println!("\n=== Plugin Validation: PASSED ===\n");
+                        println!("  Name:        {}", plugin.name());
+                        println!(
+                            "  Version:     {}",
+                            plugin.manifest.version.as_deref().unwrap_or("not set")
+                        );
+                        if let Some(desc) = &plugin.manifest.description {
+                            println!("  Description: {}", desc);
+                        }
+                        let cmds = plugin.resolved_commands();
+                        let hooks = plugin.resolved_hooks();
+                        let mcps = plugin.resolved_mcp_servers();
+                        println!("  Commands:    {}", cmds.len());
+                        println!("  Hooks:       {}", hooks.len());
+                        println!("  MCP Servers: {}", mcps.len());
+                        println!();
+                    }
+                    Err(e) => {
+                        println!("\n=== Plugin Validation: FAILED ===\n");
+                        println!("  Error: {}\n", e);
+                    }
+                }
+            } else if target_path.is_file() {
+                // Try to parse as manifest
+                match fs::read_to_string(target_path) {
+                    Ok(content) => {
+                        if let Ok(manifest) =
+                            serde_json::from_str::<plugins::PluginManifest>(&content)
+                        {
+                            println!("\n=== Manifest Validation: PASSED ===\n");
+                            println!("  Name:    {}", manifest.name);
+                            println!(
+                                "  Version: {}",
+                                manifest.version.as_deref().unwrap_or("not set")
+                            );
+                            println!();
+                        } else if let Ok(marketplace) =
+                            serde_json::from_str::<plugins::MarketplaceManifest>(&content)
+                        {
+                            println!("\n=== Marketplace Manifest: PASSED ===\n");
+                            println!("  Name:    {}", marketplace.name);
+                            println!("  Plugins: {}", marketplace.plugins.len());
+                            println!();
+                        } else {
+                            println!("\n=== Manifest Validation: FAILED ===\n");
+                            println!("  Could not parse as plugin or marketplace manifest.\n");
+                        }
+                    }
+                    Err(e) => {
+                        println!("\n=== Manifest Validation: FAILED ===\n");
+                        println!("  Could not read file: {}\n", e);
+                    }
+                }
+            } else {
+                println!("\nPath not found: {}\n", target);
+                println!("Usage: /plugin validate <path>");
+                println!(
+                    "  /plugin validate .                          - Validate current directory"
+                );
+                println!("  /plugin validate .claude-plugin/plugin.json - Validate manifest file");
+                println!("  /plugin validate /path/to/plugin-directory\n");
+            }
+        }
+        PluginAction::Marketplace { action, target } => match action.as_deref() {
+            Some("add") => {
+                if let Some(t) = &target {
+                    let path = std::path::Path::new(t.as_str());
+                    if path.exists() && path.is_dir() {
+                        match plugin_manager.add_marketplace_from_directory(path) {
+                            Ok(manifest) => println!(
+                                "\nAdded marketplace '{}' ({} plugins).\n",
+                                manifest.name,
+                                manifest.plugins.len()
+                            ),
+                            Err(e) => eprintln!("\nFailed to add marketplace: {}\n", e),
+                        }
+                    } else if t.contains('/') || t.ends_with(".git") || t.starts_with("http") {
+                        println!("\nCloning marketplace from '{}'...", t);
+                        match plugin_manager.add_marketplace_from_git(t, None) {
+                            Ok(manifest) => println!(
+                                "Added marketplace '{}' ({} plugins).\n",
+                                manifest.name,
+                                manifest.plugins.len()
+                            ),
+                            Err(e) => eprintln!("Failed to add marketplace: {}\n", e),
+                        }
+                    } else {
+                        eprintln!("\nCould not resolve '{}' as a path or URL.\n", t);
+                    }
+                } else {
+                    println!("\nUsage: /plugin marketplace add <path-or-url>\n");
+                }
+            }
+            Some("remove") | Some("rm") => {
+                if let Some(t) = &target {
+                    match plugin_manager.remove_marketplace(t) {
+                        Ok(()) => println!("\nRemoved marketplace '{}'.\n", t),
+                        Err(e) => eprintln!("\nFailed to remove marketplace: {}\n", e),
+                    }
+                } else {
+                    println!("\nUsage: /plugin marketplace remove <name>\n");
+                }
+            }
+            Some("update") => {
+                let marketplaces = plugin_manager.list_marketplaces();
+                if marketplaces.is_empty() {
+                    println!("\nNo marketplaces installed.\n");
+                } else if let Some(t) = &target {
+                    match plugin_manager.update_marketplace(t) {
+                        Ok(manifest) => println!(
+                            "\nUpdated marketplace '{}' ({} plugins).\n",
+                            manifest.name,
+                            manifest.plugins.len()
+                        ),
+                        Err(e) => eprintln!("\nFailed to update '{}': {}\n", t, e),
+                    }
+                } else {
+                    println!("\nUpdating {} marketplace(s)...", marketplaces.len());
+                    for (name, _) in &marketplaces {
+                        match plugin_manager.update_marketplace(name) {
+                            Ok(m) => {
+                                println!("  {} - updated ({} plugins)", name, m.plugins.len())
+                            }
+                            Err(e) => eprintln!("  {} - failed: {}", name, e),
+                        }
+                    }
+                    println!();
+                }
+            }
+            Some("list") => {
+                let marketplaces = plugin_manager.list_marketplaces();
+                if marketplaces.is_empty() {
+                    println!("\nNo marketplaces installed.");
+                    println!("Use /plugin marketplace add <path-or-url> to add one.\n");
+                } else {
+                    println!(
+                        "\n=== Installed Marketplaces ({}) ===\n",
+                        marketplaces.len()
+                    );
+                    for (name, manifest) in &marketplaces {
+                        println!("  {} ({} plugins)", name, manifest.plugins.len());
+                        for plugin in &manifest.plugins {
+                            let desc = plugin.description.as_deref().unwrap_or("No description");
+                            println!("    - {} - {}", plugin.name, desc);
+                        }
+                    }
+                    println!("\nInstall: /plugin install <plugin>@<marketplace>\n");
+                }
+            }
+            _ => {
+                println!("\nMarketplace Commands:");
+                println!("  /plugin marketplace add <path/url> - Add a marketplace");
+                println!("  /plugin marketplace remove <name>  - Remove a marketplace");
+                println!("  /plugin marketplace update         - Update all marketplaces");
+                println!("  /plugin marketplace list           - List marketplaces\n");
+            }
+        },
+        PluginAction::Reload => {
+            let errors = plugin_manager.reload();
+            println!("\nReloaded plugins: {} loaded", plugin_manager.count());
+            for err in &errors {
+                eprintln!("  Error: {}", err);
+            }
+            println!();
+        }
+        PluginAction::RunCommand {
+            plugin_name,
+            command_name,
+        } => {
+            if let Some(plugin) = plugin_manager.get(&plugin_name) {
+                let commands = plugin.resolved_commands();
+                if let Some(cmd) = commands.iter().find(|c| c.name == command_name) {
+                    println!("\n--- /{}: {} ---\n", plugin_name, command_name);
+                    println!("{}", cmd.content);
+                    println!();
+                } else {
+                    let available: Vec<_> = commands.iter().map(|c| c.name.clone()).collect();
+                    eprintln!(
+                        "\nCommand '{}' not found in plugin '{}'.",
+                        command_name, plugin_name
+                    );
+                    if available.is_empty() {
+                        eprintln!("This plugin has no commands.\n");
+                    } else {
+                        eprintln!("Available: {}\n", available.join(", "));
+                    }
+                }
+            } else {
+                eprintln!(
+                    "\nPlugin '{}' not found. Use /plugin to see installed plugins.\n",
+                    plugin_name
+                );
+            }
         }
     }
 }
@@ -2688,6 +3269,16 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
     // Initialize rules engine
     let rules_engine = RulesEngine::new(".openclaudia/rules");
 
+    // Initialize plugin manager
+    let mut plugin_manager = plugins::PluginManager::new();
+    let plugin_errors = plugin_manager.discover();
+    if plugin_manager.count() > 0 {
+        println!("\x1b[90m{} plugin(s) loaded\x1b[0m", plugin_manager.count());
+    }
+    for err in &plugin_errors {
+        tracing::warn!("Plugin error: {}", err);
+    }
+
     // Initialize rustyline editor with history
     let mut rl = DefaultEditor::new()?;
     let history_path = get_history_path();
@@ -3011,6 +3602,10 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                 }
                             }
                             println!("\nUse /model <name> to switch models.\n");
+                            continue;
+                        }
+                        SlashCommandResult::Plugin(action) => {
+                            handle_plugin_action(action, &mut plugin_manager);
                             continue;
                         }
                         SlashCommandResult::Handled => {
@@ -4226,7 +4821,7 @@ async fn cmd_doctor() -> anyhow::Result<()> {
             println!(
                 "  - {} v{} ({})",
                 plugin.name(),
-                plugin.manifest.version,
+                plugin.manifest.version.as_deref().unwrap_or("0.0.0"),
                 root.display()
             );
 
@@ -4236,14 +4831,34 @@ async fn cmd_doctor() -> anyhow::Result<()> {
                 println!("    Environment: {} vars", env_vars.len());
             }
 
-            // Show plugin commands
-            if !plugin.manifest.commands.is_empty() {
-                println!("    Commands: {}", plugin.manifest.commands.len());
+            // Show plugin commands with resolved descriptions
+            let resolved_cmds = plugin.resolved_commands();
+            if !resolved_cmds.is_empty() {
+                println!("    Commands: {}", resolved_cmds.len());
+                for cmd in &resolved_cmds {
+                    let desc = cmd.description.as_deref().unwrap_or("(no description)");
+                    let extras = [
+                        cmd.argument_hint.as_ref().map(|h| format!("args: {}", h)),
+                        cmd.model.as_ref().map(|m| format!("model: {}", m)),
+                        cmd.allowed_tools
+                            .as_ref()
+                            .map(|t| format!("tools: {}", t.len())),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>();
+
+                    if extras.is_empty() {
+                        println!("      /{} - {}", cmd.name, desc);
+                    } else {
+                        println!("      /{} - {} [{}]", cmd.name, desc, extras.join(", "));
+                    }
+                }
             }
 
             // Show MCP servers
-            if !plugin.manifest.mcp_servers.is_empty() {
-                println!("    MCP servers: {}", plugin.manifest.mcp_servers.len());
+            if !plugin.mcp_configs.is_empty() {
+                println!("    MCP servers: {}", plugin.mcp_configs.len());
             }
         }
 

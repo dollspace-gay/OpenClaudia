@@ -502,7 +502,7 @@ async fn proxy_chat_completions(
         .plugin_manager
         .all_commands()
         .iter()
-        .map(|(plugin, cmd)| format!("/{} (from {})", cmd.name, plugin.name()))
+        .map(|(plugin, cmd)| format!("/{}:{} (from {})", plugin.name(), cmd.name, plugin.name()))
         .collect();
     if !plugin_commands.is_empty() {
         let commands_context = format!("Available plugin commands: {}", plugin_commands.join(", "));

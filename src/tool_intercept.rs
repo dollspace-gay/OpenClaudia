@@ -373,7 +373,7 @@ impl ToolInterceptor {
             parameters,
             id: format!(
                 "toolu_{}",
-                Uuid::new_v4().to_string().replace("-", "")[..24].to_string()
+                &Uuid::new_v4().to_string().replace("-", "")[..24]
             ),
         })
     }
@@ -511,7 +511,7 @@ impl ToolInterceptor {
                 parameters,
                 id: format!(
                     "toolu_{}",
-                    Uuid::new_v4().to_string().replace("-", "")[..24].to_string()
+                    &Uuid::new_v4().to_string().replace("-", "")[..24]
                 ),
             });
 
