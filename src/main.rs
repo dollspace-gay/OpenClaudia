@@ -4044,11 +4044,13 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                 tool_interceptor.push(&full_content);
 
                                 // Agentic loop for proxy mode with local tool execution
-                                let max_proxy_iterations = 10;
-                                let mut proxy_iteration = 0;
+                                // 0 = unlimited (matches Claude Code behavior)
+                                let max_proxy_iterations = config.session.max_turns;
+                                let mut proxy_iteration: u32 = 0;
 
                                 while tool_interceptor.has_complete_block()
-                                    && proxy_iteration < max_proxy_iterations
+                                    && (max_proxy_iterations == 0
+                                        || proxy_iteration < max_proxy_iterations)
                                 {
                                     proxy_iteration += 1;
 
@@ -4206,6 +4208,17 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                     }
                                 }
 
+                                // Log if we hit the max_turns limit while tools were still pending
+                                if max_proxy_iterations > 0
+                                    && proxy_iteration >= max_proxy_iterations
+                                    && tool_interceptor.has_complete_block()
+                                {
+                                    eprintln!(
+                                        "\n\x1b[33m⚠ Reached max_turns limit ({} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m",
+                                        max_proxy_iterations
+                                    );
+                                }
+
                                 // Add final assistant message
                                 if !full_content.trim().is_empty()
                                     && !tool_interceptor.has_pending_tool_calls()
@@ -4221,14 +4234,15 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                             }
 
                             // Agentic loop - continue while there are tool calls
-                            let max_iterations = 10; // Prevent infinite loops
-                            let mut iteration = 0;
+                            // 0 = unlimited (matches Claude Code behavior)
+                            let max_iterations = config.session.max_turns;
+                            let mut iteration: u32 = 0;
                             let mut current_content = full_content;
 
-                            // Check for tool calls
-                            let has_tools = tool_accumulator.has_tool_calls();
-
-                            while has_tools && !cancelled && iteration < max_iterations {
+                            while tool_accumulator.has_tool_calls()
+                                && !cancelled
+                                && (max_iterations == 0 || iteration < max_iterations)
+                            {
                                 iteration += 1;
 
                                 // Get tool calls
@@ -4524,6 +4538,17 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                         println!();
                                     }
                                 }
+                            }
+
+                            // Log if we hit the max_turns limit while tools were still pending
+                            if max_iterations > 0
+                                && iteration >= max_iterations
+                                && tool_accumulator.has_tool_calls()
+                            {
+                                eprintln!(
+                                    "\n\x1b[33m⚠ Reached max_turns limit ({} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m",
+                                    max_iterations
+                                );
                             }
 
                             // Save final response

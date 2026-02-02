@@ -142,6 +142,10 @@ pub struct SessionConfig {
     pub timeout_minutes: u64,
     #[serde(default = "default_persist_path")]
     pub persist_path: PathBuf,
+    /// Maximum agentic turns (API round-trips with tool execution) per user message.
+    /// 0 means unlimited (like Claude Code). Default: 0 (unlimited).
+    #[serde(default)]
+    pub max_turns: u32,
 }
 
 /// Keybinding action names
@@ -251,6 +255,7 @@ impl Default for SessionConfig {
         Self {
             timeout_minutes: default_timeout_minutes(),
             persist_path: default_persist_path(),
+            max_turns: 0,
         }
     }
 }
