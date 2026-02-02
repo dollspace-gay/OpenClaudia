@@ -23,6 +23,53 @@ pub enum SessionMode {
     Coding,
 }
 
+/// Token usage from a single API response
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TokenUsage {
+    /// Input tokens billed
+    pub input_tokens: u64,
+    /// Output tokens billed
+    pub output_tokens: u64,
+    /// Tokens read from cache (reduced cost)
+    pub cache_read_tokens: u64,
+    /// Tokens written to cache
+    pub cache_write_tokens: u64,
+}
+
+impl TokenUsage {
+    /// Total tokens (input + output)
+    pub fn total(&self) -> u64 {
+        self.input_tokens + self.output_tokens
+    }
+
+    /// Accumulate usage from another TokenUsage
+    pub fn accumulate(&mut self, other: &TokenUsage) {
+        self.input_tokens += other.input_tokens;
+        self.output_tokens += other.output_tokens;
+        self.cache_read_tokens += other.cache_read_tokens;
+        self.cache_write_tokens += other.cache_write_tokens;
+    }
+}
+
+/// Metrics for a single API turn (round-trip)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnMetrics {
+    /// Turn number within the session
+    pub turn_number: u64,
+    /// Pre-request estimated input tokens (from our estimator)
+    pub estimated_input_tokens: usize,
+    /// Actual usage reported by the provider (if available)
+    pub actual_usage: Option<TokenUsage>,
+    /// Tokens consumed by injected context (rules, hooks, session, MCP tools)
+    pub injected_context_tokens: usize,
+    /// Tokens consumed by system prompt
+    pub system_prompt_tokens: usize,
+    /// Tokens consumed by tool definitions
+    pub tool_def_tokens: usize,
+    /// When this turn occurred
+    pub timestamp: DateTime<Utc>,
+}
+
 /// Progress tracking for a session
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionProgress {
@@ -57,8 +104,14 @@ pub struct Session {
     pub parent_session_id: Option<String>,
     /// Number of API requests in this session
     pub request_count: u64,
-    /// Total tokens used (approximate)
+    /// Total tokens used (approximate) - kept for backward compat
     pub total_tokens: u64,
+    /// Cumulative token usage across all turns
+    #[serde(default)]
+    pub cumulative_usage: TokenUsage,
+    /// Per-turn metrics history
+    #[serde(default)]
+    pub turn_metrics: Vec<TurnMetrics>,
 }
 
 impl Session {
@@ -74,6 +127,8 @@ impl Session {
             parent_session_id: None,
             request_count: 0,
             total_tokens: 0,
+            cumulative_usage: TokenUsage::default(),
+            turn_metrics: Vec::new(),
         }
     }
 
@@ -89,6 +144,8 @@ impl Session {
             parent_session_id: Some(parent_id.to_string()),
             request_count: 0,
             total_tokens: 0,
+            cumulative_usage: TokenUsage::default(),
+            turn_metrics: Vec::new(),
         }
     }
 
@@ -103,10 +160,87 @@ impl Session {
         self.touch();
     }
 
-    /// Add tokens to the total
+    /// Add tokens to the total (legacy simple counter)
     pub fn add_tokens(&mut self, tokens: u64) {
         self.total_tokens += tokens;
         self.touch();
+    }
+
+    /// Record metrics for an API turn (pre-request estimation)
+    pub fn record_turn_estimate(
+        &mut self,
+        estimated_input_tokens: usize,
+        injected_context_tokens: usize,
+        system_prompt_tokens: usize,
+        tool_def_tokens: usize,
+    ) -> u64 {
+        let turn_number = self.turn_metrics.len() as u64 + 1;
+        self.turn_metrics.push(TurnMetrics {
+            turn_number,
+            estimated_input_tokens,
+            actual_usage: None,
+            injected_context_tokens,
+            system_prompt_tokens,
+            tool_def_tokens,
+            timestamp: Utc::now(),
+        });
+        self.touch();
+        turn_number
+    }
+
+    /// Record actual usage from provider response for the most recent turn
+    pub fn record_actual_usage(&mut self, usage: TokenUsage) {
+        self.total_tokens += usage.total();
+        self.cumulative_usage.accumulate(&usage);
+        if let Some(last_turn) = self.turn_metrics.last_mut() {
+            last_turn.actual_usage = Some(usage);
+        }
+        self.touch();
+    }
+
+    /// Get session stats summary
+    pub fn stats_summary(&self) -> String {
+        let mut s = String::new();
+        s.push_str(&format!("Session: {}\n", self.id));
+        s.push_str(&format!("Mode: {:?}\n", self.mode));
+        s.push_str(&format!("Turns: {}\n", self.turn_metrics.len()));
+        s.push_str(&format!("Requests: {}\n", self.request_count));
+        s.push_str(&format!(
+            "Input tokens:  {} (cumulative)\n",
+            self.cumulative_usage.input_tokens
+        ));
+        s.push_str(&format!(
+            "Output tokens: {} (cumulative)\n",
+            self.cumulative_usage.output_tokens
+        ));
+        s.push_str(&format!(
+            "Cache read:    {}\n",
+            self.cumulative_usage.cache_read_tokens
+        ));
+        s.push_str(&format!(
+            "Cache write:   {}\n",
+            self.cumulative_usage.cache_write_tokens
+        ));
+        s.push_str(&format!(
+            "Total tokens:  {}\n",
+            self.cumulative_usage.total()
+        ));
+
+        if let Some(last) = self.turn_metrics.last() {
+            s.push_str(&format!(
+                "\nLast turn #{}: estimated {} input tokens",
+                last.turn_number, last.estimated_input_tokens
+            ));
+            if let Some(actual) = &last.actual_usage {
+                s.push_str(&format!(
+                    ", actual {}in/{}out",
+                    actual.input_tokens, actual.output_tokens
+                ));
+            }
+            s.push('\n');
+        }
+
+        s
     }
 
     /// Add a completed task
@@ -187,6 +321,24 @@ impl Session {
             handoff.push_str("### Notes for Next Session\n");
             handoff.push_str(&self.progress.handoff_notes);
             handoff.push('\n');
+        }
+
+        // Include token usage stats
+        if self.cumulative_usage.total() > 0 {
+            handoff.push_str("\n### Token Usage\n");
+            handoff.push_str(&format!(
+                "- Input: {} tokens\n",
+                self.cumulative_usage.input_tokens
+            ));
+            handoff.push_str(&format!(
+                "- Output: {} tokens\n",
+                self.cumulative_usage.output_tokens
+            ));
+            handoff.push_str(&format!(
+                "- Cache read: {} tokens\n",
+                self.cumulative_usage.cache_read_tokens
+            ));
+            handoff.push_str(&format!("- Turns: {}\n", self.turn_metrics.len()));
         }
 
         handoff

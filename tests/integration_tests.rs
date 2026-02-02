@@ -2063,3 +2063,753 @@ mod subagent_tools {
         assert!(!guide_tools.contains(&"bash")); // No bash for guide
     }
 }
+
+// ============================================================================
+// TOKEN TRACKING INTEGRATION TESTS
+// ============================================================================
+
+mod token_tracking {
+    use openclaudia::compaction::{
+        estimate_message_tokens, estimate_request_tokens, estimate_tokens, get_context_window,
+        CompactionConfig, ContextCompactor,
+    };
+    use openclaudia::config::{SessionConfig, TokenTrackingConfig};
+    use openclaudia::proxy::{ChatCompletionRequest, ChatMessage, MessageContent};
+    use openclaudia::session::{Session, SessionManager, SessionMode, TokenUsage};
+    use std::collections::HashMap;
+    use tempfile::TempDir;
+
+    // ========================================================================
+    // TokenUsage Tests
+    // ========================================================================
+
+    #[test]
+    fn test_token_usage_default() {
+        let usage = TokenUsage::default();
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.cache_write_tokens, 0);
+        assert_eq!(usage.total(), 0);
+    }
+
+    #[test]
+    fn test_token_usage_total() {
+        let usage = TokenUsage {
+            input_tokens: 1000,
+            output_tokens: 500,
+            cache_read_tokens: 200,
+            cache_write_tokens: 100,
+        };
+        assert_eq!(usage.total(), 1500); // input + output only
+    }
+
+    #[test]
+    fn test_token_usage_accumulate() {
+        let mut cumulative = TokenUsage::default();
+
+        let turn1 = TokenUsage {
+            input_tokens: 1000,
+            output_tokens: 500,
+            cache_read_tokens: 200,
+            cache_write_tokens: 100,
+        };
+        cumulative.accumulate(&turn1);
+
+        assert_eq!(cumulative.input_tokens, 1000);
+        assert_eq!(cumulative.output_tokens, 500);
+        assert_eq!(cumulative.cache_read_tokens, 200);
+        assert_eq!(cumulative.cache_write_tokens, 100);
+
+        let turn2 = TokenUsage {
+            input_tokens: 2000,
+            output_tokens: 800,
+            cache_read_tokens: 500,
+            cache_write_tokens: 0,
+        };
+        cumulative.accumulate(&turn2);
+
+        assert_eq!(cumulative.input_tokens, 3000);
+        assert_eq!(cumulative.output_tokens, 1300);
+        assert_eq!(cumulative.cache_read_tokens, 700);
+        assert_eq!(cumulative.cache_write_tokens, 100);
+        assert_eq!(cumulative.total(), 4300);
+    }
+
+    #[test]
+    fn test_token_usage_serialization_roundtrip() {
+        let usage = TokenUsage {
+            input_tokens: 12345,
+            output_tokens: 6789,
+            cache_read_tokens: 1000,
+            cache_write_tokens: 500,
+        };
+
+        let json = serde_json::to_string(&usage).expect("serialize");
+        let deserialized: TokenUsage = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(deserialized.input_tokens, 12345);
+        assert_eq!(deserialized.output_tokens, 6789);
+        assert_eq!(deserialized.cache_read_tokens, 1000);
+        assert_eq!(deserialized.cache_write_tokens, 500);
+    }
+
+    // ========================================================================
+    // Session Token Tracking Tests
+    // ========================================================================
+
+    #[test]
+    fn test_session_record_turn_estimate() {
+        let mut session = Session::new_initializer();
+
+        let turn = session.record_turn_estimate(5000, 2000, 1500, 500);
+        assert_eq!(turn, 1);
+        assert_eq!(session.turn_metrics.len(), 1);
+
+        let metrics = &session.turn_metrics[0];
+        assert_eq!(metrics.turn_number, 1);
+        assert_eq!(metrics.estimated_input_tokens, 5000);
+        assert_eq!(metrics.injected_context_tokens, 2000);
+        assert_eq!(metrics.system_prompt_tokens, 1500);
+        assert_eq!(metrics.tool_def_tokens, 500);
+        assert!(metrics.actual_usage.is_none());
+
+        // Second turn
+        let turn2 = session.record_turn_estimate(8000, 3000, 1500, 1500);
+        assert_eq!(turn2, 2);
+        assert_eq!(session.turn_metrics.len(), 2);
+    }
+
+    #[test]
+    fn test_session_record_actual_usage() {
+        let mut session = Session::new_initializer();
+
+        // Record estimate first
+        session.record_turn_estimate(5000, 2000, 1500, 500);
+
+        // Then record actual usage
+        let usage = TokenUsage {
+            input_tokens: 4800,
+            output_tokens: 1200,
+            cache_read_tokens: 300,
+            cache_write_tokens: 100,
+        };
+        session.record_actual_usage(usage);
+
+        // Check cumulative
+        assert_eq!(session.cumulative_usage.input_tokens, 4800);
+        assert_eq!(session.cumulative_usage.output_tokens, 1200);
+        assert_eq!(session.total_tokens, 6000); // backward compat field
+
+        // Check last turn has actual usage
+        let last = session.turn_metrics.last().unwrap();
+        assert!(last.actual_usage.is_some());
+        let actual = last.actual_usage.as_ref().unwrap();
+        assert_eq!(actual.input_tokens, 4800);
+        assert_eq!(actual.output_tokens, 1200);
+    }
+
+    #[test]
+    fn test_session_multi_turn_tracking() {
+        let mut session = Session::new_initializer();
+
+        // Turn 1
+        session.record_turn_estimate(5000, 2000, 1500, 500);
+        session.record_actual_usage(TokenUsage {
+            input_tokens: 4800,
+            output_tokens: 1200,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+        });
+
+        // Turn 2
+        session.record_turn_estimate(8000, 2500, 1500, 1000);
+        session.record_actual_usage(TokenUsage {
+            input_tokens: 7500,
+            output_tokens: 2000,
+            cache_read_tokens: 1000,
+            cache_write_tokens: 0,
+        });
+
+        // Turn 3
+        session.record_turn_estimate(12000, 3000, 1500, 1500);
+        session.record_actual_usage(TokenUsage {
+            input_tokens: 11000,
+            output_tokens: 3000,
+            cache_read_tokens: 2000,
+            cache_write_tokens: 500,
+        });
+
+        assert_eq!(session.turn_metrics.len(), 3);
+        assert_eq!(session.request_count, 0); // increment_requests not called
+        assert_eq!(
+            session.cumulative_usage.input_tokens,
+            4800 + 7500 + 11000
+        );
+        assert_eq!(
+            session.cumulative_usage.output_tokens,
+            1200 + 2000 + 3000
+        );
+        assert_eq!(session.cumulative_usage.cache_read_tokens, 0 + 1000 + 2000);
+        assert_eq!(session.cumulative_usage.cache_write_tokens, 0 + 0 + 500);
+        assert_eq!(
+            session.cumulative_usage.total(),
+            (4800 + 7500 + 11000) + (1200 + 2000 + 3000)
+        );
+    }
+
+    #[test]
+    fn test_session_stats_summary() {
+        let mut session = Session::new_initializer();
+        session.record_turn_estimate(5000, 2000, 1500, 500);
+        session.record_actual_usage(TokenUsage {
+            input_tokens: 4800,
+            output_tokens: 1200,
+            cache_read_tokens: 300,
+            cache_write_tokens: 100,
+        });
+
+        let summary = session.stats_summary();
+
+        assert!(summary.contains("Turns: 1"), "Summary: {}", summary);
+        assert!(
+            summary.contains("Input tokens:  4800"),
+            "Summary: {}",
+            summary
+        );
+        assert!(
+            summary.contains("Output tokens: 1200"),
+            "Summary: {}",
+            summary
+        );
+        assert!(summary.contains("Cache read:    300"), "Summary: {}", summary);
+        assert!(summary.contains("Cache write:   100"), "Summary: {}", summary);
+        assert!(
+            summary.contains("Last turn #1"),
+            "Summary: {}",
+            summary
+        );
+        assert!(
+            summary.contains("actual 4800in/1200out"),
+            "Summary: {}",
+            summary
+        );
+    }
+
+    #[test]
+    fn test_session_handoff_includes_token_usage() {
+        let mut session = Session::new_initializer();
+        session.record_turn_estimate(5000, 2000, 1500, 500);
+        session.record_actual_usage(TokenUsage {
+            input_tokens: 4800,
+            output_tokens: 1200,
+            cache_read_tokens: 300,
+            cache_write_tokens: 0,
+        });
+
+        let handoff = session.generate_handoff();
+
+        assert!(
+            handoff.contains("### Token Usage"),
+            "Handoff: {}",
+            handoff
+        );
+        assert!(
+            handoff.contains("Input: 4800 tokens"),
+            "Handoff: {}",
+            handoff
+        );
+        assert!(
+            handoff.contains("Output: 1200 tokens"),
+            "Handoff: {}",
+            handoff
+        );
+        assert!(
+            handoff.contains("Turns: 1"),
+            "Handoff: {}",
+            handoff
+        );
+    }
+
+    #[test]
+    fn test_session_handoff_no_token_section_when_empty() {
+        let session = Session::new_initializer();
+        let handoff = session.generate_handoff();
+
+        assert!(
+            !handoff.contains("### Token Usage"),
+            "Should not include token section when no usage"
+        );
+    }
+
+    // ========================================================================
+    // Session Persistence with Token Data
+    // ========================================================================
+
+    #[test]
+    fn test_session_persistence_with_token_data() {
+        let dir = TempDir::new().unwrap();
+        let mut manager = SessionManager::new(dir.path().join("sessions"));
+
+        // Create session and add token data
+        let session = manager.get_or_create_session();
+        let session_id = session.id.clone();
+
+        {
+            let session = manager.get_session_mut().unwrap();
+            session.record_turn_estimate(10000, 3000, 2000, 1000);
+            session.record_actual_usage(TokenUsage {
+                input_tokens: 9500,
+                output_tokens: 2500,
+                cache_read_tokens: 500,
+                cache_write_tokens: 200,
+            });
+        }
+
+        // Persist and reload
+        manager.end_session(Some("Token tracking test"));
+
+        let loaded = manager.load_session(&session_id).expect("Should load");
+
+        assert_eq!(loaded.cumulative_usage.input_tokens, 9500);
+        assert_eq!(loaded.cumulative_usage.output_tokens, 2500);
+        assert_eq!(loaded.cumulative_usage.cache_read_tokens, 500);
+        assert_eq!(loaded.cumulative_usage.cache_write_tokens, 200);
+        assert_eq!(loaded.turn_metrics.len(), 1);
+
+        let turn = &loaded.turn_metrics[0];
+        assert_eq!(turn.estimated_input_tokens, 10000);
+        assert!(turn.actual_usage.is_some());
+    }
+
+    #[test]
+    fn test_session_backward_compat_deserialization() {
+        // Simulate loading a session that was persisted before token tracking
+        let old_session_json = r#"{
+            "id": "test-old-session",
+            "mode": "initializer",
+            "created_at": "2025-01-01T00:00:00Z",
+            "updated_at": "2025-01-01T01:00:00Z",
+            "progress": {
+                "completed_tasks": [],
+                "in_progress_tasks": [],
+                "pending_tasks": [],
+                "decisions": [],
+                "files_modified": [],
+                "handoff_notes": ""
+            },
+            "parent_session_id": null,
+            "request_count": 5,
+            "total_tokens": 10000
+        }"#;
+
+        let session: Session =
+            serde_json::from_str(old_session_json).expect("Should deserialize old format");
+
+        assert_eq!(session.id, "test-old-session");
+        assert_eq!(session.request_count, 5);
+        assert_eq!(session.total_tokens, 10000);
+        // New fields should have defaults
+        assert_eq!(session.cumulative_usage.input_tokens, 0);
+        assert_eq!(session.cumulative_usage.output_tokens, 0);
+        assert!(session.turn_metrics.is_empty());
+    }
+
+    // ========================================================================
+    // TokenTrackingConfig Tests
+    // ========================================================================
+
+    #[test]
+    fn test_token_tracking_config_default() {
+        let config = TokenTrackingConfig::default();
+        assert!(config.enabled);
+        assert!(config.log_usage);
+        assert!((config.warn_threshold - 0.75).abs() < f32::EPSILON);
+        assert_eq!(config.max_output_tokens, 0);
+    }
+
+    #[test]
+    fn test_token_tracking_config_serde_defaults() {
+        let config: TokenTrackingConfig = serde_json::from_str("{}").unwrap();
+        assert!(config.enabled);
+        assert!(config.log_usage);
+        assert!((config.warn_threshold - 0.75).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_token_tracking_config_custom() {
+        let json = r#"{
+            "enabled": false,
+            "log_usage": false,
+            "warn_threshold": 0.9,
+            "max_output_tokens": 8192
+        }"#;
+
+        let config: TokenTrackingConfig = serde_json::from_str(json).unwrap();
+        assert!(!config.enabled);
+        assert!(!config.log_usage);
+        assert!((config.warn_threshold - 0.9).abs() < f32::EPSILON);
+        assert_eq!(config.max_output_tokens, 8192);
+    }
+
+    #[test]
+    fn test_session_config_includes_token_tracking() {
+        let config = SessionConfig::default();
+        assert!(config.token_tracking.enabled);
+        assert!(config.token_tracking.log_usage);
+    }
+
+    #[test]
+    fn test_session_config_serde_with_token_tracking() {
+        let json = r#"{
+            "timeout_minutes": 60,
+            "persist_path": "/tmp/test",
+            "token_tracking": {
+                "enabled": true,
+                "warn_threshold": 0.8
+            }
+        }"#;
+
+        let config: SessionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.timeout_minutes, 60);
+        assert!(config.token_tracking.enabled);
+        assert!((config.token_tracking.warn_threshold - 0.8).abs() < f32::EPSILON);
+    }
+
+    // ========================================================================
+    // extract_usage_from_response Tests (via proxy internals)
+    // ========================================================================
+
+    // These test the usage extraction logic by verifying session state
+    // after processing mock provider responses.
+
+    #[test]
+    fn test_token_usage_openai_format_parsing() {
+        // Simulate what extract_usage_from_response does for OpenAI
+        let response = serde_json::json!({
+            "id": "chatcmpl-123",
+            "usage": {
+                "prompt_tokens": 1500,
+                "completion_tokens": 800,
+                "total_tokens": 2300,
+                "prompt_tokens_details": {
+                    "cached_tokens": 400
+                }
+            }
+        });
+
+        let usage = response.get("usage").unwrap();
+        let input = usage
+            .get("prompt_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let output = usage
+            .get("completion_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let cached = usage
+            .get("prompt_tokens_details")
+            .and_then(|d| d.get("cached_tokens"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        assert_eq!(input, 1500);
+        assert_eq!(output, 800);
+        assert_eq!(cached, 400);
+    }
+
+    #[test]
+    fn test_token_usage_anthropic_format_parsing() {
+        // Simulate Anthropic response format
+        let response = serde_json::json!({
+            "id": "msg_123",
+            "usage": {
+                "input_tokens": 2000,
+                "output_tokens": 1000,
+                "cache_read_input_tokens": 500,
+                "cache_creation_input_tokens": 200
+            }
+        });
+
+        let usage = response.get("usage").unwrap();
+        let input = usage
+            .get("input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let output = usage
+            .get("output_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let cache_read = usage
+            .get("cache_read_input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let cache_write = usage
+            .get("cache_creation_input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        assert_eq!(input, 2000);
+        assert_eq!(output, 1000);
+        assert_eq!(cache_read, 500);
+        assert_eq!(cache_write, 200);
+    }
+
+    #[test]
+    fn test_token_usage_missing_usage_field() {
+        let response = serde_json::json!({
+            "id": "chatcmpl-123",
+            "choices": []
+        });
+
+        assert!(response.get("usage").is_none());
+    }
+
+    // ========================================================================
+    // Compaction with Token Hint Tests
+    // ========================================================================
+
+    fn make_test_message(role: &str, content: &str) -> ChatMessage {
+        ChatMessage {
+            role: role.to_string(),
+            content: MessageContent::Text(content.to_string()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    fn make_test_request(messages: Vec<ChatMessage>) -> ChatCompletionRequest {
+        ChatCompletionRequest {
+            model: "gpt-4".to_string(),
+            messages,
+            temperature: None,
+            max_tokens: None,
+            stream: None,
+            tools: None,
+            tool_choice: None,
+            extra: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_compaction_analyze_with_hint_none() {
+        let messages = vec![
+            make_test_message("system", "You are helpful."),
+            make_test_message("user", "Hello"),
+        ];
+
+        let request = make_test_request(messages);
+        let compactor = ContextCompactor::new(CompactionConfig::default());
+
+        // Without hint, should use estimator
+        let analysis = compactor.analyze_with_hint(&request, None);
+        let estimated = estimate_request_tokens(&request);
+        assert_eq!(analysis.current_tokens, estimated);
+        assert!(!analysis.needs_compaction);
+    }
+
+    #[test]
+    fn test_compaction_analyze_with_hint_provided() {
+        let messages = vec![
+            make_test_message("system", "You are helpful."),
+            make_test_message("user", "Hello"),
+        ];
+
+        let request = make_test_request(messages);
+        let compactor = ContextCompactor::new(CompactionConfig::default());
+
+        // With hint, should use the provided value
+        let analysis = compactor.analyze_with_hint(&request, Some(50000));
+        assert_eq!(analysis.current_tokens, 50000);
+    }
+
+    #[test]
+    fn test_compaction_with_hint_triggers_compaction() {
+        let messages = vec![
+            make_test_message("system", "System prompt"),
+            make_test_message("user", "First question"),
+            make_test_message("assistant", "First answer"),
+            make_test_message("user", "Second question"),
+            make_test_message("assistant", "Second answer with some content"),
+            make_test_message("user", "Recent question"),
+            make_test_message("assistant", "Recent answer"),
+        ];
+
+        let request = make_test_request(messages);
+
+        // Small context window to make hint trigger compaction
+        let config = CompactionConfig {
+            max_context_tokens: 5000,
+            threshold: 0.8,
+            preserve_recent: 2,
+            ..Default::default()
+        };
+
+        let compactor = ContextCompactor::new(config);
+
+        // Without hint: estimation might not trigger compaction
+        let _analysis_no_hint = compactor.analyze_with_hint(&request, None);
+
+        // With large hint: should definitely trigger compaction
+        let analysis_with_hint = compactor.analyze_with_hint(&request, Some(4500));
+        assert!(
+            analysis_with_hint.needs_compaction,
+            "4500 tokens should exceed 80% of 5000"
+        );
+        assert!(analysis_with_hint.tokens_to_free > 0);
+    }
+
+    #[tokio::test]
+    async fn test_compact_with_hint_method() {
+        let long_content = "x".repeat(10000);
+        let messages = vec![
+            make_test_message("system", "You are helpful."),
+            make_test_message("user", &long_content),
+            make_test_message("assistant", &long_content),
+            make_test_message("user", "Recent message"),
+            make_test_message("assistant", "Recent response"),
+        ];
+
+        let mut request = make_test_request(messages);
+
+        let config = CompactionConfig {
+            max_context_tokens: 5000,
+            threshold: 0.8,
+            preserve_recent: 2,
+            ..Default::default()
+        };
+
+        let compactor = ContextCompactor::new(config);
+
+        // compact_with_hint with None behaves like compact
+        let result = compactor
+            .compact_with_hint(&mut request, None, None, None)
+            .await
+            .unwrap();
+
+        assert!(result.compacted);
+        assert!(result.new_tokens < result.original_tokens);
+    }
+
+    // ========================================================================
+    // Token Estimation Accuracy Tests
+    // ========================================================================
+
+    #[test]
+    fn test_estimate_tokens_rough_accuracy() {
+        // "Hello world" is approximately 2 tokens in most tokenizers
+        let estimate = estimate_tokens("Hello world");
+        assert!(estimate >= 1 && estimate <= 5, "Estimate: {}", estimate);
+
+        // Longer text should scale roughly linearly
+        let short = estimate_tokens("Hello");
+        let long = estimate_tokens(&"Hello ".repeat(100));
+        assert!(long > short * 50, "Should scale with length");
+    }
+
+    #[test]
+    fn test_estimate_message_tokens_includes_overhead() {
+        let msg = make_test_message("user", "Hello");
+        let tokens = estimate_message_tokens(&msg);
+        let text_tokens = estimate_tokens("Hello");
+
+        // Message tokens should be more than just text (includes role overhead)
+        assert!(
+            tokens > text_tokens,
+            "Message should have overhead: msg={}, text={}",
+            tokens,
+            text_tokens
+        );
+    }
+
+    #[test]
+    fn test_estimate_request_tokens_with_tools() {
+        let messages = vec![make_test_message("user", "Help me write code")];
+        let mut request = make_test_request(messages);
+
+        let tokens_no_tools = estimate_request_tokens(&request);
+
+        request.tools = Some(vec![serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a file from disk",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"}
+                    }
+                }
+            }
+        })]);
+
+        let tokens_with_tools = estimate_request_tokens(&request);
+
+        assert!(
+            tokens_with_tools > tokens_no_tools,
+            "Tools should add tokens: with={}, without={}",
+            tokens_with_tools,
+            tokens_no_tools
+        );
+    }
+
+    #[test]
+    fn test_context_window_sizes() {
+        assert_eq!(get_context_window("claude-3-opus-20240229"), 200_000);
+        assert_eq!(get_context_window("claude-3-5-sonnet-20241022"), 200_000);
+        assert_eq!(get_context_window("gpt-4o"), 128_000);
+        assert_eq!(get_context_window("gemini-1.5-pro"), 1_000_000);
+        assert_eq!(get_context_window("unknown-model"), 128_000);
+    }
+
+    // ========================================================================
+    // Coding Session Continuation with Token Data
+    // ========================================================================
+
+    #[test]
+    fn test_coding_session_inherits_clean_token_state() {
+        let dir = TempDir::new().unwrap();
+        let mut manager = SessionManager::new(dir.path().join("sessions"));
+
+        // First session with token data
+        {
+            let _ = manager.get_or_create_session();
+            let session = manager.get_session_mut().unwrap();
+            session.record_turn_estimate(5000, 2000, 1500, 500);
+            session.record_actual_usage(TokenUsage {
+                input_tokens: 4800,
+                output_tokens: 1200,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+            });
+        }
+        manager.end_session(Some("First session done"));
+
+        // Second session should start with clean token counters
+        let second = manager.get_or_create_session().clone();
+        assert_eq!(second.mode, SessionMode::Coding);
+        assert_eq!(second.cumulative_usage.input_tokens, 0);
+        assert_eq!(second.cumulative_usage.output_tokens, 0);
+        assert!(second.turn_metrics.is_empty());
+        assert!(second.parent_session_id.is_some());
+    }
+
+    #[test]
+    fn test_session_record_without_actual_usage() {
+        let mut session = Session::new_initializer();
+
+        // Record estimate but no actual usage (streaming response)
+        session.record_turn_estimate(5000, 2000, 1500, 500);
+        session.record_turn_estimate(8000, 3000, 2000, 1000);
+
+        assert_eq!(session.turn_metrics.len(), 2);
+        assert_eq!(session.cumulative_usage.total(), 0); // No actual usage recorded
+        assert_eq!(session.total_tokens, 0);
+
+        // Both turns should have None for actual_usage
+        for turn in &session.turn_metrics {
+            assert!(turn.actual_usage.is_none());
+        }
+    }
+}

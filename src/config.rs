@@ -146,6 +146,46 @@ pub struct SessionConfig {
     /// 0 means unlimited (like Claude Code). Default: 0 (unlimited).
     #[serde(default)]
     pub max_turns: u32,
+    /// Token tracking configuration
+    #[serde(default)]
+    pub token_tracking: TokenTrackingConfig,
+}
+
+/// Token tracking and budget configuration
+#[derive(Debug, Deserialize, Clone)]
+pub struct TokenTrackingConfig {
+    /// Enable per-turn token tracking (default: true)
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Log token usage at info level each turn (default: true)
+    #[serde(default = "default_true")]
+    pub log_usage: bool,
+    /// Warn when estimated input exceeds this percentage of context window (0.0-1.0)
+    /// Default: 0.75 (warn at 75% of context window)
+    #[serde(default = "default_warn_threshold")]
+    pub warn_threshold: f32,
+    /// Maximum output tokens per response (0 = provider default)
+    #[serde(default)]
+    pub max_output_tokens: u32,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_warn_threshold() -> f32 {
+    0.75
+}
+
+impl Default for TokenTrackingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            log_usage: true,
+            warn_threshold: 0.75,
+            max_output_tokens: 0,
+        }
+    }
 }
 
 /// Keybinding action names
@@ -256,6 +296,7 @@ impl Default for SessionConfig {
             timeout_minutes: default_timeout_minutes(),
             persist_path: default_persist_path(),
             max_turns: 0,
+            token_tracking: TokenTrackingConfig::default(),
         }
     }
 }

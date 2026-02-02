@@ -31,7 +31,7 @@ use crate::oauth::OAuthStore;
 use crate::plugins::PluginManager;
 use crate::providers::get_adapter;
 use crate::rules::{extract_extensions_from_tool_input, RulesEngine};
-use crate::session::{get_session_context, SessionManager};
+use crate::session::{get_session_context, SessionManager, TokenUsage};
 
 /// Normalize base URL by stripping trailing slash and /v1 suffix.
 /// This prevents double /v1/v1 when endpoint paths include /v1 prefix.
@@ -166,6 +166,8 @@ pub fn create_router(state: ProxyState) -> Router {
             axum::routing::post(auth_device_submit),
         )
         .route("/auth/status", get(auth_status))
+        // Stats endpoint for token usage
+        .route("/stats", get(session_stats))
         // OpenAI-compatible endpoints
         .route("/v1/chat/completions", any(proxy_chat_completions))
         .route("/v1/completions", any(proxy_completions))
@@ -184,6 +186,45 @@ async fn health_check() -> impl IntoResponse {
         "service": "openclaudia",
         "version": env!("CARGO_PKG_VERSION")
     }))
+}
+
+/// Session stats endpoint - returns token usage and turn metrics
+async fn session_stats(State(state): State<ProxyState>) -> impl IntoResponse {
+    let sm = state.session_manager.read().await;
+    match sm.get_session() {
+        Some(session) => {
+            let last_turn = session.turn_metrics.last();
+            Json(serde_json::json!({
+                "session_id": session.id,
+                "mode": session.mode,
+                "request_count": session.request_count,
+                "turns": session.turn_metrics.len(),
+                "cumulative_usage": {
+                    "input_tokens": session.cumulative_usage.input_tokens,
+                    "output_tokens": session.cumulative_usage.output_tokens,
+                    "cache_read_tokens": session.cumulative_usage.cache_read_tokens,
+                    "cache_write_tokens": session.cumulative_usage.cache_write_tokens,
+                    "total_tokens": session.cumulative_usage.total(),
+                },
+                "last_turn": last_turn.map(|t| serde_json::json!({
+                    "turn_number": t.turn_number,
+                    "estimated_input_tokens": t.estimated_input_tokens,
+                    "injected_context_tokens": t.injected_context_tokens,
+                    "system_prompt_tokens": t.system_prompt_tokens,
+                    "tool_def_tokens": t.tool_def_tokens,
+                    "actual_usage": t.actual_usage.as_ref().map(|u| serde_json::json!({
+                        "input_tokens": u.input_tokens,
+                        "output_tokens": u.output_tokens,
+                        "cache_read_tokens": u.cache_read_tokens,
+                        "cache_write_tokens": u.cache_write_tokens,
+                    })),
+                })),
+            }))
+        }
+        None => Json(serde_json::json!({
+            "error": "No active session"
+        })),
+    }
 }
 
 /// Device flow page - HTML UI for OAuth authentication
@@ -577,9 +618,26 @@ async fn proxy_chat_completions(
     model_config.preserve_tool_calls = base_config.preserve_tool_calls;
     compactor.set_config(model_config);
 
+    // Get last actual input token count from session for more accurate compaction
+    let actual_token_hint: Option<usize> = {
+        let sm = state.session_manager.read().await;
+        sm.get_session().and_then(|session| {
+            session
+                .turn_metrics
+                .last()
+                .and_then(|tm| tm.actual_usage.as_ref())
+                .map(|u| u.input_tokens as usize)
+        })
+    };
+
     // Compact context if needed (for long conversations)
     let compaction_result = compactor
-        .compact(&mut request, Some(&state.hook_engine), None)
+        .compact_with_hint(
+            &mut request,
+            Some(&state.hook_engine),
+            None,
+            actual_token_hint,
+        )
         .await;
 
     match compaction_result {
@@ -610,6 +668,73 @@ async fn proxy_chat_completions(
     let adapter = get_adapter(&provider_name);
     debug!(provider = adapter.name(), "Using provider adapter");
 
+    // Pre-request token estimation and tracking
+    let token_tracking_enabled = state.config.session.token_tracking.enabled;
+    if token_tracking_enabled {
+        let estimated_input = crate::compaction::estimate_request_tokens(&request);
+
+        // Break down token components
+        let system_prompt_tokens: usize = request
+            .messages
+            .iter()
+            .filter(|m| m.role == "system")
+            .map(crate::compaction::estimate_message_tokens)
+            .sum();
+
+        let tool_def_tokens: usize = request
+            .tools
+            .as_ref()
+            .map(|tools| {
+                tools
+                    .iter()
+                    .map(|t| crate::compaction::estimate_tokens(&t.to_string()))
+                    .sum()
+            })
+            .unwrap_or(0);
+
+        let injected_context_tokens = system_prompt_tokens + tool_def_tokens;
+
+        // Record turn estimate in session
+        {
+            let mut sm = state.session_manager.write().await;
+            if let Some(session) = sm.get_session_mut() {
+                let turn = session.record_turn_estimate(
+                    estimated_input,
+                    injected_context_tokens,
+                    system_prompt_tokens,
+                    tool_def_tokens,
+                );
+                let context_window = crate::compaction::get_context_window(&request.model);
+
+                if state.config.session.token_tracking.log_usage {
+                    info!(
+                        turn = turn,
+                        estimated_input = estimated_input,
+                        system_prompt = system_prompt_tokens,
+                        tool_defs = tool_def_tokens,
+                        context_window = context_window,
+                        utilization_pct = format!(
+                            "{:.1}%",
+                            (estimated_input as f64 / context_window as f64) * 100.0
+                        ),
+                        "Turn token estimate"
+                    );
+                }
+
+                // Warn if approaching context limit
+                let warn_threshold = state.config.session.token_tracking.warn_threshold;
+                if estimated_input as f32 > context_window as f32 * warn_threshold {
+                    warn!(
+                        estimated = estimated_input,
+                        threshold = format!("{:.0}%", warn_threshold * 100.0),
+                        context_window = context_window,
+                        "Token usage approaching context window limit"
+                    );
+                }
+            }
+        }
+    }
+
     let is_stream = request.stream.unwrap_or(false);
 
     // Transform request to provider format with thinking config
@@ -618,7 +743,7 @@ async fn proxy_chat_completions(
         .map_err(|e| ProxyError::InvalidBody(e.to_string()))?;
 
     // Forward to provider with transformed request
-    let response = forward_to_provider_raw(
+    let raw_response = forward_to_provider_raw_reqwest(
         &state.client,
         provider,
         &api_key,
@@ -629,7 +754,29 @@ async fn proxy_chat_completions(
     )
     .await?;
 
-    Ok(response)
+    // Post-response: extract usage from non-streaming responses and convert
+    if token_tracking_enabled && !is_stream {
+        let (response, usage) = convert_response_with_usage(raw_response).await?;
+        if let Some(usage) = usage {
+            let mut sm = state.session_manager.write().await;
+            if let Some(session) = sm.get_session_mut() {
+                if state.config.session.token_tracking.log_usage {
+                    info!(
+                        input = usage.input_tokens,
+                        output = usage.output_tokens,
+                        cache_read = usage.cache_read_tokens,
+                        cache_write = usage.cache_write_tokens,
+                        "Actual token usage from provider"
+                    );
+                }
+                session.record_actual_usage(usage);
+            }
+        }
+        Ok(response)
+    } else {
+        let response = convert_response(raw_response).await?;
+        Ok(response)
+    }
 }
 
 /// Handle MCP tool calls from the model response
@@ -894,6 +1041,82 @@ fn extract_api_key(headers: &HeaderMap) -> Option<String> {
         })
 }
 
+/// Convert reqwest response to axum response, also extracting token usage if present
+async fn convert_response_with_usage(
+    response: reqwest::Response,
+) -> Result<(Response, Option<TokenUsage>), ProxyError> {
+    let status = StatusCode::from_u16(response.status().as_u16())
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+
+    let mut builder = Response::builder().status(status);
+
+    for (key, value) in response.headers() {
+        if key != header::TRANSFER_ENCODING && key != header::CONTENT_LENGTH {
+            if let Ok(v) = HeaderValue::from_bytes(value.as_bytes()) {
+                builder = builder.header(key.as_str(), v);
+            }
+        }
+    }
+
+    let body = response.bytes().await?;
+
+    // Try to extract usage from the response body
+    let usage = serde_json::from_slice::<Value>(&body)
+        .ok()
+        .map(|json| extract_usage_from_response(&json))
+        .filter(|u| u.total() > 0);
+
+    Ok((builder.body(Body::from(body)).unwrap(), usage))
+}
+
+/// Extract token usage from a provider's JSON response
+/// Handles OpenAI format (usage.prompt_tokens/completion_tokens)
+/// and Anthropic format (usage.input_tokens/output_tokens)
+fn extract_usage_from_response(response: &Value) -> TokenUsage {
+    let usage = match response.get("usage") {
+        Some(u) => u,
+        None => return TokenUsage::default(),
+    };
+
+    // OpenAI format
+    let input_tokens = usage
+        .get("prompt_tokens")
+        .and_then(|v| v.as_u64())
+        // Anthropic format
+        .or_else(|| usage.get("input_tokens").and_then(|v| v.as_u64()))
+        .unwrap_or(0);
+
+    let output_tokens = usage
+        .get("completion_tokens")
+        .and_then(|v| v.as_u64())
+        .or_else(|| usage.get("output_tokens").and_then(|v| v.as_u64()))
+        .unwrap_or(0);
+
+    let cache_read_tokens = usage
+        .get("cache_read_input_tokens")
+        .and_then(|v| v.as_u64())
+        // OpenAI format uses prompt_tokens_details.cached_tokens
+        .or_else(|| {
+            usage
+                .get("prompt_tokens_details")
+                .and_then(|d| d.get("cached_tokens"))
+                .and_then(|v| v.as_u64())
+        })
+        .unwrap_or(0);
+
+    let cache_write_tokens = usage
+        .get("cache_creation_input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    TokenUsage {
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
+    }
+}
+
 /// Forward request to upstream provider
 async fn forward_to_provider<T: Serialize>(
     client: &Client,
@@ -942,8 +1165,9 @@ fn set_auth_header(
     req
 }
 
-/// Forward request to upstream provider with raw Value body and custom headers
-async fn forward_to_provider_raw(
+/// Forward request to upstream provider with raw Value body and custom headers.
+/// Returns the raw reqwest::Response for inspection before conversion.
+async fn forward_to_provider_raw_reqwest(
     client: &Client,
     provider: &ProviderConfig,
     _api_key: &str,
@@ -951,24 +1175,21 @@ async fn forward_to_provider_raw(
     body: &Value,
     is_stream: bool,
     custom_headers: Vec<(String, String)>,
-) -> Result<Response, ProxyError> {
+) -> Result<reqwest::Response, ProxyError> {
     let url = format!("{}{}", normalize_base_url(&provider.base_url), path);
-    debug!(url = %url, stream = is_stream, "Forwarding to provider (raw)");
+    debug!(url = %url, stream = is_stream, "Forwarding to provider (raw/reqwest)");
 
     let mut req = client.post(&url).json(body);
 
-    // Apply custom headers from provider adapter
     for (key, value) in custom_headers {
         req = req.header(key.as_str(), value.as_str());
     }
 
-    // Add any custom headers from config
     for (key, value) in &provider.headers {
         req = req.header(key.as_str(), value.as_str());
     }
 
-    let response = req.send().await?;
-    convert_response(response).await
+    Ok(req.send().await?)
 }
 
 /// Convert reqwest response to axum response

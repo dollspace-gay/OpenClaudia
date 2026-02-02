@@ -202,6 +202,50 @@ impl ContextCompactor {
         Self::new(CompactionConfig::for_model(model))
     }
 
+    /// Analyze whether compaction is needed.
+    /// If `actual_input_tokens` is provided (from a previous turn's provider response),
+    /// it will be used instead of the estimator for more accurate decisions.
+    pub fn analyze_with_hint(
+        &self,
+        request: &ChatCompletionRequest,
+        actual_input_tokens: Option<usize>,
+    ) -> CompactionAnalysis {
+        let estimated = estimate_request_tokens(request);
+        let current_tokens = actual_input_tokens.unwrap_or(estimated);
+
+        if actual_input_tokens.is_some() {
+            debug!(
+                estimated = estimated,
+                actual = current_tokens,
+                delta = (current_tokens as i64 - estimated as i64),
+                "Using actual token count for compaction analysis"
+            );
+        }
+
+        let threshold_tokens =
+            (self.config.max_context_tokens as f32 * self.config.threshold) as usize;
+        let effective_threshold = threshold_tokens.saturating_sub(RESPONSE_RESERVE);
+        let needs_compaction = current_tokens > effective_threshold;
+
+        let target_tokens = threshold_tokens / 2;
+        let tokens_to_free = if needs_compaction {
+            current_tokens.saturating_sub(target_tokens)
+        } else {
+            0
+        };
+
+        let (preserve, summarize) = self.categorize_messages(&request.messages);
+
+        CompactionAnalysis {
+            current_tokens,
+            max_tokens: self.config.max_context_tokens,
+            needs_compaction,
+            tokens_to_free,
+            messages_to_summarize: summarize,
+            messages_to_preserve: preserve,
+        }
+    }
+
     /// Analyze whether compaction is needed
     pub fn analyze(&self, request: &ChatCompletionRequest) -> CompactionAnalysis {
         let current_tokens = estimate_request_tokens(request);
@@ -263,7 +307,19 @@ impl ContextCompactor {
         hook_engine: Option<&HookEngine>,
         session_id: Option<&str>,
     ) -> Result<CompactionResult, CompactionError> {
-        let analysis = self.analyze(request);
+        self.compact_with_hint(request, hook_engine, session_id, None)
+            .await
+    }
+
+    /// Compact with an optional actual token count hint from the provider
+    pub async fn compact_with_hint(
+        &self,
+        request: &mut ChatCompletionRequest,
+        hook_engine: Option<&HookEngine>,
+        session_id: Option<&str>,
+        actual_input_tokens: Option<usize>,
+    ) -> Result<CompactionResult, CompactionError> {
+        let analysis = self.analyze_with_hint(request, actual_input_tokens);
 
         if !analysis.needs_compaction {
             return Ok(CompactionResult {
