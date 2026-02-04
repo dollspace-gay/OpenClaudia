@@ -54,6 +54,14 @@ pub enum HookEvent {
     PermissionRequest,
     /// Fired for notifications
     Notification,
+    /// Fired before sending builder output to adversary (VDD)
+    PreAdversaryReview,
+    /// Fired after adversary returns review (VDD)
+    PostAdversaryReview,
+    /// Fired when adversary finds genuine issues (VDD)
+    VddConflict,
+    /// Fired when adversary reaches confabulation threshold (VDD)
+    VddConverged,
 }
 
 impl HookEvent {
@@ -72,6 +80,10 @@ impl HookEvent {
             HookEvent::PreCompact => "pre_compact",
             HookEvent::PermissionRequest => "permission_request",
             HookEvent::Notification => "notification",
+            HookEvent::PreAdversaryReview => "pre_adversary_review",
+            HookEvent::PostAdversaryReview => "post_adversary_review",
+            HookEvent::VddConflict => "vdd_conflict",
+            HookEvent::VddConverged => "vdd_converged",
         }
     }
 
@@ -91,6 +103,10 @@ impl HookEvent {
             "SessionStart" => Some(HookEvent::SessionStart),
             "SessionEnd" => Some(HookEvent::SessionEnd),
             "PermissionRequest" => Some(HookEvent::PermissionRequest),
+            "PreAdversaryReview" => Some(HookEvent::PreAdversaryReview),
+            "PostAdversaryReview" => Some(HookEvent::PostAdversaryReview),
+            "VddConflict" => Some(HookEvent::VddConflict),
+            "VddConverged" => Some(HookEvent::VddConverged),
             _ => None,
         }
     }
@@ -240,6 +256,14 @@ pub fn merge_hooks_config(base: HooksConfig, other: HooksConfig) -> HooksConfig 
     merged.post_tool_use.extend(other.post_tool_use);
     merged.user_prompt_submit.extend(other.user_prompt_submit);
     merged.stop.extend(other.stop);
+    merged
+        .pre_adversary_review
+        .extend(other.pre_adversary_review);
+    merged
+        .post_adversary_review
+        .extend(other.post_adversary_review);
+    merged.vdd_conflict.extend(other.vdd_conflict);
+    merged.vdd_converged.extend(other.vdd_converged);
 
     merged
 }
@@ -253,6 +277,10 @@ impl HooksConfig {
             && self.post_tool_use.is_empty()
             && self.user_prompt_submit.is_empty()
             && self.stop.is_empty()
+            && self.pre_adversary_review.is_empty()
+            && self.post_adversary_review.is_empty()
+            && self.vdd_conflict.is_empty()
+            && self.vdd_converged.is_empty()
     }
 }
 
@@ -506,6 +534,11 @@ impl HookEngine {
             | HookEvent::PreCompact
             | HookEvent::PermissionRequest
             | HookEvent::Notification => &[],
+            // VDD events
+            HookEvent::PreAdversaryReview => &self.config.pre_adversary_review,
+            HookEvent::PostAdversaryReview => &self.config.post_adversary_review,
+            HookEvent::VddConflict => &self.config.vdd_conflict,
+            HookEvent::VddConverged => &self.config.vdd_converged,
         }
     }
 

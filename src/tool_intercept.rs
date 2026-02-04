@@ -204,6 +204,83 @@ impl ToolInterceptor {
         (vec![], self.buffer.clone(), String::new())
     }
 
+    /// Strip hallucinated result blocks and wrapper tags from the buffer.
+    ///
+    /// When a model generates tool calls in text mode (no structured tool_use),
+    /// it often continues generating fabricated `<function_results>` blocks after
+    /// each tool call. This method strips those hallucinated outputs so we can
+    /// extract the real tool calls and execute them ourselves.
+    ///
+    /// Also strips `<function_calls>` / `</function_calls>` wrapper tags since
+    /// the parser works directly with `<invoke>` blocks.
+    pub fn strip_hallucinated_blocks(&mut self) {
+        // Remove <function_results>...</function_results> or <function_results>...</function_calls>
+        // (models sometimes hallucinate the wrong closing tag)
+        loop {
+            let Some(start) = self.buffer.find("<function_results>") else {
+                break;
+            };
+
+            // Prefer proper closing tag; fall back to </function_calls> (common hallucination)
+            let end = if let Some(rel) = self.buffer[start..].find("</function_results>") {
+                start + rel + "</function_results>".len()
+            } else if let Some(rel) = self.buffer[start..].find("</function_calls>") {
+                start + rel + "</function_calls>".len()
+            } else {
+                // No closing tag found — discard from <function_results> to end of buffer
+                self.buffer.truncate(start);
+                break;
+            };
+
+            self.buffer = format!("{}{}", &self.buffer[..start], &self.buffer[end..]);
+        }
+
+        // Remove <function_calls> and </function_calls> wrapper tags (keep content inside)
+        self.buffer = self.buffer.replace("<function_calls>", "");
+        self.buffer = self.buffer.replace("</function_calls>", "");
+    }
+
+    /// Extract ALL tool calls from the buffer at once, stripping hallucinated results.
+    ///
+    /// This is the main entry point for proxy-mode tool extraction. It:
+    /// 1. Strips hallucinated `<function_results>` blocks the model generated
+    /// 2. Strips `<function_calls>` wrapper tags
+    /// 3. Extracts every tool call (invoke and shorthand formats)
+    /// 4. Returns all tools and the interleaved text content
+    ///
+    /// This prevents the model from "running ahead" with fabricated tool outputs
+    /// by ensuring we execute all real tools before sending results back.
+    pub fn extract_all_tool_calls(&mut self) -> (Vec<InterceptedToolCall>, Vec<String>) {
+        // Strip hallucinated outputs first
+        self.strip_hallucinated_blocks();
+
+        let mut all_tools = Vec::new();
+        let mut text_parts = Vec::new();
+
+        // Extract tool calls one by one until none remain
+        while self.has_complete_block() {
+            let (tools, before, _after) = self.extract_tool_calls();
+            if tools.is_empty() {
+                break;
+            }
+            let trimmed = before.trim().to_string();
+            if !trimmed.is_empty() {
+                text_parts.push(trimmed);
+            }
+            all_tools.extend(tools);
+        }
+
+        // Any remaining buffer content is text after all tools
+        let remaining = self.buffer.trim().to_string();
+        if !remaining.is_empty() {
+            text_parts.push(remaining);
+        }
+
+        self.buffer.clear();
+
+        (all_tools, text_parts)
+    }
+
     /// Try to extract tool calls in <invoke name="..."> format
     fn try_extract_invoke_format(&mut self) -> Option<(Vec<InterceptedToolCall>, String, String)> {
         const INVOKE_OPEN: &str = "<invoke name=\"";
@@ -522,11 +599,19 @@ impl ToolInterceptor {
     }
 }
 
+/// Result of executing an intercepted tool call
+pub struct ToolExecutionResult {
+    pub id: String,
+    pub name: String,
+    pub content: String,
+    pub is_error: bool,
+}
+
 /// Execute intercepted tool calls locally and format results for Claude
 pub fn execute_intercepted_tools(
     tools: &[InterceptedToolCall],
     memory_db: Option<&crate::memory::MemoryDb>,
-) -> Vec<(String, String, bool)> {
+) -> Vec<ToolExecutionResult> {
     let mut results = Vec::new();
 
     for tool in tools {
@@ -560,47 +645,94 @@ pub fn execute_intercepted_tools(
             );
         }
 
-        results.push((tool.id.clone(), result.content, result.is_error));
+        results.push(ToolExecutionResult {
+            id: tool.id.clone(),
+            name: tool.name.clone(),
+            content: result.content,
+            is_error: result.is_error,
+        });
     }
 
     results
 }
 
+/// Format tool execution results as XML with tool names for better completion signaling
+pub fn format_execution_results_xml(results: &[ToolExecutionResult]) -> String {
+    let refs: Vec<(&str, Option<&str>, &str, bool)> = results
+        .iter()
+        .map(|r| {
+            (
+                r.id.as_str(),
+                Some(r.name.as_str()),
+                r.content.as_str(),
+                r.is_error,
+            )
+        })
+        .collect();
+    format_tool_results_xml_with_names(&refs)
+}
+
 /// Format tool results as XML for injection back to Claude
+///
+/// Results include explicit status and completion signals to prevent the model
+/// from retrying operations that already succeeded.
 pub fn format_tool_results_xml(results: &[(String, String, bool)]) -> String {
-    const OPEN_TAG: &str = "<function_results>";
-    const CLOSE_TAG: &str = "</function_results>";
-    const RESULT_OPEN: &str = "<result>";
-    const RESULT_CLOSE: &str = "</result>";
-    const OUTPUT_OPEN: &str = "<output>";
-    const OUTPUT_CLOSE: &str = "</output>";
-    const ERROR_OPEN: &str = "<error>";
-    const ERROR_CLOSE: &str = "</error>";
+    format_tool_results_xml_with_names(
+        &results
+            .iter()
+            .map(|(id, content, is_error)| (id.as_str(), None, content.as_str(), *is_error))
+            .collect::<Vec<_>>(),
+    )
+}
 
+/// Format tool results with tool names for better completion signaling
+pub fn format_tool_results_xml_with_names(results: &[(&str, Option<&str>, &str, bool)]) -> String {
     let mut xml = String::new();
-    xml.push_str(OPEN_TAG);
-    xml.push('\n');
+    xml.push_str("<function_results>\n");
 
-    for (id, content, is_error) in results {
-        xml.push_str(RESULT_OPEN);
-        xml.push('\n');
+    for (id, tool_name, content, is_error) in results {
+        xml.push_str("<result>\n");
         xml.push_str(&format!("<tool_use_id>{}</tool_use_id>\n", id));
 
         if *is_error {
-            xml.push_str(ERROR_OPEN);
+            xml.push_str("<status>error</status>\n");
+            xml.push_str("<error>");
             xml.push_str(content);
-            xml.push_str(ERROR_CLOSE);
+            xml.push_str("</error>\n");
         } else {
-            xml.push_str(OUTPUT_OPEN);
+            xml.push_str("<status>success</status>\n");
+            xml.push_str("<output>");
             xml.push_str(content);
-            xml.push_str(OUTPUT_CLOSE);
+            xml.push_str("</output>\n");
+
+            // Add explicit completion hint for file operations
+            if let Some(name) = tool_name {
+                let completion_hint = match *name {
+                    "write_file" | "Write" | "write" => {
+                        Some("File created successfully. The operation is COMPLETE - do NOT call write_file again for this file.")
+                    }
+                    "edit_file" | "Edit" | "edit" => {
+                        Some("Edit applied successfully. The operation is COMPLETE - do NOT call edit_file again with the same change.")
+                    }
+                    "bash" | "Bash" => {
+                        if content.contains("error") || content.contains("Error") || content.contains("failed") {
+                            None // Don't add completion hint for errors
+                        } else {
+                            Some("Command executed successfully.")
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(hint) = completion_hint {
+                    xml.push_str(&format!("<completion_note>{}</completion_note>\n", hint));
+                }
+            }
         }
-        xml.push('\n');
-        xml.push_str(RESULT_CLOSE);
-        xml.push('\n');
+        xml.push_str("</result>\n");
     }
 
-    xml.push_str(CLOSE_TAG);
+    xml.push_str("</function_results>\n");
+    xml.push_str("<system_note>All tool operations above completed. Respond to the user with a summary of what was done. Do NOT re-execute these tools unless the user asks for additional changes.</system_note>");
     xml
 }
 
@@ -829,5 +961,199 @@ int main() { return 0; }
             tools[0].parameters.get("new_string"),
             Some(&"fn new() {}".to_string())
         );
+    }
+
+    #[test]
+    fn test_strip_hallucinated_blocks_proper_closing() {
+        let mut interceptor = ToolInterceptor::new();
+
+        let content = r#"<invoke name="Bash">
+<parameter name="command">ls</parameter>
+</invoke>
+<function_results>
+<result>
+file1.txt
+file2.txt
+</result>
+</function_results>
+<invoke name="Read">
+<parameter name="file_path">file1.txt</parameter>
+</invoke>"#;
+
+        interceptor.push(content);
+        interceptor.strip_hallucinated_blocks();
+
+        let buf = interceptor.get_buffer();
+        assert!(buf.contains("<invoke name=\"Bash\">"));
+        assert!(buf.contains("<invoke name=\"Read\">"));
+        assert!(!buf.contains("<function_results>"));
+        assert!(!buf.contains("file1.txt\nfile2.txt"));
+    }
+
+    #[test]
+    fn test_strip_hallucinated_blocks_malformed_closing() {
+        let mut interceptor = ToolInterceptor::new();
+
+        // Model uses </function_calls> instead of </function_results>
+        let content = r#"<function_calls>
+<invoke name="read_file">
+<parameter name="path">Cargo.toml</parameter>
+</invoke>
+</function_calls>
+<function_results>
+<result>
+[package]
+name = "test"
+</result>
+</function_calls>
+<function_calls>
+<invoke name="edit_file">
+<parameter name="path">Cargo.toml</parameter>
+<parameter name="old_string">[dependencies]</parameter>
+<parameter name="new_string">[dependencies]
+serde = "1"</parameter>
+</invoke>
+</function_calls>"#;
+
+        interceptor.push(content);
+        interceptor.strip_hallucinated_blocks();
+
+        let buf = interceptor.get_buffer();
+        assert!(buf.contains("<invoke name=\"read_file\">"));
+        assert!(buf.contains("<invoke name=\"edit_file\">"));
+        assert!(!buf.contains("<function_results>"));
+        assert!(!buf.contains("<function_calls>"));
+        assert!(!buf.contains("</function_calls>"));
+        assert!(!buf.contains("[package]"));
+    }
+
+    #[test]
+    fn test_extract_all_tool_calls_multiple_invokes() {
+        let mut interceptor = ToolInterceptor::new();
+
+        let content = r#"Let me check things.
+
+<function_calls>
+<invoke name="read_file">
+<parameter name="path">file.txt</parameter>
+</invoke>
+</function_calls>
+<function_results>
+<result>
+fake content
+</result>
+</function_calls>
+
+Now I'll edit it.
+
+<function_calls>
+<invoke name="edit_file">
+<parameter name="path">file.txt</parameter>
+<parameter name="old_string">old</parameter>
+<parameter name="new_string">new</parameter>
+</invoke>
+</function_calls>
+<function_results>
+<result>
+Successfully edited
+</result>
+</function_calls>
+
+And run tests.
+
+<function_calls>
+<invoke name="Bash">
+<parameter name="command">cargo test</parameter>
+</invoke>
+</function_calls>"#;
+
+        interceptor.push(content);
+        let (tools, text_parts) = interceptor.extract_all_tool_calls();
+
+        assert_eq!(tools.len(), 3);
+        assert_eq!(tools[0].name, "read_file");
+        assert_eq!(tools[1].name, "edit_file");
+        assert_eq!(tools[2].name, "Bash");
+
+        // Text parts should contain the interleaved text
+        let combined = text_parts.join(" ");
+        assert!(combined.contains("Let me check things"));
+        assert!(combined.contains("Now I'll edit it"));
+        assert!(combined.contains("And run tests"));
+
+        // Buffer should be cleared
+        assert!(interceptor.get_buffer().is_empty());
+    }
+
+    #[test]
+    fn test_extract_all_tool_calls_mixed_formats() {
+        let mut interceptor = ToolInterceptor::new();
+
+        // Mix of invoke and shorthand formats
+        let content = r#"<invoke name="Read">
+<parameter name="file_path">src/main.rs</parameter>
+</invoke>
+<result>fn main() {}</result>
+
+<bash>cargo build</bash>"#;
+
+        interceptor.push(content);
+        let (tools, _text_parts) = interceptor.extract_all_tool_calls();
+
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].name, "Read");
+        assert_eq!(tools[1].name, "bash");
+    }
+
+    #[test]
+    fn test_extract_all_tool_calls_no_hallucination() {
+        let mut interceptor = ToolInterceptor::new();
+
+        // Clean tool calls without hallucinated results
+        let content = r#"I'll read the file.
+
+<invoke name="Read">
+<parameter name="file_path">test.txt</parameter>
+</invoke>"#;
+
+        interceptor.push(content);
+        let (tools, text_parts) = interceptor.extract_all_tool_calls();
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "Read");
+        assert!(text_parts[0].contains("I'll read the file"));
+    }
+
+    #[test]
+    fn test_extract_all_tool_calls_empty_buffer() {
+        let mut interceptor = ToolInterceptor::new();
+        interceptor.push("Just some text, no tool calls.");
+
+        let (tools, text_parts) = interceptor.extract_all_tool_calls();
+
+        assert!(tools.is_empty());
+        assert_eq!(text_parts.len(), 1);
+        assert!(text_parts[0].contains("Just some text"));
+    }
+
+    #[test]
+    fn test_strip_hallucinated_blocks_no_closing_tag() {
+        let mut interceptor = ToolInterceptor::new();
+
+        // <function_results> with no closing tag — truncate from there
+        let content = r#"<invoke name="Bash">
+<parameter name="command">ls</parameter>
+</invoke>
+<function_results>
+<result>
+this never closes"#;
+
+        interceptor.push(content);
+        interceptor.strip_hallucinated_blocks();
+
+        let buf = interceptor.get_buffer();
+        assert!(buf.contains("<invoke name=\"Bash\">"));
+        assert!(!buf.contains("<function_results>"));
+        assert!(!buf.contains("this never closes"));
     }
 }

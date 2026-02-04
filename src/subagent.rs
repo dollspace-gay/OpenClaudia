@@ -9,7 +9,6 @@
 
 use crate::config::AppConfig;
 use crate::tools::{execute_tool, ToolCall};
-use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -25,132 +24,6 @@ const MAX_SUBAGENT_TURNS: usize = 50;
 /// Maximum tokens for subagent responses
 const SUBAGENT_MAX_TOKENS: u32 = 8192;
 
-/// Detect chainlink issue references in text (e.g., #123, issue 123, issue #123)
-/// Returns the first issue ID found, if any
-fn detect_chainlink_issue(text: &str) -> Option<u32> {
-    // Match patterns like #123, issue 123, issue #123, chainlink #123
-    let re = Regex::new(r"(?i)(?:#(\d+)|issue\s*#?(\d+)|chainlink\s*#?(\d+))").ok()?;
-
-    for caps in re.captures_iter(text) {
-        // Try each capture group
-        for i in 1..=3 {
-            if let Some(m) = caps.get(i) {
-                if let Ok(id) = m.as_str().parse::<u32>() {
-                    return Some(id);
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Spawn a TestBuilder agent to work alongside a coding agent
-fn spawn_companion_test_builder(
-    issue_id: u32,
-    original_task: &str,
-    app_config: &AppConfig,
-) -> Option<String> {
-    // Get the current working directory to pass to the subagent
-    let working_dir = std::env::current_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| ".".to_string());
-
-    let test_builder_task = format!("Adversarial testing for issue #{}", issue_id);
-    let test_builder_prompt = format!(
-        r#"A coding agent is working on chainlink issue #{}. YOUR JOB IS TO BREAK THEIR CODE.
-
-## Working Directory
-You are working in: {}
-All file paths and commands should be relative to or executed from this directory.
-
-Original task they're working on: {}
-
-## Your Mission
-Don't trust them. They probably made mistakes. Find those mistakes.
-
-## Instructions
-1. Check the issue: `chainlink show {}`
-2. Watch for their changes: `git diff` and `git diff --cached`
-3. Read their code critically - what did they miss? What edge cases did they ignore?
-4. Write ADVERSARIAL tests designed to break their implementation
-5. Run the tests. Hunt for failures.
-
-## When You Find Bugs (and you will)
-- Reopen the issue: `chainlink reopen {}`
-- Add a detailed comment explaining exactly how their code fails
-- Include "⚠️ ALERT: Test failure detected - coding agent's work has bugs"
-
-## Categories to Attack
-- Empty/null inputs
-- Boundary conditions (off-by-one, max values, zero)
-- Invalid types and malformed data
-- Error paths (what if things fail?)
-- Concurrency (if applicable)
-
-Start by checking what they've changed. Then break it."#,
-        issue_id, working_dir, original_task, issue_id, issue_id
-    );
-
-    let config = SubagentConfig {
-        agent_type: AgentType::TestBuilder,
-        task: test_builder_task.clone(),
-        prompt: test_builder_prompt,
-        run_in_background: true,
-        model_override: Some("opus".to_string()), // Use opus for adversarial reasoning
-    };
-
-    let client = Client::new();
-    let agent_id = BACKGROUND_AGENTS.register(AgentType::TestBuilder, &test_builder_task);
-
-    let config_clone = config.clone();
-    let app_config_clone = app_config.clone();
-    let agent_id_clone = agent_id.clone();
-
-    if let Ok(handle) = Handle::try_current() {
-        // Console output: TestBuilder spawning
-        eprintln!(
-            "\n\x1b[33m🧪 TestBuilder agent spawned (ID: {})\x1b[0m",
-            agent_id
-        );
-        eprintln!(
-            "\x1b[33m   └─ Adversarial testing for issue #{}\x1b[0m\n",
-            issue_id
-        );
-
-        handle.spawn(async move {
-            let result = run_subagent(&config_clone, &app_config_clone, &client).await;
-
-            // Console output: TestBuilder completed
-            if result.success {
-                // Check for ALERT in output - this means bugs were found!
-                if result.output.contains("ALERT") || result.output.contains("⚠️") {
-                    eprintln!("\n\x1b[31m╔════════════════════════════════════════════════════════════╗\x1b[0m");
-                    eprintln!("\x1b[31m║  ⚠️  TESTBUILDER FOUND BUGS IN CODING AGENT'S WORK!  ⚠️    ║\x1b[0m");
-                    eprintln!("\x1b[31m╚════════════════════════════════════════════════════════════╝\x1b[0m");
-                    eprintln!("\x1b[33mAgent ID: {}\x1b[0m", agent_id_clone);
-                    eprintln!("\x1b[33mUse `agent_output` to see full details.\x1b[0m\n");
-                } else {
-                    eprintln!(
-                        "\n\x1b[32m✓ TestBuilder completed (ID: {}) - {} turns\x1b[0m",
-                        agent_id_clone, result.turns_used
-                    );
-                    eprintln!("\x1b[32m  Use `agent_output` to see results.\x1b[0m\n");
-                }
-            } else {
-                eprintln!(
-                    "\n\x1b[31m✗ TestBuilder failed (ID: {}): {}\x1b[0m\n",
-                    agent_id_clone, result.output
-                );
-                BACKGROUND_AGENTS.fail(&agent_id_clone, result.output);
-            }
-        });
-        Some(agent_id)
-    } else {
-        eprintln!("\x1b[31m✗ Failed to spawn TestBuilder - no async runtime\x1b[0m");
-        None
-    }
-}
-
 /// Agent types available for spawning
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -163,8 +36,6 @@ pub enum AgentType {
     Plan,
     /// Documentation lookup agent
     Guide,
-    /// Test builder agent that writes tests alongside coding agents
-    TestBuilder,
 }
 
 impl AgentType {
@@ -177,9 +48,6 @@ impl AgentType {
             "explore" | "explorer" => Some(AgentType::Explore),
             "plan" | "planner" => Some(AgentType::Plan),
             "guide" | "claude-code-guide" => Some(AgentType::Guide),
-            "test-builder" | "test_builder" | "testbuilder" | "tester" => {
-                Some(AgentType::TestBuilder)
-            }
             _ => None,
         }
     }
@@ -191,7 +59,6 @@ impl AgentType {
             AgentType::Explore => EXPLORE_PROMPT,
             AgentType::Plan => PLAN_PROMPT,
             AgentType::Guide => GUIDE_PROMPT,
-            AgentType::TestBuilder => TEST_BUILDER_PROMPT,
         }
     }
 
@@ -214,26 +81,15 @@ impl AgentType {
             }
             AgentType::Plan => vec!["bash", "read_file", "list_files", "web_fetch", "web_search"],
             AgentType::Guide => vec!["read_file", "list_files", "web_fetch", "web_search"],
-            AgentType::TestBuilder => vec![
-                "bash",        // For running tests (cargo test, pytest)
-                "bash_output", // For monitoring long-running tests
-                "kill_shell",  // For stopping hung tests
-                "read_file",   // For reading source code to understand what to test
-                "write_file",  // For creating new test files
-                "edit_file",   // For adding tests to existing test files
-                "list_files",  // For finding test files and source files
-                "chainlink",   // For reading issues, reopening on failure, adding comments
-            ],
         }
     }
 
     /// Get model preference for this agent type
     pub fn preferred_model(&self) -> Option<&'static str> {
         match self {
-            AgentType::Explore => Some("haiku"),    // Fast, cheap searches
-            AgentType::Guide => Some("haiku"),      // Documentation lookup
-            AgentType::TestBuilder => Some("opus"), // Use opus for adversarial reasoning
-            _ => None,                              // Use default model
+            AgentType::Explore => Some("haiku"), // Fast, cheap searches
+            AgentType::Guide => Some("haiku"),   // Documentation lookup
+            _ => None,                           // Use default model
         }
     }
 }
@@ -301,114 +157,6 @@ Guidelines:
 - Include relevant code examples when helpful
 
 Return a helpful answer with sources cited."#;
-
-const TEST_BUILDER_PROMPT: &str = r#"You are an ADVERSARIAL TestBuilder agent. Your job is to DISTRUST the coding agent and PROVE they made mistakes.
-
-## Working Directory
-IMPORTANT: You are working in the same directory as the main agent. Use `pwd` to confirm your location before running any commands. All paths should be relative to the project root.
-
-## Your Mission
-You work in parallel with coding agents, but you are NOT their friend. You are their adversary - constructively. Your goal is to find every bug, edge case, and weakness in their code. Assume they made mistakes. Assume they cut corners. Assume they didn't think of edge cases. Your tests should PROVE these assumptions right (or, occasionally, prove them wrong).
-
-## Adversarial Mindset
-
-**ALWAYS ASK:**
-- What happens with empty input? null? undefined?
-- What happens with HUGE input? What about negative numbers?
-- What about concurrent access? Race conditions?
-- What if the network fails? What if the file doesn't exist?
-- What about Unicode edge cases? Emoji? RTL text? Zero-width characters?
-- What happens at boundaries? Off-by-one errors are EVERYWHERE.
-- Did they handle the error path? Really? Test it.
-- What assumptions did they make? Break those assumptions.
-
-**YOUR ATTITUDE:**
-- "That looks too simple. They probably forgot something."
-- "Happy path works? Great. Now let's break it."
-- "They said it handles errors? I don't believe them. Prove it."
-- "This code looks correct. I'll find where it isn't."
-
-## Workflow
-
-### 1. Understand What You're Attacking
-- Use `chainlink show <id>` to read the issue - understand the INTENT
-- Run `git diff` to see what changed - this is your attack surface
-- Read the modified code - look for assumptions, shortcuts, missing checks
-- Think: "If I were trying to break this, what would I try?"
-
-### 2. Design Adversarial Tests
-
-**Categories of tests to write:**
-
-**Boundary tests:**
-- Empty strings, empty arrays, empty objects
-- Single element, two elements (fence post errors)
-- Maximum values, minimum values, zero, negative
-- Very long strings (10000+ chars), very large numbers
-
-**Invalid input tests:**
-- null, undefined, NaN, Infinity, -Infinity
-- Wrong types (string where number expected, etc.)
-- Malformed data (invalid JSON, broken UTF-8)
-- SQL injection attempts, XSS attempts, path traversal
-
-**Error path tests:**
-- Network failures, timeouts
-- File not found, permission denied
-- Invalid state, uninitialized data
-- Out of memory (simulate with large inputs)
-
-**Concurrency tests (if applicable):**
-- Multiple simultaneous calls
-- Interleaved operations
-- Timeout during operation
-
-**Language-Specific Guidance:**
-
-*Rust:* Use `#[should_panic]`, `Result` unwrapping tests, property-based tests with proptest
-*Python:* Use pytest.raises, hypothesis for property testing, mock.patch for failures
-*JS/TS:* Use expect().toThrow(), mock timers, fake network responses
-
-### 3. Run Tests and HUNT for Failures
-- Execute the test suite
-- If all tests pass: You probably didn't try hard enough. Write harder tests.
-- If tests fail: GOOD. Now analyze - is this a test bug or their bug?
-
-### 4. Handle Failures
-
-**Your test is wrong:**
-- Fix it. Don't be embarrassed. Move on. Write more.
-
-**Their code is wrong (THE GOAL):**
-- DO NOT fix it. That's their job, and you'd probably mess it up anyway.
-- Reopen the issue: `chainlink reopen <id>`
-- Add DETAILED comment:
-  - Exact test that failed
-  - Expected vs actual behavior
-  - Minimal reproduction case
-  - Your theory on what's wrong
-- Mark your summary with "⚠️ ALERT: Test failure detected - coding agent's work has bugs"
-
-### 5. Keep Going
-- One passing test run doesn't mean you're done
-- Think of more edge cases. There are always more.
-- The coding agent thought they were done. They weren't.
-
-## Rules
-- NEVER modify source code - only test code. You are the adversary, not the developer.
-- ALWAYS run tests after writing them. Untested tests are useless.
-- When in doubt whether it's a test bug or code bug, assume CODE BUG. Alert the human.
-- Include issue ID in test comments for traceability
-- Don't duplicate existing tests - but DO test cases they missed
-
-## Output Format
-Provide a battle report:
-- Tests written (paths and names)
-- Bugs found (with evidence)
-- Test results (pass/fail counts)
-- Issues reopened (if any)
-- Confidence level: How thoroughly did you test? What's still untested?
-- Human attention needed? (YES if any code bugs found)"#;
 
 // === Background Agent Management ===
 
@@ -554,8 +302,8 @@ pub fn get_task_tool_definition() -> Value {
                     },
                     "subagent_type": {
                         "type": "string",
-                        "enum": ["general-purpose", "explore", "plan", "guide", "test-builder"],
-                        "description": "The type of specialized agent: 'general-purpose' for complex tasks, 'explore' for fast codebase searches, 'plan' for architecture design, 'guide' for documentation lookup, 'test-builder' for writing tests alongside coding"
+                        "enum": ["general-purpose", "explore", "plan", "guide"],
+                        "description": "The type of specialized agent: 'general-purpose' for complex tasks, 'explore' for fast codebase searches, 'plan' for architecture design, 'guide' for documentation lookup"
                     },
                     "run_in_background": {
                         "type": "boolean",
@@ -1156,64 +904,20 @@ pub fn execute_task_tool(args: &HashMap<String, Value>, app_config: &AppConfig) 
     // Create HTTP client
     let client = Client::new();
 
-    // Auto-spawn TestBuilder for GeneralPurpose agents working on chainlink issues
-    let mut companion_agent_id: Option<String> = None;
-    if agent_type == AgentType::GeneralPurpose {
-        // Check both description and prompt for chainlink issue references
-        let combined_text = format!("{} {}", description, prompt);
-        if let Some(issue_id) = detect_chainlink_issue(&combined_text) {
-            companion_agent_id = spawn_companion_test_builder(issue_id, description, app_config);
-        }
-    }
-
     if run_in_background {
         // Register the agent and spawn the task
         let agent_id = BACKGROUND_AGENTS.register(agent_type, description);
-
-        // Console output for TestBuilder spawn
-        if agent_type == AgentType::TestBuilder {
-            eprintln!(
-                "\n\x1b[33m🧪 TestBuilder agent spawned (ID: {})\x1b[0m",
-                agent_id
-            );
-            eprintln!("\x1b[33m   └─ Task: {}\x1b[0m\n", description);
-        }
 
         // Spawn the background task
         let config_clone = config.clone();
         let app_config_clone = app_config.clone();
         let client_clone = client.clone();
         let agent_id_clone = agent_id.clone();
-        let is_test_builder = agent_type == AgentType::TestBuilder;
 
         // Use tokio runtime to spawn the background task
         if let Ok(handle) = Handle::try_current() {
             handle.spawn(async move {
                 let result = run_subagent(&config_clone, &app_config_clone, &client_clone).await;
-
-                // Console output for TestBuilder completion
-                if is_test_builder {
-                    if result.success {
-                        if result.output.contains("ALERT") || result.output.contains("⚠️") {
-                            eprintln!("\n\x1b[31m╔════════════════════════════════════════════════════════════╗\x1b[0m");
-                            eprintln!("\x1b[31m║  ⚠️  TESTBUILDER FOUND BUGS!  ⚠️                            ║\x1b[0m");
-                            eprintln!("\x1b[31m╚════════════════════════════════════════════════════════════╝\x1b[0m");
-                            eprintln!("\x1b[33mAgent ID: {}\x1b[0m", agent_id_clone);
-                            eprintln!("\x1b[33mUse `agent_output` to see full details.\x1b[0m\n");
-                        } else {
-                            eprintln!(
-                                "\n\x1b[32m✓ TestBuilder completed (ID: {}) - {} turns\x1b[0m",
-                                agent_id_clone, result.turns_used
-                            );
-                            eprintln!("\x1b[32m  Use `agent_output` to see results.\x1b[0m\n");
-                        }
-                    } else {
-                        eprintln!(
-                            "\n\x1b[31m✗ TestBuilder failed (ID: {})\x1b[0m\n",
-                            agent_id_clone
-                        );
-                    }
-                }
 
                 if !result.success {
                     BACKGROUND_AGENTS.fail(&agent_id_clone, result.output);
@@ -1221,17 +925,10 @@ pub fn execute_task_tool(args: &HashMap<String, Value>, app_config: &AppConfig) 
             });
         }
 
-        let mut message = format!(
+        let message = format!(
             "Background agent started with ID: {}\nTask: {}\nType: {:?}\n\nUse agent_output with this agent_id to retrieve results.",
             agent_id, description, agent_type
         );
-
-        if let Some(test_agent_id) = &companion_agent_id {
-            message.push_str(&format!(
-                "\n\n🧪 TestBuilder companion agent automatically spawned with ID: {}\nIt will write tests for this work and alert you if tests fail.",
-                test_agent_id
-            ));
-        }
 
         (message, false)
     } else {
@@ -1249,17 +946,10 @@ pub fn execute_task_tool(args: &HashMap<String, Value>, app_config: &AppConfig) 
         };
 
         if result.success {
-            let mut message = format!(
+            let message = format!(
                 "Agent completed in {} turns.\n\n{}",
                 result.turns_used, result.output
             );
-
-            if let Some(test_agent_id) = &companion_agent_id {
-                message.push_str(&format!(
-                    "\n\n🧪 TestBuilder companion agent running in background with ID: {}\nUse agent_output to check its progress and results.",
-                    test_agent_id
-                ));
-            }
 
             (message, false)
         } else {
@@ -1366,41 +1056,8 @@ mod tests {
         assert_eq!(AgentType::parse_type("explore"), Some(AgentType::Explore));
         assert_eq!(AgentType::parse_type("plan"), Some(AgentType::Plan));
         assert_eq!(AgentType::parse_type("guide"), Some(AgentType::Guide));
-        assert_eq!(
-            AgentType::parse_type("test-builder"),
-            Some(AgentType::TestBuilder)
-        );
-        assert_eq!(
-            AgentType::parse_type("testbuilder"),
-            Some(AgentType::TestBuilder)
-        );
+        assert_eq!(AgentType::parse_type("test-builder"), None);
         assert_eq!(AgentType::parse_type("unknown"), None);
-    }
-
-    #[test]
-    fn test_detect_chainlink_issue() {
-        // Basic #N pattern
-        assert_eq!(detect_chainlink_issue("#123"), Some(123));
-        assert_eq!(detect_chainlink_issue("Working on #42"), Some(42));
-
-        // issue N pattern
-        assert_eq!(detect_chainlink_issue("issue 99"), Some(99));
-        assert_eq!(detect_chainlink_issue("Issue 456"), Some(456));
-        assert_eq!(detect_chainlink_issue("issue #789"), Some(789));
-
-        // chainlink N pattern
-        assert_eq!(detect_chainlink_issue("chainlink 101"), Some(101));
-        assert_eq!(detect_chainlink_issue("Chainlink #202"), Some(202));
-
-        // No match
-        assert_eq!(detect_chainlink_issue("no issue here"), None);
-        assert_eq!(detect_chainlink_issue("# not a number"), None);
-
-        // Embedded in longer text
-        assert_eq!(
-            detect_chainlink_issue("Implement feature for issue #168 please"),
-            Some(168)
-        );
     }
 
     #[test]

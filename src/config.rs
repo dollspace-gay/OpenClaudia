@@ -7,8 +7,9 @@
 //! 4. Environment variables with `OPENCLAUDIA_` prefix
 
 use config::{Config, ConfigError, Environment, File};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 use std::path::PathBuf;
 
 /// Main configuration structure
@@ -22,6 +23,8 @@ pub struct AppConfig {
     pub session: SessionConfig,
     #[serde(default)]
     pub keybindings: KeybindingsConfig,
+    #[serde(default)]
+    pub vdd: VddConfig,
 }
 
 /// Proxy server configuration
@@ -71,6 +74,249 @@ fn default_thinking_enabled() -> bool {
     true
 }
 
+// ==========================================================================
+// VDD (Verification-Driven Development) Configuration
+// ==========================================================================
+
+/// VDD operating mode
+#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum VddMode {
+    /// Adversary findings injected as context for next turn
+    #[default]
+    Advisory,
+    /// Response held until adversary passes or loop converges
+    Blocking,
+}
+
+impl fmt::Display for VddMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VddMode::Advisory => write!(f, "advisory"),
+            VddMode::Blocking => write!(f, "blocking"),
+        }
+    }
+}
+
+/// Top-level VDD configuration
+#[derive(Debug, Deserialize, Clone)]
+pub struct VddConfig {
+    /// Enable VDD adversarial loop (default: false)
+    #[serde(default)]
+    pub enabled: bool,
+    /// Operating mode: advisory or blocking
+    #[serde(default)]
+    pub mode: VddMode,
+    /// Adversary model configuration (must be different provider than builder)
+    #[serde(default)]
+    pub adversary: VddAdversaryConfig,
+    /// Convergence thresholds
+    #[serde(default)]
+    pub thresholds: VddThresholds,
+    /// Static analysis commands to run as part of the loop
+    #[serde(default)]
+    pub static_analysis: VddStaticAnalysis,
+    /// Persistence and logging
+    #[serde(default)]
+    pub tracking: VddTracking,
+}
+
+impl Default for VddConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: VddMode::Advisory,
+            adversary: VddAdversaryConfig::default(),
+            thresholds: VddThresholds::default(),
+            static_analysis: VddStaticAnalysis::default(),
+            tracking: VddTracking::default(),
+        }
+    }
+}
+
+/// Adversary model configuration
+#[derive(Debug, Deserialize, Clone)]
+pub struct VddAdversaryConfig {
+    /// Provider name (must differ from proxy.target)
+    #[serde(default = "default_adversary_provider")]
+    pub provider: String,
+    /// Model override for adversary (uses provider default if None)
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Separate API key for adversary (falls back to provider's key if None)
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Temperature for adversary responses (lower = more deterministic critique)
+    #[serde(default = "default_adversary_temperature")]
+    pub temperature: f32,
+    /// Max output tokens for adversary responses
+    #[serde(default = "default_adversary_max_tokens")]
+    pub max_tokens: u32,
+}
+
+fn default_adversary_provider() -> String {
+    "google".to_string()
+}
+
+fn default_adversary_temperature() -> f32 {
+    0.3
+}
+
+fn default_adversary_max_tokens() -> u32 {
+    4096
+}
+
+impl Default for VddAdversaryConfig {
+    fn default() -> Self {
+        Self {
+            provider: default_adversary_provider(),
+            model: None,
+            api_key: None,
+            temperature: default_adversary_temperature(),
+            max_tokens: default_adversary_max_tokens(),
+        }
+    }
+}
+
+/// Convergence and termination thresholds
+#[derive(Debug, Deserialize, Clone)]
+pub struct VddThresholds {
+    /// Maximum adversarial loop iterations before forced termination
+    #[serde(default = "default_max_iterations")]
+    pub max_iterations: u32,
+    /// False positive rate threshold for confabulation detection (0.0-1.0)
+    #[serde(default = "default_fp_threshold")]
+    pub false_positive_rate: f32,
+    /// Minimum iterations before checking confabulation threshold
+    #[serde(default = "default_min_iterations")]
+    pub min_iterations: u32,
+}
+
+fn default_max_iterations() -> u32 {
+    5
+}
+
+fn default_fp_threshold() -> f32 {
+    0.75
+}
+
+fn default_min_iterations() -> u32 {
+    2
+}
+
+impl Default for VddThresholds {
+    fn default() -> Self {
+        Self {
+            max_iterations: default_max_iterations(),
+            false_positive_rate: default_fp_threshold(),
+            min_iterations: default_min_iterations(),
+        }
+    }
+}
+
+/// Static analysis commands run as part of the adversarial loop
+#[derive(Debug, Deserialize, Clone)]
+pub struct VddStaticAnalysis {
+    /// Enable static analysis in the loop
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Shell commands to run (exit code 0 = pass)
+    #[serde(default)]
+    pub commands: Vec<String>,
+    /// Timeout per command in seconds
+    #[serde(default = "default_analysis_timeout")]
+    pub timeout_seconds: u64,
+}
+
+fn default_analysis_timeout() -> u64 {
+    120
+}
+
+impl Default for VddStaticAnalysis {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            commands: Vec::new(),
+            timeout_seconds: default_analysis_timeout(),
+        }
+    }
+}
+
+/// VDD session persistence and logging
+#[derive(Debug, Deserialize, Clone)]
+pub struct VddTracking {
+    /// Persist VDD session data to disk
+    #[serde(default = "default_true")]
+    pub persist: bool,
+    /// Directory for VDD session data
+    #[serde(default = "default_vdd_path")]
+    pub path: PathBuf,
+    /// Log full adversary responses (verbose)
+    #[serde(default = "default_true")]
+    pub log_adversary_responses: bool,
+}
+
+fn default_vdd_path() -> PathBuf {
+    PathBuf::from(".openclaudia/vdd")
+}
+
+impl Default for VddTracking {
+    fn default() -> Self {
+        Self {
+            persist: true,
+            path: default_vdd_path(),
+            log_adversary_responses: true,
+        }
+    }
+}
+
+impl VddConfig {
+    /// Validate VDD configuration. Returns error message if invalid.
+    pub fn validate(&self, builder_provider: &str) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        // Adversary must use different provider than builder
+        if self.adversary.provider.to_lowercase() == builder_provider.to_lowercase() {
+            return Err(format!(
+                "VDD adversary provider '{}' must differ from builder provider '{}'. \
+                 Using the same model to review its own output defeats the purpose of adversarial review.",
+                self.adversary.provider, builder_provider
+            ));
+        }
+
+        // Threshold validation
+        if self.thresholds.false_positive_rate < 0.0 || self.thresholds.false_positive_rate > 1.0 {
+            return Err(format!(
+                "VDD false_positive_rate must be between 0.0 and 1.0, got {}",
+                self.thresholds.false_positive_rate
+            ));
+        }
+
+        if self.thresholds.min_iterations > self.thresholds.max_iterations {
+            return Err(format!(
+                "VDD min_iterations ({}) cannot exceed max_iterations ({})",
+                self.thresholds.min_iterations, self.thresholds.max_iterations
+            ));
+        }
+
+        if self.thresholds.max_iterations == 0 {
+            return Err("VDD max_iterations must be at least 1".to_string());
+        }
+
+        // Temperature validation
+        if self.adversary.temperature < 0.0 || self.adversary.temperature > 2.0 {
+            return Err(format!(
+                "VDD adversary temperature must be between 0.0 and 2.0, got {}",
+                self.adversary.temperature
+            ));
+        }
+
+        Ok(())
+    }
+}
+
 /// Provider configuration (Anthropic, OpenAI, Google, etc.)
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProviderConfig {
@@ -99,6 +345,14 @@ pub struct HooksConfig {
     pub user_prompt_submit: Vec<HookEntry>,
     #[serde(default)]
     pub stop: Vec<HookEntry>,
+    #[serde(default)]
+    pub pre_adversary_review: Vec<HookEntry>,
+    #[serde(default)]
+    pub post_adversary_review: Vec<HookEntry>,
+    #[serde(default)]
+    pub vdd_conflict: Vec<HookEntry>,
+    #[serde(default)]
+    pub vdd_converged: Vec<HookEntry>,
 }
 
 /// Individual hook entry
@@ -752,6 +1006,7 @@ mod tests {
             hooks: HooksConfig::default(),
             session: SessionConfig::default(),
             keybindings: KeybindingsConfig::default(),
+            vdd: VddConfig::default(),
         };
 
         let active = config.active_provider();
@@ -789,6 +1044,7 @@ mod tests {
             hooks: HooksConfig::default(),
             session: SessionConfig::default(),
             keybindings: KeybindingsConfig::default(),
+            vdd: VddConfig::default(),
         };
 
         assert!(config.get_provider("openai").is_some());
@@ -807,8 +1063,199 @@ mod tests {
             hooks: HooksConfig::default(),
             session: SessionConfig::default(),
             keybindings: KeybindingsConfig::default(),
+            vdd: VddConfig::default(),
         };
 
         assert!(config.active_provider().is_none());
+    }
+
+    // ========================================================================
+    // VDD Configuration Tests
+    // ========================================================================
+
+    #[test]
+    fn test_vdd_config_default_disabled() {
+        let config = VddConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.mode, VddMode::Advisory);
+        assert_eq!(config.adversary.provider, "google");
+        assert!(config.adversary.model.is_none());
+        assert_eq!(config.adversary.temperature, 0.3);
+        assert_eq!(config.adversary.max_tokens, 4096);
+        assert_eq!(config.thresholds.max_iterations, 5);
+        assert_eq!(config.thresholds.false_positive_rate, 0.75);
+        assert_eq!(config.thresholds.min_iterations, 2);
+        assert!(config.static_analysis.enabled);
+        assert!(config.static_analysis.commands.is_empty());
+        assert_eq!(config.static_analysis.timeout_seconds, 120);
+        assert!(config.tracking.persist);
+        assert_eq!(config.tracking.path, PathBuf::from(".openclaudia/vdd"));
+    }
+
+    #[test]
+    fn test_vdd_config_serde_full() {
+        let json = r#"{
+            "enabled": true,
+            "mode": "blocking",
+            "adversary": {
+                "provider": "google",
+                "model": "gemini-2.5-pro",
+                "temperature": 0.2,
+                "max_tokens": 8192
+            },
+            "thresholds": {
+                "max_iterations": 8,
+                "false_positive_rate": 0.80,
+                "min_iterations": 3
+            },
+            "static_analysis": {
+                "enabled": true,
+                "commands": ["cargo clippy -- -D warnings", "cargo test"],
+                "timeout_seconds": 180
+            },
+            "tracking": {
+                "persist": true,
+                "path": "/custom/vdd",
+                "log_adversary_responses": false
+            }
+        }"#;
+
+        let config: VddConfig = serde_json::from_str(json).unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.mode, VddMode::Blocking);
+        assert_eq!(config.adversary.provider, "google");
+        assert_eq!(config.adversary.model, Some("gemini-2.5-pro".to_string()));
+        assert_eq!(config.adversary.temperature, 0.2);
+        assert_eq!(config.adversary.max_tokens, 8192);
+        assert_eq!(config.thresholds.max_iterations, 8);
+        assert_eq!(config.thresholds.false_positive_rate, 0.80);
+        assert_eq!(config.thresholds.min_iterations, 3);
+        assert_eq!(config.static_analysis.commands.len(), 2);
+        assert_eq!(config.static_analysis.timeout_seconds, 180);
+        assert!(!config.tracking.log_adversary_responses);
+    }
+
+    #[test]
+    fn test_vdd_mode_display() {
+        assert_eq!(format!("{}", VddMode::Advisory), "advisory");
+        assert_eq!(format!("{}", VddMode::Blocking), "blocking");
+    }
+
+    #[test]
+    fn test_vdd_validate_same_provider_rejected() {
+        let config = VddConfig {
+            enabled: true,
+            adversary: VddAdversaryConfig {
+                provider: "anthropic".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = config.validate("anthropic");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must differ"));
+    }
+
+    #[test]
+    fn test_vdd_validate_same_provider_case_insensitive() {
+        let config = VddConfig {
+            enabled: true,
+            adversary: VddAdversaryConfig {
+                provider: "Anthropic".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = config.validate("anthropic");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_vdd_validate_different_provider_ok() {
+        let config = VddConfig {
+            enabled: true,
+            adversary: VddAdversaryConfig {
+                provider: "google".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(config.validate("anthropic").is_ok());
+    }
+
+    #[test]
+    fn test_vdd_validate_disabled_skips_checks() {
+        // Even with same provider, disabled VDD passes validation
+        let config = VddConfig {
+            enabled: false,
+            adversary: VddAdversaryConfig {
+                provider: "anthropic".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(config.validate("anthropic").is_ok());
+    }
+
+    #[test]
+    fn test_vdd_validate_bad_fp_rate() {
+        let config = VddConfig {
+            enabled: true,
+            thresholds: VddThresholds {
+                false_positive_rate: 1.5,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = config.validate("anthropic");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("between 0.0 and 1.0"));
+    }
+
+    #[test]
+    fn test_vdd_validate_min_exceeds_max() {
+        let config = VddConfig {
+            enabled: true,
+            thresholds: VddThresholds {
+                min_iterations: 10,
+                max_iterations: 5,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = config.validate("anthropic");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cannot exceed"));
+    }
+
+    #[test]
+    fn test_vdd_validate_zero_max_iterations() {
+        let config = VddConfig {
+            enabled: true,
+            thresholds: VddThresholds {
+                max_iterations: 0,
+                min_iterations: 0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = config.validate("anthropic");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("at least 1"));
+    }
+
+    #[test]
+    fn test_vdd_validate_bad_temperature() {
+        let config = VddConfig {
+            enabled: true,
+            adversary: VddAdversaryConfig {
+                temperature: 3.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = config.validate("anthropic");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("temperature"));
     }
 }

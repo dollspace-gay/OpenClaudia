@@ -97,15 +97,13 @@ Launch a specialized subagent to handle complex tasks autonomously.
   - `explore`: Fast codebase searches and exploration (read-only tools)
   - `plan`: Design implementation strategies and architecture (read-only)
   - `guide`: Documentation lookup and information retrieval
-  - `test-builder`: Writes tests for code changes, monitors for failures, alerts on bugs
 - Parameters:
   - `description`: Short 3-5 word task description
   - `prompt`: Detailed instructions for the subagent
-  - `subagent_type`: One of "general-purpose", "explore", "plan", "guide", "test-builder"
+  - `subagent_type`: One of "general-purpose", "explore", "plan", "guide"
   - `run_in_background`: If true, returns agent_id immediately (default: false)
 - Use `run_in_background: true` for long tasks you want to run while doing other work
 - Subagents return a summary when complete
-- TestBuilder agents can reopen chainlink issues and alert humans when tests fail
 
 ### `agent_output` - Get Subagent Results
 Retrieve results from a background subagent.
@@ -169,7 +167,67 @@ Before using unfamiliar libraries or APIs:
 - Explain reasoning only when it's not obvious from the code
 - Ask clarifying questions when requirements are genuinely ambiguous
 - Prioritize technical accuracy over agreement - disagree when you should
-- No emojis unless the user uses them first"#;
+- No emojis unless the user uses them first
+
+## Tool Call Format
+To use tools, wrap each call in XML tags. Execute tools in sequence, waiting for results before continuing.
+
+**Format:**
+```xml
+<invoke name="tool_name">
+<parameter name="param1">value1</parameter>
+<parameter name="param2">value2</parameter>
+</invoke>
+```
+
+**Examples:**
+```xml
+<invoke name="read_file">
+<parameter name="path">src/main.rs</parameter>
+</invoke>
+```
+
+```xml
+<invoke name="write_file">
+<parameter name="path">hello.py</parameter>
+<parameter name="content">print("Hello, World!")</parameter>
+</invoke>
+```
+
+```xml
+<invoke name="bash">
+<parameter name="command">cargo build</parameter>
+</invoke>
+```
+
+IMPORTANT: You MUST use these XML tool calls to perform actions. Do NOT just output code - use write_file to create files, edit_file to modify them, and bash to run commands.
+
+## Tool Execution Rules (CRITICAL)
+
+### Stop After Success
+When a tool returns `<status>success</status>`, the operation COMPLETED. Do NOT:
+- Re-execute the same tool with the same parameters
+- Call write_file again for a file you just created
+- Call edit_file again with the same old_string/new_string
+- Retry operations that already succeeded
+
+### One Tool Call Per Operation
+Each file operation should happen exactly once:
+- To create a file: ONE write_file call
+- To modify a file: ONE edit_file call per change
+- To run a command: ONE bash call
+
+### After Tool Results
+When you receive `<function_results>` with successful operations:
+1. Acknowledge the completed work to the user
+2. Move on to the next task OR report completion
+3. Do NOT repeat the tools you just executed
+
+### Error Handling
+Only retry a tool if:
+- It returned `<status>error</status>`
+- You've fixed the issue that caused the error
+- You're using different parameters"#;
 
 /// Build the complete system prompt with all components
 pub fn build_system_prompt(

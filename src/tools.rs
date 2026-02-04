@@ -234,6 +234,62 @@ pub struct TodoItem {
 static TODO_LIST: std::sync::LazyLock<Mutex<Vec<TodoItem>>> =
     std::sync::LazyLock::new(|| Mutex::new(Vec::new()));
 
+/// Tracks which files have been read in the current session.
+/// edit_file will fail if the file hasn't been read first.
+static READ_TRACKER: std::sync::LazyLock<ReadFileTracker> =
+    std::sync::LazyLock::new(ReadFileTracker::new);
+
+struct ReadFileTracker {
+    read_files: Mutex<std::collections::HashSet<std::path::PathBuf>>,
+}
+
+impl ReadFileTracker {
+    fn new() -> Self {
+        Self {
+            read_files: Mutex::new(std::collections::HashSet::new()),
+        }
+    }
+
+    /// Mark a file as having been read
+    fn mark_read(&self, path: &Path) {
+        if let Ok(canonical) = std::fs::canonicalize(path) {
+            if let Ok(mut set) = self.read_files.lock() {
+                set.insert(canonical);
+            }
+        } else {
+            // If we can't canonicalize, use the path as-is
+            if let Ok(mut set) = self.read_files.lock() {
+                set.insert(path.to_path_buf());
+            }
+        }
+    }
+
+    /// Check if a file has been read
+    fn has_been_read(&self, path: &Path) -> bool {
+        let check_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if let Ok(set) = self.read_files.lock() {
+            set.contains(&check_path)
+        } else {
+            false
+        }
+    }
+
+    /// Clear tracking (called on new session)
+    #[allow(dead_code)]
+    fn clear(&self) {
+        if let Ok(mut set) = self.read_files.lock() {
+            set.clear();
+        }
+    }
+}
+
+/// Reset the read tracker - used for testing
+/// In production, this is called at the start of each new session
+#[doc(hidden)]
+pub fn reset_read_tracker() {
+    READ_TRACKER.clear();
+}
+
 /// Tool call from the model
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
@@ -741,6 +797,9 @@ fn execute_read_file(args: &HashMap<String, Value>) -> (String, bool) {
 
     match fs::read_to_string(path) {
         Ok(content) => {
+            // Track that this file has been read (for edit_file enforcement)
+            READ_TRACKER.mark_read(Path::new(path));
+
             let lines: Vec<&str> = content.lines().collect();
             let total_lines = lines.len();
 
@@ -827,6 +886,18 @@ fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
         Some(p) => p,
         None => return ("Missing 'path' argument".to_string(), true),
     };
+
+    // ENFORCE: Must read file before editing
+    // This prevents the model from making edits based on hallucinated file contents
+    if !READ_TRACKER.has_been_read(Path::new(path)) {
+        return (
+            format!(
+                "You must read '{}' before editing it. Use read_file first to see the actual contents.",
+                path
+            ),
+            true,
+        );
+    }
 
     let old_string = match args.get("old_string").and_then(|v| v.as_str()) {
         Some(s) => s,
@@ -1051,6 +1122,207 @@ impl ToolCallAccumulator {
     /// Clear the accumulator
     pub fn clear(&mut self) {
         self.tool_calls.clear();
+    }
+}
+
+// ==========================================================================
+// Anthropic Streaming Tool Accumulator
+// ==========================================================================
+
+/// Content block types from Anthropic streaming responses
+#[derive(Debug, Clone)]
+pub enum AnthropicContentBlock {
+    /// Text content block
+    Text(String),
+    /// Tool use content block
+    ToolUse {
+        id: String,
+        name: String,
+        input_json: String,
+    },
+}
+
+/// Accumulates tool_use content blocks from Anthropic streaming responses.
+///
+/// When the Anthropic API receives tool definitions, it returns structured
+/// `tool_use` content blocks instead of XML in text. This accumulator
+/// processes the streaming events to collect those blocks.
+///
+/// Anthropic streaming event sequence for tool_use:
+/// 1. `content_block_start` with `type: "tool_use"`, `id`, `name`
+/// 2. `content_block_delta` with `type: "input_json_delta"`, `partial_json`
+/// 3. `content_block_stop`
+/// 4. `message_delta` with `stop_reason: "tool_use"`
+#[derive(Debug)]
+pub struct AnthropicToolAccumulator {
+    /// Accumulated content blocks (text + tool_use)
+    pub blocks: Vec<AnthropicContentBlock>,
+    /// The stop reason from message_delta
+    pub stop_reason: Option<String>,
+}
+
+impl Default for AnthropicToolAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AnthropicToolAccumulator {
+    pub fn new() -> Self {
+        Self {
+            blocks: Vec::new(),
+            stop_reason: None,
+        }
+    }
+
+    /// Process a streaming SSE event from the Anthropic API.
+    /// Returns any text that should be printed to the terminal.
+    pub fn process_event(&mut self, event: &Value) -> Option<String> {
+        let event_type = event.get("type").and_then(|t| t.as_str())?;
+
+        match event_type {
+            "content_block_start" => {
+                let block = event.get("content_block")?;
+                let block_type = block.get("type").and_then(|t| t.as_str())?;
+
+                match block_type {
+                    "text" => {
+                        self.blocks.push(AnthropicContentBlock::Text(String::new()));
+                    }
+                    "tool_use" => {
+                        let id = block
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let name = block
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        self.blocks.push(AnthropicContentBlock::ToolUse {
+                            id,
+                            name,
+                            input_json: String::new(),
+                        });
+                    }
+                    _ => {}
+                }
+                None
+            }
+            "content_block_delta" => {
+                let delta = event.get("delta")?;
+                let delta_type = delta.get("type").and_then(|t| t.as_str())?;
+
+                match delta_type {
+                    "text_delta" => {
+                        let text = delta.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                        // Append to last text block
+                        if let Some(AnthropicContentBlock::Text(ref mut s)) = self.blocks.last_mut()
+                        {
+                            s.push_str(text);
+                        }
+                        Some(text.to_string())
+                    }
+                    "input_json_delta" => {
+                        let json_chunk = delta
+                            .get("partial_json")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("");
+                        // Append to last tool_use block's input
+                        if let Some(AnthropicContentBlock::ToolUse {
+                            ref mut input_json, ..
+                        }) = self.blocks.last_mut()
+                        {
+                            input_json.push_str(json_chunk);
+                        }
+                        None
+                    }
+                    _ => None,
+                }
+            }
+            "message_delta" => {
+                if let Some(delta) = event.get("delta") {
+                    if let Some(reason) = delta.get("stop_reason").and_then(|r| r.as_str()) {
+                        self.stop_reason = Some(reason.to_string());
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Check if the model requested tool use
+    pub fn has_tool_use(&self) -> bool {
+        self.stop_reason.as_deref() == Some("tool_use")
+            && self
+                .blocks
+                .iter()
+                .any(|b| matches!(b, AnthropicContentBlock::ToolUse { .. }))
+    }
+
+    /// Get concatenated text from all text blocks
+    pub fn get_text(&self) -> String {
+        self.blocks
+            .iter()
+            .filter_map(|b| match b {
+                AnthropicContentBlock::Text(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    /// Convert accumulated tool_use blocks to ToolCall format for execution
+    pub fn finalize_tool_calls(&self) -> Vec<ToolCall> {
+        self.blocks
+            .iter()
+            .filter_map(|b| match b {
+                AnthropicContentBlock::ToolUse {
+                    id,
+                    name,
+                    input_json,
+                } => Some(ToolCall {
+                    id: id.clone(),
+                    call_type: "function".to_string(),
+                    function: FunctionCall {
+                        name: name.clone(),
+                        arguments: input_json.clone(),
+                    },
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Convert to OpenAI-format tool_calls JSON for storage in chat_session.
+    /// This allows `convert_messages_to_anthropic` to handle the back-conversion.
+    pub fn to_openai_tool_calls_json(&self) -> Vec<serde_json::Value> {
+        self.blocks
+            .iter()
+            .filter_map(|b| match b {
+                AnthropicContentBlock::ToolUse {
+                    id,
+                    name,
+                    input_json,
+                } => Some(serde_json::json!({
+                    "id": id,
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": input_json
+                    }
+                })),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Clear the accumulator for reuse
+    pub fn clear(&mut self) {
+        self.blocks.clear();
+        self.stop_reason = None;
     }
 }
 
@@ -1726,5 +1998,126 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].function.name, "bash");
         assert_eq!(calls[0].function.arguments, "{\"command\": \"ls\"}");
+    }
+
+    #[test]
+    fn test_anthropic_accumulator_text_only() {
+        let mut acc = AnthropicToolAccumulator::new();
+
+        acc.process_event(
+            &json!({"type": "content_block_start", "content_block": {"type": "text"}}),
+        );
+        let text1 = acc.process_event(&json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hello "}}));
+        let text2 = acc.process_event(&json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "world"}}));
+        acc.process_event(&json!({"type": "content_block_stop"}));
+        acc.process_event(&json!({"type": "message_delta", "delta": {"stop_reason": "end_turn"}}));
+
+        assert_eq!(text1, Some("Hello ".to_string()));
+        assert_eq!(text2, Some("world".to_string()));
+        assert!(!acc.has_tool_use());
+        assert_eq!(acc.get_text(), "Hello world");
+        assert_eq!(acc.stop_reason.as_deref(), Some("end_turn"));
+    }
+
+    #[test]
+    fn test_anthropic_accumulator_tool_use() {
+        let mut acc = AnthropicToolAccumulator::new();
+
+        // Text block
+        acc.process_event(
+            &json!({"type": "content_block_start", "content_block": {"type": "text"}}),
+        );
+        acc.process_event(&json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Reading file..."}}));
+        acc.process_event(&json!({"type": "content_block_stop"}));
+
+        // Tool use block
+        acc.process_event(&json!({
+            "type": "content_block_start",
+            "content_block": {"type": "tool_use", "id": "toolu_abc123", "name": "read_file"}
+        }));
+        acc.process_event(&json!({"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": "{\"path\":"}}));
+        acc.process_event(&json!({"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": " \"test.txt\"}"}}));
+        acc.process_event(&json!({"type": "content_block_stop"}));
+
+        // Stop with tool_use
+        acc.process_event(&json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}}));
+
+        assert!(acc.has_tool_use());
+        assert_eq!(acc.get_text(), "Reading file...");
+
+        let tools = acc.finalize_tool_calls();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].id, "toolu_abc123");
+        assert_eq!(tools[0].function.name, "read_file");
+        assert_eq!(tools[0].function.arguments, "{\"path\": \"test.txt\"}");
+    }
+
+    #[test]
+    fn test_anthropic_accumulator_multiple_tools() {
+        let mut acc = AnthropicToolAccumulator::new();
+
+        // First tool
+        acc.process_event(&json!({
+            "type": "content_block_start",
+            "content_block": {"type": "tool_use", "id": "toolu_001", "name": "bash"}
+        }));
+        acc.process_event(&json!({"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": "{\"command\": \"ls\"}"}}));
+        acc.process_event(&json!({"type": "content_block_stop"}));
+
+        // Second tool
+        acc.process_event(&json!({
+            "type": "content_block_start",
+            "content_block": {"type": "tool_use", "id": "toolu_002", "name": "read_file"}
+        }));
+        acc.process_event(&json!({"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": "{\"path\": \"Cargo.toml\"}"}}));
+        acc.process_event(&json!({"type": "content_block_stop"}));
+
+        acc.process_event(&json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}}));
+
+        assert!(acc.has_tool_use());
+        let tools = acc.finalize_tool_calls();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].function.name, "bash");
+        assert_eq!(tools[1].function.name, "read_file");
+    }
+
+    #[test]
+    fn test_anthropic_accumulator_openai_conversion() {
+        let mut acc = AnthropicToolAccumulator::new();
+
+        acc.process_event(&json!({
+            "type": "content_block_start",
+            "content_block": {"type": "tool_use", "id": "toolu_xyz", "name": "edit_file"}
+        }));
+        acc.process_event(&json!({"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": "{\"path\": \"a.rs\"}"}}));
+        acc.process_event(&json!({"type": "content_block_stop"}));
+        acc.process_event(&json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}}));
+
+        let openai_calls = acc.to_openai_tool_calls_json();
+        assert_eq!(openai_calls.len(), 1);
+        assert_eq!(openai_calls[0]["id"], "toolu_xyz");
+        assert_eq!(openai_calls[0]["function"]["name"], "edit_file");
+        assert_eq!(
+            openai_calls[0]["function"]["arguments"],
+            "{\"path\": \"a.rs\"}"
+        );
+    }
+
+    #[test]
+    fn test_anthropic_accumulator_clear() {
+        let mut acc = AnthropicToolAccumulator::new();
+
+        acc.process_event(
+            &json!({"type": "content_block_start", "content_block": {"type": "text"}}),
+        );
+        acc.process_event(&json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hello"}}));
+        acc.process_event(&json!({"type": "message_delta", "delta": {"stop_reason": "end_turn"}}));
+
+        assert_eq!(acc.blocks.len(), 1);
+        assert!(acc.stop_reason.is_some());
+
+        acc.clear();
+        assert!(acc.blocks.is_empty());
+        assert!(acc.stop_reason.is_none());
     }
 }

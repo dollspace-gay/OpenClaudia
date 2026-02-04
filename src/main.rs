@@ -3,7 +3,7 @@
 //! Provides Claude Code-like capabilities for any AI agent.
 
 use openclaudia::{
-    config, memory, oauth, plugins, prompt, providers, proxy, tool_intercept, tools, tui,
+    config, memory, oauth, plugins, prompt, providers, proxy, tool_intercept, tools, tui, vdd,
 };
 
 use clap::{Parser, Subcommand};
@@ -208,6 +208,32 @@ session:
 #   f2: models
 #   tab: toggle_mode
 #   escape: cancel
+
+# Verification-Driven Development (VDD) - Adversarial code review
+# Uses a DIFFERENT model to review the builder's output for bugs/issues
+# vdd:
+#   enabled: false
+#   mode: advisory  # advisory = inject findings into next turn, blocking = loop until clean
+#   adversary:
+#     provider: google           # MUST differ from proxy.target
+#     model: gemini-2.5-pro      # Optional, uses provider default if omitted
+#     # api_key: ${GOOGLE_API_KEY}  # Optional, uses provider's key if omitted
+#     temperature: 0.3           # Lower = more deterministic critique
+#     max_tokens: 4096
+#   thresholds:
+#     max_iterations: 5          # Max adversary loops (blocking mode)
+#     false_positive_rate: 0.75  # Confabulation threshold to stop loop
+#     min_iterations: 2          # Minimum before checking confabulation
+#   static_analysis:
+#     enabled: true
+#     commands:                  # Shell commands that must pass (exit 0)
+#       - "cargo clippy -- -D warnings"
+#       - "cargo test --no-fail-fast"
+#     timeout_seconds: 120
+#   tracking:
+#     persist: true
+#     path: .openclaudia/vdd
+#     log_adversary_responses: true
 "#;
 
     fs::write(&config_file, default_config)?;
@@ -3356,6 +3382,21 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
     // Initialize permissions cache for sensitive operations
     let mut permissions: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+    // Initialize VDD engine if enabled
+    let vdd_engine: Option<vdd::VddEngine> = if config.vdd.enabled {
+        let http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        println!(
+            "\x1b[33m🔍 VDD enabled ({} mode) - adversary: {}\x1b[0m",
+            config.vdd.mode, config.vdd.adversary.provider
+        );
+        Some(vdd::VddEngine::new(&config.vdd, &config, http_client))
+    } else {
+        None
+    };
+
     loop {
         // Show input hints before prompt
         let mode_str = chat_session.mode.display().to_lowercase();
@@ -3771,8 +3812,9 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                     .map(|s| s.auth_mode == crate::oauth::AuthMode::ProxyMode)
                     .unwrap_or(false);
 
-                // Build request - proxy mode sends minimal request (no tools, no extra fields)
-                // This matches exactly what the working curl command sends
+                // Build request - proxy mode omits tool definitions because Claude Code
+                // OAuth credentials reject requests containing `tools` in the body.
+                // Tools are handled via XML-based interception (ToolInterceptor) instead.
                 let request_body = if using_proxy {
                     // Extract system message to top-level (Claude API requirement)
                     let system_msg = chat_session
@@ -3783,13 +3825,8 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                         .map(String::from);
 
                     // Convert messages to Anthropic format (handles tool_calls and tool results)
-                    // Proxy mode still talks to Anthropic API, so needs proper format
                     let anthropic_messages = convert_messages_to_anthropic(&chat_session.messages);
 
-                    // NOTE: Proxy mode (OAuth credentials) does NOT support custom tools!
-                    // The OAuth session is restricted to Claude Code's native format.
-                    // Claude will use its built-in sandbox environment for tool execution.
-                    // For local tool execution, use direct API mode with ANTHROPIC_API_KEY.
                     let mut req = serde_json::json!({
                         "model": model,
                         "messages": anthropic_messages,
@@ -3925,6 +3962,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                             let mut cancelled = false;
                             let mut pending_action: Option<SlashCommandResult> = None;
                             let mut tool_accumulator = tools::ToolCallAccumulator::new();
+                            let mut anthropic_accumulator = tools::AnthropicToolAccumulator::new();
 
                             while let Some(chunk_result) = stream.next().await {
                                 // Check for configured keybindings during streaming
@@ -3985,19 +4023,15 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                 if let Ok(json) =
                                                     serde_json::from_str::<serde_json::Value>(data)
                                                 {
-                                                    // Anthropic format: content_block_delta with delta.text
-                                                    if json.get("type").and_then(|t| t.as_str())
-                                                        == Some("content_block_delta")
+                                                    // Anthropic format: process all streaming events
+                                                    // through the accumulator (handles text_delta,
+                                                    // tool_use blocks, and stop_reason).
+                                                    if let Some(text) =
+                                                        anthropic_accumulator.process_event(&json)
                                                     {
-                                                        if let Some(text) = json
-                                                            .get("delta")
-                                                            .and_then(|d| d.get("text"))
-                                                            .and_then(|t| t.as_str())
-                                                        {
-                                                            print!("{}", text);
-                                                            std::io::stdout().flush().ok();
-                                                            full_content.push_str(text);
-                                                        }
+                                                        print!("{}", text);
+                                                        std::io::stdout().flush().ok();
+                                                        full_content.push_str(&text);
                                                     }
                                                     // OpenAI format: choices[0].delta.content
                                                     else if let Some(delta) = json
@@ -4036,125 +4070,383 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                             }
 
                             // PROXY MODE TOOL INTERCEPTION
-                            // When using proxy mode (OAuth credentials), Claude uses XML-style
-                            // tool invocations in its text output. We intercept these and
-                            // execute them locally instead of letting Anthropic's sandbox handle them.
+                            // When tools are included in the API request, the model returns
+                            // structured tool_use content blocks. If that fails, fall back to
+                            // XML-style tool interception from text output.
                             if using_proxy && !cancelled {
-                                let mut tool_interceptor = tool_intercept::ToolInterceptor::new();
-                                tool_interceptor.push(&full_content);
+                                let mut handled_structured = false;
 
-                                // Agentic loop for proxy mode with local tool execution
-                                // 0 = unlimited (matches Claude Code behavior)
-                                let max_proxy_iterations = config.session.max_turns;
-                                let mut proxy_iteration: u32 = 0;
+                                // STRUCTURED TOOL_USE PATH
+                                // The model returned tool_use content blocks with
+                                // stop_reason: "tool_use" — execute tools and loop.
+                                if anthropic_accumulator.has_tool_use() {
+                                    handled_structured = true;
+                                    let max_proxy_iterations = config.session.max_turns;
+                                    let mut proxy_iteration: u32 = 0;
 
-                                while tool_interceptor.has_complete_block()
-                                    && (max_proxy_iterations == 0
-                                        || proxy_iteration < max_proxy_iterations)
-                                {
-                                    proxy_iteration += 1;
+                                    loop {
+                                        if !anthropic_accumulator.has_tool_use() {
+                                            break;
+                                        }
+                                        if max_proxy_iterations > 0
+                                            && proxy_iteration >= max_proxy_iterations
+                                        {
+                                            eprintln!(
+                                                "\n\x1b[33m⚠ Reached max_turns limit ({} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m",
+                                                max_proxy_iterations
+                                            );
+                                            break;
+                                        }
+                                        proxy_iteration += 1;
 
-                                    // Extract tool calls from the XML
-                                    let (intercepted_tools, text_before, _text_after) =
-                                        tool_interceptor.extract_tool_calls();
+                                        let text = anthropic_accumulator.get_text();
+                                        let tool_calls =
+                                            anthropic_accumulator.finalize_tool_calls();
+                                        let tool_calls_json =
+                                            anthropic_accumulator.to_openai_tool_calls_json();
 
-                                    if intercepted_tools.is_empty() {
-                                        break;
-                                    }
-
-                                    // Add assistant message with the text before tools
-                                    if !text_before.trim().is_empty() {
+                                        // Store assistant message with tool_calls in OpenAI format.
+                                        // convert_messages_to_anthropic handles back-conversion
+                                        // to tool_use blocks for the API.
                                         chat_session.messages.push(serde_json::json!({
                                             "role": "assistant",
-                                            "content": text_before.trim()
+                                            "content": if text.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(text.clone()) },
+                                            "tool_calls": tool_calls_json
+                                        }));
+
+                                        // Execute each tool locally
+                                        for tool_call in &tool_calls {
+                                            println!(
+                                                "\n\x1b[36m⚡ Running {}...\x1b[0m",
+                                                tool_call.function.name
+                                            );
+
+                                            let result = if let Some(ref db) = memory_db {
+                                                tools::execute_tool_with_memory(tool_call, Some(db))
+                                            } else {
+                                                tools::execute_tool(tool_call)
+                                            };
+
+                                            // Show result preview
+                                            let preview: String = result
+                                                .content
+                                                .lines()
+                                                .take(5)
+                                                .collect::<Vec<_>>()
+                                                .join("\n");
+                                            if result.is_error {
+                                                println!("\x1b[31m✗ Error:\x1b[0m {}", preview);
+                                            } else {
+                                                println!(
+                                                    "\x1b[32m✓\x1b[0m {}",
+                                                    if preview.len() > 200 {
+                                                        format!("{}...", &preview[..200])
+                                                    } else {
+                                                        preview
+                                                    }
+                                                );
+                                            }
+
+                                            // Store tool result in OpenAI format
+                                            chat_session.messages.push(serde_json::json!({
+                                                "role": "tool",
+                                                "tool_call_id": result.tool_call_id,
+                                                "content": result.content
+                                            }));
+                                        }
+
+                                        // Clear accumulator for next response
+                                        anthropic_accumulator.clear();
+
+                                        // Send follow-up request WITH tool definitions
+                                        println!(
+                                            "\n\x1b[90m(Sending {} tool result{} to Claude...)\x1b[0m",
+                                            tool_calls.len(),
+                                            if tool_calls.len() == 1 { "" } else { "s" }
+                                        );
+
+                                        let anthropic_messages =
+                                            convert_messages_to_anthropic(&chat_session.messages);
+                                        let system_msg = chat_session
+                                            .messages
+                                            .iter()
+                                            .find(|m| {
+                                                m.get("role").and_then(|r| r.as_str())
+                                                    == Some("system")
+                                            })
+                                            .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                                            .map(String::from);
+
+                                        let openai_tools =
+                                            tools::get_all_tool_definitions(stateful, true);
+                                        let anthropic_tools = convert_tools_to_anthropic(
+                                            openai_tools.as_array().unwrap_or(&vec![]),
+                                        );
+
+                                        let mut followup_req = serde_json::json!({
+                                            "model": model,
+                                            "messages": anthropic_messages,
+                                            "max_tokens": 4096,
+                                            "stream": true,
+                                            "tools": anthropic_tools
+                                        });
+                                        if let Some(sys) = system_msg {
+                                            followup_req["system"] = serde_json::json!(sys);
+                                        }
+
+                                        let mut req = client.post(&endpoint).json(&followup_req);
+                                        for (key, value) in &headers {
+                                            req = req.header(key, value);
+                                        }
+
+                                        match req.send().await {
+                                            Ok(response) if response.status().is_success() => {
+                                                use futures::StreamExt;
+                                                let mut stream = response.bytes_stream();
+                                                let mut buffer = String::new();
+                                                full_content = String::new();
+
+                                                println!();
+
+                                                while let Some(chunk_result) = stream.next().await {
+                                                    match chunk_result {
+                                                        Ok(chunk) => {
+                                                            buffer.push_str(
+                                                                &String::from_utf8_lossy(&chunk),
+                                                            );
+                                                            while let Some(line_end) =
+                                                                buffer.find('\n')
+                                                            {
+                                                                let line = buffer[..line_end]
+                                                                    .trim()
+                                                                    .to_string();
+                                                                buffer = buffer[line_end + 1..]
+                                                                    .to_string();
+                                                                if line.is_empty()
+                                                                    || line.starts_with(':')
+                                                                {
+                                                                    continue;
+                                                                }
+                                                                if let Some(data) =
+                                                                    line.strip_prefix("data: ")
+                                                                {
+                                                                    if data == "[DONE]" {
+                                                                        break;
+                                                                    }
+                                                                    if let Ok(json) =
+                                                                        serde_json::from_str::<
+                                                                            serde_json::Value,
+                                                                        >(
+                                                                            data
+                                                                        )
+                                                                    {
+                                                                        if let Some(text) =
+                                                                            anthropic_accumulator
+                                                                                .process_event(
+                                                                                    &json,
+                                                                                )
+                                                                        {
+                                                                            print!("{}", text);
+                                                                            std::io::stdout()
+                                                                                .flush()
+                                                                                .ok();
+                                                                            full_content
+                                                                                .push_str(&text);
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            eprintln!("\nStream error: {}", e);
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                                // Loop continues — will check
+                                                // has_tool_use() at top
+                                            }
+                                            Ok(response) => {
+                                                eprintln!(
+                                                    "\nFollow-up request failed: {}",
+                                                    response.status()
+                                                );
+                                                break;
+                                            }
+                                            Err(e) => {
+                                                eprintln!("\nFollow-up request error: {}", e);
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    // Add final assistant message
+                                    if !full_content.trim().is_empty() {
+                                        chat_session.messages.push(serde_json::json!({
+                                            "role": "assistant",
+                                            "content": full_content.trim()
                                         }));
                                     }
+                                }
 
-                                    // Execute tools locally
-                                    let results = tool_intercept::execute_intercepted_tools(
-                                        &intercepted_tools,
-                                        memory_db.as_ref(),
+                                // TEXT-BASED XML TOOL INTERCEPTION (fallback)
+                                // If the model returned text with XML tool calls instead of
+                                // structured tool_use blocks, fall back to text interception.
+                                if !handled_structured {
+                                    let mut tool_interceptor =
+                                        tool_intercept::ToolInterceptor::new();
+                                    tool_interceptor.push(&full_content);
+
+                                    // Agentic loop for proxy mode with local tool execution
+                                    // 0 = unlimited (matches Claude Code behavior)
+                                    let max_proxy_iterations = config.session.max_turns;
+                                    let mut proxy_iteration: u32 = 0;
+
+                                    // Track executed tool calls to detect loops
+                                    let mut executed_tool_signatures: std::collections::HashSet<String> =
+                                        std::collections::HashSet::new();
+
+                                    while tool_interceptor.has_complete_block()
+                                        && (max_proxy_iterations == 0
+                                            || proxy_iteration < max_proxy_iterations)
+                                    {
+                                        proxy_iteration += 1;
+
+                                        // Extract ALL tool calls at once, stripping hallucinated
+                                        // <function_results> blocks the model generated inline.
+                                        // Without this, the model generates 8+ tool calls with
+                                        // fabricated results in a single response, but only one
+                                        // would execute per turn.
+                                        let (all_tools, text_parts) =
+                                            tool_interceptor.extract_all_tool_calls();
+
+                                        if all_tools.is_empty() {
+                                            break;
+                                        }
+
+                                        // Check for duplicate tool calls (model stuck in loop)
+                                        let mut all_duplicates = true;
+                                        for tool in &all_tools {
+                                            // Create a signature from tool name and parameters
+                                            let params_str: String = tool.parameters.iter()
+                                                .map(|(k, v)| format!("{}={}", k, v))
+                                                .collect::<Vec<_>>()
+                                                .join(",");
+                                            let sig = format!("{}:{}", tool.name, params_str);
+                                            if !executed_tool_signatures.contains(&sig) {
+                                                all_duplicates = false;
+                                                executed_tool_signatures.insert(sig);
+                                            }
+                                        }
+
+                                        if all_duplicates && proxy_iteration > 1 {
+                                            eprintln!(
+                                                "\n\x1b[33m⚠ Detected duplicate tool calls - breaking loop\x1b[0m"
+                                            );
+                                            break;
+                                        }
+
+                                        // Add assistant message with text content between tools
+                                        let combined_text = text_parts.join("\n\n");
+                                        if !combined_text.is_empty() {
+                                            chat_session.messages.push(serde_json::json!({
+                                                "role": "assistant",
+                                                "content": combined_text
+                                            }));
+                                        }
+
+                                        // Execute ALL tools locally
+                                        let results = tool_intercept::execute_intercepted_tools(
+                                            &all_tools,
+                                            memory_db.as_ref(),
+                                        );
+
+                                        // Format ALL results for Claude and add as user message
+                                        // Uses the new format with tool names for better completion signaling
+                                        let results_xml =
+                                            tool_intercept::format_execution_results_xml(&results);
+                                        chat_session.messages.push(serde_json::json!({
+                                            "role": "user",
+                                            "content": results_xml
+                                        }));
+
+                                        // Send follow-up request
+                                        println!(
+                                        "\n\x1b[90m(Sending {} tool result{} to Claude...)\x1b[0m",
+                                        results.len(),
+                                        if results.len() == 1 { "" } else { "s" }
                                     );
 
-                                    // Format results for Claude and add as user message
-                                    let results_xml =
-                                        tool_intercept::format_tool_results_xml(&results);
-                                    chat_session.messages.push(serde_json::json!({
-                                        "role": "user",
-                                        "content": results_xml
-                                    }));
+                                        let anthropic_messages =
+                                            convert_messages_to_anthropic(&chat_session.messages);
+                                        let system_msg = chat_session
+                                            .messages
+                                            .iter()
+                                            .find(|m| {
+                                                m.get("role").and_then(|r| r.as_str())
+                                                    == Some("system")
+                                            })
+                                            .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                                            .map(String::from);
 
-                                    // Send follow-up request
-                                    println!(
-                                        "\n\x1b[90m(Sending tool results to Claude...)\x1b[0m"
-                                    );
+                                        // Proxy mode: omit tools from follow-up requests
+                                        // (OAuth credentials reject tools in body)
+                                        let mut followup_req = serde_json::json!({
+                                            "model": model,
+                                            "messages": anthropic_messages,
+                                            "max_tokens": 4096,
+                                            "stream": true
+                                        });
+                                        if let Some(sys) = system_msg {
+                                            followup_req["system"] = serde_json::json!(sys);
+                                        }
 
-                                    let anthropic_messages =
-                                        convert_messages_to_anthropic(&chat_session.messages);
-                                    let system_msg = chat_session
-                                        .messages
-                                        .iter()
-                                        .find(|m| {
-                                            m.get("role").and_then(|r| r.as_str()) == Some("system")
-                                        })
-                                        .and_then(|m| m.get("content").and_then(|c| c.as_str()))
-                                        .map(String::from);
+                                        let mut req = client.post(&endpoint).json(&followup_req);
+                                        for (key, value) in &headers {
+                                            req = req.header(key, value);
+                                        }
 
-                                    let mut followup_req = serde_json::json!({
-                                        "model": model,
-                                        "messages": anthropic_messages,
-                                        "max_tokens": 4096,
-                                        "stream": true
-                                    });
-                                    if let Some(sys) = system_msg {
-                                        followup_req["system"] = serde_json::json!(sys);
-                                    }
+                                        match req.send().await {
+                                            Ok(response) if response.status().is_success() => {
+                                                use futures::StreamExt;
 
-                                    let mut req = client.post(&endpoint).json(&followup_req);
-                                    for (key, value) in &headers {
-                                        req = req.header(key, value);
-                                    }
+                                                let mut stream = response.bytes_stream();
+                                                let mut buffer = String::new();
+                                                let mut followup_content = String::new();
 
-                                    match req.send().await {
-                                        Ok(response) if response.status().is_success() => {
-                                            use futures::StreamExt;
-
-                                            let mut stream = response.bytes_stream();
-                                            let mut buffer = String::new();
-                                            let mut followup_content = String::new();
-
-                                            while let Some(chunk_result) = stream.next().await {
-                                                match chunk_result {
-                                                    Ok(chunk) => {
-                                                        buffer.push_str(&String::from_utf8_lossy(
-                                                            &chunk,
-                                                        ));
-                                                        while let Some(line_end) = buffer.find('\n')
-                                                        {
-                                                            let line = buffer[..line_end]
-                                                                .trim()
-                                                                .to_string();
-                                                            buffer =
-                                                                buffer[line_end + 1..].to_string();
-                                                            if line.is_empty()
-                                                                || line.starts_with(':')
+                                                while let Some(chunk_result) = stream.next().await {
+                                                    match chunk_result {
+                                                        Ok(chunk) => {
+                                                            buffer.push_str(
+                                                                &String::from_utf8_lossy(&chunk),
+                                                            );
+                                                            while let Some(line_end) =
+                                                                buffer.find('\n')
                                                             {
-                                                                continue;
-                                                            }
-                                                            if let Some(data) =
-                                                                line.strip_prefix("data: ")
-                                                            {
-                                                                if data == "[DONE]" {
-                                                                    break;
-                                                                }
-                                                                if let Ok(json) =
-                                                                    serde_json::from_str::<
-                                                                        serde_json::Value,
-                                                                    >(
-                                                                        data
-                                                                    )
+                                                                let line = buffer[..line_end]
+                                                                    .trim()
+                                                                    .to_string();
+                                                                buffer = buffer[line_end + 1..]
+                                                                    .to_string();
+                                                                if line.is_empty()
+                                                                    || line.starts_with(':')
                                                                 {
-                                                                    if json
+                                                                    continue;
+                                                                }
+                                                                if let Some(data) =
+                                                                    line.strip_prefix("data: ")
+                                                                {
+                                                                    if data == "[DONE]" {
+                                                                        break;
+                                                                    }
+                                                                    if let Ok(json) =
+                                                                        serde_json::from_str::<
+                                                                            serde_json::Value,
+                                                                        >(
+                                                                            data
+                                                                        )
+                                                                    {
+                                                                        if json
                                                                         .get("type")
                                                                         .and_then(|t| t.as_str())
                                                                         == Some(
@@ -4178,55 +4470,113 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                                                 .push_str(text);
                                                                         }
                                                                     }
+                                                                    }
                                                                 }
                                                             }
                                                         }
-                                                    }
-                                                    Err(e) => {
-                                                        eprintln!("\nStream error: {}", e);
-                                                        break;
+                                                        Err(e) => {
+                                                            eprintln!("\nStream error: {}", e);
+                                                            break;
+                                                        }
                                                     }
                                                 }
-                                            }
 
-                                            // Check if follow-up contains more tool calls
-                                            tool_interceptor.clear();
-                                            tool_interceptor.push(&followup_content);
-                                            full_content = followup_content;
-                                        }
-                                        Ok(response) => {
-                                            eprintln!(
-                                                "\nFollow-up request failed: {}",
-                                                response.status()
-                                            );
-                                            break;
-                                        }
-                                        Err(e) => {
-                                            eprintln!("\nFollow-up request error: {}", e);
-                                            break;
+                                                // Check if follow-up contains more tool calls
+                                                tool_interceptor.clear();
+                                                tool_interceptor.push(&followup_content);
+                                                full_content = followup_content;
+                                            }
+                                            Ok(response) => {
+                                                eprintln!(
+                                                    "\nFollow-up request failed: {}",
+                                                    response.status()
+                                                );
+                                                break;
+                                            }
+                                            Err(e) => {
+                                                eprintln!("\nFollow-up request error: {}", e);
+                                                break;
+                                            }
                                         }
                                     }
-                                }
 
-                                // Log if we hit the max_turns limit while tools were still pending
-                                if max_proxy_iterations > 0
-                                    && proxy_iteration >= max_proxy_iterations
-                                    && tool_interceptor.has_complete_block()
-                                {
-                                    eprintln!(
+                                    // Log if we hit the max_turns limit while tools were still pending
+                                    if max_proxy_iterations > 0
+                                        && proxy_iteration >= max_proxy_iterations
+                                        && tool_interceptor.has_complete_block()
+                                    {
+                                        eprintln!(
                                         "\n\x1b[33m⚠ Reached max_turns limit ({} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m",
                                         max_proxy_iterations
                                     );
-                                }
+                                    }
 
-                                // Add final assistant message
-                                if !full_content.trim().is_empty()
-                                    && !tool_interceptor.has_pending_tool_calls()
-                                {
-                                    chat_session.messages.push(serde_json::json!({
-                                        "role": "assistant",
-                                        "content": full_content.trim()
-                                    }));
+                                    // Add final assistant message
+                                    if !full_content.trim().is_empty()
+                                        && !tool_interceptor.has_pending_tool_calls()
+                                    {
+                                        chat_session.messages.push(serde_json::json!({
+                                            "role": "assistant",
+                                            "content": full_content.trim()
+                                        }));
+                                    }
+                                } // end if !handled_structured (XML fallback)
+
+                                // VDD: Run adversarial review if enabled
+                                if let Some(ref engine) = vdd_engine {
+                                    // Extract the user's original task from the last user message
+                                    let user_task = chat_session
+                                        .messages
+                                        .iter()
+                                        .rev()
+                                        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+                                        .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                                        .unwrap_or("");
+
+                                    match engine.review_text(&full_content, user_task).await {
+                                        Ok(result) => {
+                                            if !result.findings.is_empty() {
+                                                let genuine_count = result
+                                                    .findings
+                                                    .iter()
+                                                    .filter(|f| f.status == vdd::FindingStatus::Genuine)
+                                                    .count();
+                                                println!(
+                                                    "\n\x1b[33m🔍 VDD Review: {} finding(s) ({} genuine)\x1b[0m",
+                                                    result.findings.len(),
+                                                    genuine_count
+                                                );
+                                                // Display findings
+                                                for finding in &result.findings {
+                                                    let status_icon = match finding.status {
+                                                        vdd::FindingStatus::Genuine => "⚠",
+                                                        vdd::FindingStatus::FalsePositive => "✗",
+                                                        vdd::FindingStatus::Disputed => "?",
+                                                    };
+                                                    println!(
+                                                        "  {} [{}] {}",
+                                                        status_icon, finding.severity, finding.description
+                                                    );
+                                                }
+                                                // Inject findings as context for next turn (advisory mode)
+                                                if !result.context_injection.is_empty() {
+                                                    chat_session.messages.push(serde_json::json!({
+                                                        "role": "system",
+                                                        "content": format!(
+                                                            "<vdd-review>\n{}\n</vdd-review>",
+                                                            result.context_injection
+                                                        )
+                                                    }));
+                                                }
+                                            } else {
+                                                println!("\n\x1b[32m✓ VDD Review: No issues found\x1b[0m");
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("VDD review failed: {}", e);
+                                            println!("\n\x1b[31m⚠ VDD review failed: {}\x1b[0m", e);
+                                        }
+                                    }
                                 }
 
                                 println!();
@@ -4394,12 +4744,19 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                     let anthropic_messages =
                                         convert_messages_to_anthropic(&chat_session.messages);
 
-                                    // NOTE: Proxy mode (OAuth) does NOT support custom tools - see above
+                                    // Proxy mode (OAuth) — include tool definitions
+                                    let openai_tools =
+                                        tools::get_all_tool_definitions(stateful, true);
+                                    let anthropic_tools = convert_tools_to_anthropic(
+                                        openai_tools.as_array().unwrap_or(&vec![]),
+                                    );
+
                                     let mut req = serde_json::json!({
                                         "model": model,
                                         "messages": anthropic_messages,
                                         "max_tokens": 4096,
-                                        "stream": true
+                                        "stream": true,
+                                        "tools": anthropic_tools
                                     });
 
                                     if let Some(sys) = system_msg {

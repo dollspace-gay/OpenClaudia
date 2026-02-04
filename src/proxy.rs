@@ -32,6 +32,7 @@ use crate::plugins::PluginManager;
 use crate::providers::get_adapter;
 use crate::rules::{extract_extensions_from_tool_input, RulesEngine};
 use crate::session::{get_session_context, SessionManager, TokenUsage};
+use crate::vdd::{VddEngine, VddResult};
 
 /// Normalize base URL by stripping trailing slash and /v1 suffix.
 /// This prevents double /v1/v1 when endpoint paths include /v1 prefix.
@@ -56,6 +57,8 @@ pub struct ProxyState {
     pub mcp_manager: Arc<RwLock<McpManager>>,
     /// OAuth session store for Claude Max authentication
     pub oauth_store: Arc<OAuthStore>,
+    /// VDD engine for adversarial review (if enabled)
+    pub vdd_engine: Option<Arc<tokio::sync::Mutex<VddEngine>>>,
 }
 
 /// Errors that can occur in the proxy
@@ -560,6 +563,17 @@ async fn proxy_chat_completions(
         ContextInjector::inject_all(&mut request, &[context]);
     }
 
+    // Inject VDD advisory context from previous turn (if any)
+    {
+        let mut sm = state.session_manager.write().await;
+        if let Some(vdd_context) = sm.take_vdd_context() {
+            if !vdd_context.is_empty() {
+                ContextInjector::inject_system_suffix(&mut request, &vdd_context);
+                debug!("Injected VDD advisory context from previous turn");
+            }
+        }
+    }
+
     // Run PreToolUse hooks if there are tool calls in previous messages
     // This validates tool usage before the model responds
     for msg in &request.messages {
@@ -756,7 +770,7 @@ async fn proxy_chat_completions(
 
     // Post-response: extract usage from non-streaming responses and convert
     if token_tracking_enabled && !is_stream {
-        let (response, usage) = convert_response_with_usage(raw_response).await?;
+        let (mut response_value, usage) = convert_response_with_usage(raw_response).await?;
         if let Some(usage) = usage {
             let mut sm = state.session_manager.write().await;
             if let Some(session) = sm.get_session_mut() {
@@ -772,7 +786,71 @@ async fn proxy_chat_completions(
                 session.record_actual_usage(usage);
             }
         }
-        Ok(response)
+
+        // VDD: adversarial review of the builder's response
+        if let Some(vdd_engine) = &state.vdd_engine {
+            // Decompose response to get owned body for reading
+            let (parts, body) = response_value.into_parts();
+            let response_bytes = axum::body::to_bytes(body, usize::MAX)
+                .await
+                .unwrap_or_default();
+
+            if let Ok(response_json) = serde_json::from_slice::<Value>(&response_bytes) {
+                let engine = vdd_engine.lock().await;
+                match engine
+                    .process_response(&response_json, &request, &provider_name, &api_key)
+                    .await
+                {
+                    Ok(VddResult::Advisory(advisory)) => {
+                        let genuine = advisory
+                            .findings
+                            .iter()
+                            .filter(|f| f.status == crate::vdd::FindingStatus::Genuine)
+                            .count();
+                        if !advisory.context_injection.is_empty() {
+                            let mut sm = state.session_manager.write().await;
+                            sm.store_vdd_context(advisory.context_injection);
+                        }
+                        info!(
+                            total = advisory.findings.len(),
+                            genuine = genuine,
+                            "VDD advisory review complete"
+                        );
+                        // Rebuild response with original body
+                        response_value = Response::from_parts(parts, Body::from(response_bytes));
+                    }
+                    Ok(VddResult::Blocking(blocking)) => {
+                        // Replace response with the final revised version
+                        info!(
+                            iterations = blocking.session.iterations.len(),
+                            genuine = blocking.session.total_genuine,
+                            converged = blocking.session.converged,
+                            chainlink_issues = blocking.chainlink_issues.len(),
+                            "VDD blocking loop complete"
+                        );
+                        // Rebuild response with revised JSON body
+                        let revised_bytes = serde_json::to_vec(&blocking.final_response)
+                            .unwrap_or_else(|_| response_bytes.to_vec());
+                        response_value = Response::from_parts(parts, Body::from(revised_bytes));
+                    }
+                    Ok(VddResult::Skipped(reason)) => {
+                        debug!(reason = %reason, "VDD skipped");
+                        // Rebuild response with original body
+                        response_value = Response::from_parts(parts, Body::from(response_bytes));
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "VDD error (non-blocking, returning original response)");
+                        // Rebuild response with original body
+                        response_value = Response::from_parts(parts, Body::from(response_bytes));
+                    }
+                }
+            } else {
+                // JSON parse failed, rebuild response with original body
+                response_value = Response::from_parts(parts, Body::from(response_bytes));
+            }
+        }
+
+        Ok(response_value)
     } else {
         let response = convert_response(raw_response).await?;
         Ok(response)
@@ -921,7 +999,11 @@ async fn proxy_anthropic_messages(
             }
         }
 
+        // Strip TTL from cache_control objects (Anthropic API rejects TTL with OAuth)
+        strip_cache_control_ttl(&mut request);
+
         let url = format!("{}/v1/messages", normalize_base_url(&provider.base_url));
+
         let response = state
             .client
             .post(&url)
@@ -931,7 +1013,7 @@ async fn proxy_anthropic_messages(
             )
             .header(
                 "anthropic-beta",
-                "oauth-2025-04-20,computer-use-2025-01-24,fine-grained-tool-streaming-2025-05-14",
+                "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14",
             )
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
@@ -1022,6 +1104,27 @@ fn determine_provider(model: &str, config: &AppConfig) -> String {
     } else {
         // Fall back to configured target
         config.proxy.target.clone()
+    }
+}
+
+/// Recursively strip `ttl` from any `cache_control` objects in a JSON value.
+/// Anthropic's API rejects TTL in cache_control when using OAuth credentials.
+fn strip_cache_control_ttl(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            if let Some(Value::Object(cc_map)) = map.get_mut("cache_control") {
+                cc_map.remove("ttl");
+            }
+            for v in map.values_mut() {
+                strip_cache_control_ttl(v);
+            }
+        }
+        Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                strip_cache_control_ttl(v);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1287,6 +1390,28 @@ pub async fn start_server(config: AppConfig) -> anyhow::Result<()> {
     // Initialize OAuth store for Claude Max authentication
     let oauth_store = Arc::new(OAuthStore::new());
 
+    // Initialize VDD engine if enabled
+    let vdd_engine = if config.vdd.enabled {
+        if let Err(e) = config.vdd.validate(&config.proxy.target) {
+            anyhow::bail!("VDD configuration error: {}", e);
+        }
+        info!(
+            mode = %config.vdd.mode,
+            adversary = %config.vdd.adversary.provider,
+            "VDD engine enabled"
+        );
+        Some(Arc::new(tokio::sync::Mutex::new(VddEngine::new(
+            &config.vdd,
+            &config,
+            client.clone(),
+        ))))
+    } else {
+        debug!(
+            "VDD is disabled. To enable adversarial review, add vdd.enabled=true to config.yaml"
+        );
+        None
+    };
+
     let state = ProxyState {
         config: Arc::new(config),
         client,
@@ -1297,6 +1422,7 @@ pub async fn start_server(config: AppConfig) -> anyhow::Result<()> {
         plugin_manager,
         mcp_manager,
         oauth_store,
+        vdd_engine,
     };
 
     // Fire SessionStart hook and inject session context
@@ -1367,6 +1493,28 @@ pub async fn start_server_with_shutdown(
     // Initialize OAuth store for Claude Max authentication
     let oauth_store = Arc::new(OAuthStore::new());
 
+    // Initialize VDD engine if enabled
+    let vdd_engine = if config.vdd.enabled {
+        if let Err(e) = config.vdd.validate(&config.proxy.target) {
+            anyhow::bail!("VDD configuration error: {}", e);
+        }
+        info!(
+            mode = %config.vdd.mode,
+            adversary = %config.vdd.adversary.provider,
+            "VDD engine enabled"
+        );
+        Some(Arc::new(tokio::sync::Mutex::new(VddEngine::new(
+            &config.vdd,
+            &config,
+            client.clone(),
+        ))))
+    } else {
+        debug!(
+            "VDD is disabled. To enable adversarial review, add vdd.enabled=true to config.yaml"
+        );
+        None
+    };
+
     let state = ProxyState {
         config: Arc::new(config),
         client,
@@ -1377,6 +1525,7 @@ pub async fn start_server_with_shutdown(
         plugin_manager,
         mcp_manager,
         oauth_store,
+        vdd_engine,
     };
 
     let app = create_router(state);

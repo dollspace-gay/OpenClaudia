@@ -4,7 +4,9 @@
 //! against real filesystem, processes, and network operations.
 
 use openclaudia::memory::MemoryDb;
-use openclaudia::tools::{clear_todo_list, execute_tool, get_todo_list, FunctionCall, ToolCall};
+use openclaudia::tools::{
+    clear_todo_list, execute_tool, get_todo_list, reset_read_tracker, FunctionCall, ToolCall,
+};
 use serde_json::{json, Value};
 use std::fs;
 use tempfile::TempDir;
@@ -183,8 +185,16 @@ mod file_tools {
 
     #[test]
     fn test_edit_file_replace() {
+        reset_read_tracker(); // Clear tracker for clean test state
         let dir = setup_test_dir();
         let file_path = dir.path().join("test.txt");
+
+        // Read the file first (required before editing)
+        let read_call = make_tool_call(
+            "read_file",
+            json!({ "path": file_path.to_string_lossy() }),
+        );
+        execute_tool(&read_call);
 
         let tool_call = make_tool_call(
             "edit_file",
@@ -212,8 +222,16 @@ mod file_tools {
 
     #[test]
     fn test_edit_file_old_string_not_found() {
+        reset_read_tracker(); // Clear tracker for clean test state
         let dir = setup_test_dir();
         let file_path = dir.path().join("test.txt");
+
+        // Read the file first (required before editing)
+        let read_call = make_tool_call(
+            "read_file",
+            json!({ "path": file_path.to_string_lossy() }),
+        );
+        execute_tool(&read_call);
 
         let tool_call = make_tool_call(
             "edit_file",
@@ -413,11 +431,19 @@ mod file_tools {
 
     #[test]
     fn test_edit_file_multiline() {
+        reset_read_tracker(); // Clear tracker for clean test state
         let dir = TempDir::new().expect("Failed to create temp dir");
         let file_path = dir.path().join("multiline.txt");
 
         let original = "function foo() {\n    console.log('old');\n}";
         fs::write(&file_path, original).expect("Failed to write");
+
+        // Read the file first (required before editing)
+        let read_call = make_tool_call(
+            "read_file",
+            json!({ "path": file_path.to_string_lossy() }),
+        );
+        execute_tool(&read_call);
 
         let tool_call = make_tool_call(
             "edit_file",
@@ -445,11 +471,19 @@ mod file_tools {
 
     #[test]
     fn test_edit_file_special_characters() {
+        reset_read_tracker(); // Clear tracker for clean test state
         let dir = TempDir::new().expect("Failed to create temp dir");
         let file_path = dir.path().join("special.txt");
 
         let original = "Price: $100 (50% off!) [limited]";
         fs::write(&file_path, original).expect("Failed to write");
+
+        // Read the file first (required before editing)
+        let read_call = make_tool_call(
+            "read_file",
+            json!({ "path": file_path.to_string_lossy() }),
+        );
+        execute_tool(&read_call);
 
         let tool_call = make_tool_call(
             "edit_file",
@@ -2242,14 +2276,8 @@ mod token_tracking {
 
         assert_eq!(session.turn_metrics.len(), 3);
         assert_eq!(session.request_count, 0); // increment_requests not called
-        assert_eq!(
-            session.cumulative_usage.input_tokens,
-            4800 + 7500 + 11000
-        );
-        assert_eq!(
-            session.cumulative_usage.output_tokens,
-            1200 + 2000 + 3000
-        );
+        assert_eq!(session.cumulative_usage.input_tokens, 4800 + 7500 + 11000);
+        assert_eq!(session.cumulative_usage.output_tokens, 1200 + 2000 + 3000);
         assert_eq!(session.cumulative_usage.cache_read_tokens, 0 + 1000 + 2000);
         assert_eq!(session.cumulative_usage.cache_write_tokens, 0 + 0 + 500);
         assert_eq!(
@@ -2282,13 +2310,17 @@ mod token_tracking {
             "Summary: {}",
             summary
         );
-        assert!(summary.contains("Cache read:    300"), "Summary: {}", summary);
-        assert!(summary.contains("Cache write:   100"), "Summary: {}", summary);
         assert!(
-            summary.contains("Last turn #1"),
+            summary.contains("Cache read:    300"),
             "Summary: {}",
             summary
         );
+        assert!(
+            summary.contains("Cache write:   100"),
+            "Summary: {}",
+            summary
+        );
+        assert!(summary.contains("Last turn #1"), "Summary: {}", summary);
         assert!(
             summary.contains("actual 4800in/1200out"),
             "Summary: {}",
@@ -2309,11 +2341,7 @@ mod token_tracking {
 
         let handoff = session.generate_handoff();
 
-        assert!(
-            handoff.contains("### Token Usage"),
-            "Handoff: {}",
-            handoff
-        );
+        assert!(handoff.contains("### Token Usage"), "Handoff: {}", handoff);
         assert!(
             handoff.contains("Input: 4800 tokens"),
             "Handoff: {}",
@@ -2324,11 +2352,7 @@ mod token_tracking {
             "Handoff: {}",
             handoff
         );
-        assert!(
-            handoff.contains("Turns: 1"),
-            "Handoff: {}",
-            handoff
-        );
+        assert!(handoff.contains("Turns: 1"), "Handoff: {}", handoff);
     }
 
     #[test]
@@ -2811,5 +2835,464 @@ mod token_tracking {
         for turn in &session.turn_metrics {
             assert!(turn.actual_usage.is_none());
         }
+    }
+}
+
+// ============================================================================
+// VDD (Verification-Driven Development) INTEGRATION TESTS
+// ============================================================================
+
+mod vdd_tests {
+    use openclaudia::config::{
+        AppConfig, HooksConfig, KeybindingsConfig, ProxyConfig, SessionConfig, VddAdversaryConfig,
+        VddConfig, VddMode, VddStaticAnalysis, VddThresholds, VddTracking,
+    };
+    use openclaudia::hooks::{HookEngine, HookEvent};
+    use openclaudia::session::{SessionManager, TokenUsage};
+    use openclaudia::vdd::{
+        ConfabulationTracker, Finding, FindingStatus, Severity, VddEngine, VddSession,
+    };
+    use std::collections::HashMap;
+    use tempfile::TempDir;
+
+    /// Helper to create an AppConfig with VDD enabled for a given mode
+    fn make_vdd_config(mode: VddMode, adversary_provider: &str) -> AppConfig {
+        AppConfig {
+            proxy: ProxyConfig {
+                target: "anthropic".to_string(),
+                ..Default::default()
+            },
+            providers: HashMap::new(),
+            hooks: HooksConfig::default(),
+            session: SessionConfig::default(),
+            keybindings: KeybindingsConfig::default(),
+            vdd: VddConfig {
+                enabled: true,
+                mode,
+                adversary: VddAdversaryConfig {
+                    provider: adversary_provider.to_string(),
+                    model: Some("test-model".to_string()),
+                    temperature: 0.3,
+                    max_tokens: 4096,
+                    ..Default::default()
+                },
+                thresholds: VddThresholds {
+                    max_iterations: 5,
+                    false_positive_rate: 0.75,
+                    min_iterations: 2,
+                },
+                static_analysis: VddStaticAnalysis {
+                    enabled: true,
+                    commands: vec!["echo ok".to_string()],
+                    timeout_seconds: 30,
+                },
+                tracking: VddTracking {
+                    persist: false,
+                    log_adversary_responses: true,
+                    ..Default::default()
+                },
+            },
+        }
+    }
+
+    // ========================================================================
+    // Config Validation Integration
+    // ========================================================================
+
+    #[test]
+    fn test_vdd_config_validates_against_builder_provider() {
+        let config = make_vdd_config(VddMode::Advisory, "google");
+        // Should pass: adversary=google, builder=anthropic
+        assert!(config.vdd.validate(&config.proxy.target).is_ok());
+    }
+
+    #[test]
+    fn test_vdd_config_rejects_same_provider() {
+        let config = make_vdd_config(VddMode::Advisory, "anthropic");
+        // Should fail: adversary=anthropic, builder=anthropic
+        let result = config.vdd.validate(&config.proxy.target);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must differ"));
+    }
+
+    #[test]
+    fn test_vdd_config_disabled_skips_validation() {
+        let mut config = make_vdd_config(VddMode::Advisory, "anthropic");
+        config.vdd.enabled = false;
+        // Even though providers match, validation passes when disabled
+        assert!(config.vdd.validate(&config.proxy.target).is_ok());
+    }
+
+    #[test]
+    fn test_vdd_config_validates_thresholds() {
+        let mut config = make_vdd_config(VddMode::Blocking, "google");
+
+        // Invalid FP rate
+        config.vdd.thresholds.false_positive_rate = 2.0;
+        assert!(config.vdd.validate(&config.proxy.target).is_err());
+
+        // Fix FP rate, make min > max
+        config.vdd.thresholds.false_positive_rate = 0.75;
+        config.vdd.thresholds.min_iterations = 10;
+        config.vdd.thresholds.max_iterations = 5;
+        assert!(config.vdd.validate(&config.proxy.target).is_err());
+    }
+
+    // ========================================================================
+    // VDD Engine Construction
+    // ========================================================================
+
+    #[test]
+    fn test_vdd_engine_construction() {
+        let config = make_vdd_config(VddMode::Advisory, "google");
+        let client = reqwest::Client::new();
+        let engine = VddEngine::new(&config.vdd, &config, client);
+        // Engine should be constructible without panic
+        assert!(true, "VDD engine constructed successfully");
+        let _ = engine; // use it to avoid warning
+    }
+
+    #[test]
+    fn test_vdd_engine_both_modes() {
+        let client = reqwest::Client::new();
+
+        let advisory_config = make_vdd_config(VddMode::Advisory, "google");
+        let _advisory_engine =
+            VddEngine::new(&advisory_config.vdd, &advisory_config, client.clone());
+
+        let blocking_config = make_vdd_config(VddMode::Blocking, "google");
+        let _blocking_engine = VddEngine::new(&blocking_config.vdd, &blocking_config, client);
+    }
+
+    // ========================================================================
+    // Confabulation Tracker Integration
+    // ========================================================================
+
+    #[test]
+    fn test_confabulation_tracker_full_lifecycle() {
+        let mut tracker = ConfabulationTracker::new(0.75, 2);
+
+        // Iteration 1: adversary finds real issues (0% FP rate)
+        tracker.record_iteration(3, 0);
+        assert!(!tracker.should_terminate()); // below min_iterations
+        assert_eq!(tracker.current_rate(), 0.0);
+
+        // Iteration 2: mixed results (50% FP)
+        tracker.record_iteration(2, 2);
+        assert!(!tracker.should_terminate()); // 50% < 75% threshold
+        assert!(tracker.latest_rate() > 0.0);
+
+        // Iteration 3: mostly FPs (80% FP)
+        tracker.record_iteration(1, 4);
+        assert!(tracker.should_terminate()); // 80% > 75% threshold
+    }
+
+    #[test]
+    fn test_confabulation_tracker_immediate_convergence() {
+        let mut tracker = ConfabulationTracker::new(0.75, 2);
+
+        // Adversary finds nothing twice in a row
+        tracker.record_iteration(0, 0);
+        assert!(!tracker.should_terminate()); // below min_iterations
+
+        tracker.record_iteration(0, 0);
+        assert!(tracker.should_terminate()); // 0 findings = converged
+    }
+
+    #[test]
+    fn test_confabulation_tracker_never_converges_with_real_findings() {
+        let mut tracker = ConfabulationTracker::new(0.75, 2);
+
+        // Adversary consistently finds real issues (0% FP)
+        for _ in 0..5 {
+            tracker.record_iteration(5, 0);
+            assert!(!tracker.should_terminate());
+        }
+        // Never terminates because genuine findings keep appearing
+        assert_eq!(tracker.current_rate(), 0.0);
+    }
+
+    // ========================================================================
+    // VDD Session Type Integration
+    // ========================================================================
+
+    #[test]
+    fn test_vdd_session_public_fields() {
+        // VddSession fields are public — verify we can read them from integration context
+        let session = VddSession {
+            id: "test-session-1".to_string(),
+            mode: VddMode::Blocking,
+            iterations: vec![],
+            total_findings: 5,
+            total_genuine: 3,
+            total_false_positives: 2,
+            false_positive_rate: 0.4,
+            converged: false,
+            termination_reason: None,
+            builder_tokens: TokenUsage::default(),
+            adversary_tokens: TokenUsage {
+                input_tokens: 1800,
+                output_tokens: 900,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+            },
+            started_at: chrono::Utc::now(),
+            ended_at: None,
+        };
+
+        assert_eq!(session.total_genuine, 3);
+        assert_eq!(session.total_false_positives, 2);
+        assert_eq!(session.adversary_tokens.input_tokens, 1800);
+        assert!(!session.converged);
+        assert!(session.termination_reason.is_none());
+    }
+
+    // ========================================================================
+    // Session Manager VDD Context Integration
+    // ========================================================================
+
+    #[test]
+    fn test_session_manager_vdd_context_store_and_take() {
+        let dir = TempDir::new().unwrap();
+        let mut manager = SessionManager::new(dir.path().to_path_buf());
+
+        // Initially no VDD context
+        assert!(manager.take_vdd_context().is_none());
+
+        // Store advisory findings context
+        let context = "<vdd-advisory>\nSQLi found in db.rs:45\n</vdd-advisory>".to_string();
+        manager.store_vdd_context(context.clone());
+
+        // Take it once
+        let taken = manager.take_vdd_context();
+        assert!(taken.is_some());
+        assert_eq!(taken.unwrap(), context);
+
+        // Second take returns None (consumed)
+        assert!(manager.take_vdd_context().is_none());
+    }
+
+    #[test]
+    fn test_session_manager_vdd_context_overwrite() {
+        let dir = TempDir::new().unwrap();
+        let mut manager = SessionManager::new(dir.path().to_path_buf());
+
+        manager.store_vdd_context("first finding".to_string());
+        manager.store_vdd_context("second finding".to_string());
+
+        // Should get the latest one
+        let taken = manager.take_vdd_context();
+        assert_eq!(taken.unwrap(), "second finding");
+    }
+
+    // ========================================================================
+    // Hook Event Integration for VDD
+    // ========================================================================
+
+    #[test]
+    fn test_vdd_hook_events_exist() {
+        // Verify all 4 VDD hook events are recognized
+        let events = [
+            HookEvent::PreAdversaryReview,
+            HookEvent::PostAdversaryReview,
+            HookEvent::VddConflict,
+            HookEvent::VddConverged,
+        ];
+
+        for event in &events {
+            // config_key should return a non-empty string
+            let key = event.config_key();
+            assert!(!key.is_empty(), "VDD event {:?} has no config key", event);
+        }
+    }
+
+    #[test]
+    fn test_vdd_hook_engine_runs_empty_hooks() {
+        let engine = HookEngine::new(HooksConfig::default());
+
+        // VDD hooks with empty config should be no-ops
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(async {
+            let input = openclaudia::hooks::HookInput::new(HookEvent::VddConflict);
+            engine.run(HookEvent::VddConflict, &input).await
+        });
+
+        // run() returns HookResult directly, not Result
+        assert!(result.allowed);
+    }
+
+    // ========================================================================
+    // VDD Finding Types Integration
+    // ========================================================================
+
+    #[test]
+    fn test_finding_severity_ordering() {
+        // Rust derived Ord orders by declaration position (Critical=0 < High=1 < ... < Info=4)
+        // Critical is declared first, so it has the lowest discriminant
+        assert!(Severity::Critical < Severity::High);
+        assert!(Severity::High < Severity::Medium);
+        assert!(Severity::Medium < Severity::Low);
+        assert!(Severity::Low < Severity::Info);
+
+        // All variants are distinct
+        assert_ne!(Severity::Critical, Severity::Info);
+        assert_ne!(Severity::High, Severity::Low);
+    }
+
+    #[test]
+    fn test_finding_status_transitions() {
+        let mut finding = Finding {
+            id: "test-1".to_string(),
+            severity: Severity::High,
+            cwe: Some("CWE-89".to_string()),
+            description: "SQL injection in query builder".to_string(),
+            file_path: Some("src/db.rs".to_string()),
+            line_range: Some((45, 52)),
+            status: FindingStatus::Genuine,
+            adversary_reasoning: "User input concatenated directly".to_string(),
+            iteration: 1,
+        };
+
+        assert!(matches!(finding.status, FindingStatus::Genuine));
+
+        // Mark as false positive after builder disputes
+        finding.status = FindingStatus::FalsePositive;
+        assert!(matches!(finding.status, FindingStatus::FalsePositive));
+
+        // Mark as disputed
+        finding.status = FindingStatus::Disputed;
+        assert!(matches!(finding.status, FindingStatus::Disputed));
+    }
+
+    #[test]
+    fn test_finding_with_no_file_location() {
+        let finding = Finding {
+            id: "test-2".to_string(),
+            severity: Severity::Medium,
+            cwe: None,
+            description: "Logic error in business rule".to_string(),
+            file_path: None,
+            line_range: None,
+            status: FindingStatus::Genuine,
+            adversary_reasoning: "The condition is inverted".to_string(),
+            iteration: 1,
+        };
+
+        assert!(finding.file_path.is_none());
+        assert!(finding.line_range.is_none());
+        assert!(finding.cwe.is_none());
+    }
+
+    // ========================================================================
+    // VDD Mode Display Integration
+    // ========================================================================
+
+    #[test]
+    fn test_vdd_mode_display_and_serde_roundtrip() {
+        // Display
+        assert_eq!(format!("{}", VddMode::Advisory), "advisory");
+        assert_eq!(format!("{}", VddMode::Blocking), "blocking");
+
+        // Serde roundtrip
+        let advisory_json = serde_json::to_string(&VddMode::Advisory).unwrap();
+        let blocking_json = serde_json::to_string(&VddMode::Blocking).unwrap();
+        assert_eq!(advisory_json, "\"advisory\"");
+        assert_eq!(blocking_json, "\"blocking\"");
+
+        let parsed: VddMode = serde_json::from_str(&advisory_json).unwrap();
+        assert_eq!(parsed, VddMode::Advisory);
+    }
+
+    // ========================================================================
+    // Full Config Serde Integration
+    // ========================================================================
+
+    #[test]
+    fn test_vdd_config_full_yaml_roundtrip() {
+        let yaml = r#"
+enabled: true
+mode: blocking
+adversary:
+  provider: google
+  model: gemini-2.5-pro
+  temperature: 0.2
+  max_tokens: 8192
+thresholds:
+  max_iterations: 8
+  false_positive_rate: 0.80
+  min_iterations: 3
+static_analysis:
+  enabled: true
+  commands:
+    - "cargo clippy -- -D warnings"
+    - "cargo test --no-fail-fast"
+  timeout_seconds: 180
+tracking:
+  persist: true
+  path: .openclaudia/vdd
+  log_adversary_responses: false
+"#;
+
+        let config: VddConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.mode, VddMode::Blocking);
+        assert_eq!(config.adversary.provider, "google");
+        assert_eq!(config.adversary.model, Some("gemini-2.5-pro".to_string()));
+        assert_eq!(config.adversary.temperature, 0.2);
+        assert_eq!(config.adversary.max_tokens, 8192);
+        assert_eq!(config.thresholds.max_iterations, 8);
+        assert_eq!(config.thresholds.false_positive_rate, 0.80);
+        assert_eq!(config.thresholds.min_iterations, 3);
+        assert_eq!(config.static_analysis.commands.len(), 2);
+        assert_eq!(config.static_analysis.timeout_seconds, 180);
+        assert!(!config.tracking.log_adversary_responses);
+
+        // Validate against a builder
+        assert!(config.validate("anthropic").is_ok());
+        assert!(config.validate("google").is_err());
+    }
+
+    #[test]
+    fn test_vdd_config_minimal_yaml_defaults() {
+        let yaml = "enabled: false\n";
+        let config: VddConfig = serde_yaml::from_str(yaml).unwrap();
+
+        assert!(!config.enabled);
+        assert_eq!(config.mode, VddMode::Advisory); // default
+        assert_eq!(config.adversary.provider, "google"); // default
+        assert_eq!(config.thresholds.max_iterations, 5); // default
+        assert_eq!(config.thresholds.false_positive_rate, 0.75); // default
+        assert_eq!(config.thresholds.min_iterations, 2); // default
+        assert!(config.static_analysis.enabled); // default true
+        assert!(config.static_analysis.commands.is_empty()); // default empty
+    }
+
+    // ========================================================================
+    // Session TurnMetrics VDD Fields
+    // ========================================================================
+
+    #[test]
+    fn test_turn_metrics_vdd_fields_default_none() {
+        use openclaudia::session::Session;
+
+        let mut session = Session::new_initializer();
+        session.record_turn_estimate(5000, 2000, 0, 0);
+
+        let turn = &session.turn_metrics[0];
+        assert!(turn.vdd_iterations.is_none());
+        assert!(turn.vdd_genuine_findings.is_none());
+        assert!(turn.vdd_false_positives.is_none());
+        assert!(turn.vdd_adversary_tokens.is_none());
+        assert!(turn.vdd_converged.is_none());
+    }
+
+    #[test]
+    fn test_session_progress_vdd_fields() {
+        use openclaudia::session::SessionProgress;
+
+        let progress = SessionProgress::default();
+        assert_eq!(progress.vdd_total_findings, 0);
+        assert_eq!(progress.vdd_total_genuine, 0);
+        assert!(progress.vdd_sessions.is_empty());
     }
 }

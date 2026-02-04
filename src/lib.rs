@@ -22,4 +22,5 @@ pub mod subagent;
 pub mod tool_intercept;
 pub mod tools;
 pub mod tui;
+pub mod vdd;
 pub mod web;

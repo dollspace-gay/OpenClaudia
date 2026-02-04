@@ -68,6 +68,21 @@ pub struct TurnMetrics {
     pub tool_def_tokens: usize,
     /// When this turn occurred
     pub timestamp: DateTime<Utc>,
+    /// VDD: number of adversarial iterations this turn (if VDD active)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vdd_iterations: Option<u32>,
+    /// VDD: genuine findings count
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vdd_genuine_findings: Option<u32>,
+    /// VDD: false positive count
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vdd_false_positives: Option<u32>,
+    /// VDD: tokens used by adversary model
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vdd_adversary_tokens: Option<TokenUsage>,
+    /// VDD: whether the loop converged
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vdd_converged: Option<bool>,
 }
 
 /// Progress tracking for a session
@@ -85,6 +100,15 @@ pub struct SessionProgress {
     pub files_modified: Vec<String>,
     /// Notes for next session
     pub handoff_notes: String,
+    /// VDD: total findings across all VDD sessions
+    #[serde(default)]
+    pub vdd_total_findings: u32,
+    /// VDD: total genuine findings
+    #[serde(default)]
+    pub vdd_total_genuine: u32,
+    /// VDD: session IDs for VDD sessions in this coding session
+    #[serde(default)]
+    pub vdd_sessions: Vec<String>,
 }
 
 /// A single agent session
@@ -183,6 +207,11 @@ impl Session {
             system_prompt_tokens,
             tool_def_tokens,
             timestamp: Utc::now(),
+            vdd_iterations: None,
+            vdd_genuine_findings: None,
+            vdd_false_positives: None,
+            vdd_adversary_tokens: None,
+            vdd_converged: None,
         });
         self.touch();
         turn_number
@@ -352,6 +381,8 @@ pub struct SessionManager {
     persist_dir: PathBuf,
     /// Current active session
     current_session: Option<Session>,
+    /// VDD advisory context to inject into the next turn
+    vdd_pending_context: Option<String>,
 }
 
 impl SessionManager {
@@ -367,6 +398,7 @@ impl SessionManager {
         Self {
             persist_dir,
             current_session: None,
+            vdd_pending_context: None,
         }
     }
 
@@ -386,6 +418,16 @@ impl SessionManager {
     /// Get the current session immutably
     pub fn get_session(&self) -> Option<&Session> {
         self.current_session.as_ref()
+    }
+
+    /// Store VDD advisory context to inject into the next turn
+    pub fn store_vdd_context(&mut self, context: String) {
+        self.vdd_pending_context = Some(context);
+    }
+
+    /// Take (consume) the pending VDD context for injection
+    pub fn take_vdd_context(&mut self) -> Option<String> {
+        self.vdd_pending_context.take()
     }
 
     /// Create a new session (initializer or coding based on history)

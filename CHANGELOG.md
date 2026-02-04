@@ -6,10 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Removed
+- Remove obsolete TestBuilder adversarial subagent code (#205)
+
 ### Security
 - Fix lru crate Stacked Borrows vulnerability by updating to 0.16.3 (#99)
 
 ### Added
+- Add read-before-edit enforcement for edit_file tool (#216)
+- Add structured tool_use support for Anthropic proxy mode (#207)
+- Add Verification-Driven Development (VDD) adversarial loop engine (#197)
+- Add research document on evidence-based coding quality guardrails (#196)
 - Add integration tests for token budget tracking (#194)
 - Add multi-turn agentic loop matching Claude Code turn processing behavior (#185)
 - Add Claude Code-compatible plugin system for installing and managing plugins (#176)
@@ -59,6 +66,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Add hook engine with all 12 event types (#4)
 
 ### Fixed
+- Fix infinite tool call loop in XML interception mode (#217)
+- Fix VDD adversary response parsing for Gemini (#215)
+- Fix model not using Write tool to create files (#214)
+- Fix proxy mode 400 error by removing tools from OAuth request body (#211)
+- Fix model hallucinating tool results by extracting all tool calls from single response (#206)
 - Fix all provider URL construction for base URLs containing /v1 suffix (#178)
 - Fix dynamic model discovery URL construction for base URLs containing /v1 suffix (#176)
 - Fix bash tool to use correct working directory (#170)
@@ -72,6 +84,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix TUI welcome screen box drawing alignment (#59)
 
 ### Changed
+- Integrate VDD engine into main chat loop (#213)
+- Add VDD section to generated config.yaml from init command (#212)
+- Update proxy-mode agentic loop for structured tool_use with XML fallback (#210)
+- Add tool definitions to proxy mode requests and handle tool_use in stream (#209)
+- Add VDD integration tests (#204)
+- Add VDD proxy integration with advisory and blocking modes (#200)
+- Add VDD session tracking and metrics (#202)
+- Add VDD hook events for adversarial lifecycle (#201)
+- Add VDD core types and engine module (#198)
+- Add VDD configuration to config system (#199)
 - Verify plugin system can install and load plugins end-to-end (#182)
 - Add marketplace support for git and local directory sources (#181)
 - Add /plugin slash command with install, uninstall, list, enable, disable subcommands (#180)
