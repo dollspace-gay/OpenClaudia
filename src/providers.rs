@@ -207,14 +207,24 @@ pub fn convert_messages_to_anthropic(messages: &[Value]) -> Vec<Value> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let is_error = msg
+                .get("is_error")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            let mut tool_result = json!({
+                "type": "tool_result",
+                "tool_use_id": tool_use_id,
+                "content": content
+            });
+            // Anthropic API supports is_error on tool_result blocks
+            if is_error {
+                tool_result["is_error"] = json!(true);
+            }
 
             result.push(json!({
                 "role": "user",
-                "content": [{
-                    "type": "tool_result",
-                    "tool_use_id": tool_use_id,
-                    "content": content
-                }]
+                "content": [tool_result]
             }));
             continue;
         }
@@ -1538,5 +1548,46 @@ mod tests {
 
         let result = adapter.transform_response(response, false);
         assert!(matches!(result, Err(ProviderError::InvalidResponse(_))));
+    }
+
+    #[test]
+    fn test_convert_tool_result_with_error_flag() {
+        let messages = vec![
+            json!({"role": "user", "content": "test"}),
+            json!({
+                "role": "assistant",
+                "content": "Let me try.",
+                "tool_calls": [{"id": "t1", "type": "function", "function": {"name": "bash", "arguments": "{\"command\":\"ls\"}"}}]
+            }),
+            json!({"role": "tool", "tool_call_id": "t1", "content": "[ERROR] command not found", "is_error": true}),
+        ];
+        let result = convert_messages_to_anthropic(&messages);
+        // result[0]=user, result[1]=assistant+tool_use, result[2]=user+tool_result
+        assert_eq!(result.len(), 3);
+        let tool_msg = &result[2];
+        assert_eq!(tool_msg["role"], "user");
+        let content = tool_msg["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["is_error"], true);
+    }
+
+    #[test]
+    fn test_convert_tool_result_without_error_flag() {
+        let messages = vec![
+            json!({"role": "user", "content": "test"}),
+            json!({
+                "role": "assistant",
+                "content": serde_json::Value::Null,
+                "tool_calls": [{"id": "t2", "type": "function", "function": {"name": "read_file", "arguments": "{\"path\":\"a.rs\"}"}}]
+            }),
+            json!({"role": "tool", "tool_call_id": "t2", "content": "file contents here"}),
+        ];
+        let result = convert_messages_to_anthropic(&messages);
+        assert_eq!(result.len(), 3);
+        let tool_msg = &result[2];
+        let content = tool_msg["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "tool_result");
+        // is_error should not be present for successful results
+        assert!(content[0].get("is_error").is_none());
     }
 }

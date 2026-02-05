@@ -8,6 +8,7 @@
 pub mod compaction;
 pub mod config;
 pub mod context;
+pub mod guardrails;
 pub mod hooks;
 pub mod mcp;
 pub mod memory;

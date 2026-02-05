@@ -225,6 +225,19 @@ mod tests {
     #[test]
     fn test_get_tips() {
         let tips = get_tips();
-        assert!(!tips.is_empty());
+        assert!(
+            tips.len() >= 3,
+            "Should have at least 3 tips, got {}",
+            tips.len()
+        );
+        // Verify tips contain actual user-facing guidance
+        assert!(
+            tips.iter().any(|t| t.contains("/init")),
+            "Tips should mention /init command"
+        );
+        assert!(
+            tips.iter().any(|t| t.contains("/help")),
+            "Tips should mention /help command"
+        );
     }
 }

@@ -3,7 +3,8 @@
 //! Provides Claude Code-like capabilities for any AI agent.
 
 use openclaudia::{
-    config, memory, oauth, plugins, prompt, providers, proxy, tool_intercept, tools, tui, vdd,
+    config, guardrails, memory, oauth, plugins, prompt, providers, proxy, tool_intercept, tools,
+    tui, vdd,
 };
 
 use clap::{Parser, Subcommand};
@@ -234,6 +235,37 @@ session:
 #     persist: true
 #     path: .openclaudia/vdd
 #     log_adversary_responses: true
+
+# Guardrails - Constrain agent behavior and monitor changes
+# guardrails:
+#   blast_radius:
+#     enabled: true
+#     mode: advisory           # strict = block, advisory = warn
+#     allowed_paths:           # Glob patterns (empty = all allowed)
+#       - "src/**"
+#       - "tests/**"
+#     denied_paths:            # Glob patterns (takes priority over allowed)
+#       - ".env"
+#       - "secrets/**"
+#       - "*.pem"
+#     max_files_per_turn: 10   # 0 = unlimited
+#   diff_monitor:
+#     enabled: true
+#     max_lines_changed: 500   # 0 = unlimited
+#     max_files_changed: 10    # 0 = unlimited
+#     action: warn             # warn, block, or inject_findings
+#   quality_gates:
+#     enabled: true
+#     run_after: every_turn    # every_edit, every_turn, or on_commit
+#     fail_action: warn        # warn, block, or inject_findings
+#     timeout_seconds: 120
+#     checks:
+#       - name: clippy
+#         command: "cargo clippy -- -D warnings"
+#         required: true
+#       - name: tests
+#         command: "cargo test --no-fail-fast"
+#         required: true
 "#;
 
     fs::write(&config_file, default_config)?;
@@ -3204,6 +3236,9 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
         }
     };
 
+    // Initialize guardrails engine from config
+    guardrails::configure(&config.guardrails);
+
     let provider = match config.active_provider() {
         Some(p) => p,
         None => {
@@ -4083,6 +4118,8 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                     handled_structured = true;
                                     let max_proxy_iterations = config.session.max_turns;
                                     let mut proxy_iteration: u32 = 0;
+                                    let mut executed_tool_sigs: std::collections::HashSet<String> =
+                                        std::collections::HashSet::new();
 
                                     loop {
                                         if !anthropic_accumulator.has_tool_use() {
@@ -4099,11 +4136,39 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                         }
                                         proxy_iteration += 1;
 
+                                        // Reset per-turn blast radius tracking
+                                        guardrails::reset_turn();
+
                                         let text = anthropic_accumulator.get_text();
                                         let tool_calls =
                                             anthropic_accumulator.finalize_tool_calls();
                                         let tool_calls_json =
                                             anthropic_accumulator.to_openai_tool_calls_json();
+
+                                        // Duplicate tool call detection
+                                        if proxy_iteration > 0 {
+                                            let mut all_dups = true;
+                                            for tc in &tool_calls {
+                                                let sig = format!(
+                                                    "{}:{}",
+                                                    tc.function.name, tc.function.arguments
+                                                );
+                                                if !executed_tool_sigs.contains(&sig) {
+                                                    all_dups = false;
+                                                }
+                                            }
+                                            if all_dups && !tool_calls.is_empty() {
+                                                eprintln!("\n\x1b[33m⚠ Detected duplicate tool calls - breaking agentic loop\x1b[0m");
+                                                break;
+                                            }
+                                        }
+                                        for tc in &tool_calls {
+                                            let sig = format!(
+                                                "{}:{}",
+                                                tc.function.name, tc.function.arguments
+                                            );
+                                            executed_tool_sigs.insert(sig);
+                                        }
 
                                         // Store assistant message with tool_calls in OpenAI format.
                                         // convert_messages_to_anthropic handles back-conversion
@@ -4147,12 +4212,53 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                 );
                                             }
 
-                                            // Store tool result in OpenAI format
+                                            // Store tool result with error flag
+                                            let result_content = if result.is_error {
+                                                format!("[ERROR] {}", result.content)
+                                            } else {
+                                                result.content.clone()
+                                            };
                                             chat_session.messages.push(serde_json::json!({
                                                 "role": "tool",
                                                 "tool_call_id": result.tool_call_id,
-                                                "content": result.content
+                                                "content": result_content,
+                                                "is_error": result.is_error
                                             }));
+                                        }
+
+                                        // Run quality gates after tool execution (if configured for every_turn)
+                                        let qg_results = guardrails::run_quality_gates();
+                                        for qg in &qg_results {
+                                            if qg.passed {
+                                                tracing::debug!(name = %qg.name, "Quality gate passed");
+                                            } else {
+                                                let severity =
+                                                    if qg.required { "FAILED" } else { "warning" };
+                                                eprintln!(
+                                                    "\x1b[33m⚠ Quality gate '{}' {} (exit {})\x1b[0m",
+                                                    qg.name, severity, qg.exit_code
+                                                );
+                                                if !qg.stderr.is_empty() {
+                                                    let preview: String = qg
+                                                        .stderr
+                                                        .lines()
+                                                        .take(3)
+                                                        .collect::<Vec<_>>()
+                                                        .join("\n");
+                                                    eprintln!("  {}", preview);
+                                                }
+                                                // Inject findings into context so model can address them
+                                                chat_session.messages.push(serde_json::json!({
+                                                    "role": "system",
+                                                    "content": format!(
+                                                        "[Quality Gate '{}' {}] exit code {}\nstdout: {}\nstderr: {}",
+                                                        qg.name, severity,
+                                                        qg.exit_code,
+                                                        if qg.stdout.len() > 500 { &qg.stdout[..500] } else { &qg.stdout },
+                                                        if qg.stderr.len() > 500 { &qg.stderr[..500] } else { &qg.stderr }
+                                                    )
+                                                }));
+                                            }
                                         }
 
                                         // Clear accumulator for next response
@@ -4303,8 +4409,9 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                     let mut proxy_iteration: u32 = 0;
 
                                     // Track executed tool calls to detect loops
-                                    let mut executed_tool_signatures: std::collections::HashSet<String> =
-                                        std::collections::HashSet::new();
+                                    let mut executed_tool_signatures: std::collections::HashSet<
+                                        String,
+                                    > = std::collections::HashSet::new();
 
                                     while tool_interceptor.has_complete_block()
                                         && (max_proxy_iterations == 0
@@ -4328,7 +4435,9 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                         let mut all_duplicates = true;
                                         for tool in &all_tools {
                                             // Create a signature from tool name and parameters
-                                            let params_str: String = tool.parameters.iter()
+                                            let params_str: String = tool
+                                                .parameters
+                                                .iter()
                                                 .map(|(k, v)| format!("{}={}", k, v))
                                                 .collect::<Vec<_>>()
                                                 .join(",");
@@ -4529,7 +4638,9 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                         .messages
                                         .iter()
                                         .rev()
-                                        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+                                        .find(|m| {
+                                            m.get("role").and_then(|r| r.as_str()) == Some("user")
+                                        })
                                         .and_then(|m| m.get("content").and_then(|c| c.as_str()))
                                         .unwrap_or("");
 
@@ -4539,7 +4650,9 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                 let genuine_count = result
                                                     .findings
                                                     .iter()
-                                                    .filter(|f| f.status == vdd::FindingStatus::Genuine)
+                                                    .filter(|f| {
+                                                        f.status == vdd::FindingStatus::Genuine
+                                                    })
                                                     .count();
                                                 println!(
                                                     "\n\x1b[33m🔍 VDD Review: {} finding(s) ({} genuine)\x1b[0m",
@@ -4555,7 +4668,9 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                     };
                                                     println!(
                                                         "  {} [{}] {}",
-                                                        status_icon, finding.severity, finding.description
+                                                        status_icon,
+                                                        finding.severity,
+                                                        finding.description
                                                     );
                                                 }
                                                 // Inject findings as context for next turn (advisory mode)
@@ -4584,10 +4699,12 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                             }
 
                             // Agentic loop - continue while there are tool calls
-                            // 0 = unlimited (matches Claude Code behavior)
+                            // 0 = unlimited, default: 25
                             let max_iterations = config.session.max_turns;
                             let mut iteration: u32 = 0;
                             let mut current_content = full_content;
+                            let mut executed_tool_sigs: std::collections::HashSet<String> =
+                                std::collections::HashSet::new();
 
                             while tool_accumulator.has_tool_calls()
                                 && !cancelled
@@ -4595,8 +4712,34 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                             {
                                 iteration += 1;
 
+                                // Reset per-turn blast radius tracking
+                                guardrails::reset_turn();
+
                                 // Get tool calls
                                 let tool_calls = tool_accumulator.finalize();
+
+                                // Duplicate tool call detection
+                                if iteration > 1 {
+                                    let mut all_dups = true;
+                                    for tc in &tool_calls {
+                                        let sig = format!(
+                                            "{}:{}",
+                                            tc.function.name, tc.function.arguments
+                                        );
+                                        if !executed_tool_sigs.contains(&sig) {
+                                            all_dups = false;
+                                        }
+                                    }
+                                    if all_dups && !tool_calls.is_empty() {
+                                        eprintln!("\n\x1b[33m⚠ Detected duplicate tool calls - breaking agentic loop\x1b[0m");
+                                        break;
+                                    }
+                                }
+                                for tc in &tool_calls {
+                                    let sig =
+                                        format!("{}:{}", tc.function.name, tc.function.arguments);
+                                    executed_tool_sigs.insert(sig);
+                                }
 
                                 // Add assistant message with tool calls
                                 let tool_calls_json: Vec<serde_json::Value> = tool_calls
@@ -4712,12 +4855,53 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                         );
                                     }
 
-                                    // Add tool result to messages
+                                    // Add tool result with error flag
+                                    let result_content = if result.is_error {
+                                        format!("[ERROR] {}", result.content)
+                                    } else {
+                                        result.content.clone()
+                                    };
                                     chat_session.messages.push(serde_json::json!({
                                         "role": "tool",
                                         "tool_call_id": result.tool_call_id,
-                                        "content": result.content
+                                        "content": result_content,
+                                        "is_error": result.is_error
                                     }));
+                                }
+
+                                // Run quality gates after tool execution (if configured for every_turn)
+                                let qg_results = guardrails::run_quality_gates();
+                                for qg in &qg_results {
+                                    if qg.passed {
+                                        tracing::debug!(name = %qg.name, "Quality gate passed");
+                                    } else {
+                                        let severity =
+                                            if qg.required { "FAILED" } else { "warning" };
+                                        eprintln!(
+                                            "\x1b[33m⚠ Quality gate '{}' {} (exit {})\x1b[0m",
+                                            qg.name, severity, qg.exit_code
+                                        );
+                                        if !qg.stderr.is_empty() {
+                                            let preview: String = qg
+                                                .stderr
+                                                .lines()
+                                                .take(3)
+                                                .collect::<Vec<_>>()
+                                                .join("\n");
+                                            eprintln!("  {}", preview);
+                                        }
+                                        // Inject findings into context so model can address them
+                                        chat_session.messages.push(serde_json::json!({
+                                            "role": "system",
+                                            "content": format!(
+                                                "[Quality Gate '{}' {}] exit code {}\nstdout: {}\nstderr: {}",
+                                                qg.name, severity,
+                                                qg.exit_code,
+                                                if qg.stdout.len() > 500 { &qg.stdout[..500] } else { &qg.stdout },
+                                                if qg.stderr.len() > 500 { &qg.stderr[..500] } else { &qg.stderr }
+                                            )
+                                        }));
+                                    }
                                 }
 
                                 // Clear accumulator for next iteration
@@ -5036,6 +5220,9 @@ async fn cmd_start(
     if let Some(t) = target {
         config.proxy.target = t;
     }
+
+    // Initialize guardrails engine from config
+    guardrails::configure(&config.guardrails);
 
     // Check for API key - warn if missing but allow startup for OAuth mode
     if let Some(provider) = config.active_provider() {
@@ -5471,6 +5658,9 @@ async fn cmd_loop(
     if let Some(t) = target {
         config.proxy.target = t;
     }
+
+    // Initialize guardrails engine from config
+    guardrails::configure(&config.guardrails);
 
     // Validate API key
     if let Some(provider) = config.active_provider() {

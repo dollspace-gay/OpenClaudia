@@ -806,14 +806,28 @@ impl VddEngine {
 
     /// Run configured static analysis commands.
     async fn run_static_analysis(&self) -> Vec<StaticAnalysisResult> {
-        if !self.config.static_analysis.enabled || self.config.static_analysis.commands.is_empty() {
+        if !self.config.static_analysis.enabled {
             return Vec::new();
         }
+
+        // Determine commands: use explicit config, or auto-detect if enabled
+        let commands: Vec<String> = if !self.config.static_analysis.commands.is_empty() {
+            self.config.static_analysis.commands.clone()
+        } else if self.config.static_analysis.auto_detect {
+            let detected = crate::guardrails::get_auto_detected_commands();
+            if detected.is_empty() {
+                debug!("VDD: No static analysis commands configured or auto-detected");
+                return Vec::new();
+            }
+            detected
+        } else {
+            return Vec::new();
+        };
 
         let mut results = Vec::new();
         let timeout = Duration::from_secs(self.config.static_analysis.timeout_seconds);
 
-        for command in &self.config.static_analysis.commands {
+        for command in &commands {
             debug!(command = %command, "VDD: Running static analysis");
 
             let result = run_shell_command(command, timeout).await;
@@ -832,12 +846,14 @@ impl VddEngine {
     /// Parse adversary response text into structured findings.
     fn parse_findings(&self, adversary_response: &str, iteration: u32) -> Vec<Finding> {
         // Try to parse as JSON first
-        let parsed: Option<AdversaryResponse> =
-            serde_json::from_str(adversary_response).ok().or_else(|| {
+        let parsed: Option<AdversaryResponse> = serde_json::from_str(adversary_response)
+            .ok()
+            .or_else(|| {
                 // Try to extract JSON from markdown code blocks
                 extract_json_from_response(adversary_response)
                     .and_then(|json| serde_json::from_str(&json).ok())
-            }).or_else(|| {
+            })
+            .or_else(|| {
                 // Try relaxed parsing for natural language responses
                 try_parse_relaxed(adversary_response)
             });
@@ -1175,10 +1191,7 @@ async fn forward_request(
 
     // Google/Gemini requires model name in the URL path
     let url = if provider_name == "google" {
-        format!(
-            "{}/v1beta/models/{}:generateContent",
-            base_url, model
-        )
+        format!("{}/v1beta/models/{}:generateContent", base_url, model)
     } else {
         format!("{}{}", base_url, endpoint)
     };
@@ -1978,6 +1991,7 @@ mod tests {
                 session: crate::config::SessionConfig::default(),
                 keybindings: crate::config::KeybindingsConfig::default(),
                 vdd: VddConfig::default(),
+                guardrails: crate::config::GuardrailsConfig::default(),
             },
             client: Client::new(),
         };
@@ -2011,6 +2025,7 @@ mod tests {
                 session: crate::config::SessionConfig::default(),
                 keybindings: crate::config::KeybindingsConfig::default(),
                 vdd: VddConfig::default(),
+                guardrails: crate::config::GuardrailsConfig::default(),
             },
             client: Client::new(),
         };
@@ -2032,6 +2047,7 @@ mod tests {
                 session: crate::config::SessionConfig::default(),
                 keybindings: crate::config::KeybindingsConfig::default(),
                 vdd: VddConfig::default(),
+                guardrails: crate::config::GuardrailsConfig::default(),
             },
             client: Client::new(),
         };

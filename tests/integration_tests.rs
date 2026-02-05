@@ -190,10 +190,7 @@ mod file_tools {
         let file_path = dir.path().join("test.txt");
 
         // Read the file first (required before editing)
-        let read_call = make_tool_call(
-            "read_file",
-            json!({ "path": file_path.to_string_lossy() }),
-        );
+        let read_call = make_tool_call("read_file", json!({ "path": file_path.to_string_lossy() }));
         execute_tool(&read_call);
 
         let tool_call = make_tool_call(
@@ -227,10 +224,7 @@ mod file_tools {
         let file_path = dir.path().join("test.txt");
 
         // Read the file first (required before editing)
-        let read_call = make_tool_call(
-            "read_file",
-            json!({ "path": file_path.to_string_lossy() }),
-        );
+        let read_call = make_tool_call("read_file", json!({ "path": file_path.to_string_lossy() }));
         execute_tool(&read_call);
 
         let tool_call = make_tool_call(
@@ -439,10 +433,7 @@ mod file_tools {
         fs::write(&file_path, original).expect("Failed to write");
 
         // Read the file first (required before editing)
-        let read_call = make_tool_call(
-            "read_file",
-            json!({ "path": file_path.to_string_lossy() }),
-        );
+        let read_call = make_tool_call("read_file", json!({ "path": file_path.to_string_lossy() }));
         execute_tool(&read_call);
 
         let tool_call = make_tool_call(
@@ -479,10 +470,7 @@ mod file_tools {
         fs::write(&file_path, original).expect("Failed to write");
 
         // Read the file first (required before editing)
-        let read_call = make_tool_call(
-            "read_file",
-            json!({ "path": file_path.to_string_lossy() }),
-        );
+        let read_call = make_tool_call("read_file", json!({ "path": file_path.to_string_lossy() }));
         execute_tool(&read_call);
 
         let tool_call = make_tool_call(
@@ -544,12 +532,14 @@ mod file_tools {
 
         let result = execute_tool(&tool_call);
 
-        // Some implementations create parent dirs, some don't - test behavior
-        if !result.is_error {
-            let content = fs::read_to_string(&file_path).expect("Failed to read");
-            assert_eq!(content, "Content in nested dir");
-        }
-        // If error, it should mention directory doesn't exist
+        // write_file should create parent directories automatically
+        assert!(
+            !result.is_error,
+            "write_file should create parent dirs, got error: {}",
+            result.content
+        );
+        let content = fs::read_to_string(&file_path).expect("Failed to read written file");
+        assert_eq!(content, "Content in nested dir");
     }
 
     #[test]
@@ -557,7 +547,7 @@ mod file_tools {
         let dir = TempDir::new().expect("Failed to create temp dir");
         let file_path = dir.path().join("binary.bin");
 
-        // Write some binary content
+        // Write some binary content (PNG magic bytes + nulls)
         let binary_content: Vec<u8> = vec![0x00, 0x01, 0x02, 0xFF, 0xFE, 0x89, 0x50, 0x4E, 0x47];
         fs::write(&file_path, &binary_content).expect("Failed to write binary");
 
@@ -570,11 +560,164 @@ mod file_tools {
 
         let result = execute_tool(&tool_call);
 
-        // Should either succeed with escaped content or indicate binary file
-        // Both behaviors are acceptable
+        // Must produce a non-empty response (either content or error message)
         assert!(
-            !result.is_error || result.content.to_lowercase().contains("binary"),
-            "Should handle binary file gracefully"
+            !result.content.is_empty(),
+            "Binary file read should produce output (content or error), got empty"
+        );
+        // If it succeeded, it should have returned some representation of the bytes
+        // If it errored, it should mention binary
+        if result.is_error {
+            assert!(
+                result.content.to_lowercase().contains("binary")
+                    || result.content.to_lowercase().contains("utf")
+                    || result.content.to_lowercase().contains("invalid"),
+                "Binary error should explain the issue, got: {}",
+                result.content
+            );
+        }
+    }
+
+    // =========== EDGE CASE: EDIT WITHOUT PRIOR READ ===========
+
+    #[test]
+    fn test_edit_file_without_prior_read() {
+        reset_read_tracker();
+        let dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = dir.path().join("unread.txt");
+        fs::write(&file_path, "original content").expect("Failed to write");
+
+        // Attempt to edit WITHOUT reading first — should be rejected by read tracker
+        let tool_call = make_tool_call(
+            "edit_file",
+            json!({
+                "path": file_path.to_string_lossy(),
+                "old_string": "original",
+                "new_string": "modified"
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            result.is_error,
+            "Edit without prior read should fail, got: {}",
+            result.content
+        );
+        assert!(
+            result.content.to_lowercase().contains("read")
+                || result.content.to_lowercase().contains("must"),
+            "Error should mention the read requirement, got: {}",
+            result.content
+        );
+
+        // Verify file is unchanged
+        let content = fs::read_to_string(&file_path).expect("Failed to read");
+        assert_eq!(content, "original content", "File should be unmodified");
+    }
+
+    // =========== EDGE CASE: WRITE EMPTY CONTENT ===========
+
+    #[test]
+    fn test_write_file_empty_content() {
+        let dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = dir.path().join("empty_write.txt");
+
+        let tool_call = make_tool_call(
+            "write_file",
+            json!({
+                "path": file_path.to_string_lossy(),
+                "content": ""
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            !result.is_error,
+            "Writing empty content should succeed: {}",
+            result.content
+        );
+        let content = fs::read_to_string(&file_path).expect("Failed to read");
+        assert_eq!(content, "", "File should be empty");
+    }
+
+    // =========== EDGE CASE: EDIT WITH IDENTICAL OLD/NEW ===========
+
+    #[test]
+    fn test_edit_file_identical_old_new() {
+        reset_read_tracker();
+        let dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = dir.path().join("identical.txt");
+        fs::write(&file_path, "some content here").expect("Failed to write");
+
+        // Read first
+        let read_call = make_tool_call("read_file", json!({ "path": file_path.to_string_lossy() }));
+        execute_tool(&read_call);
+
+        // Edit with same old and new string
+        let tool_call = make_tool_call(
+            "edit_file",
+            json!({
+                "path": file_path.to_string_lossy(),
+                "old_string": "some content",
+                "new_string": "some content"
+            }),
+        );
+
+        let _result = execute_tool(&tool_call);
+
+        // Should either succeed (no-op) or warn — but file must be unchanged
+        let content = fs::read_to_string(&file_path).expect("Failed to read");
+        assert_eq!(
+            content, "some content here",
+            "File should be unchanged after identical edit"
+        );
+    }
+
+    // =========== EDGE CASE: READ FILE WITH PATH TRAVERSAL ===========
+
+    #[test]
+    fn test_read_file_path_traversal() {
+        let tool_call = make_tool_call(
+            "read_file",
+            json!({
+                "path": "../../../etc/passwd"
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        // On Windows this path won't exist; on any OS this should fail or return safely
+        assert!(
+            result.is_error || !result.content.contains("root:"),
+            "Path traversal should not expose sensitive files"
+        );
+    }
+
+    // =========== EDGE CASE: WRITE FILE WITH VERY LONG PATH ===========
+
+    #[test]
+    fn test_write_file_very_long_filename() {
+        let dir = TempDir::new().expect("Failed to create temp dir");
+        let long_name = "a".repeat(300);
+        let file_path = dir.path().join(&long_name);
+
+        let tool_call = make_tool_call(
+            "write_file",
+            json!({
+                "path": file_path.to_string_lossy(),
+                "content": "test"
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        // Should fail gracefully — most filesystems reject names > 255 chars
+        assert!(
+            result.is_error,
+            "Very long filename should fail, got: {}",
+            result.content
         );
     }
 }
@@ -617,10 +760,11 @@ mod bash_tools {
 
         let result = execute_tool(&tool_call);
 
-        // Command fails but tool captures the result
+        // A non-zero exit must be flagged as an error
         assert!(
-            result.content.contains("exit") || result.is_error,
-            "Should indicate non-zero exit"
+            result.is_error,
+            "Non-zero exit code should set is_error=true, got content: {}",
+            result.content
         );
     }
 
@@ -685,10 +829,17 @@ mod bash_tools {
             }),
         );
 
-        let _result = execute_tool(&tool_call);
+        let result = execute_tool(&tool_call);
 
-        // Should timeout or complete quickly
-        // The implementation might return timeout error or partial output
+        // Must produce some output or error — never silently pass
+        assert!(
+            result.is_error
+                || result.content.contains("timeout")
+                || result.content.contains("Pinging")
+                || result.content.contains("Reply")
+                || !result.content.is_empty(),
+            "Timeout test should produce output or error, got empty result"
+        );
     }
 
     #[test]
@@ -902,10 +1053,11 @@ mod bash_tools {
 
         let result = execute_tool(&tool_call);
 
-        // Should capture stderr output
+        // Stderr output must appear in result content regardless of is_error
         assert!(
-            !result.is_error || result.content.contains("stderr"),
-            "Should capture stderr output"
+            result.content.contains("stderr test"),
+            "Should capture stderr output in content, got: {}",
+            result.content
         );
     }
 
@@ -970,6 +1122,87 @@ mod bash_tools {
             result.is_error || result.content.to_lowercase().contains("not found"),
             "Should indicate shell not found: {}",
             result.content
+        );
+    }
+
+    // =========== EDGE CASE: EMPTY COMMAND ===========
+
+    #[test]
+    fn test_bash_empty_command() {
+        let tool_call = make_tool_call(
+            "bash",
+            json!({
+                "command": ""
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        // Empty command should either error or produce a safe no-op result — not crash
+        assert!(
+            result.is_error
+                || result.content.is_empty()
+                || result.content.to_lowercase().contains("no output")
+                || result.content.to_lowercase().contains("empty"),
+            "Empty command should fail gracefully or produce no-op output, got: {}",
+            result.content
+        );
+    }
+
+    // =========== EDGE CASE: COMMAND WITH SPECIAL SHELL CHARS ===========
+
+    #[test]
+    fn test_bash_special_shell_characters() {
+        let tool_call = make_tool_call(
+            "bash",
+            json!({
+                "command": "echo 'hello; world & test | more'"
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            !result.is_error,
+            "Quoted special chars should not be interpreted: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("hello; world & test | more"),
+            "Should print literal special chars, got: {}",
+            result.content
+        );
+    }
+
+    // =========== EDGE CASE: LARGE OUTPUT ===========
+
+    #[test]
+    fn test_bash_large_output() {
+        // Generate a large output to test truncation behavior
+        let tool_call = make_tool_call(
+            "bash",
+            json!({
+                "command": "seq 1 5000"
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            !result.is_error,
+            "Large output command should succeed: {}",
+            result.content
+        );
+        // Should contain at least some of the output
+        assert!(
+            result.content.contains("1"),
+            "Should contain start of output"
+        );
+        // Content should be non-trivially sized
+        assert!(
+            result.content.len() > 100,
+            "Large output should produce substantial content, got {} bytes",
+            result.content.len()
         );
     }
 }
@@ -1131,7 +1364,15 @@ mod memory_tools {
             "Search should succeed: {}",
             result.content
         );
-        // Empty result is fine
+        // Verify it actually reports zero/no results rather than silently passing
+        assert!(
+            result.content.to_lowercase().contains("no ")
+                || result.content.to_lowercase().contains("0 ")
+                || result.content.to_lowercase().contains("empty")
+                || result.content.is_empty(),
+            "Should indicate no results found, got: {}",
+            result.content
+        );
     }
 
     #[test]
@@ -1939,12 +2180,23 @@ mod subagent_tools {
         let tool_call = make_tool_call("agent_output", json!({}));
         let result = execute_tool(&tool_call);
 
-        // Should fail because it requires config, or return empty list
-        // The behavior depends on implementation
-        if !result.is_error {
+        // Must produce a meaningful response — either error about config or empty list message
+        assert!(
+            !result.content.is_empty(),
+            "agent_output should produce output, got empty"
+        );
+        if result.is_error {
+            assert!(
+                result.content.to_lowercase().contains("config")
+                    || result.content.to_lowercase().contains("require"),
+                "Error should mention config requirement: {}",
+                result.content
+            );
+        } else {
             assert!(
                 result.content.to_lowercase().contains("no")
-                    || result.content.to_lowercase().contains("agent"),
+                    || result.content.to_lowercase().contains("agent")
+                    || result.content.to_lowercase().contains("empty"),
                 "Should mention no agents: {}",
                 result.content
             );
@@ -2883,6 +3135,7 @@ mod vdd_tests {
                 },
                 static_analysis: VddStaticAnalysis {
                     enabled: true,
+                    auto_detect: false,
                     commands: vec!["echo ok".to_string()],
                     timeout_seconds: 30,
                 },
@@ -2892,6 +3145,7 @@ mod vdd_tests {
                     ..Default::default()
                 },
             },
+            guardrails: openclaudia::config::GuardrailsConfig::default(),
         }
     }
 

@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix lru crate Stacked Borrows vulnerability by updating to 0.16.3 (#99)
 
 ### Added
+- Improve test robustness and add edge case coverage (#225)
+- Improve tool result format to prevent agentic loops (#218)
+- Add coding guardrail enforcement system (#219)
+- Add automatic language detection for VDD static analysis commands (#223)
+- Add guardrails configuration to default config template (#224)
 - Add read-before-edit enforcement for edit_file tool (#216)
 - Add structured tool_use support for Anthropic proxy mode (#207)
 - Add Verification-Driven Development (VDD) adversarial loop engine (#197)
@@ -84,6 +89,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix TUI welcome screen box drawing alignment (#59)
 
 ### Changed
+- Add automated code quality gates for real-time code smell detection (#222)
+- Add diff size monitoring with automated flagging for oversized changes (#221)
+- Add blast radius limiting to constrain file and scope access per request (#220)
 - Integrate VDD engine into main chat loop (#213)
 - Add VDD section to generated config.yaml from init command (#212)
 - Update proxy-mode agentic loop for structured tool_use with XML fallback (#210)

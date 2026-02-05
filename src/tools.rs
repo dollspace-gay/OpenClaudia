@@ -862,6 +862,17 @@ fn execute_write_file(args: &HashMap<String, Value>) -> (String, bool) {
         None => return ("Missing 'content' argument".to_string(), true),
     };
 
+    // Blast radius check
+    if let Err(msg) = crate::guardrails::check_file_access(path) {
+        return (msg, true);
+    }
+
+    // Read existing content for diff tracking
+    let old_lines = fs::read_to_string(path)
+        .map(|c| c.lines().count() as u32)
+        .unwrap_or(0);
+    let new_lines = content.lines().count() as u32;
+
     // Create parent directories if needed
     if let Some(parent) = Path::new(path).parent() {
         if !parent.as_os_str().is_empty() {
@@ -872,10 +883,16 @@ fn execute_write_file(args: &HashMap<String, Value>) -> (String, bool) {
     }
 
     match fs::write(path, content) {
-        Ok(()) => (
-            format!("Successfully wrote {} bytes to '{}'", content.len(), path),
-            false,
-        ),
+        Ok(()) => {
+            // Record diff stats
+            crate::guardrails::record_file_modification(path, new_lines, old_lines);
+
+            let mut result = format!("Successfully wrote {} bytes to '{}'", content.len(), path);
+            if let Some(warning) = crate::guardrails::check_diff_thresholds() {
+                result.push_str(&format!("\n\nWarning: {}", warning.message));
+            }
+            (result, false)
+        }
         Err(e) => (format!("Failed to write file '{}': {}", path, e), true),
     }
 }
@@ -897,6 +914,11 @@ fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
             ),
             true,
         );
+    }
+
+    // Blast radius check
+    if let Err(msg) = crate::guardrails::check_file_access(path) {
+        return (msg, true);
     }
 
     let old_string = match args.get("old_string").and_then(|v| v.as_str()) {
@@ -932,20 +954,30 @@ fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
         return (format!("Found {} occurrences of the text. Please provide a more specific old_string that matches uniquely.", count), true);
     }
 
+    // Track diff: lines removed vs added
+    let lines_removed = old_string.lines().count() as u32;
+    let lines_added = new_string.lines().count() as u32;
+
     // Make the replacement
     let new_content = content.replacen(old_string, new_string, 1);
 
     // Write back
     match fs::write(path, &new_content) {
-        Ok(()) => (
-            format!(
+        Ok(()) => {
+            // Record diff stats
+            crate::guardrails::record_file_modification(path, lines_added, lines_removed);
+
+            let mut result = format!(
                 "Successfully edited '{}'. Replaced {} chars with {} chars.",
                 path,
                 old_string.len(),
                 new_string.len()
-            ),
-            false,
-        ),
+            );
+            if let Some(warning) = crate::guardrails::check_diff_thresholds() {
+                result.push_str(&format!("\n\nWarning: {}", warning.message));
+            }
+            (result, false)
+        }
         Err(e) => (format!("Failed to write file '{}': {}", path, e), true),
     }
 }
@@ -1948,7 +1980,50 @@ mod tests {
         let tools = get_tool_definitions();
         assert!(tools.is_array());
         let arr = tools.as_array().unwrap();
-        assert!(arr.len() >= 4);
+
+        // Extract tool names for specific checks
+        let tool_names: Vec<&str> = arr
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str())
+            .collect();
+
+        // Verify all core tools are present
+        let required = vec![
+            "bash",
+            "bash_output",
+            "kill_shell",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "list_files",
+            "chainlink",
+            "web_fetch",
+            "web_search",
+            "todo_write",
+            "todo_read",
+        ];
+        for name in &required {
+            assert!(
+                tool_names.contains(name),
+                "Missing required tool '{}'. Found: {:?}",
+                name,
+                tool_names
+            );
+        }
+
+        // Each tool must have valid structure
+        for tool in arr {
+            let func = tool.get("function").expect("Tool missing 'function'");
+            assert!(
+                func.get("name").and_then(|n| n.as_str()).is_some(),
+                "Tool missing name"
+            );
+            assert!(
+                func.get("description").and_then(|d| d.as_str()).is_some(),
+                "Tool missing description"
+            );
+            assert!(func.get("parameters").is_some(), "Tool missing parameters");
+        }
     }
 
     #[test]
@@ -1964,8 +2039,14 @@ mod tests {
     fn test_list_files() {
         let args = HashMap::new();
         let (output, is_error) = execute_list_files(&args);
-        assert!(!is_error);
-        assert!(!output.is_empty());
+        assert!(!is_error, "list_files should succeed for cwd");
+        assert!(!output.is_empty(), "cwd should contain files");
+        // Running in the project root, Cargo.toml must be present
+        assert!(
+            output.contains("Cargo.toml"),
+            "Project root should contain Cargo.toml, got: {}",
+            output
+        );
     }
 
     #[test]
