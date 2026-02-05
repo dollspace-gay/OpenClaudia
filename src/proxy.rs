@@ -378,15 +378,16 @@ async fn run_pre_tool_use_hooks(
     tool_input: &serde_json::Value,
 ) -> HookResult {
     // Check for dangerous tool patterns and deny if needed
+    // Serialize the entire tool_input JSON to a string so we catch patterns
+    // inside nested fields (e.g. {"command": "rm -rf /"})
     let dangerous_patterns = ["rm -rf", "format c:", "drop table", "delete from"];
-    if let Some(args_str) = tool_input.as_str() {
-        for pattern in dangerous_patterns {
-            if args_str.to_lowercase().contains(pattern) {
-                return HookResult::denied(format!(
-                    "Tool '{}' contains dangerous pattern: {}",
-                    tool_name, pattern
-                ));
-            }
+    let input_str = tool_input.to_string().to_lowercase();
+    for pattern in dangerous_patterns {
+        if input_str.contains(pattern) {
+            return HookResult::denied(format!(
+                "Tool '{}' contains dangerous pattern: {}",
+                tool_name, pattern
+            ));
         }
     }
 
@@ -417,15 +418,16 @@ async fn run_pre_tool_use_hooks(
     result
 }
 
+/// Lazily-compiled regex for extracting file extensions from message text.
+static EXTENSION_PATTERN: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"[\w/\\.-]+\.([a-zA-Z0-9]{1,10})\b").unwrap());
+
 /// Extract file extensions from message content (looks for file paths)
 fn extract_extensions_from_messages(messages: &[ChatMessage]) -> Vec<String> {
     use std::collections::HashSet;
 
     let mut extensions = HashSet::new();
-
-    // Simple regex-like pattern to find file extensions in text
-    // Matches patterns like: file.rs, /path/to/file.py, src/main.ts
-    let extension_pattern = regex::Regex::new(r"[\w/\\.-]+\.([a-zA-Z0-9]{1,10})\b").unwrap();
+    let extension_pattern = &*EXTENSION_PATTERN;
 
     for msg in messages {
         let text = match &msg.content {
@@ -1238,7 +1240,7 @@ async fn forward_to_provider<T: Serialize>(
     if provider.base_url.contains("anthropic") {
         req = req
             .header("x-api-key", api_key)
-            .header("anthropic-version", "2024-01-01");
+            .header("anthropic-version", "2023-06-01");
     } else {
         req = req.header(header::AUTHORIZATION, format!("Bearer {}", api_key));
     }
@@ -1261,7 +1263,7 @@ fn set_auth_header(
     if provider_name == "anthropic" {
         req = req
             .header("x-api-key", api_key)
-            .header("anthropic-version", "2024-01-01");
+            .header("anthropic-version", "2023-06-01");
     } else {
         req = req.header(header::AUTHORIZATION, format!("Bearer {}", api_key));
     }
@@ -1468,7 +1470,11 @@ pub async fn start_server_with_shutdown(
         .timeout(std::time::Duration::from_secs(300))
         .build()?;
 
-    let hook_engine = HookEngine::new(config.hooks.clone());
+    // Load hooks from both OpenClaudia config and Claude Code settings.json
+    let claude_hooks = load_claude_code_hooks();
+    let merged_hooks = merge_hooks_config(config.hooks.clone(), claude_hooks);
+    let hook_engine = HookEngine::new(merged_hooks);
+
     let rules_engine = RulesEngine::new(".openclaudia/rules");
 
     // Initialize compactor with default model context
@@ -1487,8 +1493,46 @@ pub async fn start_server_with_shutdown(
     }
     let plugin_manager = Arc::new(plugin_manager);
 
-    // Initialize MCP manager
+    // Initialize MCP manager and connect to configured servers
     let mcp_manager = Arc::new(RwLock::new(McpManager::new()));
+    {
+        let mut mcp = mcp_manager.write().await;
+        for (plugin, server) in plugin_manager.all_mcp_servers() {
+            match server.transport.as_str() {
+                "stdio" => {
+                    if let Some(command) = &server.command {
+                        let args: Vec<&str> = server.args.iter().map(|s| s.as_str()).collect();
+                        match mcp.connect_stdio(&server.name, command, &args).await {
+                            Ok(()) => {
+                                info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (stdio)")
+                            }
+                            Err(e) => {
+                                warn!(server = %server.name, error = %e, "MCP connect failed")
+                            }
+                        }
+                    }
+                }
+                "http" => {
+                    if let Some(url) = &server.url {
+                        match mcp.connect_http(&server.name, url).await {
+                            Ok(()) => {
+                                info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (http)")
+                            }
+                            Err(e) => {
+                                warn!(server = %server.name, error = %e, "MCP connect failed")
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    warn!(server = %server.name, transport = %server.transport, "Unknown MCP transport")
+                }
+            }
+        }
+        if mcp.server_count() > 0 {
+            info!(connected = mcp.server_count(), "MCP servers initialized");
+        }
+    }
 
     // Initialize OAuth store for Claude Max authentication
     let oauth_store = Arc::new(OAuthStore::new());
@@ -1527,6 +1571,25 @@ pub async fn start_server_with_shutdown(
         oauth_store,
         vdd_engine,
     };
+
+    // Fire SessionStart hook
+    let session_id = {
+        let mut sm = state.session_manager.write().await;
+        let session = sm.get_or_create_session();
+        session.id.clone()
+    };
+
+    let start_input = HookInput::new(HookEvent::SessionStart).with_session_id(&session_id);
+    let start_result = state
+        .hook_engine
+        .run(HookEvent::SessionStart, &start_input)
+        .await;
+
+    info!(
+        session_id = %session_id,
+        hooks_allowed = start_result.allowed,
+        "Session started"
+    );
 
     let app = create_router(state);
 
