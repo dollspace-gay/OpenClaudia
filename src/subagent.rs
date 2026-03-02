@@ -13,8 +13,10 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
+use std::time::Instant;
 use tokio::runtime::Handle;
 use uuid::Uuid;
 
@@ -280,6 +282,176 @@ impl Default for BackgroundAgentManager {
 pub static BACKGROUND_AGENTS: LazyLock<BackgroundAgentManager> =
     LazyLock::new(BackgroundAgentManager::new);
 
+// === Transcript Storage for Resume ===
+
+/// Stored transcript for a completed agent, enabling resume
+pub(crate) struct StoredTranscript {
+    messages: Vec<Value>,
+    agent_type: AgentType,
+    created_at: Instant,
+}
+
+/// TTL for stored transcripts (30 minutes)
+const TRANSCRIPT_TTL_SECS: u64 = 30 * 60;
+
+/// Global transcript store for agent resume
+pub(crate) static TRANSCRIPT_STORE: LazyLock<Mutex<HashMap<String, StoredTranscript>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Store a transcript for future resume
+fn store_transcript(agent_id: &str, messages: Vec<Value>, agent_type: AgentType) {
+    if let Ok(mut store) = TRANSCRIPT_STORE.lock() {
+        // Evict expired transcripts
+        let now = Instant::now();
+        store.retain(|_, t| now.duration_since(t.created_at).as_secs() < TRANSCRIPT_TTL_SECS);
+
+        store.insert(
+            agent_id.to_string(),
+            StoredTranscript {
+                messages,
+                agent_type,
+                created_at: now,
+            },
+        );
+    }
+}
+
+/// Load a stored transcript for resume
+fn load_transcript(agent_id: &str) -> Option<(Vec<Value>, AgentType)> {
+    if let Ok(mut store) = TRANSCRIPT_STORE.lock() {
+        // Evict expired first
+        let now = Instant::now();
+        store.retain(|_, t| now.duration_since(t.created_at).as_secs() < TRANSCRIPT_TTL_SECS);
+
+        store.get(agent_id).map(|t| (t.messages.clone(), t.agent_type))
+    } else {
+        None
+    }
+}
+
+// === Worktree Isolation ===
+
+/// State for a git worktree used by an agent
+#[derive(Debug, Clone)]
+pub struct WorktreeIsolation {
+    pub worktree_path: PathBuf,
+    pub branch_name: String,
+}
+
+impl WorktreeIsolation {
+    /// Create a new git worktree for agent isolation
+    pub fn create(agent_id: &str) -> Result<Self, String> {
+        let branch_name = format!("agent/{}", agent_id);
+
+        // Find the git root
+        let git_root = std::process::Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .output()
+            .map_err(|e| format!("git not available: {}", e))?;
+
+        if !git_root.status.success() {
+            return Err("Not in a git repository".to_string());
+        }
+
+        let root = String::from_utf8_lossy(&git_root.stdout).trim().to_string();
+        let worktree_dir = Path::new(&root).join(".openclaudia").join("worktrees");
+
+        // Ensure worktree directory exists
+        std::fs::create_dir_all(&worktree_dir)
+            .map_err(|e| format!("Failed to create worktree directory: {}", e))?;
+
+        let worktree_path = worktree_dir.join(agent_id);
+
+        // Create the worktree
+        let result = std::process::Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                worktree_path.to_str().unwrap_or(""),
+                "-b",
+                &branch_name,
+            ])
+            .output()
+            .map_err(|e| format!("Failed to create worktree: {}", e))?;
+
+        if !result.status.success() {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            return Err(format!("git worktree add failed: {}", stderr));
+        }
+
+        Ok(Self {
+            worktree_path,
+            branch_name,
+        })
+    }
+
+    /// Check if the worktree has uncommitted changes
+    pub fn has_changes(&self) -> bool {
+        let result = std::process::Command::new("git")
+            .args(["-C", self.worktree_path.to_str().unwrap_or(""), "diff", "--stat"])
+            .output();
+
+        match result {
+            Ok(output) => !output.stdout.is_empty(),
+            Err(_) => false,
+        }
+    }
+
+    /// Remove the worktree (only if no changes)
+    pub fn cleanup(&self) -> Result<(), String> {
+        if self.has_changes() {
+            return Err(format!(
+                "Worktree has changes — keeping at {} on branch {}",
+                self.worktree_path.display(),
+                self.branch_name
+            ));
+        }
+
+        let result = std::process::Command::new("git")
+            .args([
+                "worktree",
+                "remove",
+                self.worktree_path.to_str().unwrap_or(""),
+                "--force",
+            ])
+            .output()
+            .map_err(|e| format!("Failed to remove worktree: {}", e))?;
+
+        if !result.status.success() {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            return Err(format!("git worktree remove failed: {}", stderr));
+        }
+
+        // Also delete the branch
+        let _ = std::process::Command::new("git")
+            .args(["branch", "-D", &self.branch_name])
+            .output();
+
+        Ok(())
+    }
+}
+
+// === Model Name Resolution ===
+
+/// Map friendly model names to actual model IDs
+fn resolve_model_name(friendly: &str, provider: &str) -> String {
+    match friendly.to_lowercase().as_str() {
+        "opus" => match provider {
+            "anthropic" => "claude-opus-4-20250514".to_string(),
+            _ => "claude-opus-4-20250514".to_string(),
+        },
+        "sonnet" => match provider {
+            "anthropic" => "claude-sonnet-4-20250514".to_string(),
+            _ => "claude-sonnet-4-20250514".to_string(),
+        },
+        "haiku" => match provider {
+            "anthropic" => "claude-haiku-4-5-20251001".to_string(),
+            _ => "claude-haiku-4-5-20251001".to_string(),
+        },
+        other => other.to_string(),
+    }
+}
+
 // === Tool Definitions ===
 
 /// Get the Task tool definition
@@ -288,7 +460,7 @@ pub fn get_task_tool_definition() -> Value {
         "type": "function",
         "function": {
             "name": "task",
-            "description": "Launch a subagent to handle a complex task autonomously. The subagent runs with its own conversation context and tool access, then returns a summary when done. Use 'run_in_background: true' for long tasks you want to run while continuing other work.",
+            "description": "Launch a subagent to handle a complex task autonomously. The subagent runs with its own conversation context and tool access, then returns a summary when done. Use 'run_in_background: true' for long tasks. Use 'resume' with a previous agent_id to continue from where it left off.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -308,6 +480,20 @@ pub fn get_task_tool_definition() -> Value {
                     "run_in_background": {
                         "type": "boolean",
                         "description": "If true, run in background and return an agent_id. Use agent_output to retrieve results later."
+                    },
+                    "resume": {
+                        "type": "string",
+                        "description": "Optional agent ID to resume from. The agent continues with its full previous context preserved."
+                    },
+                    "model": {
+                        "type": "string",
+                        "enum": ["sonnet", "opus", "haiku"],
+                        "description": "Optional model to use. 'haiku' for quick tasks, 'opus' for complex reasoning, 'sonnet' (default) for balanced."
+                    },
+                    "isolation": {
+                        "type": "string",
+                        "enum": ["worktree"],
+                        "description": "Set to 'worktree' to run the agent in an isolated git worktree. Changes are kept if the agent modifies files."
                     }
                 },
                 "required": ["description", "prompt", "subagent_type"]
@@ -359,6 +545,8 @@ pub struct SubagentConfig {
     pub prompt: String,
     pub run_in_background: bool,
     pub model_override: Option<String>,
+    pub resume_agent_id: Option<String>,
+    pub isolation: Option<String>,
 }
 
 /// Result from a subagent execution
@@ -369,6 +557,7 @@ pub struct SubagentResult {
     pub output: String,
     pub turns_used: u64,
     pub is_background: bool,
+    pub worktree: Option<WorktreeIsolation>,
 }
 
 /// Run a subagent synchronously, returning the final result
@@ -377,10 +566,76 @@ pub async fn run_subagent(
     app_config: &AppConfig,
     client: &Client,
 ) -> SubagentResult {
-    let agent_id = BACKGROUND_AGENTS.register(config.agent_type, &config.task);
+    // Handle resume: reuse previous agent_id and load transcript
+    let (agent_id, mut messages) = if let Some(ref resume_id) = config.resume_agent_id {
+        match load_transcript(resume_id) {
+            Some((prev_messages, _prev_type)) => {
+                // Re-register with same ID for tracking
+                let id = BACKGROUND_AGENTS.register(config.agent_type, &config.task);
+                let mut msgs = prev_messages;
+                // Append the new prompt as a continuation
+                msgs.push(json!({
+                    "role": "user",
+                    "content": format!("Continuing from where you left off.\n\n{}", config.prompt)
+                }));
+                (id, msgs)
+            }
+            None => {
+                return SubagentResult {
+                    agent_id: resume_id.clone(),
+                    success: false,
+                    output: format!("No transcript found for agent '{}'. It may have expired (TTL: {} minutes).", resume_id, TRANSCRIPT_TTL_SECS / 60),
+                    turns_used: 0,
+                    is_background: config.run_in_background,
+                    worktree: None,
+                };
+            }
+        }
+    } else {
+        let id = BACKGROUND_AGENTS.register(config.agent_type, &config.task);
+        let system_prompt = config.agent_type.system_prompt();
+        let msgs = vec![
+            json!({
+                "role": "system",
+                "content": system_prompt
+            }),
+            json!({
+                "role": "user",
+                "content": format!("Task: {}\n\n{}", config.task, config.prompt)
+            }),
+        ];
+        (id, msgs)
+    };
 
-    // Build the conversation
-    let system_prompt = config.agent_type.system_prompt();
+    // Set up worktree isolation if requested
+    let worktree = if config.isolation.as_deref() == Some("worktree") {
+        match WorktreeIsolation::create(&agent_id) {
+            Ok(wt) => {
+                // Set working directory for tool execution by injecting context
+                messages.push(json!({
+                    "role": "system",
+                    "content": format!(
+                        "You are running in an isolated git worktree at: {}\nBranch: {}\nAll file operations should use paths relative to or within this directory.",
+                        wt.worktree_path.display(), wt.branch_name
+                    )
+                }));
+                Some(wt)
+            }
+            Err(e) => {
+                return SubagentResult {
+                    agent_id,
+                    success: false,
+                    output: format!("Failed to create worktree: {}", e),
+                    turns_used: 0,
+                    is_background: config.run_in_background,
+                    worktree: None,
+                };
+            }
+        }
+    } else {
+        None
+    };
+
     let allowed_tools = config.agent_type.allowed_tools();
 
     // Filter tool definitions to only allowed tools
@@ -400,18 +655,6 @@ pub async fn run_subagent(
                 .collect()
         })
         .unwrap_or_default();
-
-    // Initialize messages with system and user prompt
-    let mut messages: Vec<Value> = vec![
-        json!({
-            "role": "system",
-            "content": system_prompt
-        }),
-        json!({
-            "role": "user",
-            "content": format!("Task: {}\n\n{}", config.task, config.prompt)
-        }),
-    ];
 
     // Determine the model to use
     let model = config
@@ -449,12 +692,15 @@ pub async fn run_subagent(
                 &agent_id,
                 format!("Agent exceeded maximum turns ({})", MAX_SUBAGENT_TURNS),
             );
+            // Store transcript even on failure for potential resume
+            store_transcript(&agent_id, messages, config.agent_type);
             return SubagentResult {
                 agent_id,
                 success: false,
                 output: format!("Agent exceeded maximum turns ({})", MAX_SUBAGENT_TURNS),
                 turns_used: turns,
                 is_background: config.run_in_background,
+                worktree: worktree.clone(),
             };
         }
 
@@ -471,12 +717,14 @@ pub async fn run_subagent(
             Ok(r) => r,
             Err(e) => {
                 BACKGROUND_AGENTS.fail(&agent_id, e.clone());
+                store_transcript(&agent_id, messages, config.agent_type);
                 return SubagentResult {
                     agent_id,
                     success: false,
                     output: e,
                     turns_used: turns,
                     is_background: config.run_in_background,
+                    worktree: worktree.clone(),
                 };
             }
         };
@@ -486,12 +734,14 @@ pub async fn run_subagent(
             Ok(msg) => msg,
             Err(e) => {
                 BACKGROUND_AGENTS.fail(&agent_id, e.clone());
+                store_transcript(&agent_id, messages, config.agent_type);
                 return SubagentResult {
                     agent_id,
                     success: false,
                     output: e,
                     turns_used: turns,
                     is_background: config.run_in_background,
+                    worktree: worktree.clone(),
                 };
             }
         };
@@ -578,8 +828,21 @@ pub async fn run_subagent(
         }
     }
 
-    // Mark as finished
+    // Mark as finished and store transcript for future resume
     BACKGROUND_AGENTS.finish(&agent_id, final_output.clone());
+    store_transcript(&agent_id, messages, config.agent_type);
+
+    // Handle worktree cleanup: remove if no changes, keep if changes exist
+    let final_worktree = if let Some(wt) = worktree {
+        if wt.has_changes() {
+            Some(wt) // Keep — return path and branch to caller
+        } else {
+            let _ = wt.cleanup(); // No changes, clean up silently
+            None
+        }
+    } else {
+        None
+    };
 
     SubagentResult {
         agent_id,
@@ -587,6 +850,7 @@ pub async fn run_subagent(
         output: final_output,
         turns_used: turns,
         is_background: config.run_in_background,
+        worktree: final_worktree,
     }
 }
 
@@ -870,6 +1134,9 @@ pub fn execute_task_tool(args: &HashMap<String, Value>, app_config: &AppConfig) 
         None => return ("Missing 'prompt' argument".to_string(), true),
     };
 
+    // Handle resume: if resume ID is provided, load previous transcript
+    let resume_id = args.get("resume").and_then(|v| v.as_str()).map(String::from);
+
     let subagent_type_str = match args.get("subagent_type").and_then(|v| v.as_str()) {
         Some(t) => t,
         None => return ("Missing 'subagent_type' argument".to_string(), true),
@@ -893,12 +1160,25 @@ pub fn execute_task_tool(args: &HashMap<String, Value>, app_config: &AppConfig) 
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    // Resolve model: map friendly names to actual model IDs
+    let model_override = args
+        .get("model")
+        .and_then(|v| v.as_str())
+        .map(|m| resolve_model_name(m, &app_config.proxy.target));
+
+    let isolation = args
+        .get("isolation")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
     let config = SubagentConfig {
         agent_type,
         task: description.to_string(),
         prompt: prompt.to_string(),
         run_in_background,
-        model_override: args.get("model").and_then(|v| v.as_str()).map(String::from),
+        model_override,
+        resume_agent_id: resume_id,
+        isolation,
     };
 
     // Create HTTP client
@@ -946,10 +1226,19 @@ pub fn execute_task_tool(args: &HashMap<String, Value>, app_config: &AppConfig) 
         };
 
         if result.success {
-            let message = format!(
+            let mut message = format!(
                 "Agent completed in {} turns.\n\n{}",
                 result.turns_used, result.output
             );
+
+            // If worktree was used and has changes, include path info
+            if let Some(ref wt) = result.worktree {
+                message.push_str(&format!(
+                    "\n\nWorktree: {}\nBranch: {}",
+                    wt.worktree_path.display(),
+                    wt.branch_name
+                ));
+            }
 
             (message, false)
         } else {
