@@ -619,6 +619,107 @@ pub fn get_tool_definitions() -> Value {
                     "required": ["notebook_path", "cell_number", "new_source"]
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ask_user_question",
+                "description": "Ask the user one or more structured questions with predefined options. Use this when you need clarification or want the user to make a choice before proceeding. Each question can have 2-4 options plus an automatic 'Other' option. Supports single or multi-select.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "questions": {
+                            "type": "array",
+                            "description": "1-4 questions to ask the user",
+                            "minItems": 1,
+                            "maxItems": 4,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "question": {
+                                        "type": "string",
+                                        "description": "The question text to display"
+                                    },
+                                    "header": {
+                                        "type": "string",
+                                        "description": "Short label (max 12 chars) shown as a tag",
+                                        "maxLength": 12
+                                    },
+                                    "options": {
+                                        "type": "array",
+                                        "description": "2-4 answer options",
+                                        "minItems": 2,
+                                        "maxItems": 4,
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "label": {
+                                                    "type": "string",
+                                                    "description": "Option name (e.g., 'PostgreSQL')"
+                                                },
+                                                "description": {
+                                                    "type": "string",
+                                                    "description": "Brief description of this option"
+                                                }
+                                            },
+                                            "required": ["label", "description"]
+                                        }
+                                    },
+                                    "multi_select": {
+                                        "type": "boolean",
+                                        "description": "If true, user can select multiple options (comma-separated)"
+                                    }
+                                },
+                                "required": ["question", "header", "options"]
+                            }
+                        }
+                    },
+                    "required": ["questions"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "enter_plan_mode",
+                "description": "Switch to plan mode. In plan mode, only read-only tools (read_file, list_files, grep, web_fetch, web_search), ask_user_question, and the task/agent tool are available. Write/Edit/Bash are blocked. Use write_file ONLY to write to the plan file. This is useful when you want to analyze the codebase and create a structured implementation plan before making changes.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "exit_plan_mode",
+                "description": "Exit plan mode and return to build mode. The plan file content will be shown to the user for approval. If approved, full tool access is restored and the plan is injected as context. If rejected, you stay in plan mode.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "allowed_prompts": {
+                            "type": "array",
+                            "description": "Optional list of allowed tool+prompt pairs that constrain what operations are permitted after plan approval",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "tool": {
+                                        "type": "string",
+                                        "description": "Tool name (e.g., 'write_file', 'bash')"
+                                    },
+                                    "prompt": {
+                                        "type": "string",
+                                        "description": "Description of the allowed operation"
+                                    }
+                                },
+                                "required": ["tool", "prompt"]
+                            }
+                        }
+                    },
+                    "required": []
+                }
+            }
         }
     ])
 }
@@ -2092,6 +2193,13 @@ pub fn execute_tool_with_memory(tool_call: &ToolCall, memory_db: Option<&MemoryD
         "todo_write" => execute_todo_write(&args),
         "todo_read" => execute_todo_read(),
 
+        // User interaction tools
+        "ask_user_question" => execute_ask_user_question(&args),
+
+        // Plan mode tools
+        "enter_plan_mode" => execute_enter_plan_mode(),
+        "exit_plan_mode" => execute_exit_plan_mode(&args),
+
         // Subagent tools (require config - return error if called without it)
         "task" | "agent_output" => (
             "Subagent tools require configuration context. Use execute_tool_full() instead."
@@ -2517,6 +2625,175 @@ pub fn clear_todo_list() {
     }
 }
 
+// === User Interaction Tools ===
+
+/// Marker type for ask_user_question results.
+/// The tool returns a JSON object with type "user_question" that the main loop
+/// intercepts to display questions and collect answers from the user.
+pub const USER_QUESTION_MARKER: &str = "user_question";
+
+/// Marker type for enter_plan_mode results.
+pub const ENTER_PLAN_MODE_MARKER: &str = "enter_plan_mode";
+
+/// Marker type for exit_plan_mode results.
+pub const EXIT_PLAN_MODE_MARKER: &str = "exit_plan_mode";
+
+/// Execute the ask_user_question tool.
+/// Returns a special JSON result that signals the main loop to collect user input.
+fn execute_ask_user_question(args: &HashMap<String, Value>) -> (String, bool) {
+    let questions = match args.get("questions").and_then(|v| v.as_array()) {
+        Some(q) => q,
+        None => return ("Missing 'questions' argument".to_string(), true),
+    };
+
+    if questions.is_empty() || questions.len() > 4 {
+        return (
+            "Must provide 1-4 questions".to_string(),
+            true,
+        );
+    }
+
+    // Validate each question
+    for (i, q) in questions.iter().enumerate() {
+        let question_text = q.get("question").and_then(|v| v.as_str());
+        let header = q.get("header").and_then(|v| v.as_str());
+        let options = q.get("options").and_then(|v| v.as_array());
+
+        if question_text.is_none() {
+            return (format!("Question {} missing 'question' field", i), true);
+        }
+        if header.is_none() {
+            return (format!("Question {} missing 'header' field", i), true);
+        }
+        if let Some(h) = header {
+            if h.len() > 12 {
+                return (
+                    format!("Question {} header '{}' exceeds 12 character limit", i, h),
+                    true,
+                );
+            }
+        }
+        match options {
+            None => return (format!("Question {} missing 'options' field", i), true),
+            Some(opts) => {
+                if opts.len() < 2 || opts.len() > 4 {
+                    return (
+                        format!("Question {} must have 2-4 options, got {}", i, opts.len()),
+                        true,
+                    );
+                }
+                for (j, opt) in opts.iter().enumerate() {
+                    if opt.get("label").and_then(|v| v.as_str()).is_none() {
+                        return (
+                            format!("Question {} option {} missing 'label'", i, j),
+                            true,
+                        );
+                    }
+                    if opt.get("description").and_then(|v| v.as_str()).is_none() {
+                        return (
+                            format!("Question {} option {} missing 'description'", i, j),
+                            true,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // Return the special marker result for the main loop to intercept
+    let result = json!({
+        "type": USER_QUESTION_MARKER,
+        "questions": questions
+    });
+
+    (result.to_string(), false)
+}
+
+/// Execute the enter_plan_mode tool.
+/// Returns a special marker that the main loop intercepts to activate plan mode.
+fn execute_enter_plan_mode() -> (String, bool) {
+    let result = json!({
+        "type": ENTER_PLAN_MODE_MARKER
+    });
+    (result.to_string(), false)
+}
+
+/// Execute the exit_plan_mode tool.
+/// Returns a special marker that the main loop intercepts to show the plan for approval.
+fn execute_exit_plan_mode(args: &HashMap<String, Value>) -> (String, bool) {
+    let allowed_prompts = args
+        .get("allowed_prompts")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    // Validate allowed_prompts structure
+    for (i, prompt) in allowed_prompts.iter().enumerate() {
+        if prompt.get("tool").and_then(|v| v.as_str()).is_none() {
+            return (
+                format!("allowed_prompts[{}] missing 'tool' field", i),
+                true,
+            );
+        }
+        if prompt.get("prompt").and_then(|v| v.as_str()).is_none() {
+            return (
+                format!("allowed_prompts[{}] missing 'prompt' field", i),
+                true,
+            );
+        }
+    }
+
+    let result = json!({
+        "type": EXIT_PLAN_MODE_MARKER,
+        "allowed_prompts": allowed_prompts
+    });
+    (result.to_string(), false)
+}
+
+/// Check if a tool result contains a special marker that needs main loop handling.
+/// Returns the marker type if found, None otherwise.
+pub fn check_tool_result_marker(content: &str) -> Option<String> {
+    if let Ok(parsed) = serde_json::from_str::<Value>(content) {
+        if let Some(marker_type) = parsed.get("type").and_then(|v| v.as_str()) {
+            match marker_type {
+                USER_QUESTION_MARKER | ENTER_PLAN_MODE_MARKER | EXIT_PLAN_MODE_MARKER => {
+                    return Some(marker_type.to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// Parse user questions from a tool result with the user_question marker.
+pub fn parse_user_questions(content: &str) -> Option<Vec<Value>> {
+    let parsed: Value = serde_json::from_str(content).ok()?;
+    parsed.get("questions").and_then(|v| v.as_array()).cloned()
+}
+
+/// Parse allowed prompts from an exit_plan_mode tool result.
+pub fn parse_exit_plan_mode_prompts(content: &str) -> Vec<crate::session::AllowedPrompt> {
+    let parsed: Value = match serde_json::from_str(content) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    parsed
+        .get("allowed_prompts")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    let tool = item.get("tool")?.as_str()?.to_string();
+                    let prompt = item.get("prompt")?.as_str()?.to_string();
+                    Some(crate::session::AllowedPrompt { tool, prompt })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2548,6 +2825,9 @@ mod tests {
             "todo_write",
             "todo_read",
             "notebook_edit",
+            "ask_user_question",
+            "enter_plan_mode",
+            "exit_plan_mode",
         ];
         for name in &required {
             assert!(

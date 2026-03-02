@@ -591,6 +591,12 @@ struct ChatSession {
     /// Undo stack for undone message pairs (user + assistant)
     #[serde(default)]
     undo_stack: Vec<(serde_json::Value, serde_json::Value)>,
+    /// Plan mode state (None when not in plan mode)
+    #[serde(default)]
+    plan_mode: Option<openclaudia::session::PlanModeState>,
+    /// Approved plan content injected as system context
+    #[serde(default)]
+    approved_plan: Option<String>,
 }
 
 impl ChatSession {
@@ -606,6 +612,8 @@ impl ChatSession {
             mode: AgentMode::default(),
             messages: Vec::new(),
             undo_stack: Vec::new(),
+            plan_mode: None,
+            approved_plan: None,
         }
     }
 
@@ -706,6 +714,453 @@ fn list_chat_sessions() -> Vec<ChatSession> {
     // Sort by updated_at descending (most recent first)
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     sessions
+}
+
+/// Display structured questions to the user and collect answers.
+/// Returns a JSON string mapping question text to selected answer(s).
+fn handle_user_questions(questions: &[serde_json::Value]) -> String {
+    use std::io::{self, Write};
+
+    let mut answers: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+
+    for q in questions {
+        let question_text = q
+            .get("question")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        let header = q.get("header").and_then(|v| v.as_str()).unwrap_or("");
+        let options = q
+            .get("options")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let multi_select = q
+            .get("multi_select")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        // Display the question
+        println!(
+            "\n\x1b[1;36m?\x1b[0m {}  \x1b[90m[{}]\x1b[0m",
+            question_text, header
+        );
+
+        // Display options
+        for (i, opt) in options.iter().enumerate() {
+            let label = opt.get("label").and_then(|v| v.as_str()).unwrap_or("?");
+            let desc = opt
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            println!(
+                "  \x1b[1m{}.\x1b[0m {} \x1b[90m- {}\x1b[0m",
+                i + 1,
+                label,
+                desc
+            );
+        }
+        // Always append "Other" option
+        let other_num = options.len() + 1;
+        println!(
+            "  \x1b[1m{}.\x1b[0m Other \x1b[90m(type your answer)\x1b[0m",
+            other_num
+        );
+
+        if multi_select {
+            print!("\x1b[36m> \x1b[0m\x1b[90m(comma-separated numbers) \x1b[0m");
+        } else {
+            print!("\x1b[36m> \x1b[0m");
+        }
+        io::stdout().flush().ok();
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            answers.insert(
+                question_text.to_string(),
+                serde_json::Value::String("(no input)".to_string()),
+            );
+            continue;
+        }
+        let input = input.trim();
+
+        if multi_select {
+            // Parse comma-separated numbers
+            let mut selected: Vec<serde_json::Value> = Vec::new();
+            for part in input.split(',') {
+                let part = part.trim();
+                if let Ok(num) = part.parse::<usize>() {
+                    if num >= 1 && num <= options.len() {
+                        if let Some(opt) = options.get(num - 1) {
+                            let label =
+                                opt.get("label").and_then(|v| v.as_str()).unwrap_or("?");
+                            selected.push(serde_json::Value::String(label.to_string()));
+                        }
+                    } else if num == other_num {
+                        // "Other" selected - prompt for freeform
+                        print!("  \x1b[36mYour answer: \x1b[0m");
+                        io::stdout().flush().ok();
+                        let mut other_input = String::new();
+                        if io::stdin().read_line(&mut other_input).is_ok() {
+                            selected.push(serde_json::Value::String(
+                                other_input.trim().to_string(),
+                            ));
+                        }
+                    }
+                }
+            }
+            answers.insert(
+                question_text.to_string(),
+                serde_json::Value::Array(selected),
+            );
+        } else {
+            // Single selection
+            if let Ok(num) = input.parse::<usize>() {
+                if num >= 1 && num <= options.len() {
+                    if let Some(opt) = options.get(num - 1) {
+                        let label = opt.get("label").and_then(|v| v.as_str()).unwrap_or("?");
+                        answers.insert(
+                            question_text.to_string(),
+                            serde_json::Value::String(label.to_string()),
+                        );
+                    }
+                } else if num == other_num {
+                    // "Other" selected - prompt for freeform
+                    print!("  \x1b[36mYour answer: \x1b[0m");
+                    io::stdout().flush().ok();
+                    let mut other_input = String::new();
+                    if io::stdin().read_line(&mut other_input).is_ok() {
+                        answers.insert(
+                            question_text.to_string(),
+                            serde_json::Value::String(other_input.trim().to_string()),
+                        );
+                    }
+                } else {
+                    answers.insert(
+                        question_text.to_string(),
+                        serde_json::Value::String(input.to_string()),
+                    );
+                }
+            } else {
+                // Direct text input (not a number)
+                answers.insert(
+                    question_text.to_string(),
+                    serde_json::Value::String(input.to_string()),
+                );
+            }
+        }
+    }
+
+    serde_json::Value::Object(answers).to_string()
+}
+
+/// Handle entering plan mode. Creates plan file and sets up state.
+fn handle_enter_plan_mode(chat_session: &mut ChatSession) -> String {
+    // Create plans directory
+    let plans_dir = std::path::PathBuf::from(".openclaudia/plans");
+    if let Err(e) = fs::create_dir_all(&plans_dir) {
+        return format!("Failed to create plans directory: {}", e);
+    }
+
+    let plan_file = plans_dir.join(format!("{}.md", chat_session.id));
+
+    // Initialize plan file if it doesn't exist
+    if !plan_file.exists() {
+        let header = format!(
+            "# Implementation Plan\n\nSession: {}\nCreated: {}\n\n## Plan\n\n",
+            chat_session.id,
+            chrono::Utc::now().format("%Y-%m-%d %H:%M UTC")
+        );
+        if let Err(e) = fs::write(&plan_file, &header) {
+            return format!("Failed to create plan file: {}", e);
+        }
+    }
+
+    let plan_state = openclaudia::session::PlanModeState {
+        active: true,
+        plan_file: plan_file.clone(),
+        allowed_prompts: Vec::new(),
+    };
+
+    chat_session.plan_mode = Some(plan_state);
+    chat_session.mode = AgentMode::Plan;
+
+    println!(
+        "\n\x1b[1;33m>> Entered Plan Mode\x1b[0m\n\
+         \x1b[90mWrite-access tools are now blocked.\n\
+         Use write_file to write to: {}\n\
+         Call exit_plan_mode when your plan is ready.\x1b[0m\n",
+        plan_file.display()
+    );
+
+    format!(
+        "Plan mode activated. Plan file: {}. \
+         Only read-only tools, ask_user_question, and task are available. \
+         Use write_file ONLY to write to the plan file at the path shown above. \
+         Call exit_plan_mode when you are ready to present the plan for approval.",
+        plan_file.display()
+    )
+}
+
+/// Handle exiting plan mode. Reads plan file, shows to user for approval.
+/// Returns (result_text, should_exit_plan_mode).
+fn handle_exit_plan_mode(
+    chat_session: &mut ChatSession,
+    allowed_prompts_json: &str,
+) -> (String, bool) {
+    use std::io::{self, Write};
+
+    let plan_state = match &chat_session.plan_mode {
+        Some(state) if state.active => state.clone(),
+        _ => {
+            return (
+                "Not currently in plan mode.".to_string(),
+                false,
+            );
+        }
+    };
+
+    // Read plan file content
+    let plan_content = match fs::read_to_string(&plan_state.plan_file) {
+        Ok(content) => content,
+        Err(e) => {
+            return (
+                format!(
+                    "Failed to read plan file {}: {}",
+                    plan_state.plan_file.display(),
+                    e
+                ),
+                false,
+            );
+        }
+    };
+
+    // Display plan to user
+    println!("\n\x1b[1;36m{}\x1b[0m", "=".repeat(60));
+    println!("\x1b[1;36m## Implementation Plan\x1b[0m\n");
+    println!("{}", plan_content);
+    println!("\x1b[1;36m{}\x1b[0m\n", "=".repeat(60));
+    print!("\x1b[1;33mApprove? [y/n/edit]: \x1b[0m");
+    io::stdout().flush().ok();
+
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_err() {
+        return ("Failed to read user input.".to_string(), false);
+    }
+    let input = input.trim().to_lowercase();
+
+    match input.as_str() {
+        "y" | "yes" => {
+            // Parse allowed prompts
+            let allowed_prompts = tools::parse_exit_plan_mode_prompts(allowed_prompts_json);
+
+            // Deactivate plan mode
+            chat_session.plan_mode = None;
+            chat_session.mode = AgentMode::Build;
+            chat_session.approved_plan = Some(plan_content.clone());
+
+            println!(
+                "\n\x1b[1;32m>> Plan Approved - Returning to Build Mode\x1b[0m\n\
+                 \x1b[90mFull tool access restored. Plan injected as context.\x1b[0m\n"
+            );
+
+            // Inject plan as system context
+            chat_session.messages.push(serde_json::json!({
+                "role": "system",
+                "content": format!(
+                    "[Approved Implementation Plan]\n\
+                     The user has approved the following plan. Execute it step by step.\n\n{}\n\n{}",
+                    plan_content,
+                    if !allowed_prompts.is_empty() {
+                        format!(
+                            "Allowed operations:\n{}",
+                            allowed_prompts
+                                .iter()
+                                .map(|p| format!("- {}: {}", p.tool, p.prompt))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        )
+                    } else {
+                        String::new()
+                    }
+                )
+            }));
+
+            (
+                "Plan approved by user. Full tool access restored. Proceed with implementation according to the plan.".to_string(),
+                true,
+            )
+        }
+        "n" | "no" => {
+            println!(
+                "\n\x1b[1;31m>> Plan Rejected - Staying in Plan Mode\x1b[0m\n\
+                 \x1b[90mRevise the plan and try again.\x1b[0m\n"
+            );
+
+            (
+                "Plan rejected by user. You are still in plan mode. Please revise the plan based on user feedback and call exit_plan_mode again when ready.".to_string(),
+                false,
+            )
+        }
+        "edit" | "e" => {
+            // Open plan file in external editor
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+            println!(
+                "\n\x1b[90mOpening plan in {}...\x1b[0m",
+                editor
+            );
+
+            let edit_result = std::process::Command::new(&editor)
+                .arg(&plan_state.plan_file)
+                .status();
+
+            match edit_result {
+                Ok(status) if status.success() => {
+                    // Re-read the edited plan
+                    let edited_content =
+                        fs::read_to_string(&plan_state.plan_file).unwrap_or_default();
+
+                    // Show edited plan and ask again
+                    println!("\n\x1b[1;36m## Edited Plan\x1b[0m\n");
+                    println!("{}", edited_content);
+                    println!();
+                    print!("\x1b[1;33mApprove edited plan? [y/n]: \x1b[0m");
+                    io::stdout().flush().ok();
+
+                    let mut input2 = String::new();
+                    if io::stdin().read_line(&mut input2).is_err() {
+                        return ("Failed to read user input.".to_string(), false);
+                    }
+
+                    if input2.trim().to_lowercase().starts_with('y') {
+                        let allowed_prompts =
+                            tools::parse_exit_plan_mode_prompts(allowed_prompts_json);
+
+                        chat_session.plan_mode = None;
+                        chat_session.mode = AgentMode::Build;
+                        chat_session.approved_plan = Some(edited_content.clone());
+
+                        println!(
+                            "\n\x1b[1;32m>> Plan Approved - Returning to Build Mode\x1b[0m\n"
+                        );
+
+                        chat_session.messages.push(serde_json::json!({
+                            "role": "system",
+                            "content": format!(
+                                "[Approved Implementation Plan (edited by user)]\n\
+                                 The user has edited and approved the following plan. Execute it step by step.\n\n{}\n\n{}",
+                                edited_content,
+                                if !allowed_prompts.is_empty() {
+                                    format!(
+                                        "Allowed operations:\n{}",
+                                        allowed_prompts
+                                            .iter()
+                                            .map(|p| format!("- {}: {}", p.tool, p.prompt))
+                                            .collect::<Vec<_>>()
+                                            .join("\n")
+                                    )
+                                } else {
+                                    String::new()
+                                }
+                            )
+                        }));
+
+                        (
+                            "Plan edited and approved by user. Full tool access restored. Proceed with implementation according to the edited plan.".to_string(),
+                            true,
+                        )
+                    } else {
+                        println!(
+                            "\n\x1b[1;31m>> Plan Rejected - Staying in Plan Mode\x1b[0m\n"
+                        );
+                        (
+                            "Edited plan rejected by user. Still in plan mode. Revise and try again.".to_string(),
+                            false,
+                        )
+                    }
+                }
+                Ok(_) => {
+                    ("Editor exited with error. Plan unchanged. Still in plan mode.".to_string(), false)
+                }
+                Err(e) => {
+                    println!(
+                        "\x1b[31mFailed to open editor '{}': {}\x1b[0m",
+                        editor, e
+                    );
+                    ("Failed to open editor. Still in plan mode.".to_string(), false)
+                }
+            }
+        }
+        _ => {
+            println!("\x1b[90mUnrecognized input. Staying in plan mode.\x1b[0m");
+            (
+                "Unrecognized response. Still in plan mode. Call exit_plan_mode again when ready.".to_string(),
+                false,
+            )
+        }
+    }
+}
+
+/// Check if a tool call is blocked by plan mode and return an error message if so.
+fn check_plan_mode_restriction(
+    chat_session: &ChatSession,
+    tool_name: &str,
+    tool_args: &str,
+) -> Option<String> {
+    let plan_state = match &chat_session.plan_mode {
+        Some(state) if state.active => state,
+        _ => return None,
+    };
+
+    let args: serde_json::Value =
+        serde_json::from_str(tool_args).unwrap_or(serde_json::Value::Null);
+
+    if openclaudia::session::is_tool_allowed_in_plan_mode(
+        tool_name,
+        &plan_state.plan_file,
+        &args,
+    ) {
+        None
+    } else {
+        Some(format!(
+            "Tool '{}' is not available in plan mode. \
+             Only read-only tools (read_file, list_files, grep, web_fetch, web_search), \
+             ask_user_question, and task are allowed. \
+             You can use write_file ONLY to write to the plan file at: {}",
+            tool_name,
+            plan_state.plan_file.display()
+        ))
+    }
+}
+
+/// Process a tool result, checking for special markers (user_question, plan mode).
+/// Returns the (possibly replaced) result content and whether it was a special marker.
+fn process_tool_result_marker(
+    chat_session: &mut ChatSession,
+    tool_name: &str,
+    result_content: &str,
+) -> (String, bool) {
+    if let Some(marker) = tools::check_tool_result_marker(result_content) {
+        match marker.as_str() {
+            tools::USER_QUESTION_MARKER => {
+                if let Some(questions) = tools::parse_user_questions(result_content) {
+                    let answers = handle_user_questions(&questions);
+                    return (answers, true);
+                }
+            }
+            tools::ENTER_PLAN_MODE_MARKER => {
+                let msg = handle_enter_plan_mode(chat_session);
+                return (msg, true);
+            }
+            tools::EXIT_PLAN_MODE_MARKER => {
+                let (msg, _approved) =
+                    handle_exit_plan_mode(chat_session, result_content);
+                return (msg, true);
+            }
+            _ => {}
+        }
+    }
+    let _ = tool_name; // suppress unused warning
+    (result_content.to_string(), false)
 }
 
 /// Slash command result
@@ -4181,6 +4636,25 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
 
                                         // Execute each tool locally
                                         for tool_call in &tool_calls {
+                                            // Check plan mode restrictions before executing
+                                            if let Some(block_msg) = check_plan_mode_restriction(
+                                                &chat_session,
+                                                &tool_call.function.name,
+                                                &tool_call.function.arguments,
+                                            ) {
+                                                println!(
+                                                    "\n\x1b[33m⚠ Blocked in plan mode: {}\x1b[0m",
+                                                    tool_call.function.name
+                                                );
+                                                chat_session.messages.push(serde_json::json!({
+                                                    "role": "tool",
+                                                    "tool_call_id": tool_call.id,
+                                                    "content": format!("[ERROR] {}", block_msg),
+                                                    "is_error": true
+                                                }));
+                                                continue;
+                                            }
+
                                             println!(
                                                 "\n\x1b[36m⚡ Running {}...\x1b[0m",
                                                 tool_call.function.name
@@ -4192,14 +4666,26 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                 tools::execute_tool(tool_call)
                                             };
 
+                                            // Check for special markers (user_question, plan mode)
+                                            let (final_content, _was_marker) =
+                                                process_tool_result_marker(
+                                                    &mut chat_session,
+                                                    &tool_call.function.name,
+                                                    &result.content,
+                                                );
+                                            let final_is_error = if _was_marker {
+                                                false
+                                            } else {
+                                                result.is_error
+                                            };
+
                                             // Show result preview
-                                            let preview: String = result
-                                                .content
+                                            let preview: String = final_content
                                                 .lines()
                                                 .take(5)
                                                 .collect::<Vec<_>>()
                                                 .join("\n");
-                                            if result.is_error {
+                                            if final_is_error {
                                                 println!("\x1b[31m✗ Error:\x1b[0m {}", preview);
                                             } else {
                                                 println!(
@@ -4213,16 +4699,16 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                             }
 
                                             // Store tool result with error flag
-                                            let result_content = if result.is_error {
-                                                format!("[ERROR] {}", result.content)
+                                            let result_content = if final_is_error {
+                                                format!("[ERROR] {}", final_content)
                                             } else {
-                                                result.content.clone()
+                                                final_content
                                             };
                                             chat_session.messages.push(serde_json::json!({
                                                 "role": "tool",
                                                 "tool_call_id": result.tool_call_id,
                                                 "content": result_content,
-                                                "is_error": result.is_error
+                                                "is_error": final_is_error
                                             }));
                                         }
 
@@ -4764,6 +5250,25 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
 
                                 // Execute each tool and collect results
                                 for tool_call in &tool_calls {
+                                    // Check plan mode restrictions before executing
+                                    if let Some(block_msg) = check_plan_mode_restriction(
+                                        &chat_session,
+                                        &tool_call.function.name,
+                                        &tool_call.function.arguments,
+                                    ) {
+                                        println!(
+                                            "\n\x1b[33m⚠ Blocked in plan mode: {}\x1b[0m",
+                                            tool_call.function.name
+                                        );
+                                        chat_session.messages.push(serde_json::json!({
+                                            "role": "tool",
+                                            "tool_call_id": tool_call.id,
+                                            "content": format!("[ERROR] {}", block_msg),
+                                            "is_error": true
+                                        }));
+                                        continue;
+                                    }
+
                                     println!(
                                         "\n\x1b[36m⚡ Running {}...\x1b[0m",
                                         tool_call.function.name
@@ -4774,6 +5279,19 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                         tools::execute_tool_with_memory(tool_call, Some(db))
                                     } else {
                                         tools::execute_tool(tool_call)
+                                    };
+
+                                    // Check for special markers (user_question, plan mode)
+                                    let (final_content, _was_marker) =
+                                        process_tool_result_marker(
+                                            &mut chat_session,
+                                            &tool_call.function.name,
+                                            &result.content,
+                                        );
+                                    let final_is_error = if _was_marker {
+                                        false
+                                    } else {
+                                        result.is_error
                                     };
 
                                     // Log activity for short-term memory
@@ -4831,18 +5349,17 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                             &chat_session.id,
                                             activity_type,
                                             &target,
-                                            if result.is_error { Some("error") } else { None },
+                                            if final_is_error { Some("error") } else { None },
                                         );
                                     }
 
                                     // Show result preview
-                                    let preview: String = result
-                                        .content
+                                    let preview: String = final_content
                                         .lines()
                                         .take(5)
                                         .collect::<Vec<_>>()
                                         .join("\n");
-                                    if result.is_error {
+                                    if final_is_error {
                                         println!("\x1b[31m✗ Error:\x1b[0m {}", preview);
                                     } else {
                                         println!(
@@ -4856,16 +5373,16 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                     }
 
                                     // Add tool result with error flag
-                                    let result_content = if result.is_error {
-                                        format!("[ERROR] {}", result.content)
+                                    let result_content = if final_is_error {
+                                        format!("[ERROR] {}", final_content)
                                     } else {
-                                        result.content.clone()
+                                        final_content
                                     };
                                     chat_session.messages.push(serde_json::json!({
                                         "role": "tool",
                                         "tool_call_id": result.tool_call_id,
                                         "content": result_content,
-                                        "is_error": result.is_error
+                                        "is_error": final_is_error
                                     }));
                                 }
 
