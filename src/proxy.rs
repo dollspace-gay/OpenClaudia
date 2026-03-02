@@ -773,9 +773,22 @@ async fn proxy_chat_completions(
     let is_stream = request.stream.unwrap_or(false);
 
     // Transform request to provider format with thinking config
-    let transformed_request = adapter
+    let mut transformed_request = adapter
         .transform_request_with_thinking(&request, &provider.thinking)
         .map_err(|e| ProxyError::InvalidBody(e.to_string()))?;
+
+    // For OpenAI-compatible streaming requests, inject stream_options to
+    // include usage in the final SSE event so we can track token costs.
+    if is_stream && !provider_name.contains("anthropic") {
+        if let Some(obj) = transformed_request.as_object_mut() {
+            if !obj.contains_key("stream_options") {
+                obj.insert(
+                    "stream_options".to_string(),
+                    serde_json::json!({"include_usage": true}),
+                );
+            }
+        }
+    }
 
     // Forward to provider with transformed request
     let raw_response = forward_to_provider_raw_reqwest(
@@ -1258,6 +1271,76 @@ fn extract_usage_from_response(response: &Value) -> TokenUsage {
         cache_write_tokens,
     }
 }
+
+/// Extract token usage from an SSE data line (JSON).
+///
+/// For Anthropic: look for `message_delta` with `usage` in the top-level.
+/// For OpenAI: look for the final chunk with a `usage` field (when
+/// `stream_options.include_usage` is set).
+///
+/// Returns `Some(TokenUsage)` if usage was found, `None` otherwise.
+pub fn extract_usage_from_sse_event(json: &Value) -> Option<TokenUsage> {
+    // Anthropic: message_delta event carries cumulative usage at the top level
+    if json.get("type").and_then(|t| t.as_str()) == Some("message_delta") {
+        if let Some(usage) = json.get("usage") {
+            let output_tokens = usage
+                .get("output_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            // message_delta usually only has output_tokens; input is on message_start
+            if output_tokens > 0 {
+                return Some(TokenUsage {
+                    input_tokens: 0,
+                    output_tokens,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                });
+            }
+        }
+    }
+
+    // Anthropic: message_start carries input usage
+    if json.get("type").and_then(|t| t.as_str()) == Some("message_start") {
+        if let Some(usage) = json.get("message").and_then(|m| m.get("usage")) {
+            let input_tokens = usage
+                .get("input_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let cache_read = usage
+                .get("cache_read_input_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let cache_write = usage
+                .get("cache_creation_input_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            if input_tokens > 0 || cache_read > 0 || cache_write > 0 {
+                return Some(TokenUsage {
+                    input_tokens,
+                    output_tokens: 0,
+                    cache_read_tokens: cache_read,
+                    cache_write_tokens: cache_write,
+                });
+            }
+        }
+    }
+
+    // OpenAI: final chunk with usage field (when stream_options.include_usage is true)
+    if let Some(usage) = json.get("usage") {
+        if usage.is_object() {
+            let u = extract_usage_from_response(json);
+            if u.total() > 0 {
+                return Some(u);
+            }
+        }
+    }
+
+    None
+}
+
+/// SSE stream timeout duration: if no data arrives within this window,
+/// the stream is considered stalled.
+pub const SSE_STREAM_TIMEOUT_SECS: u64 = 30;
 
 /// Forward request to upstream provider
 async fn forward_to_provider<T: Serialize>(
