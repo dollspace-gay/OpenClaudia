@@ -659,17 +659,26 @@ async fn proxy_chat_completions(
     match compaction_result {
         Ok(result) => {
             if result.compacted {
+                let summary_len = result.summary.as_ref().map(|s| s.len()).unwrap_or(0);
                 info!(
                     original = result.original_tokens,
                     new = result.new_tokens,
                     summarized = result.messages_summarized,
-                    summary_len = result.summary.as_ref().map(|s| s.len()).unwrap_or(0),
+                    summary_len = summary_len,
                     "Context compacted"
                 );
                 // Log the summary if available (for debugging)
                 if let Some(summary) = &result.summary {
                     debug!(summary = %summary, "Compaction summary generated");
                 }
+                // Fire compaction notification
+                state
+                    .hook_engine
+                    .fire_notification(
+                        "compaction",
+                        serde_json::json!({ "summary_length": summary_len }),
+                    )
+                    .await;
             }
         }
         Err(crate::compaction::CompactionError::HookBlocked(reason)) => {
@@ -739,6 +748,8 @@ async fn proxy_chat_completions(
 
                 // Warn if approaching context limit
                 let warn_threshold = state.config.session.token_tracking.warn_threshold;
+                let usage_pct =
+                    (estimated_input as f64 / context_window as f64) * 100.0;
                 if estimated_input as f32 > context_window as f32 * warn_threshold {
                     warn!(
                         estimated = estimated_input,
@@ -746,6 +757,14 @@ async fn proxy_chat_completions(
                         context_window = context_window,
                         "Token usage approaching context window limit"
                     );
+                    // Fire token warning notification
+                    state
+                        .hook_engine
+                        .fire_notification(
+                            "token_warning",
+                            serde_json::json!({ "usage_pct": usage_pct }),
+                        )
+                        .await;
                 }
             }
         }
@@ -887,6 +906,24 @@ pub async fn handle_mcp_tool_call(
             e
         ))),
     }
+}
+
+/// Fire a tool_error notification when a tool execution fails.
+/// This should be called by any code path that executes tools and gets an error.
+pub async fn fire_tool_error_notification(
+    hook_engine: &HookEngine,
+    tool_name: &str,
+    error_msg: &str,
+) {
+    hook_engine
+        .fire_notification(
+            "tool_error",
+            serde_json::json!({
+                "tool": tool_name,
+                "error": error_msg,
+            }),
+        )
+        .await;
 }
 
 /// Disconnect all MCP servers gracefully

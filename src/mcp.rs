@@ -83,6 +83,17 @@ pub struct McpTool {
     pub input_schema: Option<Value>,
 }
 
+/// MCP resource definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpResource {
+    pub uri: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default, rename = "mimeType")]
+    pub mime_type: Option<String>,
+}
+
 /// MCP server capabilities
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct McpCapabilities {
@@ -448,6 +459,75 @@ impl McpServer {
         Ok(result)
     }
 
+    /// Check if the server advertises resource capabilities
+    pub fn has_resources(&self) -> bool {
+        self.capabilities.resources.is_some()
+    }
+
+    /// List resources available on this server
+    pub async fn list_resources(&self) -> Result<Vec<McpResource>, McpError> {
+        if !self.has_resources() {
+            return Ok(Vec::new());
+        }
+
+        let result = self
+            .transport
+            .request("resources/list", Some(json!({})))
+            .await?;
+
+        let resources: Vec<_> = result
+            .get("resources")
+            .and_then(|r| r.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|r| serde_json::from_value(r.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        debug!(
+            server = %self.name,
+            resource_count = resources.len(),
+            "Listed MCP resources"
+        );
+
+        Ok(resources)
+    }
+
+    /// Read a specific resource by URI
+    pub async fn read_resource(&self, uri: &str) -> Result<String, McpError> {
+        let params = json!({ "uri": uri });
+
+        debug!(server = %self.name, uri = %uri, "Reading MCP resource");
+
+        let result = self
+            .transport
+            .request("resources/read", Some(params))
+            .await?;
+
+        // The MCP spec returns contents as an array of content items
+        if let Some(contents) = result.get("contents").and_then(|c| c.as_array()) {
+            let text: Vec<&str> = contents
+                .iter()
+                .filter_map(|c| c.get("text").and_then(|t| t.as_str()))
+                .collect();
+            if !text.is_empty() {
+                return Ok(text.join("\n"));
+            }
+            // Check for blob content (base64-encoded)
+            let blobs: Vec<&str> = contents
+                .iter()
+                .filter_map(|c| c.get("blob").and_then(|b| b.as_str()))
+                .collect();
+            if !blobs.is_empty() {
+                return Ok(blobs.join("\n"));
+            }
+        }
+
+        // Fallback: return the raw result as string
+        Ok(result.to_string())
+    }
+
     /// Get server name
     pub fn name(&self) -> &str {
         &self.name
@@ -568,6 +648,50 @@ impl McpManager {
             let supports_list_changed = s.supports_tool_list_changed();
             (server_name, supports_list_changed)
         })
+    }
+
+    /// List resources across all servers, or from a specific server
+    pub async fn list_resources(
+        &self,
+        server_name: Option<&str>,
+    ) -> anyhow::Result<Vec<(String, McpResource)>> {
+        let mut all_resources = Vec::new();
+
+        if let Some(name) = server_name {
+            let server = self
+                .servers
+                .get(name)
+                .ok_or_else(|| McpError::NotConnected(name.to_string()))?;
+            let resources = server.list_resources().await?;
+            for r in resources {
+                all_resources.push((name.to_string(), r));
+            }
+        } else {
+            for (name, server) in &self.servers {
+                match server.list_resources().await {
+                    Ok(resources) => {
+                        for r in resources {
+                            all_resources.push((name.clone(), r));
+                        }
+                    }
+                    Err(e) => {
+                        warn!(server = %name, error = %e, "Failed to list resources from server");
+                    }
+                }
+            }
+        }
+
+        Ok(all_resources)
+    }
+
+    /// Read a specific resource from a named server
+    pub async fn read_resource(&self, server_name: &str, uri: &str) -> anyhow::Result<String> {
+        let server = self
+            .servers
+            .get(server_name)
+            .ok_or_else(|| McpError::NotConnected(server_name.to_string()))?;
+        let content = server.read_resource(uri).await?;
+        Ok(content)
     }
 
     /// Disconnect from a server
@@ -775,5 +899,62 @@ mod tests {
         let mut manager = McpManager::new();
         let result = manager.disconnect_all().await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_mcp_resource_serialization() {
+        let resource = McpResource {
+            uri: "file:///src/main.rs".to_string(),
+            name: "main.rs".to_string(),
+            description: Some("Main entry point".to_string()),
+            mime_type: Some("text/x-rust".to_string()),
+        };
+
+        let json = serde_json::to_value(&resource).unwrap();
+        assert_eq!(json["uri"], "file:///src/main.rs");
+        assert_eq!(json["name"], "main.rs");
+        assert_eq!(json["description"], "Main entry point");
+        assert_eq!(json["mimeType"], "text/x-rust");
+    }
+
+    #[test]
+    fn test_mcp_resource_deserialization() {
+        let json = r#"{"uri": "db://users", "name": "Users Table", "mimeType": "application/json"}"#;
+        let resource: McpResource = serde_json::from_str(json).unwrap();
+        assert_eq!(resource.uri, "db://users");
+        assert_eq!(resource.name, "Users Table");
+        assert!(resource.description.is_none());
+        assert_eq!(resource.mime_type, Some("application/json".to_string()));
+    }
+
+    #[test]
+    fn test_mcp_resource_minimal() {
+        let json = r#"{"uri": "test://resource", "name": "test"}"#;
+        let resource: McpResource = serde_json::from_str(json).unwrap();
+        assert_eq!(resource.uri, "test://resource");
+        assert_eq!(resource.name, "test");
+        assert!(resource.description.is_none());
+        assert!(resource.mime_type.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_mcp_manager_list_resources_empty() {
+        let manager = McpManager::new();
+        let resources = manager.list_resources(None).await.unwrap();
+        assert!(resources.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mcp_manager_list_resources_server_not_connected() {
+        let manager = McpManager::new();
+        let result = manager.list_resources(Some("nonexistent")).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mcp_manager_read_resource_not_connected() {
+        let manager = McpManager::new();
+        let result = manager.read_resource("nonexistent", "file:///test").await;
+        assert!(result.is_err());
     }
 }

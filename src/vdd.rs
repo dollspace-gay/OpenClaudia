@@ -1992,6 +1992,7 @@ mod tests {
                 keybindings: crate::config::KeybindingsConfig::default(),
                 vdd: VddConfig::default(),
                 guardrails: crate::config::GuardrailsConfig::default(),
+                managed_settings_path: None,
             },
             client: Client::new(),
         };
@@ -2026,6 +2027,7 @@ mod tests {
                 keybindings: crate::config::KeybindingsConfig::default(),
                 vdd: VddConfig::default(),
                 guardrails: crate::config::GuardrailsConfig::default(),
+                managed_settings_path: None,
             },
             client: Client::new(),
         };
@@ -2048,6 +2050,7 @@ mod tests {
                 keybindings: crate::config::KeybindingsConfig::default(),
                 vdd: VddConfig::default(),
                 guardrails: crate::config::GuardrailsConfig::default(),
+                managed_settings_path: None,
             },
             client: Client::new(),
         };

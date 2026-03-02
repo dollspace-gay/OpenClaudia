@@ -14,11 +14,12 @@
 use crate::config::{Hook, HookEntry, HooksConfig};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::io::AsyncWriteExt;
@@ -181,6 +182,171 @@ pub fn load_claude_code_hooks() -> HooksConfig {
     }
 
     config
+}
+
+// ============================================================================
+// Settings File Layering
+// ============================================================================
+
+/// Result of loading layered Claude settings
+pub struct LayeredSettings {
+    /// The merged settings value
+    pub settings: Value,
+    /// Allowed tools extracted from merged settings
+    pub allowed_tools: Vec<String>,
+    /// Path to managed (enterprise) settings if loaded
+    pub managed_settings_path: Option<PathBuf>,
+}
+
+/// Load Claude settings from all layers, merging them in order.
+///
+/// Load order (later overrides earlier):
+/// 1. `~/.claude/settings.json` (user global)
+/// 2. `.claude/settings.json` (project, committed)
+/// 3. `.claude/settings.local.json` (project, gitignored)
+/// 4. System-level managed settings (enterprise)
+///
+/// Deep merge: arrays concatenate, objects merge recursively,
+/// scalars from later files override.
+pub fn load_claude_settings() -> LayeredSettings {
+    let mut settings = Value::Object(Default::default());
+    let mut managed_path: Option<PathBuf> = None;
+
+    // 1. User global settings
+    if let Some(home) = dirs::home_dir() {
+        let user_settings = home.join(".claude/settings.json");
+        if user_settings.exists() {
+            merge_settings_file(&mut settings, &user_settings);
+            debug!(path = ?user_settings, "Loaded user-global Claude settings");
+        }
+    }
+
+    // 2. Project settings (committed)
+    let project_settings = Path::new(".claude/settings.json");
+    if project_settings.exists() {
+        merge_settings_file(&mut settings, project_settings);
+        debug!(path = ?project_settings, "Loaded project Claude settings");
+    }
+
+    // 3. Project local settings (gitignored)
+    let local_settings = Path::new(".claude/settings.local.json");
+    if local_settings.exists() {
+        merge_settings_file(&mut settings, local_settings);
+        debug!(path = ?local_settings, "Loaded project-local Claude settings");
+    }
+
+    // 4. System-level managed settings (enterprise)
+    #[cfg(target_os = "linux")]
+    {
+        let managed = Path::new("/etc/openclaudia/managed-settings.json");
+        if managed.exists() {
+            warn!(
+                path = ?managed,
+                "Loading enterprise managed settings - these override all user and project settings"
+            );
+            merge_settings_file(&mut settings, managed);
+            managed_path = Some(managed.to_path_buf());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let managed = Path::new("/Library/Application Support/openclaudia/managed-settings.json");
+        if managed.exists() {
+            warn!(
+                path = ?managed,
+                "Loading enterprise managed settings - these override all user and project settings"
+            );
+            merge_settings_file(&mut settings, managed);
+            managed_path = Some(managed.to_path_buf());
+        }
+    }
+
+    // Extract allowedTools from merged settings
+    let allowed_tools: Vec<String> = settings
+        .get("allowedTools")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if !allowed_tools.is_empty() {
+        info!(count = allowed_tools.len(), "Extracted allowedTools from settings");
+    }
+
+    LayeredSettings {
+        settings,
+        allowed_tools,
+        managed_settings_path: managed_path,
+    }
+}
+
+/// Merge a settings file into the accumulator using deep merge semantics.
+///
+/// - Objects merge recursively
+/// - Arrays concatenate
+/// - Scalars from the new file override
+fn merge_settings_file(target: &mut Value, path: &Path) {
+    match fs::read_to_string(path) {
+        Ok(content) => match serde_json::from_str::<Value>(&content) {
+            Ok(new_settings) => {
+                deep_merge(target, &new_settings);
+            }
+            Err(e) => {
+                warn!(path = ?path, error = %e, "Failed to parse settings file");
+            }
+        },
+        Err(e) => {
+            debug!(path = ?path, error = %e, "Could not read settings file");
+        }
+    }
+}
+
+/// Deep merge two JSON values.
+///
+/// - Objects: recursively merge keys
+/// - Arrays: concatenate
+/// - Scalars: `source` overrides `target`
+fn deep_merge(target: &mut Value, source: &Value) {
+    match (target, source) {
+        (Value::Object(target_map), Value::Object(source_map)) => {
+            for (key, source_val) in source_map {
+                let entry = target_map
+                    .entry(key.clone())
+                    .or_insert(Value::Null);
+                deep_merge(entry, source_val);
+            }
+        }
+        (Value::Array(target_arr), Value::Array(source_arr)) => {
+            target_arr.extend(source_arr.iter().cloned());
+        }
+        (target, source) => {
+            *target = source.clone();
+        }
+    }
+}
+
+/// Load hooks from all layered settings files.
+///
+/// Uses the new 4-layer settings loading instead of the old 2-layer approach.
+/// Returns merged HooksConfig with Claude Code hooks converted to OpenClaudia format.
+pub fn load_claude_code_hooks_layered() -> (HooksConfig, LayeredSettings) {
+    let layered = load_claude_settings();
+    let mut config = HooksConfig::default();
+
+    // Parse hooks from the merged settings
+    if let Some(hooks_obj) = layered.settings.get("hooks") {
+        if let Ok(settings) = serde_json::from_value::<ClaudeCodeSettings>(json!({ "hooks": hooks_obj }))
+        {
+            merge_claude_hooks(&mut config, &settings);
+            info!("Loaded hooks from layered Claude settings");
+        }
+    }
+
+    (config, layered)
 }
 
 /// Load and parse a Claude Code settings.json file
@@ -428,15 +594,36 @@ pub enum HookError {
     InvalidMatcher(String),
 }
 
+/// Callback for executing model hooks via a provider adapter.
+/// This avoids a direct dependency from hooks.rs on providers.rs.
+pub type ModelHookCallback = Box<
+    dyn Fn(String, String, Option<String>) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<String, String>> + Send>,
+    > + Send
+        + Sync,
+>;
+
 /// The hook engine that executes hooks
 #[derive(Clone)]
 pub struct HookEngine {
     config: HooksConfig,
+    /// Optional callback for executing model hooks.
+    /// Takes (prompt, model, provider) and returns the model's response text.
+    model_hook_callback: Option<Arc<ModelHookCallback>>,
 }
 
 impl HookEngine {
     pub fn new(config: HooksConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            model_hook_callback: None,
+        }
+    }
+
+    /// Set a callback for executing model hooks through a provider adapter
+    pub fn with_model_callback(mut self, callback: ModelHookCallback) -> Self {
+        self.model_hook_callback = Some(Arc::new(callback));
+        self
     }
 
     /// Run all matching hooks for an event
@@ -472,6 +659,7 @@ impl HookEngine {
                 let timeout_secs = match hook {
                     Hook::Command { timeout, .. } => *timeout,
                     Hook::Prompt { timeout, .. } => *timeout,
+                    Hook::Model { timeout, .. } => *timeout,
                 };
                 hooks_to_run.push((hook, timeout_secs));
             }
@@ -606,6 +794,30 @@ impl HookEngine {
         }
     }
 
+    /// Fire a notification event with type and data
+    pub async fn fire_notification(
+        &self,
+        notification_type: &str,
+        data: Value,
+    ) -> Vec<HookResult> {
+        let extra = json!({
+            "notification_type": notification_type,
+            "data": data,
+        });
+
+        let mut input = HookInput::new(HookEvent::Notification);
+        for (k, v) in extra.as_object().unwrap() {
+            input = input.with_extra(k.clone(), v.clone());
+        }
+
+        debug!(
+            notification_type = %notification_type,
+            "Firing notification hook"
+        );
+
+        vec![self.run(HookEvent::Notification, &input).await]
+    }
+
     /// Run a single hook
     async fn run_hook(
         &self,
@@ -627,6 +839,15 @@ impl HookEngine {
                     },
                     0,
                 ))
+            }
+            Hook::Model {
+                prompt,
+                model,
+                provider,
+                ..
+            } => {
+                self.run_model_hook(prompt, model, provider.as_deref(), timeout_secs)
+                    .await
             }
         }
     }
@@ -690,6 +911,46 @@ impl HookEngine {
                 Ok((hook_output, exit_code))
             }
             Ok(Err(e)) => Err(HookError::CommandFailed(e.to_string())),
+            Err(_) => Err(HookError::Timeout(timeout_secs)),
+        }
+    }
+
+    /// Execute a model hook by sending a prompt to a specified model/provider
+    async fn run_model_hook(
+        &self,
+        prompt: &str,
+        model: &str,
+        provider: Option<&str>,
+        timeout_secs: u64,
+    ) -> Result<(HookOutput, i32), HookError> {
+        debug!(
+            model = %model,
+            provider = ?provider,
+            "Running model hook"
+        );
+
+        let callback = self.model_hook_callback.as_ref().ok_or_else(|| {
+            HookError::CommandFailed(
+                "Model hook requires a model callback to be configured on the HookEngine"
+                    .to_string(),
+            )
+        })?;
+
+        let future = callback(
+            prompt.to_string(),
+            model.to_string(),
+            provider.map(String::from),
+        );
+
+        match timeout(Duration::from_secs(timeout_secs), future).await {
+            Ok(Ok(response)) => Ok((
+                HookOutput {
+                    system_message: Some(response),
+                    ..Default::default()
+                },
+                0,
+            )),
+            Ok(Err(e)) => Err(HookError::CommandFailed(format!("Model hook error: {}", e))),
             Err(_) => Err(HookError::Timeout(timeout_secs)),
         }
     }

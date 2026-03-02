@@ -579,6 +579,44 @@ pub fn get_tool_definitions() -> Value {
                     "required": []
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_mcp_resources",
+                "description": "List resources available from connected MCP servers. Resources are data sources (files, database tables, API endpoints) that MCP servers expose for reading.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "server": {
+                            "type": "string",
+                            "description": "Optional: filter resources to a specific MCP server by name. If omitted, lists resources from all connected servers."
+                        }
+                    },
+                    "required": []
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_mcp_resource",
+                "description": "Read the content of a specific resource from an MCP server. Use list_mcp_resources first to discover available resources and their URIs.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "server": {
+                            "type": "string",
+                            "description": "The name of the MCP server that provides the resource"
+                        },
+                        "uri": {
+                            "type": "string",
+                            "description": "The URI of the resource to read (as returned by list_mcp_resources)"
+                        }
+                    },
+                    "required": ["server", "uri"]
+                }
+            }
         }
     ])
 }
