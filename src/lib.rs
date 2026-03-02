@@ -5,6 +5,8 @@
 //! This library exposes the core functionality of OpenClaudia for both
 //! the CLI binary and integration testing.
 
+#![recursion_limit = "256"]
+
 pub mod compaction;
 pub mod config;
 pub mod context;

@@ -592,6 +592,84 @@ impl SessionManager {
     }
 }
 
+/// Plan mode state for the agent session
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanModeState {
+    /// Whether plan mode is currently active
+    pub active: bool,
+    /// Path to the plan file
+    pub plan_file: PathBuf,
+    /// Allowed prompts when exiting plan mode
+    pub allowed_prompts: Vec<AllowedPrompt>,
+}
+
+/// An allowed prompt constraint for plan mode exit
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AllowedPrompt {
+    /// Tool name this prompt applies to
+    pub tool: String,
+    /// Prompt/description for the allowed operation
+    pub prompt: String,
+}
+
+/// Tools that are allowed in plan mode (read-only + user interaction)
+pub const PLAN_MODE_ALLOWED_TOOLS: &[&str] = &[
+    "read_file",
+    "list_files",
+    "grep",
+    "web_fetch",
+    "web_search",
+    "web_browser",
+    "ask_user_question",
+    "task",
+    "agent_output",
+    "todo_read",
+    "chainlink",
+    "bash_output",
+];
+
+/// Tools that are always blocked in plan mode (write/mutate operations)
+pub const PLAN_MODE_BLOCKED_TOOLS: &[&str] = &[
+    "bash",
+    "edit_file",
+    "kill_shell",
+    "todo_write",
+];
+
+/// Check if a tool is allowed in plan mode.
+/// write_file is special: it's allowed only if targeting the plan file path.
+pub fn is_tool_allowed_in_plan_mode(tool_name: &str, plan_file: &Path, args: &serde_json::Value) -> bool {
+    // Always-allowed tools
+    if PLAN_MODE_ALLOWED_TOOLS.contains(&tool_name) {
+        return true;
+    }
+
+    // Always-blocked tools
+    if PLAN_MODE_BLOCKED_TOOLS.contains(&tool_name) {
+        return false;
+    }
+
+    // write_file is allowed ONLY if targeting the plan file
+    if tool_name == "write_file" {
+        if let Some(path_str) = args.get("path").and_then(|v| v.as_str()) {
+            let target = Path::new(path_str);
+            // Compare canonical paths to handle relative vs absolute
+            let target_canonical = std::fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
+            let plan_canonical = std::fs::canonicalize(plan_file).unwrap_or_else(|_| plan_file.to_path_buf());
+            return target_canonical == plan_canonical;
+        }
+        return false;
+    }
+
+    // enter_plan_mode and exit_plan_mode are always allowed
+    if tool_name == "enter_plan_mode" || tool_name == "exit_plan_mode" {
+        return true;
+    }
+
+    // Unknown tools are blocked in plan mode
+    false
+}
+
 /// Context to inject at session start based on mode
 pub fn get_session_context(session: &Session) -> String {
     match session.mode {
