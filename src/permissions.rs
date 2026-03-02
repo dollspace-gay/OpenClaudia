@@ -450,7 +450,7 @@ mod tests {
         let (mut mgr, _dir) = make_manager(true, vec![]);
         mgr.add_session_rule(PermissionRule {
             tool: "Bash".to_string(),
-            pattern: "rm *".to_string(),
+            pattern: "rm **".to_string(),
             decision: PermissionDecision::Deny,
         });
         let result = mgr.check("bash", &json!({"command": "rm -rf /"}));
