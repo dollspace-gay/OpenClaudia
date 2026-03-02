@@ -3709,6 +3709,16 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
         }
     };
 
+    // If -m flag specifies a model, auto-detect the provider from model name
+    let mut config = config;
+    if let Some(ref model) = model_override {
+        let detected = openclaudia::proxy::determine_provider(model, &config);
+        if detected != config.proxy.target {
+            eprintln!("[debug] Model '{}' detected as provider '{}' (overriding target '{}')", model, detected, config.proxy.target);
+            config.proxy.target = detected;
+        }
+    }
+
     // Initialize guardrails engine from config
     guardrails::configure(&config.guardrails);
 
@@ -3785,7 +3795,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
         .unwrap_or_else(|| match config.proxy.target.as_str() {
             "anthropic" => "claude-sonnet-4-20250514".to_string(),
             "openai" => "gpt-4".to_string(),
-            "google" => "gemini-pro".to_string(),
+            "google" => "gemini-2.5-flash".to_string(),
             "zai" => "glm-4.7".to_string(),
             "deepseek" => "deepseek-chat".to_string(),
             "qwen" => "qwen-turbo".to_string(),
@@ -4416,6 +4426,46 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                     }
 
                     req
+                } else if config.proxy.target == "google" {
+                    // Google Gemini - build native Gemini format
+                    // Convert OpenAI-style messages to Gemini contents
+                    let openai_tools = tools::get_all_tool_definitions(stateful, true);
+                    let tools_vec = openai_tools.as_array().cloned().unwrap_or_default();
+                    let functions: Vec<serde_json::Value> = tools_vec.iter().filter_map(|tool| {
+                        let func = tool.get("function")?;
+                        Some(serde_json::json!({
+                            "name": func.get("name")?,
+                            "description": func.get("description").unwrap_or(&serde_json::json!("")),
+                            "parameters": func.get("parameters").unwrap_or(&serde_json::json!({}))
+                        }))
+                    }).collect();
+
+                    // Convert messages to Gemini contents format
+                    let mut contents = Vec::new();
+                    let mut system_text: Option<String> = None;
+                    for msg in &chat_session.messages {
+                        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+                        let text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                        if role == "system" {
+                            system_text = Some(text.to_string());
+                            continue;
+                        }
+                        let gemini_role = if role == "assistant" { "model" } else { "user" };
+                        contents.push(serde_json::json!({
+                            "role": gemini_role,
+                            "parts": [{"text": text}]
+                        }));
+                    }
+
+                    let mut req = serde_json::json!({
+                        "contents": contents,
+                        "generationConfig": {"maxOutputTokens": 4096},
+                        "tools": [{"functionDeclarations": functions}]
+                    });
+                    if let Some(sys) = system_text {
+                        req["systemInstruction"] = serde_json::json!({"parts": [{"text": sys}]});
+                    }
+                    req
                 } else {
                     // OpenAI-compatible format for other providers
                     serde_json::json!({
@@ -4434,10 +4484,10 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                         eprintln!("[debug] Using built-in proxy at: {}", url);
                         format!("{}/v1/messages", url)
                     } else {
-                        format!("{}{}", provider.base_url, adapter.chat_endpoint())
+                        format!("{}{}", provider.base_url, adapter.chat_endpoint(&model))
                     }
                 } else {
-                    format!("{}{}", provider.base_url, adapter.chat_endpoint())
+                    format!("{}{}", provider.base_url, adapter.chat_endpoint(&model))
                 };
 
                 // Build headers based on auth mode
@@ -4490,7 +4540,389 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                         spinner.finish_and_clear();
 
                         if response.status().is_success() {
-                            // Stream the response
+                          if config.proxy.target == "google" {
+                            // ── Google Gemini: non-streaming JSON response ──
+                            use std::io::Write;
+                            println!();
+
+                            let body = response.text().await.unwrap_or_default();
+                            let mut full_content = String::new();
+
+                            match serde_json::from_str::<serde_json::Value>(&body) {
+                                Ok(gemini_json) => {
+                                    // Extract text from candidates[0].content.parts[].text
+                                    let text: String = gemini_json
+                                        .get("candidates")
+                                        .and_then(|c| c.get(0))
+                                        .and_then(|c| c.get("content"))
+                                        .and_then(|c| c.get("parts"))
+                                        .and_then(|p| p.as_array())
+                                        .map(|parts| {
+                                            parts.iter()
+                                                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                                                .collect::<Vec<_>>()
+                                                .join("")
+                                        })
+                                        .unwrap_or_default();
+
+                                    if !text.is_empty() {
+                                        print!("{}", text);
+                                        std::io::stdout().flush().ok();
+                                        full_content.push_str(&text);
+                                    }
+
+                                    // Extract function calls from candidates[0].content.parts[].functionCall
+                                    let mut gemini_tool_calls: Vec<tools::ToolCall> = gemini_json
+                                        .get("candidates")
+                                        .and_then(|c| c.get(0))
+                                        .and_then(|c| c.get("content"))
+                                        .and_then(|c| c.get("parts"))
+                                        .and_then(|p| p.as_array())
+                                        .map(|parts| {
+                                            parts.iter().filter_map(|p| {
+                                                let fc = p.get("functionCall")?;
+                                                let name = fc.get("name")?.as_str()?.to_string();
+                                                let args = fc.get("args")
+                                                    .map(|a| serde_json::to_string(a).unwrap_or_default())
+                                                    .unwrap_or_else(|| "{}".to_string());
+                                                Some(tools::ToolCall {
+                                                    id: format!("call_{}", uuid::Uuid::new_v4()),
+                                                    call_type: "function".to_string(),
+                                                    function: tools::FunctionCall { name, arguments: args },
+                                                })
+                                            }).collect()
+                                        })
+                                        .unwrap_or_default();
+
+                                    // Extract usage
+                                    let input_tokens = gemini_json.get("usageMetadata")
+                                        .and_then(|u| u.get("promptTokenCount"))
+                                        .and_then(|t| t.as_u64())
+                                        .unwrap_or(0);
+                                    let output_tokens = gemini_json.get("usageMetadata")
+                                        .and_then(|u| u.get("candidatesTokenCount"))
+                                        .and_then(|t| t.as_u64())
+                                        .unwrap_or(0);
+
+                                    // Audit: log model response
+                                    audit_logger.log("model_response", &serde_json::json!({
+                                        "model": &model,
+                                        "content_length": full_content.len(),
+                                        "tool_calls": gemini_tool_calls.len(),
+                                        "cancelled": false,
+                                    }));
+
+                                    // ── Gemini tool execution loop ──
+                                    let max_iterations = config.session.max_turns;
+                                    let mut iteration: u32 = 0;
+                                    // Track conversation in Gemini's native format
+                                    let mut gemini_contents: Vec<serde_json::Value> = serde_json::from_value(
+                                        request_body.get("contents").cloned().unwrap_or(serde_json::json!([]))
+                                    ).unwrap_or_default();
+
+                                    while !gemini_tool_calls.is_empty()
+                                        && (max_iterations == 0 || iteration < max_iterations)
+                                    {
+                                        iteration += 1;
+                                        guardrails::reset_turn();
+
+                                        // Store model response with functionCall parts
+                                        let model_parts: Vec<serde_json::Value> = {
+                                            let mut parts = Vec::new();
+                                            if !full_content.is_empty() {
+                                                parts.push(serde_json::json!({"text": full_content}));
+                                            }
+                                            for tc in &gemini_tool_calls {
+                                                let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                                                    .unwrap_or(serde_json::json!({}));
+                                                parts.push(serde_json::json!({
+                                                    "functionCall": {
+                                                        "name": tc.function.name,
+                                                        "args": args
+                                                    }
+                                                }));
+                                            }
+                                            parts
+                                        };
+                                        gemini_contents.push(serde_json::json!({
+                                            "role": "model",
+                                            "parts": model_parts
+                                        }));
+
+                                        // Also store in chat_session for history
+                                        let tool_calls_json: Vec<serde_json::Value> = gemini_tool_calls.iter().map(|tc| {
+                                            serde_json::json!({
+                                                "id": tc.id,
+                                                "type": "function",
+                                                "function": {
+                                                    "name": tc.function.name,
+                                                    "arguments": tc.function.arguments
+                                                }
+                                            })
+                                        }).collect();
+                                        chat_session.messages.push(serde_json::json!({
+                                            "role": "assistant",
+                                            "content": if full_content.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(full_content.clone()) },
+                                            "tool_calls": tool_calls_json
+                                        }));
+
+                                        // Execute tools and collect functionResponse parts
+                                        let mut function_responses: Vec<serde_json::Value> = Vec::new();
+                                        for tool_call in &gemini_tool_calls {
+                                            // Plan mode check
+                                            if let Some(block_msg) = check_plan_mode_restriction(
+                                                &chat_session,
+                                                &tool_call.function.name,
+                                                &tool_call.function.arguments,
+                                            ) {
+                                                println!("\n\x1b[33m⚠ Blocked in plan mode: {}\x1b[0m", tool_call.function.name);
+                                                function_responses.push(serde_json::json!({
+                                                    "functionResponse": {
+                                                        "name": tool_call.function.name,
+                                                        "response": {"error": block_msg}
+                                                    }
+                                                }));
+                                                chat_session.messages.push(serde_json::json!({
+                                                    "role": "tool",
+                                                    "tool_call_id": tool_call.id,
+                                                    "content": format!("[ERROR] {}", block_msg),
+                                                    "is_error": true
+                                                }));
+                                                continue;
+                                            }
+
+                                            println!("\n\x1b[36m⚡ Running {}...\x1b[0m", tool_call.function.name);
+
+                                            audit_logger.log("tool_call", &serde_json::json!({
+                                                "name": &tool_call.function.name,
+                                                "arguments": &tool_call.function.arguments,
+                                                "id": &tool_call.id,
+                                            }));
+
+                                            let result = if let Some(ref db) = memory_db {
+                                                tools::execute_tool_with_memory(tool_call, Some(db))
+                                            } else {
+                                                tools::execute_tool(tool_call)
+                                            };
+
+                                            let (final_content, _was_marker) = process_tool_result_marker(
+                                                &mut chat_session,
+                                                &tool_call.function.name,
+                                                &result.content,
+                                            );
+                                            let final_is_error = if _was_marker { false } else { result.is_error };
+
+                                            // Show result preview
+                                            let preview: String = final_content.lines().take(5).collect::<Vec<_>>().join("\n");
+                                            if final_is_error {
+                                                println!("\x1b[31m✗ Error:\x1b[0m {}", preview);
+                                            } else {
+                                                println!("\x1b[32m✓\x1b[0m {}", if preview.len() > 200 { format!("{}...", &preview[..200]) } else { preview });
+                                            }
+
+                                            // Build Gemini functionResponse
+                                            let response_content = if final_is_error {
+                                                serde_json::json!({"error": final_content})
+                                            } else {
+                                                serde_json::json!({"result": final_content})
+                                            };
+                                            function_responses.push(serde_json::json!({
+                                                "functionResponse": {
+                                                    "name": tool_call.function.name,
+                                                    "response": response_content
+                                                }
+                                            }));
+
+                                            // Store in session
+                                            let result_content = if final_is_error {
+                                                format!("[ERROR] {}", final_content)
+                                            } else {
+                                                final_content
+                                            };
+                                            chat_session.messages.push(serde_json::json!({
+                                                "role": "tool",
+                                                "tool_call_id": result.tool_call_id,
+                                                "content": result_content,
+                                                "is_error": final_is_error
+                                            }));
+                                        }
+
+                                        // Add user turn with functionResponse parts
+                                        gemini_contents.push(serde_json::json!({
+                                            "role": "user",
+                                            "parts": function_responses
+                                        }));
+
+                                        // Send follow-up to Gemini
+                                        println!("\n\x1b[90m(Sending {} tool result{} to Gemini...)\x1b[0m",
+                                            gemini_tool_calls.len(),
+                                            if gemini_tool_calls.len() == 1 { "" } else { "s" }
+                                        );
+
+                                        let openai_tools = tools::get_all_tool_definitions(stateful, true);
+                                        let tools_vec = openai_tools.as_array().cloned().unwrap_or_default();
+                                        let functions: Vec<serde_json::Value> = tools_vec.iter().filter_map(|tool| {
+                                            let func = tool.get("function")?;
+                                            Some(serde_json::json!({
+                                                "name": func.get("name")?,
+                                                "description": func.get("description").unwrap_or(&serde_json::json!("")),
+                                                "parameters": func.get("parameters").unwrap_or(&serde_json::json!({}))
+                                            }))
+                                        }).collect();
+
+                                        let mut followup_req = serde_json::json!({
+                                            "contents": gemini_contents,
+                                            "generationConfig": {"maxOutputTokens": 4096},
+                                            "tools": [{"functionDeclarations": functions}]
+                                        });
+                                        if let Some(sys) = request_body.get("systemInstruction") {
+                                            followup_req["systemInstruction"] = sys.clone();
+                                        }
+
+                                        let mut req = client.post(&endpoint).json(&followup_req);
+                                        for (key, value) in &headers {
+                                            req = req.header(key, value);
+                                        }
+
+                                        match req.send().await {
+                                            Ok(resp) if resp.status().is_success() => {
+                                                let resp_body = resp.text().await.unwrap_or_default();
+                                                full_content = String::new();
+                                                gemini_tool_calls = Vec::new();
+
+                                                if let Ok(resp_json) = serde_json::from_str::<serde_json::Value>(&resp_body) {
+                                                    // Extract text
+                                                    let resp_text: String = resp_json
+                                                        .get("candidates").and_then(|c| c.get(0))
+                                                        .and_then(|c| c.get("content"))
+                                                        .and_then(|c| c.get("parts"))
+                                                        .and_then(|p| p.as_array())
+                                                        .map(|parts| {
+                                                            parts.iter()
+                                                                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                                                                .collect::<Vec<_>>().join("")
+                                                        }).unwrap_or_default();
+
+                                                    if !resp_text.is_empty() {
+                                                        println!();
+                                                        print!("{}", resp_text);
+                                                        std::io::stdout().flush().ok();
+                                                        full_content = resp_text;
+                                                    }
+
+                                                    // Extract new tool calls
+                                                    gemini_tool_calls = resp_json
+                                                        .get("candidates").and_then(|c| c.get(0))
+                                                        .and_then(|c| c.get("content"))
+                                                        .and_then(|c| c.get("parts"))
+                                                        .and_then(|p| p.as_array())
+                                                        .map(|parts| {
+                                                            parts.iter().filter_map(|p| {
+                                                                let fc = p.get("functionCall")?;
+                                                                let name = fc.get("name")?.as_str()?.to_string();
+                                                                let args = fc.get("args")
+                                                                    .map(|a| serde_json::to_string(a).unwrap_or_default())
+                                                                    .unwrap_or_else(|| "{}".to_string());
+                                                                Some(tools::ToolCall {
+                                                                    id: format!("call_{}", uuid::Uuid::new_v4()),
+                                                                    call_type: "function".to_string(),
+                                                                    function: tools::FunctionCall { name, arguments: args },
+                                                                })
+                                                            }).collect()
+                                                        }).unwrap_or_default();
+                                                    // Loop continues — will check gemini_tool_calls at top
+                                                } else {
+                                                    eprintln!("\nFailed to parse Gemini follow-up response");
+                                                    break;
+                                                }
+                                            }
+                                            Ok(resp) => {
+                                                let status = resp.status();
+                                                let err_body = resp.text().await.unwrap_or_default();
+                                                eprintln!("\nGemini follow-up failed: {} {}", status, err_body);
+                                                break;
+                                            }
+                                            Err(e) => {
+                                                eprintln!("\nGemini follow-up error: {}", e);
+                                                break;
+                                            }
+                                        }
+                                    } // end Gemini tool loop
+
+                                    // Save final assistant message
+                                    if !full_content.trim().is_empty() {
+                                        chat_session.messages.push(serde_json::json!({
+                                            "role": "assistant",
+                                            "content": full_content.trim()
+                                        }));
+                                        chat_session.touch();
+                                        if let Err(e) = save_chat_session(&chat_session) {
+                                            tracing::warn!("Failed to save session: {}", e);
+                                        }
+                                    }
+
+                                    // VDD: Run adversarial review if enabled
+                                    if let Some(ref engine) = vdd_engine {
+                                        let user_task = chat_session.messages.iter().rev()
+                                            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+                                            .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                                            .unwrap_or("");
+
+                                        match engine.review_text(&full_content, user_task).await {
+                                            Ok(result) => {
+                                                if !result.findings.is_empty() {
+                                                    let genuine_count = result.findings.iter()
+                                                        .filter(|f| f.status == vdd::FindingStatus::Genuine)
+                                                        .count();
+                                                    println!("\n\x1b[33m🔍 VDD Review: {} finding(s) ({} genuine)\x1b[0m",
+                                                        result.findings.len(), genuine_count);
+                                                    for finding in &result.findings {
+                                                        let status_icon = match finding.status {
+                                                            vdd::FindingStatus::Genuine => "⚠",
+                                                            vdd::FindingStatus::FalsePositive => "✗",
+                                                            vdd::FindingStatus::Disputed => "?",
+                                                        };
+                                                        println!("  {} [{}] {}", status_icon, finding.severity, finding.description);
+                                                    }
+                                                    if !result.context_injection.is_empty() {
+                                                        chat_session.messages.push(serde_json::json!({
+                                                            "role": "system",
+                                                            "content": format!("<vdd-review>\n{}\n</vdd-review>", result.context_injection)
+                                                        }));
+                                                    }
+                                                } else {
+                                                    println!("\n\x1b[32m✓ VDD Review: No issues found\x1b[0m");
+                                                }
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!("VDD review failed: {}", e);
+                                                println!("\n\x1b[31m⚠ VDD review failed: {}\x1b[0m", e);
+                                            }
+                                        }
+                                    }
+
+                                    // Update status bar
+                                    let tokens = estimate_session_tokens(&chat_session) + full_content.len() / 4;
+                                    let cost = session::calculate_cost(&model, &openclaudia::session::TokenUsage {
+                                        input_tokens: input_tokens.max(tokens as u64),
+                                        output_tokens: output_tokens.max(full_content.len() as u64 / 4),
+                                        cache_read_tokens: 0,
+                                        cache_write_tokens: 0,
+                                    });
+                                    let duration = chrono::Utc::now().signed_duration_since(chat_session.created_at);
+                                    let dur_str = format!("{}m", duration.num_minutes());
+                                    tui::draw_status_bar(&model, tokens, cost, chat_session.mode.display(), &dur_str);
+                                }
+                                Err(e) => {
+                                    eprintln!("\nFailed to parse Gemini response: {}", e);
+                                    eprintln!("Raw body: {}", &body[..body.len().min(500)]);
+                                    chat_session.messages.pop(); // Remove failed user message
+                                }
+                            }
+
+                            println!();
+                          } else {
+                            // Stream the response (Anthropic SSE / OpenAI SSE)
                             use crossterm::event::{self, Event, KeyEventKind};
                             use futures::StreamExt;
                             use std::io::Write;
@@ -5801,6 +6233,51 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                 chat_session.messages.pop();
                             }
 
+                            // VDD: Run adversarial review if enabled (non-proxy path)
+                            if !using_proxy && !cancelled {
+                                if let Some(ref engine) = vdd_engine {
+                                    let vdd_content = &current_content;
+                                    if !vdd_content.trim().is_empty() {
+                                        let user_task = chat_session.messages.iter().rev()
+                                            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+                                            .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                                            .unwrap_or("");
+
+                                        match engine.review_text(vdd_content, user_task).await {
+                                            Ok(result) => {
+                                                if !result.findings.is_empty() {
+                                                    let genuine_count = result.findings.iter()
+                                                        .filter(|f| f.status == vdd::FindingStatus::Genuine)
+                                                        .count();
+                                                    println!("\n\x1b[33m🔍 VDD Review: {} finding(s) ({} genuine)\x1b[0m",
+                                                        result.findings.len(), genuine_count);
+                                                    for finding in &result.findings {
+                                                        let status_icon = match finding.status {
+                                                            vdd::FindingStatus::Genuine => "⚠",
+                                                            vdd::FindingStatus::FalsePositive => "✗",
+                                                            vdd::FindingStatus::Disputed => "?",
+                                                        };
+                                                        println!("  {} [{}] {}", status_icon, finding.severity, finding.description);
+                                                    }
+                                                    if !result.context_injection.is_empty() {
+                                                        chat_session.messages.push(serde_json::json!({
+                                                            "role": "system",
+                                                            "content": format!("<vdd-review>\n{}\n</vdd-review>", result.context_injection)
+                                                        }));
+                                                    }
+                                                } else {
+                                                    println!("\n\x1b[32m✓ VDD Review: No issues found\x1b[0m");
+                                                }
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!("VDD review failed: {}", e);
+                                                println!("\n\x1b[31m⚠ VDD review failed: {}\x1b[0m", e);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             // Handle any keybinding action pressed during streaming
                             if let Some(action_result) = pending_action {
                                 match action_result {
@@ -5840,6 +6317,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                     }
                                 }
                             }
+                          } // end else (non-Google streaming)
                         } else {
                             let status = response.status();
                             let body = response.text().await.unwrap_or_default();

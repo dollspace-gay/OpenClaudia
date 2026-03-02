@@ -66,8 +66,9 @@ pub trait ProviderAdapter: Send + Sync {
     /// Transform a provider response to OpenAI-compatible format
     fn transform_response(&self, response: Value, stream: bool) -> Result<Value, ProviderError>;
 
-    /// Get the endpoint path for chat completions
-    fn chat_endpoint(&self) -> &str;
+    /// Get the endpoint path for chat completions.
+    /// The model parameter allows providers like Google to build model-specific URLs.
+    fn chat_endpoint(&self, _model: &str) -> String;
 
     /// Get required headers for this provider
     fn get_headers(&self, api_key: &str) -> Vec<(String, String)>;
@@ -449,8 +450,8 @@ impl ProviderAdapter for AnthropicAdapter {
         }))
     }
 
-    fn chat_endpoint(&self) -> &str {
-        "/v1/messages"
+    fn chat_endpoint(&self, _model: &str) -> String {
+        "/v1/messages".to_string()
     }
 
     fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {
@@ -513,8 +514,8 @@ impl ProviderAdapter for OpenAIAdapter {
         Ok(response)
     }
 
-    fn chat_endpoint(&self) -> &str {
-        "/v1/chat/completions"
+    fn chat_endpoint(&self, _model: &str) -> String {
+        "/v1/chat/completions".to_string()
     }
 
     fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {
@@ -761,9 +762,9 @@ impl ProviderAdapter for GoogleAdapter {
         }))
     }
 
-    fn chat_endpoint(&self) -> &str {
-        // Gemini uses model name in the path
-        "/v1beta/models/gemini-pro:generateContent"
+    fn chat_endpoint(&self, model: &str) -> String {
+        // Gemini uses model name in the URL path
+        format!("/v1beta/models/{}:generateContent", model)
     }
 
     fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {
@@ -839,9 +840,9 @@ impl ProviderAdapter for ZaiAdapter {
         Ok(response)
     }
 
-    fn chat_endpoint(&self) -> &str {
+    fn chat_endpoint(&self, _model: &str) -> String {
         // Z.AI base URL includes version, so no /v1/ prefix needed
-        "/chat/completions"
+        "/chat/completions".to_string()
     }
 
     fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {
@@ -900,8 +901,8 @@ impl ProviderAdapter for DeepSeekAdapter {
         Ok(response)
     }
 
-    fn chat_endpoint(&self) -> &str {
-        "/v1/chat/completions"
+    fn chat_endpoint(&self, _model: &str) -> String {
+        "/v1/chat/completions".to_string()
     }
 
     fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {
@@ -962,8 +963,8 @@ impl ProviderAdapter for QwenAdapter {
         Ok(response)
     }
 
-    fn chat_endpoint(&self) -> &str {
-        "/v1/chat/completions"
+    fn chat_endpoint(&self, _model: &str) -> String {
+        "/v1/chat/completions".to_string()
     }
 
     fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {
@@ -1155,8 +1156,8 @@ impl ProviderAdapter for OllamaAdapter {
         }))
     }
 
-    fn chat_endpoint(&self) -> &str {
-        "/api/chat"
+    fn chat_endpoint(&self, _model: &str) -> String {
+        "/api/chat".to_string()
     }
 
     fn get_headers(&self, _api_key: &str) -> Vec<(String, String)> {
@@ -1420,7 +1421,7 @@ mod tests {
     fn test_ollama_adapter() {
         let adapter = OllamaAdapter::new();
         assert_eq!(adapter.name(), "ollama");
-        assert_eq!(adapter.chat_endpoint(), "/api/chat");
+        assert_eq!(adapter.chat_endpoint("llama3"), "/api/chat");
     }
 
     #[test]
@@ -1468,7 +1469,7 @@ mod tests {
         let adapter = ZaiAdapter::new();
         assert_eq!(adapter.name(), "zai");
         // Z.AI uses /chat/completions without /v1/ prefix
-        assert_eq!(adapter.chat_endpoint(), "/chat/completions");
+        assert_eq!(adapter.chat_endpoint("glm-4"), "/chat/completions");
     }
 
     #[test]

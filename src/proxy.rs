@@ -795,7 +795,7 @@ async fn proxy_chat_completions(
         &state.client,
         provider,
         &api_key,
-        adapter.chat_endpoint(),
+        &adapter.chat_endpoint(&request.model),
         &transformed_request,
         is_stream,
         adapter.get_headers(&api_key),
@@ -1133,7 +1133,7 @@ async fn proxy_passthrough(
 }
 
 /// Determine which provider to use based on model name
-fn determine_provider(model: &str, config: &AppConfig) -> String {
+pub fn determine_provider(model: &str, config: &AppConfig) -> String {
     let model_lower = model.to_lowercase();
     if model_lower.starts_with("claude") || model_lower.starts_with("anthropic") {
         "anthropic".to_string()

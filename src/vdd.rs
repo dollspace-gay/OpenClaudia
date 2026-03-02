@@ -1064,14 +1064,14 @@ impl VddEngine {
             .map_err(|e| VddError::AdversaryRequestFailed(e.to_string()))?;
 
         let headers = adapter.get_headers(api_key);
-        let endpoint = adapter.chat_endpoint();
+        let endpoint = adapter.chat_endpoint(&request.model);
 
         let response = forward_request(
             &self.client,
             provider_config,
             &self.config.adversary.provider,
             &request.model,
-            endpoint,
+            &endpoint,
             &transformed,
             headers,
         )
@@ -1128,14 +1128,14 @@ impl VddEngine {
             .map_err(|e| VddError::BuilderRevisionFailed(e.to_string()))?;
 
         let headers = adapter.get_headers(api_key);
-        let endpoint = adapter.chat_endpoint();
+        let endpoint = adapter.chat_endpoint(&request.model);
 
         let response = forward_request(
             &self.client,
             provider_config,
             provider_name,
             &request.model,
-            endpoint,
+            &endpoint,
             &transformed,
             headers,
         )
