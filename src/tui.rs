@@ -1,10 +1,15 @@
 //! TUI module for OpenClaudia
 //!
 //! Provides a rich terminal user interface similar to Claude Code,
-//! with two-column layout, tips panel, and styled text.
+//! with two-column layout, tips panel, styled text, markdown rendering,
+//! status bar, and theme management.
 
 use crossterm::{
     cursor,
+    style::{
+        Attribute, Print, ResetColor, SetAttribute, SetForegroundColor,
+        Color as CtColor,
+    },
     terminal::{self, Clear, ClearType},
     ExecutableCommand,
 };
@@ -17,6 +22,7 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::io::{self, stdout, Write};
+use std::path::Path;
 
 /// Purple color for branding (from logo)
 const PURPLE: Color = Color::Rgb(147, 112, 219);
@@ -24,6 +30,451 @@ const PURPLE: Color = Color::Rgb(147, 112, 219);
 const GOLD: Color = Color::Rgb(218, 165, 32);
 /// Dim gray for borders
 const DIM: Color = Color::Rgb(128, 128, 128);
+
+// ─── Theme support ──────────────────────────────────────────────────────────
+
+/// A color theme for the terminal UI
+#[derive(Debug, Clone)]
+pub struct Theme {
+    /// Theme identifier
+    pub name: String,
+    /// Primary color (headings, status bar highlights)
+    pub primary: CtColor,
+    /// Secondary color (accents)
+    pub secondary: CtColor,
+    /// Code block / inline code color
+    pub code_color: CtColor,
+    /// Heading color
+    pub heading_color: CtColor,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            name: "default".to_string(),
+            primary: CtColor::Rgb { r: 147, g: 112, b: 219 },
+            secondary: CtColor::Rgb { r: 218, g: 165, b: 32 },
+            code_color: CtColor::Cyan,
+            heading_color: CtColor::Rgb { r: 147, g: 112, b: 219 },
+        }
+    }
+}
+
+impl Theme {
+    /// Build a theme from one of the built-in names
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "default" => Some(Self::default()),
+            "ocean" => Some(Self {
+                name: "ocean".to_string(),
+                primary: CtColor::Rgb { r: 0, g: 150, b: 255 },
+                secondary: CtColor::Cyan,
+                code_color: CtColor::Rgb { r: 0, g: 200, b: 200 },
+                heading_color: CtColor::Rgb { r: 0, g: 150, b: 255 },
+            }),
+            "forest" => Some(Self {
+                name: "forest".to_string(),
+                primary: CtColor::Green,
+                secondary: CtColor::Rgb { r: 144, g: 238, b: 144 },
+                code_color: CtColor::Rgb { r: 0, g: 200, b: 100 },
+                heading_color: CtColor::Green,
+            }),
+            "sunset" => Some(Self {
+                name: "sunset".to_string(),
+                primary: CtColor::Rgb { r: 255, g: 140, b: 0 },
+                secondary: CtColor::Rgb { r: 255, g: 69, b: 0 },
+                code_color: CtColor::Yellow,
+                heading_color: CtColor::Rgb { r: 255, g: 140, b: 0 },
+            }),
+            "mono" => Some(Self {
+                name: "mono".to_string(),
+                primary: CtColor::White,
+                secondary: CtColor::Grey,
+                code_color: CtColor::White,
+                heading_color: CtColor::White,
+            }),
+            "neon" => Some(Self {
+                name: "neon".to_string(),
+                primary: CtColor::Magenta,
+                secondary: CtColor::Cyan,
+                code_color: CtColor::Rgb { r: 0, g: 255, b: 255 },
+                heading_color: CtColor::Magenta,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Save the current theme name to disk
+    pub fn save(&self) -> io::Result<()> {
+        let dir = Path::new(".openclaudia");
+        std::fs::create_dir_all(dir)?;
+        std::fs::write(dir.join("theme"), &self.name)?;
+        Ok(())
+    }
+
+    /// Load the saved theme from disk, falling back to default
+    pub fn load() -> Self {
+        let path = Path::new(".openclaudia").join("theme");
+        if let Ok(name) = std::fs::read_to_string(&path) {
+            let name = name.trim();
+            if let Some(theme) = Self::from_name(name) {
+                return theme;
+            }
+        }
+        Self::default()
+    }
+}
+
+// ─── Markdown rendering ─────────────────────────────────────────────────────
+
+/// Render markdown-formatted text to the terminal with styling.
+///
+/// Supports:
+/// - **bold** and *italic* inline
+/// - `inline code` in cyan/code color
+/// - ```fenced code blocks``` with language header
+/// - # Headings at various levels
+/// - - / * / numbered list items
+/// - > block quotes
+/// - [link text](url)
+pub fn render_markdown(text: &str) {
+    render_markdown_themed(text, &Theme::load());
+}
+
+/// Render markdown with a specific theme
+pub fn render_markdown_themed(text: &str, theme: &Theme) {
+    let mut stdout = io::stdout();
+    let mut in_code_block = false;
+    let mut code_lang = String::new();
+
+    for line in text.lines() {
+        if line.starts_with("```") {
+            if in_code_block {
+                // End code block
+                in_code_block = false;
+                code_lang.clear();
+                let _ = stdout.execute(ResetColor);
+                println!();
+            } else {
+                // Start code block
+                in_code_block = true;
+                code_lang = line.trim_start_matches('`').trim().to_string();
+                if !code_lang.is_empty() {
+                    let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
+                    println!("  --- {} ---", code_lang);
+                    let _ = stdout.execute(ResetColor);
+                }
+            }
+            continue;
+        }
+
+        if in_code_block {
+            // Render code block lines with indentation and color
+            let _ = stdout.execute(SetForegroundColor(theme.code_color));
+            println!("    {}", line);
+            let _ = stdout.execute(ResetColor);
+            continue;
+        }
+
+        // Heading detection
+        if line.starts_with('#') {
+            render_heading(&mut stdout, line, theme);
+            continue;
+        }
+
+        // Blockquote
+        if line.starts_with("> ") || line == ">" {
+            let content = line.strip_prefix("> ").unwrap_or("");
+            let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
+            print!("  | ");
+            let _ = stdout.execute(SetForegroundColor(CtColor::White));
+            render_inline(&mut stdout, content, theme);
+            println!();
+            let _ = stdout.execute(ResetColor);
+            continue;
+        }
+
+        // List items (unordered: -, *, and ordered: 1., 2., etc.)
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+            let indent = line.len() - trimmed.len();
+            let content = &trimmed[2..];
+            print!("{}  \u{2022} ", " ".repeat(indent));
+            render_inline(&mut stdout, content, theme);
+            println!();
+            continue;
+        }
+        if let Some(rest) = strip_ordered_list_prefix(trimmed) {
+            let indent = line.len() - trimmed.len();
+            let num_part = &trimmed[..trimmed.len() - rest.len()];
+            print!("{}  {}", " ".repeat(indent), num_part);
+            render_inline(&mut stdout, rest, theme);
+            println!();
+            continue;
+        }
+
+        // Horizontal rule
+        if line.trim() == "---" || line.trim() == "***" || line.trim() == "___" {
+            let (cols, _) = terminal::size().unwrap_or((80, 24));
+            let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
+            println!("{}", "\u{2500}".repeat(cols as usize));
+            let _ = stdout.execute(ResetColor);
+            continue;
+        }
+
+        // Regular line with inline formatting
+        render_inline(&mut stdout, line, theme);
+        println!();
+    }
+    let _ = stdout.execute(ResetColor);
+    stdout.flush().ok();
+}
+
+/// Render a heading line
+fn render_heading(stdout: &mut io::Stdout, line: &str, theme: &Theme) {
+    let level = line.chars().take_while(|c| *c == '#').count();
+    let text = line[level..].trim_start();
+
+    let _ = stdout.execute(SetAttribute(Attribute::Bold));
+    if level <= 2 {
+        let _ = stdout.execute(SetForegroundColor(theme.heading_color));
+    }
+
+    match level {
+        1 => println!("\n{}\n", text.to_uppercase()),
+        2 => println!("\n{}\n", text),
+        3 => println!("{}", text),
+        _ => println!("{}", text),
+    }
+
+    let _ = stdout.execute(SetAttribute(Attribute::Reset));
+    let _ = stdout.execute(ResetColor);
+}
+
+/// Render inline formatting: bold, italic, inline code, links
+fn render_inline(stdout: &mut io::Stdout, text: &str, theme: &Theme) {
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        // Bold: **text**
+        if i + 1 < len && chars[i] == '*' && chars[i + 1] == '*' {
+            if let Some(end) = find_closing(&chars, i + 2, "**") {
+                let _ = stdout.execute(SetAttribute(Attribute::Bold));
+                let inner: String = chars[i + 2..end].iter().collect();
+                print!("{}", inner);
+                let _ = stdout.execute(SetAttribute(Attribute::NoBold));
+                i = end + 2;
+                continue;
+            }
+        }
+
+        // Italic: *text* (but not **)
+        if chars[i] == '*' && (i + 1 >= len || chars[i + 1] != '*') {
+            if let Some(end) = find_closing_char(&chars, i + 1, '*') {
+                let _ = stdout.execute(SetAttribute(Attribute::Italic));
+                let inner: String = chars[i + 1..end].iter().collect();
+                print!("{}", inner);
+                let _ = stdout.execute(SetAttribute(Attribute::NoItalic));
+                i = end + 1;
+                continue;
+            }
+        }
+
+        // Inline code: `text`
+        if chars[i] == '`' {
+            if let Some(end) = find_closing_char(&chars, i + 1, '`') {
+                let _ = stdout.execute(SetForegroundColor(theme.code_color));
+                let inner: String = chars[i + 1..end].iter().collect();
+                print!("{}", inner);
+                let _ = stdout.execute(ResetColor);
+                i = end + 1;
+                continue;
+            }
+        }
+
+        // Link: [text](url)
+        if chars[i] == '[' {
+            if let Some((link_text, url, end_pos)) = parse_link(&chars, i) {
+                let _ = stdout.execute(SetAttribute(Attribute::Underlined));
+                print!("{}", link_text);
+                let _ = stdout.execute(SetAttribute(Attribute::NoUnderline));
+                let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
+                print!(" ({})", url);
+                let _ = stdout.execute(ResetColor);
+                i = end_pos;
+                continue;
+            }
+        }
+
+        // Regular character
+        print!("{}", chars[i]);
+        i += 1;
+    }
+}
+
+/// Find closing delimiter in char slice (e.g., "**")
+fn find_closing(chars: &[char], start: usize, delim: &str) -> Option<usize> {
+    let delim_chars: Vec<char> = delim.chars().collect();
+    let dlen = delim_chars.len();
+    if dlen == 0 {
+        return None;
+    }
+    let mut i = start;
+    while i + dlen <= chars.len() {
+        if chars[i..i + dlen] == delim_chars[..] {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Find closing single character delimiter
+fn find_closing_char(chars: &[char], start: usize, delim: char) -> Option<usize> {
+    for i in start..chars.len() {
+        if chars[i] == delim {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// Parse a markdown link [text](url) starting at position i ('[')
+fn parse_link(chars: &[char], start: usize) -> Option<(String, String, usize)> {
+    // Find closing ']'
+    let text_end = find_closing_char(chars, start + 1, ']')?;
+    let link_text: String = chars[start + 1..text_end].iter().collect();
+
+    // Expect '(' immediately after ']'
+    let paren_start = text_end + 1;
+    if paren_start >= chars.len() || chars[paren_start] != '(' {
+        return None;
+    }
+
+    let url_end = find_closing_char(chars, paren_start + 1, ')')?;
+    let url: String = chars[paren_start + 1..url_end].iter().collect();
+
+    Some((link_text, url, url_end + 1))
+}
+
+/// Strip an ordered list prefix like "1. ", "12. " and return the remainder
+fn strip_ordered_list_prefix(s: &str) -> Option<&str> {
+    let mut chars = s.chars();
+    // Must start with a digit
+    let first = chars.next()?;
+    if !first.is_ascii_digit() {
+        return None;
+    }
+    // Consume remaining digits
+    let mut dot_pos = 1;
+    for ch in chars {
+        if ch.is_ascii_digit() {
+            dot_pos += 1;
+        } else if ch == '.' {
+            dot_pos += 1;
+            break;
+        } else {
+            return None;
+        }
+    }
+    // Must have ". " after digits
+    if dot_pos < s.len() && s.as_bytes().get(dot_pos) == Some(&b' ') {
+        return Some(&s[dot_pos + 1..]);
+    }
+    None
+}
+
+// ─── Status bar ─────────────────────────────────────────────────────────────
+
+/// Draw a persistent status bar at the bottom of the terminal.
+///
+/// Shows: model name, token count, cost, mode, session duration
+pub fn draw_status_bar(model: &str, tokens: usize, cost: Option<f64>, mode: &str, duration: &str) {
+    let mut stdout = io::stdout();
+    let (cols, rows) = terminal::size().unwrap_or((80, 24));
+
+    let cost_str = match cost {
+        Some(c) if c >= 0.01 => format!("${:.2}", c),
+        Some(c) => format!("${:.4}", c),
+        None => String::new(),
+    };
+
+    let token_str = if tokens >= 1_000_000 {
+        format!("{:.1}M tokens", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{:.1}k tokens", tokens as f64 / 1_000.0)
+    } else {
+        format!("{} tokens", tokens)
+    };
+
+    let status = if cost_str.is_empty() {
+        format!(" {} | {} | {} | {} ", model, token_str, mode, duration)
+    } else {
+        format!(
+            " {} | {} | {} | {} | {} ",
+            model, cost_str, token_str, mode, duration
+        )
+    };
+
+    // Pad to fill the terminal width
+    let padded = format!("{:<width$}", status, width = cols as usize);
+
+    let _ = crossterm::execute!(
+        stdout,
+        cursor::SavePosition,
+        cursor::MoveTo(0, rows.saturating_sub(1)),
+        SetForegroundColor(CtColor::White),
+        SetAttribute(Attribute::Reverse),
+        Print(&padded),
+        SetAttribute(Attribute::Reset),
+        ResetColor,
+        cursor::RestorePosition,
+    );
+    stdout.flush().ok();
+}
+
+// ─── Thinking display ───────────────────────────────────────────────────────
+
+/// Print a thinking/reasoning chunk in dim styling
+pub fn print_thinking_chunk(text: &str) {
+    let mut stdout = io::stdout();
+    let _ = stdout.execute(SetAttribute(Attribute::Dim));
+    let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
+    print!("{}", text);
+    let _ = stdout.execute(SetAttribute(Attribute::Reset));
+    let _ = stdout.execute(ResetColor);
+    stdout.flush().ok();
+}
+
+/// Print the thinking header when a thinking block starts
+pub fn print_thinking_start() {
+    let mut stdout = io::stdout();
+    let _ = stdout.execute(SetAttribute(Attribute::Dim));
+    let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
+    print!("Thinking: ");
+    let _ = stdout.execute(SetAttribute(Attribute::Reset));
+    let _ = stdout.execute(ResetColor);
+    stdout.flush().ok();
+}
+
+/// Print a summary when a thinking block ends
+pub fn print_thinking_end(duration_secs: f64) {
+    let mut stdout = io::stdout();
+    let _ = stdout.execute(SetAttribute(Attribute::Dim));
+    let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
+    if duration_secs > 0.0 {
+        println!("\n  (thought for {:.1}s)", duration_secs);
+    } else {
+        println!();
+    }
+    let _ = stdout.execute(SetAttribute(Attribute::Reset));
+    let _ = stdout.execute(ResetColor);
+    stdout.flush().ok();
+}
+
+// ─── Original TUI components ────────────────────────────────────────────────
 
 /// Get a random tip for the tips section
 pub fn get_tips() -> Vec<&'static str> {
@@ -166,8 +617,7 @@ pub fn render_input_prompt(mode: &str) -> io::Result<()> {
     );
 
     // Use crossterm for simple colored text
-    use crossterm::style::{ResetColor, SetForegroundColor};
-    stdout.execute(SetForegroundColor(crossterm::style::Color::Rgb {
+    stdout.execute(SetForegroundColor(CtColor::Rgb {
         r: 128,
         g: 128,
         b: 128,
@@ -239,5 +689,53 @@ mod tests {
             tips.iter().any(|t| t.contains("/help")),
             "Tips should mention /help command"
         );
+    }
+
+    #[test]
+    fn test_theme_from_name() {
+        assert!(Theme::from_name("default").is_some());
+        assert!(Theme::from_name("ocean").is_some());
+        assert!(Theme::from_name("forest").is_some());
+        assert!(Theme::from_name("sunset").is_some());
+        assert!(Theme::from_name("mono").is_some());
+        assert!(Theme::from_name("neon").is_some());
+        assert!(Theme::from_name("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_theme_default() {
+        let theme = Theme::default();
+        assert_eq!(theme.name, "default");
+    }
+
+    #[test]
+    fn test_strip_ordered_list_prefix() {
+        assert_eq!(strip_ordered_list_prefix("1. hello"), Some("hello"));
+        assert_eq!(strip_ordered_list_prefix("12. world"), Some("world"));
+        assert_eq!(strip_ordered_list_prefix("not a list"), None);
+        assert_eq!(strip_ordered_list_prefix("- dash"), None);
+    }
+
+    #[test]
+    fn test_find_closing() {
+        let chars: Vec<char> = "hello**world".chars().collect();
+        assert_eq!(find_closing(&chars, 0, "**"), Some(5));
+    }
+
+    #[test]
+    fn test_find_closing_char() {
+        let chars: Vec<char> = "hello`world".chars().collect();
+        assert_eq!(find_closing_char(&chars, 0, '`'), Some(5));
+    }
+
+    #[test]
+    fn test_parse_link() {
+        let chars: Vec<char> = "[click here](https://example.com) rest".chars().collect();
+        let result = parse_link(&chars, 0);
+        assert!(result.is_some());
+        let (text, url, end) = result.unwrap();
+        assert_eq!(text, "click here");
+        assert_eq!(url, "https://example.com");
+        assert_eq!(end, 33);
     }
 }

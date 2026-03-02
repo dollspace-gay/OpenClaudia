@@ -3,8 +3,8 @@
 //! Provides Claude Code-like capabilities for any AI agent.
 
 use openclaudia::{
-    config, guardrails, memory, oauth, plugins, prompt, providers, proxy, tool_intercept, tools,
-    tui, vdd,
+    config, guardrails, memory, oauth, plugins, prompt, providers, proxy, session, tool_intercept,
+    tools, tui, vdd,
 };
 
 use clap::{Parser, Subcommand};
@@ -779,6 +779,8 @@ enum SlashCommandResult {
     FetchModels,
     /// Plugin management command
     Plugin(PluginAction),
+    /// Theme was changed to the given name
+    ThemeChanged(String),
     /// Show help message (already printed)
     Handled,
 }
@@ -1574,8 +1576,11 @@ fn handle_slash_command(
             Some(SlashCommandResult::Handled)
         }
         "theme" | "themes" => {
-            handle_theme_command(args);
-            Some(SlashCommandResult::Handled)
+            if let Some(new_name) = handle_theme_command(args) {
+                Some(SlashCommandResult::ThemeChanged(new_name))
+            } else {
+                Some(SlashCommandResult::Handled)
+            }
         }
         "mode" => Some(SlashCommandResult::ToggleMode),
         "keybindings" | "keys" | "bindings" => Some(SlashCommandResult::Keybindings),
@@ -2952,11 +2957,14 @@ fn configure_provider_api_key() {
     }
 }
 
-/// Handle theme command - list or switch themes
-fn handle_theme_command(args: &str) {
+/// Handle theme command - list or switch themes.
+///
+/// Returns the new theme name if one was selected, so the caller
+/// can update its active theme reference.
+fn handle_theme_command(args: &str) -> Option<String> {
     use crossterm::style::{Color, Stylize};
 
-    // Available themes with their color schemes
+    // Available themes with their color schemes (for preview display)
     let themes: &[(&str, &str, Color, Color)] = &[
         (
             "default",
@@ -2986,12 +2994,21 @@ fn handle_theme_command(args: &str) {
         }
 
         println!("\nUse /theme <name> to switch themes.");
-        println!("Note: Theme affects status messages only.\n");
+        println!("Theme affects status bar, headings, and code highlighting.\n");
+        None
     } else {
         let theme_name = args.trim().to_lowercase();
 
-        if let Some((name, desc, primary, _)) = themes.iter().find(|(n, _, _, _)| *n == theme_name)
+        if let Some((name, desc, primary, _)) =
+            themes.iter().find(|(n, _, _, _)| *n == theme_name)
         {
+            // Build and persist the tui::Theme
+            if let Some(theme) = tui::Theme::from_name(name) {
+                if let Err(e) = theme.save() {
+                    eprintln!("Warning: could not save theme preference: {}", e);
+                }
+            }
+
             println!();
             println!(
                 "{}",
@@ -3001,10 +3018,10 @@ fn handle_theme_command(args: &str) {
                 "{}",
                 "Theme preview: This is how messages will appear.".with(*primary)
             );
+            println!("Theme saved and will persist across sessions.");
             println!();
 
-            // Note: In a full implementation, you'd store the theme preference
-            // and apply it to prompts and responses throughout the app
+            Some(name.to_string())
         } else {
             eprintln!("\nUnknown theme: '{}'\n", theme_name);
             eprintln!(
@@ -3015,6 +3032,7 @@ fn handle_theme_command(args: &str) {
                     .collect::<Vec<_>>()
                     .join(", ")
             );
+            None
         }
     }
 }
@@ -3367,6 +3385,12 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
     // Initialize chat session
     let mut chat_session = ChatSession::new(&model, &config.proxy.target);
 
+    // Load saved theme (or default)
+    let mut active_theme = tui::Theme::load();
+
+    // Initialize audit logger for this session
+    let mut audit_logger = openclaudia::session::AuditLogger::new(&chat_session.id);
+
     // Initialize memory database
     // Short-term memory (session summaries, recent activity) is ALWAYS available
     // Full stateful mode (memory tools, core memory in prompt) requires --stateful flag
@@ -3584,11 +3608,31 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                             );
                             println!("  Messages:   {}", msg_count);
                             println!("  Est tokens: ~{}", tokens);
+
+                            // Show estimated cost if pricing is available
+                            if let Some(pricing) = session::get_pricing(&chat_session.model) {
+                                let est_input = tokens as u64;
+                                let usage = openclaudia::session::TokenUsage {
+                                    input_tokens: est_input,
+                                    output_tokens: est_input / 4, // rough estimate
+                                    cache_read_tokens: 0,
+                                    cache_write_tokens: 0,
+                                };
+                                if let Some(cost) = session::calculate_cost(&chat_session.model, &usage) {
+                                    println!("  Est cost:   ${:.4}", cost);
+                                }
+                                println!(
+                                    "  Pricing:    ${}/M in, ${}/M out",
+                                    pricing.input_per_million, pricing.output_per_million
+                                );
+                            }
+
                             println!("  Duration:   {} min", mins);
                             println!(
                                 "  Created:    {}",
                                 chat_session.created_at.format("%Y-%m-%d %H:%M UTC")
                             );
+                            println!("  Theme:      {}", active_theme.name);
                             println!();
                             continue;
                         }
@@ -3682,6 +3726,12 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                         }
                         SlashCommandResult::Plugin(action) => {
                             handle_plugin_action(action, &mut plugin_manager);
+                            continue;
+                        }
+                        SlashCommandResult::ThemeChanged(name) => {
+                            if let Some(theme) = tui::Theme::from_name(&name) {
+                                active_theme = theme;
+                            }
                             continue;
                         }
                         SlashCommandResult::Handled => {
@@ -3999,7 +4049,32 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                             let mut tool_accumulator = tools::ToolCallAccumulator::new();
                             let mut anthropic_accumulator = tools::AnthropicToolAccumulator::new();
 
+                            // Thinking display state
+                            let mut in_thinking_block = false;
+                            let mut thinking_start_time: Option<std::time::Instant> = None;
+
+                            // SSE usage accumulator
+                            let mut stream_usage = openclaudia::session::TokenUsage::default();
+
+                            // Stream timeout tracking
+                            let mut last_data_time = std::time::Instant::now();
+                            let stream_timeout = std::time::Duration::from_secs(
+                                proxy::SSE_STREAM_TIMEOUT_SECS,
+                            );
+
+                            // Audit: log model request
+                            audit_logger.log("model_request", &serde_json::json!({
+                                "model": &model,
+                                "provider": &config.proxy.target,
+                            }));
+
                             while let Some(chunk_result) = stream.next().await {
+                                // Check stream timeout
+                                if last_data_time.elapsed() > stream_timeout {
+                                    eprintln!("\nStream timeout: no data received for {}s", proxy::SSE_STREAM_TIMEOUT_SECS);
+                                    break;
+                                }
+
                                 // Check for configured keybindings during streaming
                                 if event::poll(std::time::Duration::from_millis(1)).unwrap_or(false)
                                 {
@@ -4034,6 +4109,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
 
                                 match chunk_result {
                                     Ok(chunk) => {
+                                        last_data_time = std::time::Instant::now();
                                         // Append chunk to buffer
                                         buffer.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -4058,6 +4134,51 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                 if let Ok(json) =
                                                     serde_json::from_str::<serde_json::Value>(data)
                                                 {
+                                                    // Extract SSE usage from streaming events
+                                                    if let Some(usage) = proxy::extract_usage_from_sse_event(&json) {
+                                                        stream_usage.accumulate(&usage);
+                                                    }
+
+                                                    // Thinking block detection (Anthropic)
+                                                    if let Some(event_type) = json.get("type").and_then(|t| t.as_str()) {
+                                                        if event_type == "content_block_start" {
+                                                            if let Some(block_type) = json.get("content_block")
+                                                                .and_then(|b| b.get("type"))
+                                                                .and_then(|t| t.as_str())
+                                                            {
+                                                                if block_type == "thinking" {
+                                                                    in_thinking_block = true;
+                                                                    thinking_start_time = Some(std::time::Instant::now());
+                                                                    tui::print_thinking_start();
+                                                                    continue;
+                                                                }
+                                                            }
+                                                        }
+                                                        if event_type == "content_block_stop" && in_thinking_block {
+                                                            let elapsed = thinking_start_time
+                                                                .map(|t| t.elapsed().as_secs_f64())
+                                                                .unwrap_or(0.0);
+                                                            tui::print_thinking_end(elapsed);
+                                                            in_thinking_block = false;
+                                                            thinking_start_time = None;
+                                                            continue;
+                                                        }
+                                                        if event_type == "content_block_delta" && in_thinking_block {
+                                                            if let Some(text) = json.get("delta")
+                                                                .and_then(|d| d.get("thinking"))
+                                                                .and_then(|t| t.as_str())
+                                                            {
+                                                                tui::print_thinking_chunk(text);
+                                                            } else if let Some(text) = json.get("delta")
+                                                                .and_then(|d| d.get("text"))
+                                                                .and_then(|t| t.as_str())
+                                                            {
+                                                                tui::print_thinking_chunk(text);
+                                                            }
+                                                            continue;
+                                                        }
+                                                    }
+
                                                     // Anthropic format: process all streaming events
                                                     // through the accumulator (handles text_delta,
                                                     // tool_use blocks, and stop_reason).
@@ -4098,6 +4219,38 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                             }
 
                             println!();
+
+                            // Audit: log model response
+                            audit_logger.log("model_response", &serde_json::json!({
+                                "model": &model,
+                                "content_length": full_content.len(),
+                                "cancelled": cancelled,
+                                "stream_usage": {
+                                    "input_tokens": stream_usage.input_tokens,
+                                    "output_tokens": stream_usage.output_tokens,
+                                },
+                            }));
+
+                            // Update status bar after streaming completes
+                            {
+                                let tokens = estimate_session_tokens(&chat_session)
+                                    + full_content.len() / 4;
+                                let cost = session::calculate_cost(&model, &openclaudia::session::TokenUsage {
+                                    input_tokens: tokens as u64,
+                                    output_tokens: stream_usage.output_tokens.max(full_content.len() as u64 / 4),
+                                    cache_read_tokens: stream_usage.cache_read_tokens,
+                                    cache_write_tokens: stream_usage.cache_write_tokens,
+                                });
+                                let duration = chrono::Utc::now().signed_duration_since(chat_session.created_at);
+                                let dur_str = format!("{}m", duration.num_minutes());
+                                tui::draw_status_bar(
+                                    &model,
+                                    tokens,
+                                    cost,
+                                    chat_session.mode.display(),
+                                    &dur_str,
+                                );
+                            }
 
                             // If cancelled, append note to content
                             if cancelled && !full_content.is_empty() {
@@ -4186,11 +4339,26 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                 tool_call.function.name
                                             );
 
+                                            // Audit: log tool call
+                                            audit_logger.log("tool_call", &serde_json::json!({
+                                                "name": &tool_call.function.name,
+                                                "arguments": &tool_call.function.arguments,
+                                                "id": &tool_call.id,
+                                            }));
+
                                             let result = if let Some(ref db) = memory_db {
                                                 tools::execute_tool_with_memory(tool_call, Some(db))
                                             } else {
                                                 tools::execute_tool(tool_call)
                                             };
+
+                                            // Audit: log tool result
+                                            audit_logger.log("tool_result", &serde_json::json!({
+                                                "name": &tool_call.function.name,
+                                                "id": &tool_call.id,
+                                                "is_error": result.is_error,
+                                                "content_length": result.content.len(),
+                                            }));
 
                                             // Show result preview
                                             let preview: String = result

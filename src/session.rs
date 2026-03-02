@@ -13,6 +13,135 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+// ─── Model Pricing ──────────────────────────────────────────────────────────
+
+/// Pricing data for a model (per million tokens)
+#[derive(Debug, Clone)]
+pub struct ModelPricing {
+    /// Cost per million input tokens (USD)
+    pub input_per_million: f64,
+    /// Cost per million output tokens (USD)
+    pub output_per_million: f64,
+}
+
+/// Look up pricing for a model by name.
+///
+/// Returns hardcoded pricing for common models. Pricing is approximate
+/// and may not reflect current rates or promotional pricing.
+pub fn get_pricing(model: &str) -> Option<ModelPricing> {
+    let m = model.to_lowercase();
+    match () {
+        _ if m.contains("opus") => Some(ModelPricing {
+            input_per_million: 15.0,
+            output_per_million: 75.0,
+        }),
+        _ if m.contains("sonnet") && m.contains("3.5") => Some(ModelPricing {
+            input_per_million: 3.0,
+            output_per_million: 15.0,
+        }),
+        _ if m.contains("sonnet") => Some(ModelPricing {
+            input_per_million: 3.0,
+            output_per_million: 15.0,
+        }),
+        _ if m.contains("haiku") => Some(ModelPricing {
+            input_per_million: 0.25,
+            output_per_million: 1.25,
+        }),
+        _ if m.contains("gpt-4o-mini") => Some(ModelPricing {
+            input_per_million: 0.15,
+            output_per_million: 0.60,
+        }),
+        _ if m.contains("gpt-4o") => Some(ModelPricing {
+            input_per_million: 2.5,
+            output_per_million: 10.0,
+        }),
+        _ if m.contains("gpt-4") => Some(ModelPricing {
+            input_per_million: 30.0,
+            output_per_million: 60.0,
+        }),
+        _ if m.contains("o1") => Some(ModelPricing {
+            input_per_million: 15.0,
+            output_per_million: 60.0,
+        }),
+        _ if m.contains("o3") => Some(ModelPricing {
+            input_per_million: 10.0,
+            output_per_million: 40.0,
+        }),
+        _ if m.contains("gemini-2") && m.contains("flash") => Some(ModelPricing {
+            input_per_million: 0.075,
+            output_per_million: 0.30,
+        }),
+        _ if m.contains("gemini-2") => Some(ModelPricing {
+            input_per_million: 1.25,
+            output_per_million: 10.0,
+        }),
+        _ if m.contains("gemini") => Some(ModelPricing {
+            input_per_million: 1.25,
+            output_per_million: 5.0,
+        }),
+        _ if m.contains("deepseek") => Some(ModelPricing {
+            input_per_million: 0.27,
+            output_per_million: 1.10,
+        }),
+        _ if m.contains("qwen") => Some(ModelPricing {
+            input_per_million: 0.50,
+            output_per_million: 2.0,
+        }),
+        _ => None,
+    }
+}
+
+/// Calculate the cost for given token usage and model
+pub fn calculate_cost(model: &str, usage: &TokenUsage) -> Option<f64> {
+    let pricing = get_pricing(model)?;
+    let input_cost = usage.input_tokens as f64 * pricing.input_per_million / 1_000_000.0;
+    let output_cost = usage.output_tokens as f64 * pricing.output_per_million / 1_000_000.0;
+    // Cache reads are typically 90% cheaper; cache writes same as input
+    let cache_read_cost =
+        usage.cache_read_tokens as f64 * pricing.input_per_million * 0.1 / 1_000_000.0;
+    let cache_write_cost =
+        usage.cache_write_tokens as f64 * pricing.input_per_million * 1.25 / 1_000_000.0;
+    Some(input_cost + output_cost + cache_read_cost + cache_write_cost)
+}
+
+// ─── Audit Logger ────────────────────────────────────────────────────────────
+
+/// JSONL audit logger that records events for a session
+pub struct AuditLogger {
+    file: Option<std::fs::File>,
+}
+
+impl AuditLogger {
+    /// Create a new audit logger for a session. Creates the log directory
+    /// and opens a `.jsonl` file for appending.
+    pub fn new(session_id: &str) -> Self {
+        let dir = PathBuf::from(".openclaudia/logs");
+        std::fs::create_dir_all(&dir).ok();
+        let path = dir.join(format!("{}.jsonl", session_id));
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .ok();
+        Self { file }
+    }
+
+    /// Log an event with arbitrary JSON data
+    pub fn log(&mut self, event_type: &str, data: &serde_json::Value) {
+        if let Some(ref mut f) = self.file {
+            let entry = serde_json::json!({
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "event": event_type,
+                "data": data,
+            });
+            if let Ok(line) = serde_json::to_string(&entry) {
+                use std::io::Write;
+                writeln!(f, "{}", line).ok();
+            }
+        }
+    }
+}
+
 /// Session state indicating the agent mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -706,5 +835,57 @@ mod tests {
         let second = manager.get_or_create_session().clone();
         assert_eq!(second.mode, SessionMode::Coding);
         assert_eq!(second.parent_session_id, Some(first.id));
+    }
+
+    #[test]
+    fn test_get_pricing_known_models() {
+        assert!(get_pricing("claude-3-opus-20240229").is_some());
+        assert!(get_pricing("claude-3-sonnet-20240229").is_some());
+        assert!(get_pricing("claude-3-haiku-20240307").is_some());
+        assert!(get_pricing("gpt-4o").is_some());
+        assert!(get_pricing("gpt-4o-mini").is_some());
+        assert!(get_pricing("gemini-2.0-flash").is_some());
+        assert!(get_pricing("deepseek-chat").is_some());
+
+        // Unknown model returns None
+        assert!(get_pricing("totally-unknown-model").is_none());
+    }
+
+    #[test]
+    fn test_calculate_cost() {
+        let usage = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 100_000,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+        };
+        let cost = calculate_cost("claude-3-haiku-20240307", &usage);
+        assert!(cost.is_some());
+        let c = cost.unwrap();
+        // haiku: $0.25/M input + $1.25/M output * 0.1M = $0.25 + $0.125 = $0.375
+        assert!(c > 0.3 && c < 0.5, "Expected ~$0.375, got {}", c);
+    }
+
+    #[test]
+    fn test_audit_logger() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join(".openclaudia/logs");
+        std::fs::create_dir_all(&log_dir).unwrap();
+
+        // We just test that creation doesn't panic; actual file writing
+        // depends on current directory which is tricky in tests
+        let session_id = "test-session-123";
+        let path = log_dir.join(format!("{}.jsonl", session_id));
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .ok();
+        let mut logger = AuditLogger { file };
+        logger.log("test_event", &serde_json::json!({"key": "value"}));
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("test_event"));
+        assert!(content.contains("\"key\":\"value\""));
     }
 }
