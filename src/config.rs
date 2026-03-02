@@ -539,7 +539,7 @@ pub struct QualityCheck {
 ///
 /// Controls whether permission checks are performed before tool execution
 /// and provides default allow-list patterns.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 pub struct PermissionsConfig {
     /// Enable the permission system (default: false)
     #[serde(default)]
@@ -549,15 +549,6 @@ pub struct PermissionsConfig {
     /// (command string for Bash, file_path for Edit/Write).
     #[serde(default)]
     pub default_allow: Vec<String>,
-}
-
-impl Default for PermissionsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            default_allow: Vec::new(),
-        }
-    }
 }
 
 /// Provider configuration (Anthropic, OpenAI, Google, etc.)

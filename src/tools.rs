@@ -3004,7 +3004,14 @@ fn execute_task_update(args: &HashMap<String, Value>, task_mgr: &mut TaskManager
                 .collect()
         });
 
-    match task_mgr.update_task(task_id, status, subject, description, active_form, add_blocks, add_blocked_by) {
+    match task_mgr.update_task(task_id, crate::session::TaskUpdateParams {
+        status: status.map(String::from),
+        subject,
+        description,
+        active_form,
+        add_blocks,
+        add_blocked_by,
+    }) {
         Ok(task) => {
             let output = format!("Updated task: {}\n{}", task.id, TaskManager::format_task_detail(task));
             (output, false)

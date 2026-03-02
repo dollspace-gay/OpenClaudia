@@ -333,12 +333,7 @@ fn find_closing(chars: &[char], start: usize, delim: &str) -> Option<usize> {
 
 /// Find closing single character delimiter
 fn find_closing_char(chars: &[char], start: usize, delim: char) -> Option<usize> {
-    for i in start..chars.len() {
-        if chars[i] == delim {
-            return Some(i);
-        }
-    }
-    None
+    (start..chars.len()).find(|&i| chars[i] == delim)
 }
 
 /// Parse a markdown link [text](url) starting at position i ('[')

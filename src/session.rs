@@ -57,6 +57,17 @@ pub struct Task {
     pub created_at: DateTime<Utc>,
 }
 
+/// Parameters for updating an existing task.
+#[derive(Default)]
+pub struct TaskUpdateParams {
+    pub status: Option<String>,
+    pub subject: Option<String>,
+    pub description: Option<String>,
+    pub active_form: Option<String>,
+    pub add_blocks: Option<Vec<String>>,
+    pub add_blocked_by: Option<Vec<String>>,
+}
+
 /// Manages structured tasks with dependency tracking.
 ///
 /// Enforces the invariant that only one task can be `InProgress` at a time.
@@ -123,20 +134,17 @@ impl TaskManager {
     pub fn update_task(
         &mut self,
         task_id: &str,
-        status: Option<&str>,
-        subject: Option<String>,
-        description: Option<String>,
-        active_form: Option<String>,
-        add_blocks: Option<Vec<String>>,
-        add_blocked_by: Option<Vec<String>>,
+        params: TaskUpdateParams,
     ) -> Result<&Task, String> {
         // Validate the task exists
         if self.get_task(task_id).is_none() {
             return Err(format!("Task '{}' not found", task_id));
         }
 
+        let TaskUpdateParams { status, subject, description, active_form, add_blocks, add_blocked_by } = params;
+
         // Parse and validate the new status
-        let new_status = if let Some(s) = status {
+        let new_status = if let Some(s) = status.as_deref() {
             match s {
                 "pending" => Some(TaskStatus::Pending),
                 "in_progress" => Some(TaskStatus::InProgress),
@@ -1255,7 +1263,9 @@ mod tests {
         let mut tm = TaskManager::new();
         tm.create_task("Task A".to_string(), "Desc".to_string(), None);
 
-        let result = tm.update_task("task-1", Some("in_progress"), None, None, None, None, None);
+        let result = tm.update_task("task-1", TaskUpdateParams {
+            status: Some("in_progress".into()), ..Default::default()
+        });
         assert!(result.is_ok());
         assert_eq!(tm.get_task("task-1").unwrap().status, TaskStatus::InProgress);
     }
@@ -1266,10 +1276,14 @@ mod tests {
         tm.create_task("Task A".to_string(), "Desc".to_string(), None);
         tm.create_task("Task B".to_string(), "Desc".to_string(), None);
 
-        tm.update_task("task-1", Some("in_progress"), None, None, None, None, None).unwrap();
+        tm.update_task("task-1", TaskUpdateParams {
+            status: Some("in_progress".into()), ..Default::default()
+        }).unwrap();
         assert_eq!(tm.get_task("task-1").unwrap().status, TaskStatus::InProgress);
 
-        tm.update_task("task-2", Some("in_progress"), None, None, None, None, None).unwrap();
+        tm.update_task("task-2", TaskUpdateParams {
+            status: Some("in_progress".into()), ..Default::default()
+        }).unwrap();
         assert_eq!(tm.get_task("task-1").unwrap().status, TaskStatus::Pending);
         assert_eq!(tm.get_task("task-2").unwrap().status, TaskStatus::InProgress);
     }
@@ -1280,7 +1294,9 @@ mod tests {
         tm.create_task("To delete".to_string(), "Desc".to_string(), None);
         assert_eq!(tm.list_tasks().len(), 1);
 
-        let result = tm.update_task("task-1", Some("deleted"), None, None, None, None, None);
+        let result = tm.update_task("task-1", TaskUpdateParams {
+            status: Some("deleted".into()), ..Default::default()
+        });
         // "deleted" returns an Err with the deletion message
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("deleted"));
@@ -1292,7 +1308,9 @@ mod tests {
         let mut tm = TaskManager::new();
         tm.create_task("Task".to_string(), "Desc".to_string(), None);
 
-        let result = tm.update_task("task-1", Some("invalid"), None, None, None, None, None);
+        let result = tm.update_task("task-1", TaskUpdateParams {
+            status: Some("invalid".into()), ..Default::default()
+        });
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid status"));
     }
@@ -1300,7 +1318,9 @@ mod tests {
     #[test]
     fn test_task_manager_not_found() {
         let mut tm = TaskManager::new();
-        let result = tm.update_task("task-999", Some("completed"), None, None, None, None, None);
+        let result = tm.update_task("task-999", TaskUpdateParams {
+            status: Some("completed".into()), ..Default::default()
+        });
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
     }
@@ -1312,7 +1332,9 @@ mod tests {
         tm.create_task("Build".to_string(), "Second step".to_string(), None);
 
         // task-2 blocked by task-1
-        tm.update_task("task-2", None, None, None, None, None, Some(vec!["task-1".to_string()])).unwrap();
+        tm.update_task("task-2", TaskUpdateParams {
+            add_blocked_by: Some(vec!["task-1".to_string()]), ..Default::default()
+        }).unwrap();
 
         let task1 = tm.get_task("task-1").unwrap();
         let task2 = tm.get_task("task-2").unwrap();
@@ -1325,7 +1347,9 @@ mod tests {
         let mut tm = TaskManager::new();
         tm.create_task("Task".to_string(), "Desc".to_string(), None);
 
-        let result = tm.update_task("task-1", None, None, None, None, Some(vec!["task-1".to_string()]), None);
+        let result = tm.update_task("task-1", TaskUpdateParams {
+            add_blocks: Some(vec!["task-1".to_string()]), ..Default::default()
+        });
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("cannot block itself"));
     }
@@ -1338,7 +1362,9 @@ mod tests {
         tm.create_task("Task".to_string(), "Desc".to_string(), None);
         assert!(tm.current_task().is_none()); // still pending
 
-        tm.update_task("task-1", Some("in_progress"), None, None, None, None, None).unwrap();
+        tm.update_task("task-1", TaskUpdateParams {
+            status: Some("in_progress".into()), ..Default::default()
+        }).unwrap();
         assert!(tm.current_task().is_some());
         assert_eq!(tm.current_task().unwrap().id, "task-1");
     }
