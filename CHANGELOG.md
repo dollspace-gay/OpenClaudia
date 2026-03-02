@@ -6,13 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- Google Gemini full native integration with non-streaming response parsing, tool execution loop, and multi-turn functionCall/functionResponse support
+- Provider auto-detection from `-m` flag: `gemini-*` → Google, `gpt-*` → OpenAI, `claude-*` → Anthropic, etc.
+- VDD adversarial review now runs for all providers (previously only proxy/Anthropic OAuth mode)
+- NotebookEdit tool for reading and editing Jupyter notebook cells
+- AskUserQuestion tool with multiple-choice options for interactive clarification
+- Plan mode workflow (enter_plan_mode/exit_plan_mode) with destructive tool restrictions
+- Structured task management (task_create, task_update, task_get, task_list) with dependencies
+- MCP resource browsing (list_mcp_resources, read_mcp_resource)
+- Granular tool permissions with allow/deny rules and glob patterns
+- Rich terminal output with streaming token cost metrics and status bar
+- Agent resume, model selection, and worktree isolation for subagents
+- Settings layering (project, user, global) with hook enhancements
+- Path traversal protection on read_file (requires absolute paths)
+- Read-before-edit enforcement on edit_file tool
+
+### Fixed
+- Fix Google adapter using retired `gemini-pro` model — now defaults to `gemini-2.5-flash`
+- Fix `chat_endpoint()` across all 7 adapters to accept model parameter for dynamic URL construction
+- Fix VDD review only triggering in proxy mode — now works with Google, direct Anthropic, and OpenAI
+- Fix clippy warnings from merged worktree code (derivable Default, too_many_arguments, needless_range_loop, manual_find)
+- Fix test race conditions in `READ_TRACKER` global state with Mutex locking
+- Fix `test_bash_timeout` hanging on Linux (replaced Windows-specific `ping -n` with `sleep`)
+- Fix `test_read_file_path_traversal` failing on Linux (added absolute path requirement)
+- Fix permissions glob pattern `"rm *"` not matching paths with `/` (changed to `"rm **"`)
+- Fix missing `permissions` field in test AppConfig initializers after merge
+
+### Changed
+- Make `determine_provider()` public for use in chat mode provider auto-detection
+- Update default Google model from retired `gemini-pro` to `gemini-2.5-flash`
+- Refactor `TaskManager::update_task` from 8 args to `TaskUpdateParams` struct (clippy fix)
+- Replace manual `find_closing_char` loop with iterator `.find()` (clippy fix)
+- Change `PermissionsConfig` from manual `impl Default` to `#[derive(Default)]`
+
 ### Removed
 - Remove obsolete TestBuilder adversarial subagent code (#205)
 
 ### Security
 - Fix lru crate Stacked Borrows vulnerability by updating to 0.16.3 (#99)
+- Add path traversal protection to `read_file` tool (reject relative paths)
 
-### Added
+### Previous
+- Add Claude Code parity design document (#1)
 - Improve test robustness and add edge case coverage (#225)
 - Improve tool result format to prevent agentic loops (#218)
 - Add coding guardrail enforcement system (#219)
@@ -71,6 +107,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Add hook engine with all 12 event types (#4)
 
 ### Fixed
+- Fix clippy warnings from merged worktree code (#9)
 - Fix infinite tool call loop in XML interception mode (#217)
 - Fix VDD adversary response parsing for Gemini (#215)
 - Fix model not using Write tool to create files (#214)
