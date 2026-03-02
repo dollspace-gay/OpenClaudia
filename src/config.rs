@@ -27,6 +27,8 @@ pub struct AppConfig {
     pub vdd: VddConfig,
     #[serde(default)]
     pub guardrails: GuardrailsConfig,
+    #[serde(default)]
+    pub permissions: PermissionsConfig,
 }
 
 /// Proxy server configuration
@@ -523,6 +525,35 @@ pub struct QualityCheck {
     /// Whether failure should be treated as an error
     #[serde(default = "default_true")]
     pub required: bool,
+}
+
+// ==========================================================================
+// Permissions Configuration
+// ==========================================================================
+
+/// Tool permission system configuration.
+///
+/// Controls whether permission checks are performed before tool execution
+/// and provides default allow-list patterns.
+#[derive(Debug, Deserialize, Clone)]
+pub struct PermissionsConfig {
+    /// Enable the permission system (default: false)
+    #[serde(default)]
+    pub enabled: bool,
+    /// Glob patterns that are pre-allowed without prompting.
+    /// Patterns are matched against the tool's primary argument
+    /// (command string for Bash, file_path for Edit/Write).
+    #[serde(default)]
+    pub default_allow: Vec<String>,
+}
+
+impl Default for PermissionsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_allow: Vec::new(),
+        }
+    }
 }
 
 /// Provider configuration (Anthropic, OpenAI, Google, etc.)
@@ -1216,6 +1247,7 @@ mod tests {
             keybindings: KeybindingsConfig::default(),
             vdd: VddConfig::default(),
             guardrails: GuardrailsConfig::default(),
+            permissions: PermissionsConfig::default(),
         };
 
         let active = config.active_provider();
@@ -1255,6 +1287,7 @@ mod tests {
             keybindings: KeybindingsConfig::default(),
             vdd: VddConfig::default(),
             guardrails: GuardrailsConfig::default(),
+            permissions: PermissionsConfig::default(),
         };
 
         assert!(config.get_provider("openai").is_some());
@@ -1275,6 +1308,7 @@ mod tests {
             keybindings: KeybindingsConfig::default(),
             vdd: VddConfig::default(),
             guardrails: GuardrailsConfig::default(),
+            permissions: PermissionsConfig::default(),
         };
 
         assert!(config.active_provider().is_none());

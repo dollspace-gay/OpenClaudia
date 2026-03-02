@@ -15,6 +15,8 @@
 use base64::Engine;
 use crate::config::AppConfig;
 use crate::memory::{MemoryDb, SECTION_PERSONA, SECTION_PROJECT_INFO, SECTION_USER_PREFS};
+use crate::permissions::{CheckResult, PermissionManager};
+use crate::session::TaskManager;
 use crate::subagent;
 use crate::web::{self, WebConfig};
 use serde::{Deserialize, Serialize};
@@ -333,6 +335,10 @@ pub fn get_tool_definitions() -> Value {
                         "run_in_background": {
                             "type": "boolean",
                             "description": "If true, run the command in the background and return a shell_id. Use bash_output to retrieve output later."
+                        },
+                        "dangerously_disable_sandbox": {
+                            "type": "boolean",
+                            "description": "If true, skip all permission checks for this command. Use with extreme caution. A warning will be logged."
                         }
                     },
                     "required": ["command"]
@@ -620,6 +626,34 @@ pub fn get_tool_definitions() -> Value {
                 }
             }
         },
+        // ====================================================================
+        // Structured Task Management Tools
+        // ====================================================================
+        {
+            "type": "function",
+            "function": {
+                "name": "task_create",
+                "description": "Create a new structured task with dependency tracking. Tasks are stored in the session and support blocking/blocked_by relationships. Only one task can be in_progress at a time.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "subject": {
+                            "type": "string",
+                            "description": "Brief title in imperative form (e.g., 'Add permission system')"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Detailed description of the task"
+                        },
+                        "active_form": {
+                            "type": "string",
+                            "description": "Present continuous form for spinner display (e.g., 'Adding permission system')"
+                        }
+                    },
+                    "required": ["subject", "description"]
+                }
+            }
+        },
         {
             "type": "function",
             "function": {
@@ -675,6 +709,79 @@ pub fn get_tool_definitions() -> Value {
                         }
                     },
                     "required": ["questions"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "task_update",
+                "description": "Update an existing task's status, subject, description, or dependencies. Setting status to 'in_progress' will demote any currently in-progress task to 'pending'. Setting status to 'deleted' removes the task entirely.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task_id": {
+                            "type": "string",
+                            "description": "The task ID (e.g., 'task-1')"
+                        },
+                        "status": {
+                            "type": "string",
+                            "enum": ["pending", "in_progress", "completed", "deleted"],
+                            "description": "New task status"
+                        },
+                        "subject": {
+                            "type": "string",
+                            "description": "Updated task title"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Updated task description"
+                        },
+                        "active_form": {
+                            "type": "string",
+                            "description": "Updated spinner text (present continuous form)"
+                        },
+                        "add_blocks": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Task IDs that this task blocks (downstream dependencies)"
+                        },
+                        "add_blocked_by": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Task IDs that block this task (upstream dependencies)"
+                        }
+                    },
+                    "required": ["task_id"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "task_get",
+                "description": "Get full details of a specific task including its dependencies, status, and timestamps.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task_id": {
+                            "type": "string",
+                            "description": "The task ID (e.g., 'task-1')"
+                        }
+                    },
+                    "required": ["task_id"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "task_list",
+                "description": "List all tasks with their status and dependency summary. Shows pending, in-progress, and completed counts.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
                 }
             }
         },
@@ -2794,6 +2901,243 @@ pub fn parse_exit_plan_mode_prompts(content: &str) -> Vec<crate::session::Allowe
         .unwrap_or_default()
 }
 
+// =========================================================================
+// Structured Task Management Tool Execution
+// =========================================================================
+
+/// Execute the task_create tool
+fn execute_task_create(args: &HashMap<String, Value>, task_mgr: &mut TaskManager) -> (String, bool) {
+    let subject = match args.get("subject").and_then(|v| v.as_str()) {
+        Some(s) => s.to_string(),
+        None => return ("Missing 'subject' argument".to_string(), true),
+    };
+
+    let description = match args.get("description").and_then(|v| v.as_str()) {
+        Some(d) => d.to_string(),
+        None => return ("Missing 'description' argument".to_string(), true),
+    };
+
+    let active_form = args
+        .get("active_form")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let task = task_mgr.create_task(subject, description, active_form);
+    let output = format!("Created task: {}\n{}", task.id, TaskManager::format_task_detail(task));
+    (output, false)
+}
+
+/// Execute the task_update tool
+fn execute_task_update(args: &HashMap<String, Value>, task_mgr: &mut TaskManager) -> (String, bool) {
+    let task_id = match args.get("task_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => return ("Missing 'task_id' argument".to_string(), true),
+    };
+
+    let status = args.get("status").and_then(|v| v.as_str());
+    let subject = args.get("subject").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let description = args.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let active_form = args.get("active_form").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    let add_blocks: Option<Vec<String>> = args
+        .get("add_blocks")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
+
+    let add_blocked_by: Option<Vec<String>> = args
+        .get("add_blocked_by")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
+
+    match task_mgr.update_task(task_id, status, subject, description, active_form, add_blocks, add_blocked_by) {
+        Ok(task) => {
+            let output = format!("Updated task: {}\n{}", task.id, TaskManager::format_task_detail(task));
+            (output, false)
+        }
+        Err(msg) => {
+            // "deleted" is a special case -- it's not really an error
+            if msg.contains("deleted") {
+                (msg, false)
+            } else {
+                (msg, true)
+            }
+        }
+    }
+}
+
+/// Execute the task_get tool
+fn execute_task_get(args: &HashMap<String, Value>, task_mgr: &TaskManager) -> (String, bool) {
+    let task_id = match args.get("task_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => return ("Missing 'task_id' argument".to_string(), true),
+    };
+
+    match task_mgr.get_task(task_id) {
+        Some(task) => (TaskManager::format_task_detail(task), false),
+        None => (format!("Task '{}' not found", task_id), true),
+    }
+}
+
+/// Execute the task_list tool
+fn execute_task_list(task_mgr: &TaskManager) -> (String, bool) {
+    let tasks = task_mgr.list_tasks();
+
+    if tasks.is_empty() {
+        return ("No tasks.".to_string(), false);
+    }
+
+    let mut output = String::new();
+    for task in tasks {
+        output.push_str(&TaskManager::format_task_summary(task));
+        output.push('\n');
+    }
+
+    let completed = tasks.iter().filter(|t| t.status == crate::session::TaskStatus::Completed).count();
+    let in_progress = tasks.iter().filter(|t| t.status == crate::session::TaskStatus::InProgress).count();
+    let pending = tasks.iter().filter(|t| t.status == crate::session::TaskStatus::Pending).count();
+
+    output.push_str(&format!(
+        "\n({} total: {} completed, {} in progress, {} pending)",
+        tasks.len(), completed, in_progress, pending
+    ));
+
+    (output, false)
+}
+
+// =========================================================================
+// Permission-Checked Tool Execution
+// =========================================================================
+
+/// Check permissions before executing a tool. Returns a ToolResult with an
+/// error if permission is denied, or None if the tool should proceed.
+pub fn check_tool_permission(
+    tool_call: &ToolCall,
+    permission_mgr: Option<&PermissionManager>,
+) -> Option<ToolResult> {
+    let mgr = match permission_mgr {
+        Some(m) if m.is_enabled() => m,
+        _ => return None, // No permission manager or disabled -- allow everything
+    };
+
+    let args: Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+
+    match mgr.check(&tool_call.function.name, &args) {
+        CheckResult::Allowed => None, // Proceed with execution
+        CheckResult::Denied(reason) => Some(ToolResult {
+            tool_call_id: tool_call.id.clone(),
+            content: format!("Permission denied: {}", reason),
+            is_error: true,
+        }),
+        CheckResult::NeedsPrompt { tool, target } => {
+            // In the library layer, we can't prompt the user directly.
+            // We return a structured message that the caller (main.rs / TUI)
+            // can intercept to show a prompt.
+            Some(ToolResult {
+                tool_call_id: tool_call.id.clone(),
+                content: format!(
+                    "PERMISSION_PROMPT: Allow {} on '{}'? [y/n/a(lways)]",
+                    tool, target
+                ),
+                is_error: true,
+            })
+        }
+    }
+}
+
+/// Execute a tool call with task manager support.
+///
+/// This is the highest-level execution function that handles:
+/// - Permission checking (via the caller using `check_tool_permission`)
+/// - Task management tools (task_create, task_update, task_get, task_list)
+/// - Subagent tools (via config)
+/// - Memory tools (via memory_db)
+/// - All standard tools
+pub fn execute_tool_with_tasks(
+    tool_call: &ToolCall,
+    memory_db: Option<&MemoryDb>,
+    app_config: Option<&AppConfig>,
+    task_mgr: Option<&mut TaskManager>,
+) -> ToolResult {
+    let args: HashMap<String, Value> =
+        serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+
+    // Handle task management tools
+    match tool_call.function.name.as_str() {
+        "task_create" => {
+            if let Some(tm) = task_mgr {
+                let (content, is_error) = execute_task_create(&args, tm);
+                return ToolResult {
+                    tool_call_id: tool_call.id.clone(),
+                    content,
+                    is_error,
+                };
+            }
+            return ToolResult {
+                tool_call_id: tool_call.id.clone(),
+                content: "Task management not available (no session)".to_string(),
+                is_error: true,
+            };
+        }
+        "task_update" => {
+            if let Some(tm) = task_mgr {
+                let (content, is_error) = execute_task_update(&args, tm);
+                return ToolResult {
+                    tool_call_id: tool_call.id.clone(),
+                    content,
+                    is_error,
+                };
+            }
+            return ToolResult {
+                tool_call_id: tool_call.id.clone(),
+                content: "Task management not available (no session)".to_string(),
+                is_error: true,
+            };
+        }
+        "task_get" => {
+            if let Some(tm) = task_mgr {
+                let (content, is_error) = execute_task_get(&args, tm);
+                return ToolResult {
+                    tool_call_id: tool_call.id.clone(),
+                    content,
+                    is_error,
+                };
+            }
+            return ToolResult {
+                tool_call_id: tool_call.id.clone(),
+                content: "Task management not available (no session)".to_string(),
+                is_error: true,
+            };
+        }
+        "task_list" => {
+            if let Some(tm) = task_mgr {
+                let (content, is_error) = execute_task_list(tm);
+                return ToolResult {
+                    tool_call_id: tool_call.id.clone(),
+                    content,
+                    is_error,
+                };
+            }
+            return ToolResult {
+                tool_call_id: tool_call.id.clone(),
+                content: "Task management not available (no session)".to_string(),
+                is_error: true,
+            };
+        }
+        _ => {}
+    }
+
+    // Fall through to existing execution path
+    execute_tool_full(tool_call, memory_db, app_config)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2828,6 +3172,10 @@ mod tests {
             "ask_user_question",
             "enter_plan_mode",
             "exit_plan_mode",
+            "task_create",
+            "task_update",
+            "task_get",
+            "task_list",
         ];
         for name in &required {
             assert!(
@@ -3425,5 +3773,135 @@ mod tests {
         assert!(cell.get("outputs").is_some(), "Code cell should have outputs field");
         assert!(cell["outputs"].as_array().unwrap().is_empty());
         assert!(cell.get("execution_count").is_some(), "Code cell should have execution_count");
+    }
+
+    // ====================================================================
+    // Task Management Tool Tests
+    // ====================================================================
+
+    #[test]
+    fn test_task_create() {
+        let mut task_mgr = TaskManager::new();
+        let mut args = HashMap::new();
+        args.insert("subject".to_string(), json!("Fix the bug"));
+        args.insert("description".to_string(), json!("There is a null pointer dereference in main"));
+        args.insert("active_form".to_string(), json!("Fixing the bug"));
+
+        let (output, is_error) = execute_task_create(&args, &mut task_mgr);
+        assert!(!is_error, "task_create should succeed: {}", output);
+        assert!(output.contains("task-1"));
+        assert!(output.contains("Fix the bug"));
+
+        // Verify the task was stored
+        let tasks = task_mgr.list_tasks();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].subject, "Fix the bug");
+    }
+
+    #[test]
+    fn test_task_update_status() {
+        let mut task_mgr = TaskManager::new();
+        task_mgr.create_task("Task A".to_string(), "Desc A".to_string(), None);
+
+        let mut args = HashMap::new();
+        args.insert("task_id".to_string(), json!("task-1"));
+        args.insert("status".to_string(), json!("in_progress"));
+
+        let (output, is_error) = execute_task_update(&args, &mut task_mgr);
+        assert!(!is_error, "task_update should succeed: {}", output);
+        assert!(output.contains("in_progress"));
+    }
+
+    #[test]
+    fn test_task_only_one_in_progress() {
+        let mut task_mgr = TaskManager::new();
+        task_mgr.create_task("Task A".to_string(), "Desc A".to_string(), None);
+        task_mgr.create_task("Task B".to_string(), "Desc B".to_string(), None);
+
+        // Set task-1 to in_progress
+        let mut args = HashMap::new();
+        args.insert("task_id".to_string(), json!("task-1"));
+        args.insert("status".to_string(), json!("in_progress"));
+        execute_task_update(&args, &mut task_mgr);
+
+        // Set task-2 to in_progress -- task-1 should be demoted to pending
+        args.insert("task_id".to_string(), json!("task-2"));
+        execute_task_update(&args, &mut task_mgr);
+
+        let task1 = task_mgr.get_task("task-1").unwrap();
+        let task2 = task_mgr.get_task("task-2").unwrap();
+        assert_eq!(task1.status, crate::session::TaskStatus::Pending);
+        assert_eq!(task2.status, crate::session::TaskStatus::InProgress);
+    }
+
+    #[test]
+    fn test_task_list_empty() {
+        let task_mgr = TaskManager::new();
+        let (output, is_error) = execute_task_list(&task_mgr);
+        assert!(!is_error);
+        assert_eq!(output, "No tasks.");
+    }
+
+    #[test]
+    fn test_task_get_not_found() {
+        let task_mgr = TaskManager::new();
+        let mut args = HashMap::new();
+        args.insert("task_id".to_string(), json!("task-999"));
+        let (output, is_error) = execute_task_get(&args, &task_mgr);
+        assert!(is_error);
+        assert!(output.contains("not found"));
+    }
+
+    #[test]
+    fn test_task_delete() {
+        let mut task_mgr = TaskManager::new();
+        task_mgr.create_task("Task to delete".to_string(), "Desc".to_string(), None);
+
+        let mut args = HashMap::new();
+        args.insert("task_id".to_string(), json!("task-1"));
+        args.insert("status".to_string(), json!("deleted"));
+        let (output, is_error) = execute_task_update(&args, &mut task_mgr);
+        assert!(!is_error, "delete should not be an error: {}", output);
+        assert!(output.contains("deleted"));
+        assert!(task_mgr.list_tasks().is_empty());
+    }
+
+    #[test]
+    fn test_task_dependencies() {
+        let mut task_mgr = TaskManager::new();
+        task_mgr.create_task("Setup DB".to_string(), "Create schema".to_string(), None);
+        task_mgr.create_task("Add API".to_string(), "REST endpoints".to_string(), None);
+
+        // task-2 is blocked by task-1
+        let mut args = HashMap::new();
+        args.insert("task_id".to_string(), json!("task-2"));
+        args.insert("add_blocked_by".to_string(), json!(["task-1"]));
+        let (_, is_error) = execute_task_update(&args, &mut task_mgr);
+        assert!(!is_error);
+
+        let task1 = task_mgr.get_task("task-1").unwrap();
+        let task2 = task_mgr.get_task("task-2").unwrap();
+        // task-2 should have task-1 in blocked_by
+        assert!(task2.blocked_by.contains(&"task-1".to_string()));
+        // task-1 should have task-2 in blocks (reverse relationship)
+        assert!(task1.blocks.contains(&"task-2".to_string()));
+    }
+
+    // ====================================================================
+    // Permission Checking Tests
+    // ====================================================================
+
+    #[test]
+    fn test_check_tool_permission_none_manager() {
+        let tool_call = ToolCall {
+            id: "call_1".to_string(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "bash".to_string(),
+                arguments: r#"{"command": "ls"}"#.to_string(),
+            },
+        };
+        // No permission manager -- should return None (allow)
+        assert!(check_tool_permission(&tool_call, None).is_none());
     }
 }

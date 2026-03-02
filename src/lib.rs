@@ -15,6 +15,7 @@ pub mod hooks;
 pub mod mcp;
 pub mod memory;
 pub mod oauth;
+pub mod permissions;
 pub mod plugins;
 pub mod prompt;
 pub mod providers;
