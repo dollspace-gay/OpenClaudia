@@ -12,6 +12,7 @@
 //! - memory_update: Update existing memory
 //! - core_memory_update: Update core memory sections
 //!
+use base64::Engine;
 use crate::config::AppConfig;
 use crate::memory::{MemoryDb, SECTION_PERSONA, SECTION_PROJECT_INFO, SECTION_USER_PREFS};
 use crate::subagent;
@@ -376,7 +377,7 @@ pub fn get_tool_definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "read_file",
-                "description": "Read the contents of a file. Returns the file content as text with line numbers.",
+                "description": "Read the contents of a file. Returns the file content as text with line numbers. Supports images (PNG, JPG, GIF, WebP) via base64 encoding, PDFs via pdftotext extraction, and Jupyter notebooks (.ipynb) with formatted cell output.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -391,6 +392,10 @@ pub fn get_tool_definitions() -> Value {
                         "limit": {
                             "type": "integer",
                             "description": "Maximum number of lines to read. Defaults to reading entire file."
+                        },
+                        "pages": {
+                            "type": "string",
+                            "description": "Page range for PDF files (e.g., '1-5', '3', '10-20'). Required for PDFs with more than 10 pages."
                         }
                     },
                     "required": ["path"]
@@ -577,6 +582,41 @@ pub fn get_tool_definitions() -> Value {
                     "type": "object",
                     "properties": {},
                     "required": []
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "notebook_edit",
+                "description": "Edit a Jupyter notebook (.ipynb file). Supports replacing cell contents, inserting new cells, and deleting cells. The notebook must be read with read_file before editing.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "notebook_path": {
+                            "type": "string",
+                            "description": "The absolute path to the .ipynb file to edit"
+                        },
+                        "cell_number": {
+                            "type": "integer",
+                            "description": "The 0-indexed cell number to operate on"
+                        },
+                        "new_source": {
+                            "type": "string",
+                            "description": "The new source content for the cell. For delete mode, this can be empty."
+                        },
+                        "cell_type": {
+                            "type": "string",
+                            "enum": ["code", "markdown"],
+                            "description": "The type of cell. Required when inserting a new cell."
+                        },
+                        "edit_mode": {
+                            "type": "string",
+                            "enum": ["replace", "insert", "delete"],
+                            "description": "The edit operation: 'replace' (default) overwrites cell source, 'insert' adds a new cell at the index, 'delete' removes the cell."
+                        }
+                    },
+                    "required": ["notebook_path", "cell_number", "new_source"]
                 }
             }
         }
@@ -775,6 +815,277 @@ fn execute_kill_shell(args: &HashMap<String, Value>) -> (String, bool) {
     }
 }
 
+/// Detect file type from extension
+fn detect_file_type(path: &str) -> FileType {
+    let lower = path.to_lowercase();
+    if lower.ends_with(".png") {
+        FileType::Image("image/png")
+    } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        FileType::Image("image/jpeg")
+    } else if lower.ends_with(".gif") {
+        FileType::Image("image/gif")
+    } else if lower.ends_with(".webp") {
+        FileType::Image("image/webp")
+    } else if lower.ends_with(".pdf") {
+        FileType::Pdf
+    } else if lower.ends_with(".ipynb") {
+        FileType::Notebook
+    } else {
+        FileType::Text
+    }
+}
+
+/// Supported file types for read_file
+enum FileType {
+    Text,
+    Image(&'static str), // mime type
+    Pdf,
+    Notebook,
+}
+
+/// Read an image file, base64-encode it, and return a structured result
+fn read_image_file(path: &str, mime_type: &str) -> (String, bool) {
+    match fs::read(path) {
+        Ok(bytes) => {
+            let file_size = bytes.len();
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            let filename = Path::new(path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.to_string());
+
+            let result = format!(
+                "[Image: {} ({} bytes, {}) - base64 data included for vision-capable models]\n{}",
+                filename, file_size, mime_type, b64
+            );
+            (result, false)
+        }
+        Err(e) => (format!("Failed to read image file '{}': {}", path, e), true),
+    }
+}
+
+/// Parse a page range string like "1-5", "3", or "10-20"
+/// Returns (first_page, last_page) as 1-indexed values
+fn parse_page_range(pages: &str) -> Result<(u32, u32), String> {
+    let pages = pages.trim();
+    if let Some((start, end)) = pages.split_once('-') {
+        let start: u32 = start
+            .trim()
+            .parse()
+            .map_err(|_| format!("Invalid page range start: '{}'", start.trim()))?;
+        let end: u32 = end
+            .trim()
+            .parse()
+            .map_err(|_| format!("Invalid page range end: '{}'", end.trim()))?;
+        if start == 0 || end == 0 {
+            return Err("Page numbers must be 1 or greater".to_string());
+        }
+        if start > end {
+            return Err(format!(
+                "Invalid page range: start ({}) > end ({})",
+                start, end
+            ));
+        }
+        Ok((start, end))
+    } else {
+        let page: u32 = pages
+            .parse()
+            .map_err(|_| format!("Invalid page number: '{}'", pages))?;
+        if page == 0 {
+            return Err("Page numbers must be 1 or greater".to_string());
+        }
+        Ok((page, page))
+    }
+}
+
+/// Read a PDF file using pdftotext
+fn read_pdf_file(path: &str, pages: Option<&str>) -> (String, bool) {
+    // Check if pdftotext is available
+    let check = Command::new("which").arg("pdftotext").output();
+    match check {
+        Ok(output) if !output.status.success() => {
+            return (
+                "pdftotext is not installed. Install it with:\n  \
+                 Ubuntu/Debian: sudo apt install poppler-utils\n  \
+                 macOS: brew install poppler\n  \
+                 Fedora: sudo dnf install poppler-utils"
+                    .to_string(),
+                true,
+            );
+        }
+        Err(_) => {
+            return (
+                "Could not check for pdftotext. Ensure poppler-utils is installed.".to_string(),
+                true,
+            );
+        }
+        _ => {}
+    }
+
+    // If no pages specified, check total page count first
+    if pages.is_none() {
+        // Use pdftotext on the whole file but first count pages with pdfinfo if available
+        let info_output = Command::new("pdfinfo").arg(path).output();
+        if let Ok(info) = info_output {
+            if info.status.success() {
+                let info_text = String::from_utf8_lossy(&info.stdout);
+                for line in info_text.lines() {
+                    if line.starts_with("Pages:") {
+                        if let Some(count_str) = line.split(':').nth(1) {
+                            if let Ok(count) = count_str.trim().parse::<u32>() {
+                                if count > 10 {
+                                    return (
+                                        format!(
+                                            "PDF has {} pages. For large PDFs (>10 pages), you must specify \
+                                             a page range using the 'pages' parameter (e.g., '1-5', '3', '10-20').",
+                                            count
+                                        ),
+                                        true,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Build pdftotext command
+    let mut cmd = Command::new("pdftotext");
+    if let Some(pages_str) = pages {
+        match parse_page_range(pages_str) {
+            Ok((first, last)) => {
+                cmd.arg("-f").arg(first.to_string());
+                cmd.arg("-l").arg(last.to_string());
+            }
+            Err(e) => return (format!("Invalid pages parameter: {}", e), true),
+        }
+    }
+    cmd.arg(path);
+    cmd.arg("-"); // Output to stdout
+
+    match cmd.output() {
+        Ok(output) => {
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return (
+                    format!("pdftotext failed for '{}': {}", path, stderr),
+                    true,
+                );
+            }
+            let text = String::from_utf8_lossy(&output.stdout).to_string();
+            if text.trim().is_empty() {
+                (
+                    format!("PDF '{}' produced no extractable text (may be image-based).", path),
+                    false,
+                )
+            } else {
+                (text, false)
+            }
+        }
+        Err(e) => (format!("Failed to run pdftotext on '{}': {}", path, e), true),
+    }
+}
+
+/// Read a Jupyter notebook (.ipynb) and format cells for display
+fn read_notebook_file(path: &str) -> (String, bool) {
+    let content = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => return (format!("Failed to read notebook '{}': {}", path, e), true),
+    };
+
+    let notebook: Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                format!("Failed to parse notebook '{}' as JSON: {}", path, e),
+                true,
+            )
+        }
+    };
+
+    let cells = match notebook.get("cells").and_then(|c| c.as_array()) {
+        Some(c) => c,
+        None => return ("Notebook has no 'cells' array.".to_string(), true),
+    };
+
+    let mut output = String::new();
+    for (i, cell) in cells.iter().enumerate() {
+        let cell_type = cell
+            .get("cell_type")
+            .and_then(|t| t.as_str())
+            .unwrap_or("unknown");
+
+        // Get source - can be a string or array of strings
+        let source = match cell.get("source") {
+            Some(Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join(""),
+            Some(Value::String(s)) => s.clone(),
+            _ => String::new(),
+        };
+
+        output.push_str(&format!("Cell {} ({}):\n```\n{}\n```\n", i, cell_type, source));
+
+        // For code cells, include text outputs (skip binary/image outputs)
+        if cell_type == "code" {
+            if let Some(outputs) = cell.get("outputs").and_then(|o| o.as_array()) {
+                for out in outputs {
+                    let output_type = out.get("output_type").and_then(|t| t.as_str());
+                    match output_type {
+                        Some("stream") => {
+                            if let Some(text) = out.get("text") {
+                                let text_str = match text {
+                                    Value::Array(arr) => arr
+                                        .iter()
+                                        .filter_map(|v| v.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(""),
+                                    Value::String(s) => s.clone(),
+                                    _ => continue,
+                                };
+                                output.push_str(&format!("Output:\n{}\n", text_str));
+                            }
+                        }
+                        Some("execute_result") | Some("display_data") => {
+                            // Only include text/plain data, skip images and other binary
+                            if let Some(data) = out.get("data") {
+                                if let Some(text_plain) = data.get("text/plain") {
+                                    let text_str = match text_plain {
+                                        Value::Array(arr) => arr
+                                            .iter()
+                                            .filter_map(|v| v.as_str())
+                                            .collect::<Vec<_>>()
+                                            .join(""),
+                                        Value::String(s) => s.clone(),
+                                        _ => continue,
+                                    };
+                                    output.push_str(&format!("Output:\n{}\n", text_str));
+                                }
+                            }
+                        }
+                        Some("error") => {
+                            if let Some(traceback) = out.get("traceback").and_then(|t| t.as_array())
+                            {
+                                let tb: Vec<&str> =
+                                    traceback.iter().filter_map(|v| v.as_str()).collect();
+                                output.push_str(&format!("Error:\n{}\n", tb.join("\n")));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        output.push('\n');
+    }
+
+    (output, false)
+}
+
 /// Read a file's contents
 fn execute_read_file(args: &HashMap<String, Value>) -> (String, bool) {
     let path = match args.get("path").and_then(|v| v.as_str()) {
@@ -782,6 +1093,23 @@ fn execute_read_file(args: &HashMap<String, Value>) -> (String, bool) {
         None => return ("Missing 'path' argument".to_string(), true),
     };
 
+    // Track that this file has been read (for edit_file and notebook_edit enforcement)
+    READ_TRACKER.mark_read(Path::new(path));
+
+    // Detect file type and dispatch accordingly
+    match detect_file_type(path) {
+        FileType::Image(mime_type) => read_image_file(path, mime_type),
+        FileType::Pdf => {
+            let pages = args.get("pages").and_then(|v| v.as_str());
+            read_pdf_file(path, pages)
+        }
+        FileType::Notebook => read_notebook_file(path),
+        FileType::Text => read_text_file(path, args),
+    }
+}
+
+/// Read a plain text file with optional offset/limit
+fn read_text_file(path: &str, args: &HashMap<String, Value>) -> (String, bool) {
     // Get optional offset (1-indexed line number to start from)
     let offset = args
         .get("offset")
@@ -797,9 +1125,6 @@ fn execute_read_file(args: &HashMap<String, Value>) -> (String, bool) {
 
     match fs::read_to_string(path) {
         Ok(content) => {
-            // Track that this file has been read (for edit_file enforcement)
-            READ_TRACKER.mark_read(Path::new(path));
-
             let lines: Vec<&str> = content.lines().collect();
             let total_lines = lines.len();
 
@@ -979,6 +1304,226 @@ fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
             (result, false)
         }
         Err(e) => (format!("Failed to write file '{}': {}", path, e), true),
+    }
+}
+
+/// Split source text into a JSON array of line strings for notebook cell source format.
+/// Each line except possibly the last ends with '\n'.
+fn source_to_line_array(source: &str) -> Value {
+    if source.is_empty() {
+        return json!([]);
+    }
+    let lines: Vec<&str> = source.split('\n').collect();
+    let mut result: Vec<Value> = Vec::with_capacity(lines.len());
+    for (i, line) in lines.iter().enumerate() {
+        if i < lines.len() - 1 {
+            // Not the last line: append \n
+            result.push(json!(format!("{}\n", line)));
+        } else {
+            // Last line: include as-is (no trailing \n unless empty)
+            if !line.is_empty() {
+                result.push(json!(*line));
+            }
+        }
+    }
+    result.into()
+}
+
+/// Edit a Jupyter notebook cell
+fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
+    let notebook_path = match args.get("notebook_path").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return ("Missing 'notebook_path' argument".to_string(), true),
+    };
+
+    let cell_number = match args.get("cell_number").and_then(|v| v.as_u64()) {
+        Some(n) => n as usize,
+        None => return ("Missing 'cell_number' argument".to_string(), true),
+    };
+
+    let new_source = match args.get("new_source").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => return ("Missing 'new_source' argument".to_string(), true),
+    };
+
+    let cell_type = args.get("cell_type").and_then(|v| v.as_str());
+    let edit_mode = args
+        .get("edit_mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("replace");
+
+    // Validate edit_mode
+    if !["replace", "insert", "delete"].contains(&edit_mode) {
+        return (
+            format!(
+                "Invalid edit_mode '{}'. Must be 'replace', 'insert', or 'delete'.",
+                edit_mode
+            ),
+            true,
+        );
+    }
+
+    // Enforce read-before-edit
+    if !READ_TRACKER.has_been_read(Path::new(notebook_path)) {
+        return (
+            format!(
+                "You must read '{}' before editing it. Use read_file first to see the actual contents.",
+                notebook_path
+            ),
+            true,
+        );
+    }
+
+    // Blast radius check
+    if let Err(msg) = crate::guardrails::check_file_access(notebook_path) {
+        return (msg, true);
+    }
+
+    // Read and parse the notebook
+    let content = match fs::read_to_string(notebook_path) {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                format!("Failed to read notebook '{}': {}", notebook_path, e),
+                true,
+            )
+        }
+    };
+
+    let mut notebook: Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                format!(
+                    "Failed to parse notebook '{}' as JSON: {}",
+                    notebook_path, e
+                ),
+                true,
+            )
+        }
+    };
+
+    let cells = match notebook.get_mut("cells").and_then(|c| c.as_array_mut()) {
+        Some(c) => c,
+        None => return ("Notebook has no 'cells' array.".to_string(), true),
+    };
+
+    match edit_mode {
+        "replace" => {
+            if cell_number >= cells.len() {
+                return (
+                    format!(
+                        "Cell number {} is out of bounds. Notebook has {} cells (0-indexed).",
+                        cell_number,
+                        cells.len()
+                    ),
+                    true,
+                );
+            }
+
+            // Update the cell's source
+            cells[cell_number]["source"] = source_to_line_array(new_source);
+
+            // Optionally update cell_type if provided
+            if let Some(ct) = cell_type {
+                cells[cell_number]["cell_type"] = json!(ct);
+            }
+        }
+        "insert" => {
+            let ct = match cell_type {
+                Some(ct) => ct,
+                None => {
+                    return (
+                        "cell_type is required when inserting a new cell. Use 'code' or 'markdown'."
+                            .to_string(),
+                        true,
+                    )
+                }
+            };
+
+            if cell_number > cells.len() {
+                return (
+                    format!(
+                        "Cell number {} is out of bounds for insertion. Notebook has {} cells (valid range: 0-{}).",
+                        cell_number,
+                        cells.len(),
+                        cells.len()
+                    ),
+                    true,
+                );
+            }
+
+            // Create a new cell
+            let mut new_cell = json!({
+                "cell_type": ct,
+                "metadata": {},
+                "source": source_to_line_array(new_source)
+            });
+
+            // Code cells have an outputs array and execution_count
+            if ct == "code" {
+                new_cell["outputs"] = json!([]);
+                new_cell["execution_count"] = Value::Null;
+            }
+
+            cells.insert(cell_number, new_cell);
+        }
+        "delete" => {
+            if cell_number >= cells.len() {
+                return (
+                    format!(
+                        "Cell number {} is out of bounds. Notebook has {} cells (0-indexed).",
+                        cell_number,
+                        cells.len()
+                    ),
+                    true,
+                );
+            }
+
+            cells.remove(cell_number);
+        }
+        _ => unreachable!(),
+    }
+
+    // Write back with pretty formatting
+    let old_lines = content.lines().count() as u32;
+    match serde_json::to_string_pretty(&notebook) {
+        Ok(pretty) => {
+            let new_lines = pretty.lines().count() as u32;
+            match fs::write(notebook_path, &pretty) {
+                Ok(()) => {
+                    crate::guardrails::record_file_modification(
+                        notebook_path,
+                        new_lines,
+                        old_lines,
+                    );
+                    let action = match edit_mode {
+                        "replace" => format!("Replaced cell {} contents", cell_number),
+                        "insert" => format!("Inserted new {} cell at position {}", cell_type.unwrap_or("unknown"), cell_number),
+                        "delete" => format!("Deleted cell {}", cell_number),
+                        _ => unreachable!(),
+                    };
+                    let mut result = format!(
+                        "Successfully edited '{}'. {}. Notebook now has {} cells.",
+                        notebook_path,
+                        action,
+                        notebook.get("cells").and_then(|c| c.as_array()).map(|a| a.len()).unwrap_or(0)
+                    );
+                    if let Some(warning) = crate::guardrails::check_diff_thresholds() {
+                        result.push_str(&format!("\n\nWarning: {}", warning.message));
+                    }
+                    (result, false)
+                }
+                Err(e) => (
+                    format!("Failed to write notebook '{}': {}", notebook_path, e),
+                    true,
+                ),
+            }
+        }
+        Err(e) => (
+            format!("Failed to serialize notebook: {}", e),
+            true,
+        ),
     }
 }
 
@@ -1492,6 +2037,7 @@ pub fn execute_tool_with_memory(tool_call: &ToolCall, memory_db: Option<&MemoryD
         "read_file" => execute_read_file(&args),
         "write_file" => execute_write_file(&args),
         "edit_file" => execute_edit_file(&args),
+        "notebook_edit" => execute_notebook_edit(&args),
         "list_files" => execute_list_files(&args),
         "chainlink" => execute_chainlink(&args),
 
@@ -2001,6 +2547,7 @@ mod tests {
             "web_search",
             "todo_write",
             "todo_read",
+            "notebook_edit",
         ];
         for name in &required {
             assert!(
@@ -2200,5 +2747,403 @@ mod tests {
         acc.clear();
         assert!(acc.blocks.is_empty());
         assert!(acc.stop_reason.is_none());
+    }
+
+    // === File type detection tests ===
+
+    #[test]
+    fn test_detect_file_type_images() {
+        assert!(matches!(detect_file_type("photo.png"), FileType::Image("image/png")));
+        assert!(matches!(detect_file_type("photo.PNG"), FileType::Image("image/png")));
+        assert!(matches!(detect_file_type("photo.jpg"), FileType::Image("image/jpeg")));
+        assert!(matches!(detect_file_type("photo.jpeg"), FileType::Image("image/jpeg")));
+        assert!(matches!(detect_file_type("photo.JPEG"), FileType::Image("image/jpeg")));
+        assert!(matches!(detect_file_type("anim.gif"), FileType::Image("image/gif")));
+        assert!(matches!(detect_file_type("modern.webp"), FileType::Image("image/webp")));
+    }
+
+    #[test]
+    fn test_detect_file_type_pdf() {
+        assert!(matches!(detect_file_type("document.pdf"), FileType::Pdf));
+        assert!(matches!(detect_file_type("DOCUMENT.PDF"), FileType::Pdf));
+    }
+
+    #[test]
+    fn test_detect_file_type_notebook() {
+        assert!(matches!(detect_file_type("analysis.ipynb"), FileType::Notebook));
+        assert!(matches!(detect_file_type("test.IPYNB"), FileType::Notebook));
+    }
+
+    #[test]
+    fn test_detect_file_type_text() {
+        assert!(matches!(detect_file_type("main.rs"), FileType::Text));
+        assert!(matches!(detect_file_type("README.md"), FileType::Text));
+        assert!(matches!(detect_file_type("config.yaml"), FileType::Text));
+        assert!(matches!(detect_file_type("data.csv"), FileType::Text));
+    }
+
+    // === Page range parsing tests ===
+
+    #[test]
+    fn test_parse_page_range_single() {
+        assert_eq!(parse_page_range("3").unwrap(), (3, 3));
+        assert_eq!(parse_page_range("1").unwrap(), (1, 1));
+        assert_eq!(parse_page_range("100").unwrap(), (100, 100));
+    }
+
+    #[test]
+    fn test_parse_page_range_range() {
+        assert_eq!(parse_page_range("1-5").unwrap(), (1, 5));
+        assert_eq!(parse_page_range("10-20").unwrap(), (10, 20));
+        assert_eq!(parse_page_range(" 3 - 7 ").unwrap(), (3, 7));
+    }
+
+    #[test]
+    fn test_parse_page_range_invalid() {
+        assert!(parse_page_range("0").is_err());
+        assert!(parse_page_range("5-3").is_err());
+        assert!(parse_page_range("abc").is_err());
+        assert!(parse_page_range("1-abc").is_err());
+        assert!(parse_page_range("0-5").is_err());
+    }
+
+    // === Notebook source formatting tests ===
+
+    #[test]
+    fn test_source_to_line_array_multiline() {
+        let result = source_to_line_array("line1\nline2\nline3");
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 3);
+        assert_eq!(arr[0], json!("line1\n"));
+        assert_eq!(arr[1], json!("line2\n"));
+        assert_eq!(arr[2], json!("line3"));
+    }
+
+    #[test]
+    fn test_source_to_line_array_single_line() {
+        let result = source_to_line_array("hello world");
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0], json!("hello world"));
+    }
+
+    #[test]
+    fn test_source_to_line_array_empty() {
+        let result = source_to_line_array("");
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 0);
+    }
+
+    #[test]
+    fn test_source_to_line_array_trailing_newline() {
+        let result = source_to_line_array("line1\nline2\n");
+        let arr = result.as_array().unwrap();
+        // "line1\nline2\n" splits into ["line1", "line2", ""]
+        // line1 -> "line1\n", line2 -> "line2\n", "" -> skipped (empty last)
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0], json!("line1\n"));
+        assert_eq!(arr[1], json!("line2\n"));
+    }
+
+    // === Notebook reading tests ===
+
+    #[test]
+    fn test_read_notebook_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let nb_path = dir.path().join("test.ipynb");
+        let notebook = json!({
+            "cells": [
+                {
+                    "cell_type": "markdown",
+                    "metadata": {},
+                    "source": ["# Title\n", "Some text"]
+                },
+                {
+                    "cell_type": "code",
+                    "metadata": {},
+                    "source": ["print('hello')"],
+                    "outputs": [
+                        {
+                            "output_type": "stream",
+                            "name": "stdout",
+                            "text": ["hello\n"]
+                        }
+                    ],
+                    "execution_count": 1
+                }
+            ],
+            "metadata": {},
+            "nbformat": 4,
+            "nbformat_minor": 5
+        });
+        fs::write(&nb_path, serde_json::to_string_pretty(&notebook).unwrap()).unwrap();
+
+        let (output, is_error) = read_notebook_file(nb_path.to_str().unwrap());
+        assert!(!is_error, "read_notebook_file should succeed: {}", output);
+        assert!(output.contains("Cell 0 (markdown)"));
+        assert!(output.contains("# Title"));
+        assert!(output.contains("Cell 1 (code)"));
+        assert!(output.contains("print('hello')"));
+        assert!(output.contains("Output:"));
+        assert!(output.contains("hello"));
+    }
+
+    // === Notebook edit tests ===
+
+    #[test]
+    fn test_notebook_edit_replace() {
+        let dir = tempfile::tempdir().unwrap();
+        let nb_path = dir.path().join("test.ipynb");
+        let notebook = json!({
+            "cells": [
+                {
+                    "cell_type": "code",
+                    "metadata": {},
+                    "source": ["old code"],
+                    "outputs": [],
+                    "execution_count": null
+                }
+            ],
+            "metadata": {},
+            "nbformat": 4,
+            "nbformat_minor": 5
+        });
+        fs::write(&nb_path, serde_json::to_string_pretty(&notebook).unwrap()).unwrap();
+
+        // Mark as read first
+        READ_TRACKER.mark_read(&nb_path);
+
+        let mut args = HashMap::new();
+        args.insert("notebook_path".to_string(), json!(nb_path.to_str().unwrap()));
+        args.insert("cell_number".to_string(), json!(0));
+        args.insert("new_source".to_string(), json!("new code\nline 2"));
+
+        let (output, is_error) = execute_notebook_edit(&args);
+        assert!(!is_error, "notebook_edit replace should succeed: {}", output);
+        assert!(output.contains("Replaced cell 0"));
+
+        // Verify the file was updated
+        let content = fs::read_to_string(&nb_path).unwrap();
+        let updated: Value = serde_json::from_str(&content).unwrap();
+        let source = updated["cells"][0]["source"].as_array().unwrap();
+        assert_eq!(source[0], json!("new code\n"));
+        assert_eq!(source[1], json!("line 2"));
+    }
+
+    #[test]
+    fn test_notebook_edit_insert() {
+        let dir = tempfile::tempdir().unwrap();
+        let nb_path = dir.path().join("test.ipynb");
+        let notebook = json!({
+            "cells": [
+                {
+                    "cell_type": "code",
+                    "metadata": {},
+                    "source": ["existing"],
+                    "outputs": [],
+                    "execution_count": null
+                }
+            ],
+            "metadata": {},
+            "nbformat": 4,
+            "nbformat_minor": 5
+        });
+        fs::write(&nb_path, serde_json::to_string_pretty(&notebook).unwrap()).unwrap();
+
+        READ_TRACKER.mark_read(&nb_path);
+
+        let mut args = HashMap::new();
+        args.insert("notebook_path".to_string(), json!(nb_path.to_str().unwrap()));
+        args.insert("cell_number".to_string(), json!(0));
+        args.insert("new_source".to_string(), json!("# New markdown cell"));
+        args.insert("cell_type".to_string(), json!("markdown"));
+        args.insert("edit_mode".to_string(), json!("insert"));
+
+        let (output, is_error) = execute_notebook_edit(&args);
+        assert!(!is_error, "notebook_edit insert should succeed: {}", output);
+        assert!(output.contains("Inserted new markdown cell"));
+
+        // Verify - should now have 2 cells
+        let content = fs::read_to_string(&nb_path).unwrap();
+        let updated: Value = serde_json::from_str(&content).unwrap();
+        let cells = updated["cells"].as_array().unwrap();
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0]["cell_type"], json!("markdown"));
+        assert_eq!(cells[1]["cell_type"], json!("code"));
+    }
+
+    #[test]
+    fn test_notebook_edit_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let nb_path = dir.path().join("test.ipynb");
+        let notebook = json!({
+            "cells": [
+                {
+                    "cell_type": "code",
+                    "metadata": {},
+                    "source": ["cell 0"],
+                    "outputs": [],
+                    "execution_count": null
+                },
+                {
+                    "cell_type": "code",
+                    "metadata": {},
+                    "source": ["cell 1"],
+                    "outputs": [],
+                    "execution_count": null
+                }
+            ],
+            "metadata": {},
+            "nbformat": 4,
+            "nbformat_minor": 5
+        });
+        fs::write(&nb_path, serde_json::to_string_pretty(&notebook).unwrap()).unwrap();
+
+        READ_TRACKER.mark_read(&nb_path);
+
+        let mut args = HashMap::new();
+        args.insert("notebook_path".to_string(), json!(nb_path.to_str().unwrap()));
+        args.insert("cell_number".to_string(), json!(0));
+        args.insert("new_source".to_string(), json!(""));
+        args.insert("edit_mode".to_string(), json!("delete"));
+
+        let (output, is_error) = execute_notebook_edit(&args);
+        assert!(!is_error, "notebook_edit delete should succeed: {}", output);
+        assert!(output.contains("Deleted cell 0"));
+
+        // Verify - should now have 1 cell
+        let content = fs::read_to_string(&nb_path).unwrap();
+        let updated: Value = serde_json::from_str(&content).unwrap();
+        let cells = updated["cells"].as_array().unwrap();
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0]["source"].as_array().unwrap()[0], json!("cell 1"));
+    }
+
+    #[test]
+    fn test_notebook_edit_requires_read_first() {
+        let mut args = HashMap::new();
+        args.insert(
+            "notebook_path".to_string(),
+            json!("/tmp/nonexistent_unread_notebook.ipynb"),
+        );
+        args.insert("cell_number".to_string(), json!(0));
+        args.insert("new_source".to_string(), json!("test"));
+
+        let (output, is_error) = execute_notebook_edit(&args);
+        assert!(is_error, "Should fail without reading first");
+        assert!(output.contains("must read"));
+    }
+
+    #[test]
+    fn test_notebook_edit_out_of_bounds() {
+        let dir = tempfile::tempdir().unwrap();
+        let nb_path = dir.path().join("test.ipynb");
+        let notebook = json!({
+            "cells": [
+                {
+                    "cell_type": "code",
+                    "metadata": {},
+                    "source": ["only cell"],
+                    "outputs": [],
+                    "execution_count": null
+                }
+            ],
+            "metadata": {},
+            "nbformat": 4,
+            "nbformat_minor": 5
+        });
+        fs::write(&nb_path, serde_json::to_string_pretty(&notebook).unwrap()).unwrap();
+
+        READ_TRACKER.mark_read(&nb_path);
+
+        let mut args = HashMap::new();
+        args.insert("notebook_path".to_string(), json!(nb_path.to_str().unwrap()));
+        args.insert("cell_number".to_string(), json!(5));
+        args.insert("new_source".to_string(), json!("test"));
+
+        let (output, is_error) = execute_notebook_edit(&args);
+        assert!(is_error, "Should fail for out-of-bounds cell");
+        assert!(output.contains("out of bounds"));
+    }
+
+    #[test]
+    fn test_notebook_edit_insert_requires_cell_type() {
+        let dir = tempfile::tempdir().unwrap();
+        let nb_path = dir.path().join("test.ipynb");
+        let notebook = json!({
+            "cells": [],
+            "metadata": {},
+            "nbformat": 4,
+            "nbformat_minor": 5
+        });
+        fs::write(&nb_path, serde_json::to_string_pretty(&notebook).unwrap()).unwrap();
+
+        READ_TRACKER.mark_read(&nb_path);
+
+        let mut args = HashMap::new();
+        args.insert("notebook_path".to_string(), json!(nb_path.to_str().unwrap()));
+        args.insert("cell_number".to_string(), json!(0));
+        args.insert("new_source".to_string(), json!("test"));
+        args.insert("edit_mode".to_string(), json!("insert"));
+        // No cell_type provided
+
+        let (output, is_error) = execute_notebook_edit(&args);
+        assert!(is_error, "Should fail without cell_type for insert");
+        assert!(output.contains("cell_type is required"));
+    }
+
+    // === Image reading test ===
+
+    #[test]
+    fn test_read_image_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let img_path = dir.path().join("test.png");
+        // Write some fake PNG bytes
+        let fake_png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        fs::write(&img_path, &fake_png).unwrap();
+
+        let (output, is_error) = read_image_file(img_path.to_str().unwrap(), "image/png");
+        assert!(!is_error, "read_image_file should succeed");
+        assert!(output.contains("[Image: test.png"));
+        assert!(output.contains("image/png"));
+        assert!(output.contains("8 bytes"));
+        // Check that base64 data is present
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&fake_png);
+        assert!(output.contains(&b64));
+    }
+
+    // === Insert code cell has outputs field ===
+
+    #[test]
+    fn test_notebook_edit_insert_code_cell_has_outputs() {
+        let dir = tempfile::tempdir().unwrap();
+        let nb_path = dir.path().join("test.ipynb");
+        let notebook = json!({
+            "cells": [],
+            "metadata": {},
+            "nbformat": 4,
+            "nbformat_minor": 5
+        });
+        fs::write(&nb_path, serde_json::to_string_pretty(&notebook).unwrap()).unwrap();
+
+        READ_TRACKER.mark_read(&nb_path);
+
+        let mut args = HashMap::new();
+        args.insert("notebook_path".to_string(), json!(nb_path.to_str().unwrap()));
+        args.insert("cell_number".to_string(), json!(0));
+        args.insert("new_source".to_string(), json!("x = 1"));
+        args.insert("cell_type".to_string(), json!("code"));
+        args.insert("edit_mode".to_string(), json!("insert"));
+
+        let (output, is_error) = execute_notebook_edit(&args);
+        assert!(!is_error, "insert code cell should succeed: {}", output);
+
+        let content = fs::read_to_string(&nb_path).unwrap();
+        let updated: Value = serde_json::from_str(&content).unwrap();
+        let cell = &updated["cells"][0];
+        assert_eq!(cell["cell_type"], json!("code"));
+        assert!(cell.get("outputs").is_some(), "Code cell should have outputs field");
+        assert!(cell["outputs"].as_array().unwrap().is_empty());
+        assert!(cell.get("execution_count").is_some(), "Code cell should have execution_count");
     }
 }
