@@ -3146,6 +3146,7 @@ mod vdd_tests {
                 },
             },
             guardrails: openclaudia::config::GuardrailsConfig::default(),
+            managed_settings_path: None,
         }
     }
 

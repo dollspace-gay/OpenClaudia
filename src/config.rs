@@ -29,6 +29,10 @@ pub struct AppConfig {
     pub guardrails: GuardrailsConfig,
     #[serde(default)]
     pub permissions: PermissionsConfig,
+    /// Path to enterprise managed settings file, if one was loaded.
+    /// Managed settings override all user and project settings.
+    #[serde(skip)]
+    pub managed_settings_path: Option<PathBuf>,
 }
 
 /// Proxy server configuration
@@ -618,6 +622,20 @@ pub enum Hook {
         #[serde(default = "default_prompt_timeout")]
         timeout: u64,
     },
+    /// Model hook: sends a prompt to a specific model/provider and returns
+    /// the model's response as the hook result.
+    #[serde(rename = "model")]
+    Model {
+        /// The prompt to send to the model
+        prompt: String,
+        /// The model identifier (e.g., "claude-3-5-haiku-20241022")
+        model: String,
+        /// Optional provider name (defaults to proxy target)
+        #[serde(default)]
+        provider: Option<String>,
+        #[serde(default = "default_timeout")]
+        timeout: u64,
+    },
 }
 
 fn default_timeout() -> u64 {
@@ -803,6 +821,26 @@ impl Default for ProxyConfig {
         }
     }
 }
+
+// ==========================================================================
+// Config Schema Generation (future)
+// ==========================================================================
+//
+// To enable JSON Schema generation for config validation and IDE support,
+// add the `schemars` crate to dependencies and derive `JsonSchema` on all
+// config structs (AppConfig, ProxyConfig, ProviderConfig, HooksConfig, etc.).
+//
+// Example:
+//   #[derive(Debug, Deserialize, Clone, schemars::JsonSchema)]
+//   pub struct AppConfig { ... }
+//
+// Then expose via:
+//   pub fn generate_config_schema() -> String {
+//       serde_json::to_string_pretty(&schemars::schema_for!(AppConfig)).unwrap()
+//   }
+//
+// This would allow `openclaudia config schema` to output the JSON schema
+// for editor integration and config validation.
 
 /// Load configuration from all sources
 pub fn load_config() -> Result<AppConfig, ConfigError> {
@@ -1179,6 +1217,53 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_hook_model_type() {
+        let json = r#"{
+            "type": "model",
+            "prompt": "Review this code",
+            "model": "claude-3-5-haiku-20241022",
+            "provider": "anthropic",
+            "timeout": 45
+        }"#;
+
+        let hook: Hook = serde_json::from_str(json).unwrap();
+        match hook {
+            Hook::Model {
+                prompt,
+                model,
+                provider,
+                timeout,
+            } => {
+                assert_eq!(prompt, "Review this code");
+                assert_eq!(model, "claude-3-5-haiku-20241022");
+                assert_eq!(provider, Some("anthropic".to_string()));
+                assert_eq!(timeout, 45);
+            }
+            _ => panic!("Expected Model hook"),
+        }
+    }
+
+    #[test]
+    fn test_hook_model_type_defaults() {
+        let json = r#"{
+            "type": "model",
+            "prompt": "Validate",
+            "model": "gpt-4o-mini"
+        }"#;
+
+        let hook: Hook = serde_json::from_str(json).unwrap();
+        match hook {
+            Hook::Model {
+                provider, timeout, ..
+            } => {
+                assert!(provider.is_none());
+                assert_eq!(timeout, 60); // default_timeout
+            }
+            _ => panic!("Expected Model hook"),
+        }
+    }
+
     // ========================================================================
     // ProviderConfig Tests
     // ========================================================================
@@ -1248,6 +1333,7 @@ mod tests {
             vdd: VddConfig::default(),
             guardrails: GuardrailsConfig::default(),
             permissions: PermissionsConfig::default(),
+            managed_settings_path: None,
         };
 
         let active = config.active_provider();
@@ -1288,6 +1374,7 @@ mod tests {
             vdd: VddConfig::default(),
             guardrails: GuardrailsConfig::default(),
             permissions: PermissionsConfig::default(),
+            managed_settings_path: None,
         };
 
         assert!(config.get_provider("openai").is_some());
@@ -1309,6 +1396,7 @@ mod tests {
             vdd: VddConfig::default(),
             guardrails: GuardrailsConfig::default(),
             permissions: PermissionsConfig::default(),
+            managed_settings_path: None,
         };
 
         assert!(config.active_provider().is_none());
