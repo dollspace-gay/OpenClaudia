@@ -9,7 +9,12 @@ use openclaudia::tools::{
 };
 use serde_json::{json, Value};
 use std::fs;
+use std::sync::Mutex;
 use tempfile::TempDir;
+
+/// Global lock for tests that depend on the shared READ_TRACKER state.
+/// Tests that call reset_read_tracker() must hold this lock to avoid races.
+static READ_TRACKER_LOCK: Mutex<()> = Mutex::new(());
 
 /// Helper to create a ToolCall from name and arguments
 fn make_tool_call(name: &str, args: Value) -> ToolCall {
@@ -185,6 +190,7 @@ mod file_tools {
 
     #[test]
     fn test_edit_file_replace() {
+        let _lock = READ_TRACKER_LOCK.lock().unwrap();
         reset_read_tracker(); // Clear tracker for clean test state
         let dir = setup_test_dir();
         let file_path = dir.path().join("test.txt");
@@ -219,6 +225,7 @@ mod file_tools {
 
     #[test]
     fn test_edit_file_old_string_not_found() {
+        let _lock = READ_TRACKER_LOCK.lock().unwrap();
         reset_read_tracker(); // Clear tracker for clean test state
         let dir = setup_test_dir();
         let file_path = dir.path().join("test.txt");
@@ -425,6 +432,7 @@ mod file_tools {
 
     #[test]
     fn test_edit_file_multiline() {
+        let _lock = READ_TRACKER_LOCK.lock().unwrap();
         reset_read_tracker(); // Clear tracker for clean test state
         let dir = TempDir::new().expect("Failed to create temp dir");
         let file_path = dir.path().join("multiline.txt");
@@ -462,6 +470,7 @@ mod file_tools {
 
     #[test]
     fn test_edit_file_special_characters() {
+        let _lock = READ_TRACKER_LOCK.lock().unwrap();
         reset_read_tracker(); // Clear tracker for clean test state
         let dir = TempDir::new().expect("Failed to create temp dir");
         let file_path = dir.path().join("special.txt");
@@ -582,6 +591,7 @@ mod file_tools {
 
     #[test]
     fn test_edit_file_without_prior_read() {
+        let _lock = READ_TRACKER_LOCK.lock().unwrap();
         reset_read_tracker();
         let dir = TempDir::new().expect("Failed to create temp dir");
         let file_path = dir.path().join("unread.txt");
@@ -646,6 +656,7 @@ mod file_tools {
 
     #[test]
     fn test_edit_file_identical_old_new() {
+        let _lock = READ_TRACKER_LOCK.lock().unwrap();
         reset_read_tracker();
         let dir = TempDir::new().expect("Failed to create temp dir");
         let file_path = dir.path().join("identical.txt");
@@ -824,19 +835,18 @@ mod bash_tools {
         let tool_call = make_tool_call(
             "bash",
             json!({
-                "command": "ping -n 100 127.0.0.1",  // Windows ping (use -c on Linux)
+                "command": "sleep 60",
                 "timeout": 1000  // 1 second timeout
             }),
         );
 
         let result = execute_tool(&tool_call);
 
-        // Must produce some output or error — never silently pass
+        // Should either error with timeout or produce some output
         assert!(
             result.is_error
                 || result.content.contains("timeout")
-                || result.content.contains("Pinging")
-                || result.content.contains("Reply")
+                || result.content.contains("timed out")
                 || !result.content.is_empty(),
             "Timeout test should produce output or error, got empty result"
         );
@@ -847,7 +857,7 @@ mod bash_tools {
         let tool_call = make_tool_call(
             "bash",
             json!({
-                "command": "ping -n 5 127.0.0.1",
+                "command": "sleep 2",
                 "run_in_background": true
             }),
         );
@@ -1271,6 +1281,7 @@ mod web_tools {
     // DuckDuckGo search uses the browser feature (enabled by default)
     // Falls back to Tavily/Brave APIs if configured
     #[test]
+    #[ignore] // Requires network access; run with `cargo test -- --ignored`
     fn test_web_search_duckduckgo() {
         let tool_call = make_tool_call(
             "web_search",

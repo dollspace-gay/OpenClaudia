@@ -1339,8 +1339,17 @@ fn execute_read_file(args: &HashMap<String, Value>) -> (String, bool) {
         None => return ("Missing 'path' argument".to_string(), true),
     };
 
+    // Reject path traversal attempts (relative paths with ..)
+    let p = Path::new(path);
+    if !p.is_absolute() {
+        return (
+            format!("Path must be absolute, got relative path: '{}'", path),
+            true,
+        );
+    }
+
     // Track that this file has been read (for edit_file and notebook_edit enforcement)
-    READ_TRACKER.mark_read(Path::new(path));
+    READ_TRACKER.mark_read(p);
 
     // Detect file type and dispatch accordingly
     match detect_file_type(path) {
