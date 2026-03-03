@@ -274,7 +274,10 @@ pub fn load_claude_settings() -> LayeredSettings {
         .unwrap_or_default();
 
     if !allowed_tools.is_empty() {
-        info!(count = allowed_tools.len(), "Extracted allowedTools from settings");
+        info!(
+            count = allowed_tools.len(),
+            "Extracted allowedTools from settings"
+        );
     }
 
     LayeredSettings {
@@ -314,9 +317,7 @@ fn deep_merge(target: &mut Value, source: &Value) {
     match (target, source) {
         (Value::Object(target_map), Value::Object(source_map)) => {
             for (key, source_val) in source_map {
-                let entry = target_map
-                    .entry(key.clone())
-                    .or_insert(Value::Null);
+                let entry = target_map.entry(key.clone()).or_insert(Value::Null);
                 deep_merge(entry, source_val);
             }
         }
@@ -339,7 +340,8 @@ pub fn load_claude_code_hooks_layered() -> (HooksConfig, LayeredSettings) {
 
     // Parse hooks from the merged settings
     if let Some(hooks_obj) = layered.settings.get("hooks") {
-        if let Ok(settings) = serde_json::from_value::<ClaudeCodeSettings>(json!({ "hooks": hooks_obj }))
+        if let Ok(settings) =
+            serde_json::from_value::<ClaudeCodeSettings>(json!({ "hooks": hooks_obj }))
         {
             merge_claude_hooks(&mut config, &settings);
             info!("Loaded hooks from layered Claude settings");
@@ -597,9 +599,13 @@ pub enum HookError {
 /// Callback for executing model hooks via a provider adapter.
 /// This avoids a direct dependency from hooks.rs on providers.rs.
 pub type ModelHookCallback = Box<
-    dyn Fn(String, String, Option<String>) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<String, String>> + Send>,
-    > + Send
+    dyn Fn(
+            String,
+            String,
+            Option<String>,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>>
+        + Send
         + Sync,
 >;
 
@@ -795,11 +801,7 @@ impl HookEngine {
     }
 
     /// Fire a notification event with type and data
-    pub async fn fire_notification(
-        &self,
-        notification_type: &str,
-        data: Value,
-    ) -> Vec<HookResult> {
+    pub async fn fire_notification(&self, notification_type: &str, data: Value) -> Vec<HookResult> {
         let extra = json!({
             "notification_type": notification_type,
             "data": data,

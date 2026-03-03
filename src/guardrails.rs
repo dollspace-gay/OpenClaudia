@@ -486,8 +486,21 @@ impl QualityGateRunner {
 }
 
 /// Run a shell command synchronously with timeout.
-fn run_shell_command_sync(command: &str, _timeout_seconds: u64) -> (i32, String, String) {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+fn run_shell_command_sync(command: &str, timeout_seconds: u64) -> (i32, String, String) {
+    let cwd = std::env::current_dir().unwrap_or_else(|e| {
+        warn!(
+            "Failed to get current directory ({}), falling back to \".\"",
+            e
+        );
+        std::path::PathBuf::from(".")
+    });
+
+    // Wrap command with timeout if a positive timeout is specified
+    let actual_command = if timeout_seconds > 0 {
+        format!("timeout {} {}", timeout_seconds, command)
+    } else {
+        command.to_string()
+    };
 
     #[cfg(windows)]
     let output = {
@@ -502,14 +515,14 @@ fn run_shell_command_sync(command: &str, _timeout_seconds: u64) -> (i32, String,
             .unwrap_or_else(|| std::path::PathBuf::from("bash"));
 
         Command::new(bash)
-            .args(["-c", command])
+            .args(["-c", &actual_command])
             .current_dir(&cwd)
             .output()
     };
 
     #[cfg(not(windows))]
     let output = Command::new("bash")
-        .args(["-c", command])
+        .args(["-c", &actual_command])
         .current_dir(&cwd)
         .output();
 

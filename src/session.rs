@@ -141,7 +141,14 @@ impl TaskManager {
             return Err(format!("Task '{}' not found", task_id));
         }
 
-        let TaskUpdateParams { status, subject, description, active_form, add_blocks, add_blocked_by } = params;
+        let TaskUpdateParams {
+            status,
+            subject,
+            description,
+            active_form,
+            add_blocks,
+            add_blocked_by,
+        } = params;
 
         // Parse and validate the new status
         let new_status = if let Some(s) = status.as_deref() {
@@ -156,7 +163,12 @@ impl TaskManager {
                     // to a deleted task. Instead, just return an error-like message.
                     return Err(format!("Task '{}' deleted", task_id));
                 }
-                other => return Err(format!("Invalid status '{}'. Must be: pending, in_progress, completed, deleted", other)),
+                other => {
+                    return Err(format!(
+                        "Invalid status '{}'. Must be: pending, in_progress, completed, deleted",
+                        other
+                    ))
+                }
             }
         } else {
             None
@@ -239,8 +251,14 @@ impl TaskManager {
 
         // Second pass: sync reverse dependencies
         // Collect the current blocks and blocked_by for the target task
-        let current_blocks: Vec<String> = self.get_task(&task_id_owned).map(|t| t.blocks.clone()).unwrap_or_default();
-        let current_blocked_by: Vec<String> = self.get_task(&task_id_owned).map(|t| t.blocked_by.clone()).unwrap_or_default();
+        let current_blocks: Vec<String> = self
+            .get_task(&task_id_owned)
+            .map(|t| t.blocks.clone())
+            .unwrap_or_default();
+        let current_blocked_by: Vec<String> = self
+            .get_task(&task_id_owned)
+            .map(|t| t.blocked_by.clone())
+            .unwrap_or_default();
 
         // For each task that this task blocks, ensure they have us in blocked_by
         for bid in &current_blocks {
@@ -270,7 +288,9 @@ impl TaskManager {
 
     /// Get the currently in-progress task, if any.
     pub fn current_task(&self) -> Option<&Task> {
-        self.tasks.iter().find(|t| t.status == TaskStatus::InProgress)
+        self.tasks
+            .iter()
+            .find(|t| t.status == TaskStatus::InProgress)
     }
 
     /// Format a task summary for display.
@@ -310,7 +330,10 @@ impl TaskManager {
         if let Some(ref af) = task.active_form {
             detail.push_str(&format!("Active form: {}\n", af));
         }
-        detail.push_str(&format!("Created: {}\n", task.created_at.format("%Y-%m-%d %H:%M:%S UTC")));
+        detail.push_str(&format!(
+            "Created: {}\n",
+            task.created_at.format("%Y-%m-%d %H:%M:%S UTC")
+        ));
         if !task.blocks.is_empty() {
             detail.push_str(&format!("Blocks: {}\n", task.blocks.join(", ")));
         }
@@ -355,6 +378,34 @@ pub fn get_pricing(model: &str) -> Option<ModelPricing> {
             input_per_million: 0.25,
             output_per_million: 1.25,
         }),
+        _ if m.contains("gpt-5.2") => Some(ModelPricing {
+            input_per_million: 2.0,
+            output_per_million: 8.0,
+        }),
+        _ if m.contains("gpt-5") && m.contains("mini") => Some(ModelPricing {
+            input_per_million: 0.50,
+            output_per_million: 2.0,
+        }),
+        _ if m.contains("gpt-5") && m.contains("nano") => Some(ModelPricing {
+            input_per_million: 0.10,
+            output_per_million: 0.40,
+        }),
+        _ if m.contains("gpt-5") => Some(ModelPricing {
+            input_per_million: 2.0,
+            output_per_million: 8.0,
+        }),
+        _ if m.contains("gpt-4.1") && m.contains("nano") => Some(ModelPricing {
+            input_per_million: 0.10,
+            output_per_million: 0.40,
+        }),
+        _ if m.contains("gpt-4.1") && m.contains("mini") => Some(ModelPricing {
+            input_per_million: 0.40,
+            output_per_million: 1.60,
+        }),
+        _ if m.contains("gpt-4.1") => Some(ModelPricing {
+            input_per_million: 2.0,
+            output_per_million: 8.0,
+        }),
         _ if m.contains("gpt-4o-mini") => Some(ModelPricing {
             input_per_million: 0.15,
             output_per_million: 0.60,
@@ -367,13 +418,13 @@ pub fn get_pricing(model: &str) -> Option<ModelPricing> {
             input_per_million: 30.0,
             output_per_million: 60.0,
         }),
+        _ if m.contains("o3") || m.contains("o4") => Some(ModelPricing {
+            input_per_million: 10.0,
+            output_per_million: 40.0,
+        }),
         _ if m.contains("o1") => Some(ModelPricing {
             input_per_million: 15.0,
             output_per_million: 60.0,
-        }),
-        _ if m.contains("o3") => Some(ModelPricing {
-            input_per_million: 10.0,
-            output_per_million: 40.0,
         }),
         _ if m.contains("gemini-2") && m.contains("flash") => Some(ModelPricing {
             input_per_million: 0.075,
@@ -1069,16 +1120,15 @@ pub const PLAN_MODE_ALLOWED_TOOLS: &[&str] = &[
 ];
 
 /// Tools that are always blocked in plan mode (write/mutate operations)
-pub const PLAN_MODE_BLOCKED_TOOLS: &[&str] = &[
-    "bash",
-    "edit_file",
-    "kill_shell",
-    "todo_write",
-];
+pub const PLAN_MODE_BLOCKED_TOOLS: &[&str] = &["bash", "edit_file", "kill_shell", "todo_write"];
 
 /// Check if a tool is allowed in plan mode.
 /// write_file is special: it's allowed only if targeting the plan file path.
-pub fn is_tool_allowed_in_plan_mode(tool_name: &str, plan_file: &Path, args: &serde_json::Value) -> bool {
+pub fn is_tool_allowed_in_plan_mode(
+    tool_name: &str,
+    plan_file: &Path,
+    args: &serde_json::Value,
+) -> bool {
     // Always-allowed tools
     if PLAN_MODE_ALLOWED_TOOLS.contains(&tool_name) {
         return true;
@@ -1094,8 +1144,10 @@ pub fn is_tool_allowed_in_plan_mode(tool_name: &str, plan_file: &Path, args: &se
         if let Some(path_str) = args.get("path").and_then(|v| v.as_str()) {
             let target = Path::new(path_str);
             // Compare canonical paths to handle relative vs absolute
-            let target_canonical = std::fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
-            let plan_canonical = std::fs::canonicalize(plan_file).unwrap_or_else(|_| plan_file.to_path_buf());
+            let target_canonical =
+                std::fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
+            let plan_canonical =
+                std::fs::canonicalize(plan_file).unwrap_or_else(|_| plan_file.to_path_buf());
             return target_canonical == plan_canonical;
         }
         return false;
@@ -1263,11 +1315,18 @@ mod tests {
         let mut tm = TaskManager::new();
         tm.create_task("Task A".to_string(), "Desc".to_string(), None);
 
-        let result = tm.update_task("task-1", TaskUpdateParams {
-            status: Some("in_progress".into()), ..Default::default()
-        });
+        let result = tm.update_task(
+            "task-1",
+            TaskUpdateParams {
+                status: Some("in_progress".into()),
+                ..Default::default()
+            },
+        );
         assert!(result.is_ok());
-        assert_eq!(tm.get_task("task-1").unwrap().status, TaskStatus::InProgress);
+        assert_eq!(
+            tm.get_task("task-1").unwrap().status,
+            TaskStatus::InProgress
+        );
     }
 
     #[test]
@@ -1276,16 +1335,32 @@ mod tests {
         tm.create_task("Task A".to_string(), "Desc".to_string(), None);
         tm.create_task("Task B".to_string(), "Desc".to_string(), None);
 
-        tm.update_task("task-1", TaskUpdateParams {
-            status: Some("in_progress".into()), ..Default::default()
-        }).unwrap();
-        assert_eq!(tm.get_task("task-1").unwrap().status, TaskStatus::InProgress);
+        tm.update_task(
+            "task-1",
+            TaskUpdateParams {
+                status: Some("in_progress".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            tm.get_task("task-1").unwrap().status,
+            TaskStatus::InProgress
+        );
 
-        tm.update_task("task-2", TaskUpdateParams {
-            status: Some("in_progress".into()), ..Default::default()
-        }).unwrap();
+        tm.update_task(
+            "task-2",
+            TaskUpdateParams {
+                status: Some("in_progress".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(tm.get_task("task-1").unwrap().status, TaskStatus::Pending);
-        assert_eq!(tm.get_task("task-2").unwrap().status, TaskStatus::InProgress);
+        assert_eq!(
+            tm.get_task("task-2").unwrap().status,
+            TaskStatus::InProgress
+        );
     }
 
     #[test]
@@ -1294,9 +1369,13 @@ mod tests {
         tm.create_task("To delete".to_string(), "Desc".to_string(), None);
         assert_eq!(tm.list_tasks().len(), 1);
 
-        let result = tm.update_task("task-1", TaskUpdateParams {
-            status: Some("deleted".into()), ..Default::default()
-        });
+        let result = tm.update_task(
+            "task-1",
+            TaskUpdateParams {
+                status: Some("deleted".into()),
+                ..Default::default()
+            },
+        );
         // "deleted" returns an Err with the deletion message
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("deleted"));
@@ -1308,9 +1387,13 @@ mod tests {
         let mut tm = TaskManager::new();
         tm.create_task("Task".to_string(), "Desc".to_string(), None);
 
-        let result = tm.update_task("task-1", TaskUpdateParams {
-            status: Some("invalid".into()), ..Default::default()
-        });
+        let result = tm.update_task(
+            "task-1",
+            TaskUpdateParams {
+                status: Some("invalid".into()),
+                ..Default::default()
+            },
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid status"));
     }
@@ -1318,9 +1401,13 @@ mod tests {
     #[test]
     fn test_task_manager_not_found() {
         let mut tm = TaskManager::new();
-        let result = tm.update_task("task-999", TaskUpdateParams {
-            status: Some("completed".into()), ..Default::default()
-        });
+        let result = tm.update_task(
+            "task-999",
+            TaskUpdateParams {
+                status: Some("completed".into()),
+                ..Default::default()
+            },
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
     }
@@ -1332,9 +1419,14 @@ mod tests {
         tm.create_task("Build".to_string(), "Second step".to_string(), None);
 
         // task-2 blocked by task-1
-        tm.update_task("task-2", TaskUpdateParams {
-            add_blocked_by: Some(vec!["task-1".to_string()]), ..Default::default()
-        }).unwrap();
+        tm.update_task(
+            "task-2",
+            TaskUpdateParams {
+                add_blocked_by: Some(vec!["task-1".to_string()]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
 
         let task1 = tm.get_task("task-1").unwrap();
         let task2 = tm.get_task("task-2").unwrap();
@@ -1347,9 +1439,13 @@ mod tests {
         let mut tm = TaskManager::new();
         tm.create_task("Task".to_string(), "Desc".to_string(), None);
 
-        let result = tm.update_task("task-1", TaskUpdateParams {
-            add_blocks: Some(vec!["task-1".to_string()]), ..Default::default()
-        });
+        let result = tm.update_task(
+            "task-1",
+            TaskUpdateParams {
+                add_blocks: Some(vec!["task-1".to_string()]),
+                ..Default::default()
+            },
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("cannot block itself"));
     }
@@ -1362,9 +1458,14 @@ mod tests {
         tm.create_task("Task".to_string(), "Desc".to_string(), None);
         assert!(tm.current_task().is_none()); // still pending
 
-        tm.update_task("task-1", TaskUpdateParams {
-            status: Some("in_progress".into()), ..Default::default()
-        }).unwrap();
+        tm.update_task(
+            "task-1",
+            TaskUpdateParams {
+                status: Some("in_progress".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert!(tm.current_task().is_some());
         assert_eq!(tm.current_task().unwrap().id, "task-1");
     }
@@ -1389,11 +1490,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut manager = SessionManager::new(dir.path().join("sessions"));
         // Verify we can access and use the task manager
-        manager.task_manager.create_task(
-            "Test".to_string(),
-            "Test task".to_string(),
-            None,
-        );
+        manager
+            .task_manager
+            .create_task("Test".to_string(), "Test task".to_string(), None);
         assert_eq!(manager.task_manager.list_tasks().len(), 1);
     }
 

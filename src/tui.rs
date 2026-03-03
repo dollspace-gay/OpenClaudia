@@ -6,10 +6,7 @@
 
 use crossterm::{
     cursor,
-    style::{
-        Attribute, Print, ResetColor, SetAttribute, SetForegroundColor,
-        Color as CtColor,
-    },
+    style::{Attribute, Color as CtColor, Print, ResetColor, SetAttribute, SetForegroundColor},
     terminal::{self, Clear, ClearType},
     ExecutableCommand,
 };
@@ -22,7 +19,7 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::io::{self, stdout, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Purple color for branding (from logo)
 const PURPLE: Color = Color::Rgb(147, 112, 219);
@@ -52,10 +49,22 @@ impl Default for Theme {
     fn default() -> Self {
         Self {
             name: "default".to_string(),
-            primary: CtColor::Rgb { r: 147, g: 112, b: 219 },
-            secondary: CtColor::Rgb { r: 218, g: 165, b: 32 },
+            primary: CtColor::Rgb {
+                r: 147,
+                g: 112,
+                b: 219,
+            },
+            secondary: CtColor::Rgb {
+                r: 218,
+                g: 165,
+                b: 32,
+            },
             code_color: CtColor::Cyan,
-            heading_color: CtColor::Rgb { r: 147, g: 112, b: 219 },
+            heading_color: CtColor::Rgb {
+                r: 147,
+                g: 112,
+                b: 219,
+            },
         }
     }
 }
@@ -67,24 +76,56 @@ impl Theme {
             "default" => Some(Self::default()),
             "ocean" => Some(Self {
                 name: "ocean".to_string(),
-                primary: CtColor::Rgb { r: 0, g: 150, b: 255 },
+                primary: CtColor::Rgb {
+                    r: 0,
+                    g: 150,
+                    b: 255,
+                },
                 secondary: CtColor::Cyan,
-                code_color: CtColor::Rgb { r: 0, g: 200, b: 200 },
-                heading_color: CtColor::Rgb { r: 0, g: 150, b: 255 },
+                code_color: CtColor::Rgb {
+                    r: 0,
+                    g: 200,
+                    b: 200,
+                },
+                heading_color: CtColor::Rgb {
+                    r: 0,
+                    g: 150,
+                    b: 255,
+                },
             }),
             "forest" => Some(Self {
                 name: "forest".to_string(),
                 primary: CtColor::Green,
-                secondary: CtColor::Rgb { r: 144, g: 238, b: 144 },
-                code_color: CtColor::Rgb { r: 0, g: 200, b: 100 },
+                secondary: CtColor::Rgb {
+                    r: 144,
+                    g: 238,
+                    b: 144,
+                },
+                code_color: CtColor::Rgb {
+                    r: 0,
+                    g: 200,
+                    b: 100,
+                },
                 heading_color: CtColor::Green,
             }),
             "sunset" => Some(Self {
                 name: "sunset".to_string(),
-                primary: CtColor::Rgb { r: 255, g: 140, b: 0 },
-                secondary: CtColor::Rgb { r: 255, g: 69, b: 0 },
+                primary: CtColor::Rgb {
+                    r: 255,
+                    g: 140,
+                    b: 0,
+                },
+                secondary: CtColor::Rgb {
+                    r: 255,
+                    g: 69,
+                    b: 0,
+                },
                 code_color: CtColor::Yellow,
-                heading_color: CtColor::Rgb { r: 255, g: 140, b: 0 },
+                heading_color: CtColor::Rgb {
+                    r: 255,
+                    g: 140,
+                    b: 0,
+                },
             }),
             "mono" => Some(Self {
                 name: "mono".to_string(),
@@ -97,24 +138,30 @@ impl Theme {
                 name: "neon".to_string(),
                 primary: CtColor::Magenta,
                 secondary: CtColor::Cyan,
-                code_color: CtColor::Rgb { r: 0, g: 255, b: 255 },
+                code_color: CtColor::Rgb {
+                    r: 0,
+                    g: 255,
+                    b: 255,
+                },
                 heading_color: CtColor::Magenta,
             }),
             _ => None,
         }
     }
 
-    /// Save the current theme name to disk
+    /// Save the current theme name to disk (in user config directory)
     pub fn save(&self) -> io::Result<()> {
-        let dir = Path::new(".openclaudia");
-        std::fs::create_dir_all(dir)?;
-        std::fs::write(dir.join("theme"), &self.name)?;
+        let path = theme_path();
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&path, &self.name)?;
         Ok(())
     }
 
     /// Load the saved theme from disk, falling back to default
     pub fn load() -> Self {
-        let path = Path::new(".openclaudia").join("theme");
+        let path = theme_path();
         if let Ok(name) = std::fs::read_to_string(&path) {
             let name = name.trim();
             if let Some(theme) = Self::from_name(name) {
@@ -123,6 +170,16 @@ impl Theme {
         }
         Self::default()
     }
+}
+
+/// Return a stable path for the theme file, using the user's config directory
+/// (e.g. `~/.config/openclaudia/theme` on Linux, `~/Library/Application Support/openclaudia/theme` on macOS).
+/// Falls back to `.openclaudia/theme` relative to CWD if the platform config dir is unavailable.
+fn theme_path() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("openclaudia")
+        .join("theme")
 }
 
 // ─── Markdown rendering ─────────────────────────────────────────────────────
@@ -639,7 +696,7 @@ fn get_username() -> Option<String> {
 }
 
 /// Capitalize the first letter of a string
-fn capitalize_first(s: &str) -> String {
+pub(crate) fn capitalize_first(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
         None => String::new(),

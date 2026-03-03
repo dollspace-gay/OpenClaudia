@@ -74,13 +74,13 @@ impl MemoryDb {
         let conn = Connection::open(path)
             .with_context(|| format!("Failed to open memory database at {:?}", path))?;
 
-        let mut db = Self {
-            conn,
-            path: path.to_path_buf(),
-        };
+        // Run schema migrations on the bare connection before wrapping in Mutex
+        Self::ensure_schema_on(&conn)?;
 
-        db.ensure_schema()?;
-        Ok(db)
+        Ok(Self {
+            conn: Mutex::new(conn),
+            path: path.to_path_buf(),
+        })
     }
 
     /// Open or create memory database in .openclaudia directory
@@ -102,17 +102,16 @@ impl MemoryDb {
         &self.path
     }
 
-    /// Ensure database schema exists and run migrations
-    fn ensure_schema(&mut self) -> Result<()> {
+    /// Ensure database schema exists and run migrations (operates on bare Connection)
+    fn ensure_schema_on(conn: &Connection) -> Result<()> {
         // Create version tracking table first
-        self.conn.execute(
+        conn.execute(
             "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)",
             [],
         )?;
 
         // Get current version (0 if table is empty = new db or pre-versioning db)
-        let current_version: i64 = self
-            .conn
+        let current_version: i64 = conn
             .query_row(
                 "SELECT COALESCE(MAX(version), 0) FROM schema_version",
                 [],
@@ -127,26 +126,26 @@ impl MemoryDb {
                 current_version,
                 SCHEMA_VERSION
             );
-            self.run_migrations(current_version)?;
+            Self::run_migrations_on(conn, current_version)?;
         }
 
         Ok(())
     }
 
-    /// Run all migrations from current_version to SCHEMA_VERSION
-    fn run_migrations(&mut self, from_version: i64) -> Result<()> {
+    /// Run all migrations from current_version to SCHEMA_VERSION (operates on bare Connection)
+    fn run_migrations_on(conn: &Connection, from_version: i64) -> Result<()> {
         // Version 1: Original schema (archival_memory, core_memory)
         if from_version < 1 {
-            self.migrate_v1()?;
+            Self::migrate_v1_on(conn)?;
         }
 
         // Version 2: Add short-term memory tables
         if from_version < 2 {
-            self.migrate_v2()?;
+            Self::migrate_v2_on(conn)?;
         }
 
         // Record current version
-        self.conn.execute(
+        conn.execute(
             "INSERT OR REPLACE INTO schema_version (version) VALUES (?1)",
             params![SCHEMA_VERSION],
         )?;
@@ -159,9 +158,9 @@ impl MemoryDb {
     }
 
     /// Migration v1: Original schema
-    fn migrate_v1(&mut self) -> Result<()> {
+    fn migrate_v1_on(conn: &Connection) -> Result<()> {
         tracing::debug!("Running migration v1: core schema");
-        self.conn.execute_batch(
+        conn.execute_batch(
             r#"
             -- Archival memory table for long-term storage
             CREATE TABLE IF NOT EXISTS archival_memory (
@@ -217,11 +216,10 @@ impl MemoryDb {
     }
 
     /// Migration v2: Add short-term memory tables
-    fn migrate_v2(&mut self) -> Result<()> {
+    fn migrate_v2_on(conn: &Connection) -> Result<()> {
         tracing::debug!("Running migration v2: short-term memory tables");
-        self.conn
-            .execute_batch(
-                r#"
+        conn.execute_batch(
+            r#"
             -- Short-term memory: Recent session summaries
             CREATE TABLE IF NOT EXISTS recent_sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -246,8 +244,8 @@ impl MemoryDb {
             CREATE INDEX IF NOT EXISTS idx_recent_activity_created ON recent_activity(created_at);
             CREATE INDEX IF NOT EXISTS idx_recent_activity_session ON recent_activity(session_id);
             "#,
-            )
-            .context("Failed to create v2 schema (short-term memory)")?;
+        )
+        .context("Failed to create v2 schema (short-term memory)")?;
 
         Ok(())
     }
@@ -257,16 +255,23 @@ impl MemoryDb {
     /// Save a new memory entry
     pub fn memory_save(&self, content: &str, tags: &[String]) -> Result<i64> {
         let tags_str = tags.join(",");
-        self.conn.execute(
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
             "INSERT INTO archival_memory (content, tags) VALUES (?1, ?2)",
             params![content, tags_str],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        Ok(conn.last_insert_rowid())
     }
 
     /// Search archival memory using full-text search
     pub fn memory_search(&self, query: &str, limit: usize) -> Result<Vec<ArchivalMemory>> {
-        let mut stmt = self.conn.prepare(
+        // Sanitize query to prevent FTS5 query syntax injection.
+        // Wrapping in double quotes forces a literal phrase search,
+        // and escaping internal double quotes with "" prevents breakout.
+        let sanitized_query = format!("\"{}\"", query.replace('"', "\"\""));
+
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
             r#"
             SELECT am.id, am.content, am.tags, am.created_at, am.updated_at,
                    bm25(archival_memory_fts) as rank
@@ -279,7 +284,7 @@ impl MemoryDb {
         )?;
 
         let memories = stmt
-            .query_map(params![query, limit as i64], |row| {
+            .query_map(params![sanitized_query, limit as i64], |row| {
                 Ok(ArchivalMemory {
                     id: row.get(0)?,
                     content: row.get(1)?,
@@ -300,7 +305,8 @@ impl MemoryDb {
 
     /// Get a memory by ID
     pub fn memory_get(&self, id: i64) -> Result<Option<ArchivalMemory>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
             "SELECT id, content, tags, created_at, updated_at FROM archival_memory WHERE id = ?1",
         )?;
 
@@ -326,7 +332,8 @@ impl MemoryDb {
 
     /// Update an existing memory
     pub fn memory_update(&self, id: i64, content: &str) -> Result<bool> {
-        let rows = self.conn.execute(
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
             "UPDATE archival_memory SET content = ?1, updated_at = datetime('now') WHERE id = ?2",
             params![content, id],
         )?;
@@ -335,15 +342,15 @@ impl MemoryDb {
 
     /// Delete a memory entry
     pub fn memory_delete(&self, id: i64) -> Result<bool> {
-        let rows = self
-            .conn
-            .execute("DELETE FROM archival_memory WHERE id = ?1", params![id])?;
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute("DELETE FROM archival_memory WHERE id = ?1", params![id])?;
         Ok(rows > 0)
     }
 
     /// List recent memories
     pub fn memory_list(&self, limit: usize) -> Result<Vec<ArchivalMemory>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
             "SELECT id, content, tags, created_at, updated_at FROM archival_memory ORDER BY updated_at DESC LIMIT ?1",
         )?;
 
@@ -369,21 +376,20 @@ impl MemoryDb {
 
     /// Get memory statistics
     pub fn memory_stats(&self) -> Result<MemoryStats> {
+        let conn = self.conn.lock().unwrap();
         let count: i64 =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM archival_memory", [], |row| row.get(0))?;
+            conn.query_row("SELECT COUNT(*) FROM archival_memory", [], |row| row.get(0))?;
 
-        let total_size: i64 = self.conn.query_row(
+        let total_size: i64 = conn.query_row(
             "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM archival_memory",
             [],
             |row| row.get(0),
         )?;
 
         let last_updated: Option<String> =
-            self.conn
-                .query_row("SELECT MAX(updated_at) FROM archival_memory", [], |row| {
-                    row.get(0)
-                })?;
+            conn.query_row("SELECT MAX(updated_at) FROM archival_memory", [], |row| {
+                row.get(0)
+            })?;
 
         Ok(MemoryStats {
             count: count as usize,
@@ -396,9 +402,9 @@ impl MemoryDb {
 
     /// Get all core memory sections
     pub fn get_core_memory(&self) -> Result<Vec<CoreMemory>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT section, content, updated_at FROM core_memory ORDER BY section")?;
+        let conn = self.conn.lock().unwrap();
+        let mut stmt =
+            conn.prepare("SELECT section, content, updated_at FROM core_memory ORDER BY section")?;
 
         let memories = stmt
             .query_map([], |row| {
@@ -415,8 +421,8 @@ impl MemoryDb {
 
     /// Get a specific core memory section
     pub fn get_core_memory_section(&self, section: &str) -> Result<Option<CoreMemory>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
             .prepare("SELECT section, content, updated_at FROM core_memory WHERE section = ?1")?;
 
         let memory = stmt
@@ -434,7 +440,8 @@ impl MemoryDb {
 
     /// Update a core memory section
     pub fn update_core_memory(&self, section: &str, content: &str) -> Result<()> {
-        self.conn.execute(
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
             "INSERT OR REPLACE INTO core_memory (section, content, updated_at) VALUES (?1, ?2, datetime('now'))",
             params![section, content],
         )?;
@@ -460,7 +467,8 @@ impl MemoryDb {
 
     /// Clear all archival memory (keeps core memory)
     pub fn clear_archival_memory(&self) -> Result<usize> {
-        let rows = self.conn.execute("DELETE FROM archival_memory", [])?;
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute("DELETE FROM archival_memory", [])?;
         Ok(rows)
     }
 
@@ -478,18 +486,20 @@ impl MemoryDb {
         let files_str = files_modified.join("\n");
         let issues_str = issues_worked.join("\n");
 
-        self.conn.execute(
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
             r#"INSERT OR REPLACE INTO recent_sessions
                (session_id, summary, files_modified, issues_worked, started_at, ended_at)
                VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))"#,
             params![session_id, summary, files_str, issues_str, started_at],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        Ok(conn.last_insert_rowid())
     }
 
     /// Get recent sessions (within expiry window)
     pub fn get_recent_sessions(&self, limit: usize) -> Result<Vec<RecentSession>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
             r#"SELECT id, session_id, summary, files_modified, issues_worked, started_at, ended_at
                FROM recent_sessions
                WHERE ended_at > datetime('now', ?1)
@@ -533,16 +543,18 @@ impl MemoryDb {
         target: &str,
         details: Option<&str>,
     ) -> Result<i64> {
-        self.conn.execute(
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
             "INSERT INTO recent_activity (session_id, activity_type, target, details) VALUES (?1, ?2, ?3, ?4)",
             params![session_id, activity_type, target, details],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        Ok(conn.last_insert_rowid())
     }
 
     /// Get recent activities for a session
     pub fn get_session_activities(&self, session_id: &str) -> Result<Vec<RecentActivity>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
             r#"SELECT id, session_id, activity_type, target, details, created_at
                FROM recent_activity
                WHERE session_id = ?1
@@ -567,7 +579,8 @@ impl MemoryDb {
 
     /// Get unique files modified in a session
     pub fn get_session_files_modified(&self, session_id: &str) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
             r#"SELECT DISTINCT target FROM recent_activity
                WHERE session_id = ?1 AND activity_type IN ('file_write', 'file_edit')
                ORDER BY target"#,
@@ -582,7 +595,8 @@ impl MemoryDb {
 
     /// Get unique issues worked on in a session
     pub fn get_session_issues(&self, session_id: &str) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
             r#"SELECT DISTINCT target FROM recent_activity
                WHERE session_id = ?1 AND activity_type IN ('issue_created', 'issue_closed', 'issue_comment')
                ORDER BY target"#,
@@ -599,12 +613,13 @@ impl MemoryDb {
     pub fn cleanup_expired_short_term(&self) -> Result<(usize, usize)> {
         let expiry = format!("-{} hours", SHORT_TERM_EXPIRY_HOURS);
 
-        let sessions_deleted = self.conn.execute(
+        let conn = self.conn.lock().unwrap();
+        let sessions_deleted = conn.execute(
             "DELETE FROM recent_sessions WHERE ended_at < datetime('now', ?1)",
             params![expiry],
         )?;
 
-        let activities_deleted = self.conn.execute(
+        let activities_deleted = conn.execute(
             "DELETE FROM recent_activity WHERE created_at < datetime('now', ?1)",
             params![expiry],
         )?;
@@ -653,7 +668,8 @@ impl MemoryDb {
 
     /// Reset everything including core memory and short-term memory
     pub fn reset_all(&self) -> Result<()> {
-        self.conn.execute_batch(
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch(
             r#"
             DELETE FROM archival_memory;
             DELETE FROM core_memory;

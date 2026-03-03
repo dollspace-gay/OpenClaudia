@@ -130,9 +130,15 @@ pub trait McpTransport: Send + Sync {
     async fn close(&self) -> Result<(), McpError>;
 }
 
+// TODO(I-2): Add reconnection logic for transports. When a stdio process
+// crashes or an HTTP endpoint becomes unreachable, the transport should
+// attempt automatic reconnection with exponential backoff before surfacing
+// errors to callers. See crosslink issue #47.
+
 /// Stdio transport - communicates with MCP server via stdin/stdout
 pub struct StdioTransport {
     child: Arc<Mutex<Child>>,
+    reader: Mutex<BufReader<tokio::process::ChildStdout>>,
     request_id: AtomicU64,
 }
 
@@ -141,7 +147,7 @@ impl StdioTransport {
     pub async fn spawn(command: &str, args: &[&str]) -> Result<Self, McpError> {
         info!(command = %command, args = ?args, "Spawning MCP server");
 
-        let child = Command::new(command)
+        let mut child = Command::new(command)
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -149,8 +155,16 @@ impl StdioTransport {
             .spawn()
             .map_err(|e| McpError::Transport(format!("Failed to spawn process: {}", e)))?;
 
+        // Take stdout from the child once and wrap in a persistent BufReader
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| McpError::Transport("Stdout not available after spawn".to_string()))?;
+        let reader = BufReader::new(stdout);
+
         Ok(Self {
             child: Arc::new(Mutex::new(child)),
+            reader: Mutex::new(reader),
             request_id: AtomicU64::new(1),
         })
     }
@@ -193,42 +207,41 @@ impl McpTransport for StdioTransport {
             return Err(McpError::Transport("Stdin not available".to_string()));
         }
 
-        // Read response from stdout
-        if let Some(stdout) = child.stdout.as_mut() {
-            let mut reader = BufReader::new(stdout);
-            let mut line = String::new();
-            reader
-                .read_line(&mut line)
-                .await
-                .map_err(|e| McpError::Transport(format!("Failed to read from stdout: {}", e)))?;
+        // Release the child lock before reading, since stdout is stored separately
+        drop(child);
 
-            let response: JsonRpcResponse = serde_json::from_str(&line)
-                .map_err(|e| McpError::Protocol(format!("Failed to parse response: {}", e)))?;
+        // Read response from the persistent BufReader
+        let mut reader = self.reader.lock().await;
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .await
+            .map_err(|e| McpError::Transport(format!("Failed to read from stdout: {}", e)))?;
 
-            if response.id != id {
-                return Err(McpError::Protocol(format!(
-                    "Response ID mismatch: expected {}, got {}",
-                    id, response.id
-                )));
-            }
+        let response: JsonRpcResponse = serde_json::from_str(&line)
+            .map_err(|e| McpError::Protocol(format!("Failed to parse response: {}", e)))?;
 
-            if let Some(error) = response.error {
-                // Include error data in message if available
-                let data_info = error
-                    .data
-                    .as_ref()
-                    .map(|d| format!(" (data: {})", d))
-                    .unwrap_or_default();
-                return Err(McpError::Protocol(format!(
-                    "RPC error {}: {}{}",
-                    error.code, error.message, data_info
-                )));
-            }
-
-            Ok(response.result.unwrap_or(Value::Null))
-        } else {
-            Err(McpError::Transport("Stdout not available".to_string()))
+        if response.id != id {
+            return Err(McpError::Protocol(format!(
+                "Response ID mismatch: expected {}, got {}",
+                id, response.id
+            )));
         }
+
+        if let Some(error) = response.error {
+            // Include error data in message if available
+            let data_info = error
+                .data
+                .as_ref()
+                .map(|d| format!(" (data: {})", d))
+                .unwrap_or_default();
+            return Err(McpError::Protocol(format!(
+                "RPC error {}: {}{}",
+                error.code, error.message, data_info
+            )));
+        }
+
+        Ok(response.result.unwrap_or(Value::Null))
     }
 
     async fn close(&self) -> Result<(), McpError> {
@@ -594,7 +607,7 @@ impl McpManager {
                 json!({
                     "type": "function",
                     "function": {
-                        "name": format!("{}_{}", server_name, tool.name),
+                        "name": format!("{}__{}", server_name, tool.name),
                         "description": tool.description.as_deref().unwrap_or(""),
                         "parameters": tool.input_schema.clone().unwrap_or(json!({"type": "object", "properties": {}}))
                     }
@@ -603,13 +616,13 @@ impl McpManager {
             .collect()
     }
 
-    /// Call a tool by its full name (server_toolname)
+    /// Call a tool by its full name (server__toolname)
     pub async fn call_tool(&self, full_name: &str, arguments: Value) -> Result<Value, McpError> {
-        // Parse server name and tool name from full_name
-        let parts: Vec<&str> = full_name.splitn(2, '_').collect();
+        // Parse server name and tool name from full_name using double underscore delimiter
+        let parts: Vec<&str> = full_name.splitn(2, "__").collect();
         if parts.len() != 2 {
             return Err(McpError::ToolNotFound(format!(
-                "Invalid tool name format: {}. Expected server_toolname",
+                "Invalid tool name format: {}. Expected server__toolname",
                 full_name
             )));
         }
@@ -919,7 +932,8 @@ mod tests {
 
     #[test]
     fn test_mcp_resource_deserialization() {
-        let json = r#"{"uri": "db://users", "name": "Users Table", "mimeType": "application/json"}"#;
+        let json =
+            r#"{"uri": "db://users", "name": "Users Table", "mimeType": "application/json"}"#;
         let resource: McpResource = serde_json::from_str(json).unwrap();
         assert_eq!(resource.uri, "db://users");
         assert_eq!(resource.name, "Users Table");

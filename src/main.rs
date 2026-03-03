@@ -4,7 +4,8 @@
 
 use openclaudia::{
     config, guardrails, memory, oauth, plugins, prompt, providers, proxy, session, tool_intercept,
-    tools, tui, vdd,
+    tools::{self, safe_truncate},
+    tui, vdd,
 };
 
 use clap::{Parser, Subcommand};
@@ -385,7 +386,7 @@ async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
                     .and_then(|c| c.get("expires_at"))
                     .and_then(|e| e.as_str())
                     .unwrap_or("unknown");
-                println!("  {} (expires: {})", &id[..8], expires);
+                println!("  {} (expires: {})", safe_truncate(&id, 8), expires);
             }
         }
         return Ok(());
@@ -499,7 +500,7 @@ async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
     store.store_session(session);
 
     println!("\n✓ Authentication successful!");
-    println!("  Session ID: {}", &session_id[..8]);
+    println!("  Session ID: {}", safe_truncate(&session_id, 8));
     match auth_mode {
         crate::oauth::AuthMode::ApiKey => {
             println!("  Auth mode: API key (organization account)");
@@ -657,7 +658,7 @@ impl ChatSession {
         {
             if let Some(content) = first_user.get("content").and_then(|c| c.as_str()) {
                 let title = if content.len() > 50 {
-                    format!("{}...", &content[..47])
+                    format!("{}...", safe_truncate(&content, 47))
                 } else {
                     content.to_string()
                 };
@@ -724,10 +725,7 @@ fn handle_user_questions(questions: &[serde_json::Value]) -> String {
     let mut answers: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
 
     for q in questions {
-        let question_text = q
-            .get("question")
-            .and_then(|v| v.as_str())
-            .unwrap_or("?");
+        let question_text = q.get("question").and_then(|v| v.as_str()).unwrap_or("?");
         let header = q.get("header").and_then(|v| v.as_str()).unwrap_or("");
         let options = q
             .get("options")
@@ -791,8 +789,7 @@ fn handle_user_questions(questions: &[serde_json::Value]) -> String {
                 if let Ok(num) = part.parse::<usize>() {
                     if num >= 1 && num <= options.len() {
                         if let Some(opt) = options.get(num - 1) {
-                            let label =
-                                opt.get("label").and_then(|v| v.as_str()).unwrap_or("?");
+                            let label = opt.get("label").and_then(|v| v.as_str()).unwrap_or("?");
                             selected.push(serde_json::Value::String(label.to_string()));
                         }
                     } else if num == other_num {
@@ -801,9 +798,8 @@ fn handle_user_questions(questions: &[serde_json::Value]) -> String {
                         io::stdout().flush().ok();
                         let mut other_input = String::new();
                         if io::stdin().read_line(&mut other_input).is_ok() {
-                            selected.push(serde_json::Value::String(
-                                other_input.trim().to_string(),
-                            ));
+                            selected
+                                .push(serde_json::Value::String(other_input.trim().to_string()));
                         }
                     }
                 }
@@ -912,10 +908,7 @@ fn handle_exit_plan_mode(
     let plan_state = match &chat_session.plan_mode {
         Some(state) if state.active => state.clone(),
         _ => {
-            return (
-                "Not currently in plan mode.".to_string(),
-                false,
-            );
+            return ("Not currently in plan mode.".to_string(), false);
         }
     };
 
@@ -1004,10 +997,7 @@ fn handle_exit_plan_mode(
         "edit" | "e" => {
             // Open plan file in external editor
             let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
-            println!(
-                "\n\x1b[90mOpening plan in {}...\x1b[0m",
-                editor
-            );
+            println!("\n\x1b[90mOpening plan in {}...\x1b[0m", editor);
 
             let edit_result = std::process::Command::new(&editor)
                 .arg(&plan_state.plan_file)
@@ -1039,9 +1029,7 @@ fn handle_exit_plan_mode(
                         chat_session.mode = AgentMode::Build;
                         chat_session.approved_plan = Some(edited_content.clone());
 
-                        println!(
-                            "\n\x1b[1;32m>> Plan Approved - Returning to Build Mode\x1b[0m\n"
-                        );
+                        println!("\n\x1b[1;32m>> Plan Approved - Returning to Build Mode\x1b[0m\n");
 
                         chat_session.messages.push(serde_json::json!({
                             "role": "system",
@@ -1069,31 +1057,31 @@ fn handle_exit_plan_mode(
                             true,
                         )
                     } else {
-                        println!(
-                            "\n\x1b[1;31m>> Plan Rejected - Staying in Plan Mode\x1b[0m\n"
-                        );
+                        println!("\n\x1b[1;31m>> Plan Rejected - Staying in Plan Mode\x1b[0m\n");
                         (
                             "Edited plan rejected by user. Still in plan mode. Revise and try again.".to_string(),
                             false,
                         )
                     }
                 }
-                Ok(_) => {
-                    ("Editor exited with error. Plan unchanged. Still in plan mode.".to_string(), false)
-                }
+                Ok(_) => (
+                    "Editor exited with error. Plan unchanged. Still in plan mode.".to_string(),
+                    false,
+                ),
                 Err(e) => {
-                    println!(
-                        "\x1b[31mFailed to open editor '{}': {}\x1b[0m",
-                        editor, e
-                    );
-                    ("Failed to open editor. Still in plan mode.".to_string(), false)
+                    println!("\x1b[31mFailed to open editor '{}': {}\x1b[0m", editor, e);
+                    (
+                        "Failed to open editor. Still in plan mode.".to_string(),
+                        false,
+                    )
                 }
             }
         }
         _ => {
             println!("\x1b[90mUnrecognized input. Staying in plan mode.\x1b[0m");
             (
-                "Unrecognized response. Still in plan mode. Call exit_plan_mode again when ready.".to_string(),
+                "Unrecognized response. Still in plan mode. Call exit_plan_mode again when ready."
+                    .to_string(),
                 false,
             )
         }
@@ -1114,11 +1102,7 @@ fn check_plan_mode_restriction(
     let args: serde_json::Value =
         serde_json::from_str(tool_args).unwrap_or(serde_json::Value::Null);
 
-    if openclaudia::session::is_tool_allowed_in_plan_mode(
-        tool_name,
-        &plan_state.plan_file,
-        &args,
-    ) {
+    if openclaudia::session::is_tool_allowed_in_plan_mode(tool_name, &plan_state.plan_file, &args) {
         None
     } else {
         Some(format!(
@@ -1152,8 +1136,7 @@ fn process_tool_result_marker(
                 return (msg, true);
             }
             tools::EXIT_PLAN_MODE_MARKER => {
-                let (msg, _approved) =
-                    handle_exit_plan_mode(chat_session, result_content);
+                let (msg, _approved) = handle_exit_plan_mode(chat_session, result_content);
                 return (msg, true);
             }
             _ => {}
@@ -1244,31 +1227,53 @@ enum SlashCommandResult {
 fn get_available_models(provider: &str) -> Vec<&'static str> {
     match provider {
         "anthropic" => vec![
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-5-20250929",
+            "claude-opus-4-5-20251101",
+            "claude-opus-4-1-20250805",
             "claude-sonnet-4-20250514",
             "claude-opus-4-20250514",
-            "claude-3-5-sonnet-20241022",
-            "claude-3-5-haiku-20241022",
-            "claude-3-opus-20240229",
         ],
         "openai" => vec![
-            "gpt-4",
-            "gpt-4-turbo",
+            "gpt-5.2",
+            "gpt-5.2-codex",
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5-nano",
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "gpt-4.1-nano",
+            "o3",
+            "o4-mini",
             "gpt-4o",
             "gpt-4o-mini",
-            "gpt-3.5-turbo",
-            "o1-preview",
-            "o1-mini",
         ],
         "google" => vec![
-            "gemini-pro",
-            "gemini-1.5-pro",
-            "gemini-1.5-flash",
-            "gemini-2.0-flash-exp",
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
         ],
-        "zai" => vec!["glm-4.7", "glm-4-plus", "glm-4-air", "glm-4-flash"],
-        "deepseek" => vec!["deepseek-chat", "deepseek-coder", "deepseek-reasoner"],
-        "qwen" => vec!["qwen-turbo", "qwen-plus", "qwen-max", "qwen-long"],
-        _ => vec!["gpt-4"],
+        "zai" => vec![
+            "glm-5",
+            "glm-4.7",
+            "glm-4.7-flash",
+            "glm-4.6",
+            "glm-4.5-flash",
+        ],
+        "deepseek" => vec!["deepseek-chat", "deepseek-reasoner"],
+        "qwen" => vec![
+            "qwen3.5-plus",
+            "qwen3-max",
+            "qwen-plus",
+            "qwen-turbo",
+            "qwq-plus",
+            "qwen3-coder-plus",
+        ],
+        _ => vec!["gpt-5.2"],
     }
 }
 
@@ -1626,7 +1631,7 @@ fn compact_chat_session(session: &mut ChatSession) -> (usize, usize) {
 
         // Truncate long messages in summary
         let preview = if content.len() > 200 {
-            format!("{}...", &content[..197])
+            format!("{}...", safe_truncate(&content, 197))
         } else {
             content.to_string()
         };
@@ -1736,7 +1741,7 @@ fn save_session_to_short_term_memory(session: &ChatSession, memory_db: Option<&m
             // Keep first line of each user message as a request summary
             if let Some(first_line) = content.lines().next() {
                 let truncated = if first_line.len() > 100 {
-                    format!("{}...", &first_line[..100])
+                    format!("{}...", safe_truncate(first_line, 100))
                 } else {
                     first_line.to_string()
                 };
@@ -1746,7 +1751,8 @@ fn save_session_to_short_term_memory(session: &ChatSession, memory_db: Option<&m
             // Keep last assistant response summary
             last_assistant_summary = content.lines().take(3).collect::<Vec<_>>().join(" ");
             if last_assistant_summary.len() > 200 {
-                last_assistant_summary = format!("{}...", &last_assistant_summary[..200]);
+                last_assistant_summary =
+                    format!("{}...", safe_truncate(&last_assistant_summary, 200));
             }
         }
     }
@@ -1951,7 +1957,7 @@ fn handle_slash_command(
                     let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("?");
                     let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
                     let preview = if content.len() > 60 {
-                        format!("{}...", &content[..57])
+                        format!("{}...", safe_truncate(&content, 57))
                     } else {
                         content.to_string()
                     };
@@ -2268,7 +2274,7 @@ fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
                         println!("\n=== Recent Memories ({}) ===\n", memories.len());
                         for mem in memories {
                             let preview = if mem.content.len() > 80 {
-                                format!("{}...", &mem.content[..77])
+                                format!("{}...", safe_truncate(&mem.content, 77))
                             } else {
                                 mem.content.clone()
                             };
@@ -2302,7 +2308,7 @@ fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
                         );
                         for mem in memories {
                             let preview = if mem.content.len() > 100 {
-                                format!("{}...", &mem.content[..97])
+                                format!("{}...", safe_truncate(&mem.content, 97))
                             } else {
                                 mem.content.clone()
                             };
@@ -2483,7 +2489,7 @@ fn handle_activity_command(
                             println!(
                                 "       \x1b[90mID: {} | Session: {}\x1b[0m",
                                 activity.id,
-                                &activity.session_id[..8]
+                                safe_truncate(&activity.session_id, 8)
                             );
                         }
                         if activities.len() > 20 {
@@ -2510,14 +2516,14 @@ fn handle_activity_command(
                                 "  \x1b[36m{}.\x1b[0m [ID:{}] Session {} (ended {})",
                                 i + 1,
                                 session.id,
-                                &session.session_id[..8],
+                                safe_truncate(&session.session_id, 8),
                                 session.ended_at
                             );
                             println!("     Started: {}", session.started_at);
 
                             // Show summary (first 100 chars)
                             let summary_preview = if session.summary.len() > 100 {
-                                format!("{}...", &session.summary[..97])
+                                format!("{}...", safe_truncate(&session.summary, 97))
                             } else {
                                 session.summary.clone()
                             };
@@ -3454,8 +3460,7 @@ fn handle_theme_command(args: &str) -> Option<String> {
     } else {
         let theme_name = args.trim().to_lowercase();
 
-        if let Some((name, desc, primary, _)) =
-            themes.iter().find(|(n, _, _, _)| *n == theme_name)
+        if let Some((name, desc, primary, _)) = themes.iter().find(|(n, _, _, _)| *n == theme_name)
         {
             // Build and persist the tui::Theme
             if let Some(theme) = tui::Theme::from_name(name) {
@@ -3714,7 +3719,10 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
     if let Some(ref model) = model_override {
         let detected = openclaudia::proxy::determine_provider(model, &config);
         if detected != config.proxy.target {
-            eprintln!("[debug] Model '{}' detected as provider '{}' (overriding target '{}')", model, detected, config.proxy.target);
+            eprintln!(
+                "[debug] Model '{}' detected as provider '{}' (overriding target '{}')",
+                model, detected, config.proxy.target
+            );
             config.proxy.target = detected;
         }
     }
@@ -3793,13 +3801,13 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
     let mut model = model_override
         .or_else(|| provider.model.clone())
         .unwrap_or_else(|| match config.proxy.target.as_str() {
-            "anthropic" => "claude-sonnet-4-20250514".to_string(),
-            "openai" => "gpt-4".to_string(),
+            "anthropic" => "claude-sonnet-4-6".to_string(),
+            "openai" => "gpt-5.2".to_string(),
             "google" => "gemini-2.5-flash".to_string(),
-            "zai" => "glm-4.7".to_string(),
+            "zai" => "glm-5".to_string(),
             "deepseek" => "deepseek-chat".to_string(),
-            "qwen" => "qwen-turbo".to_string(),
-            _ => "gpt-4".to_string(),
+            "qwen" => "qwen3.5-plus".to_string(),
+            _ => "gpt-5.2".to_string(),
         });
 
     let adapter = get_adapter(&config.proxy.target);
@@ -4062,7 +4070,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                             let mins = duration.num_minutes();
 
                             println!("\n=== Session Status ===");
-                            println!("  Session ID: {}...", &chat_session.id[..8]);
+                            println!("  Session ID: {}...", safe_truncate(&chat_session.id, 8));
                             println!("  Title:      {}", chat_session.title);
                             println!("  Provider:   {}", chat_session.provider);
                             println!("  Model:      {}", chat_session.model);
@@ -4083,7 +4091,9 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                     cache_read_tokens: 0,
                                     cache_write_tokens: 0,
                                 };
-                                if let Some(cost) = session::calculate_cost(&chat_session.model, &usage) {
+                                if let Some(cost) =
+                                    session::calculate_cost(&chat_session.model, &usage)
+                                {
                                     println!("  Est cost:   ${:.4}", cost);
                                 }
                                 println!(
@@ -4524,7 +4534,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                 spinner.set_style(
                     ProgressStyle::default_spinner()
                         .template("{spinner:.cyan} {msg}")
-                        .expect("Invalid spinner template"),
+                        .unwrap_or_else(|_| ProgressStyle::default_spinner()),
                 );
                 spinner.set_message("Connecting...");
                 spinner.enable_steady_tick(std::time::Duration::from_millis(80));
@@ -4540,228 +4550,302 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                         spinner.finish_and_clear();
 
                         if response.status().is_success() {
-                          if config.proxy.target == "google" {
-                            // ── Google Gemini: non-streaming JSON response ──
-                            use std::io::Write;
-                            println!();
+                            if config.proxy.target == "google" {
+                                // ── Google Gemini: non-streaming JSON response ──
+                                use std::io::Write;
+                                println!();
 
-                            let body = response.text().await.unwrap_or_default();
-                            let mut full_content = String::new();
+                                let body = response.text().await.unwrap_or_default();
+                                let mut full_content = String::new();
 
-                            match serde_json::from_str::<serde_json::Value>(&body) {
-                                Ok(gemini_json) => {
-                                    // Extract text from candidates[0].content.parts[].text
-                                    let text: String = gemini_json
-                                        .get("candidates")
-                                        .and_then(|c| c.get(0))
-                                        .and_then(|c| c.get("content"))
-                                        .and_then(|c| c.get("parts"))
-                                        .and_then(|p| p.as_array())
-                                        .map(|parts| {
-                                            parts.iter()
-                                                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
-                                                .collect::<Vec<_>>()
-                                                .join("")
-                                        })
-                                        .unwrap_or_default();
-
-                                    if !text.is_empty() {
-                                        print!("{}", text);
-                                        std::io::stdout().flush().ok();
-                                        full_content.push_str(&text);
-                                    }
-
-                                    // Extract function calls from candidates[0].content.parts[].functionCall
-                                    let mut gemini_tool_calls: Vec<tools::ToolCall> = gemini_json
-                                        .get("candidates")
-                                        .and_then(|c| c.get(0))
-                                        .and_then(|c| c.get("content"))
-                                        .and_then(|c| c.get("parts"))
-                                        .and_then(|p| p.as_array())
-                                        .map(|parts| {
-                                            parts.iter().filter_map(|p| {
-                                                let fc = p.get("functionCall")?;
-                                                let name = fc.get("name")?.as_str()?.to_string();
-                                                let args = fc.get("args")
-                                                    .map(|a| serde_json::to_string(a).unwrap_or_default())
-                                                    .unwrap_or_else(|| "{}".to_string());
-                                                Some(tools::ToolCall {
-                                                    id: format!("call_{}", uuid::Uuid::new_v4()),
-                                                    call_type: "function".to_string(),
-                                                    function: tools::FunctionCall { name, arguments: args },
-                                                })
-                                            }).collect()
-                                        })
-                                        .unwrap_or_default();
-
-                                    // Extract usage
-                                    let input_tokens = gemini_json.get("usageMetadata")
-                                        .and_then(|u| u.get("promptTokenCount"))
-                                        .and_then(|t| t.as_u64())
-                                        .unwrap_or(0);
-                                    let output_tokens = gemini_json.get("usageMetadata")
-                                        .and_then(|u| u.get("candidatesTokenCount"))
-                                        .and_then(|t| t.as_u64())
-                                        .unwrap_or(0);
-
-                                    // Audit: log model response
-                                    audit_logger.log("model_response", &serde_json::json!({
-                                        "model": &model,
-                                        "content_length": full_content.len(),
-                                        "tool_calls": gemini_tool_calls.len(),
-                                        "cancelled": false,
-                                    }));
-
-                                    // ── Gemini tool execution loop ──
-                                    let max_iterations = config.session.max_turns;
-                                    let mut iteration: u32 = 0;
-                                    // Track conversation in Gemini's native format
-                                    let mut gemini_contents: Vec<serde_json::Value> = serde_json::from_value(
-                                        request_body.get("contents").cloned().unwrap_or(serde_json::json!([]))
-                                    ).unwrap_or_default();
-
-                                    while !gemini_tool_calls.is_empty()
-                                        && (max_iterations == 0 || iteration < max_iterations)
-                                    {
-                                        iteration += 1;
-                                        guardrails::reset_turn();
-
-                                        // Store model response with functionCall parts
-                                        let model_parts: Vec<serde_json::Value> = {
-                                            let mut parts = Vec::new();
-                                            if !full_content.is_empty() {
-                                                parts.push(serde_json::json!({"text": full_content}));
-                                            }
-                                            for tc in &gemini_tool_calls {
-                                                let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
-                                                    .unwrap_or(serde_json::json!({}));
-                                                parts.push(serde_json::json!({
-                                                    "functionCall": {
-                                                        "name": tc.function.name,
-                                                        "args": args
-                                                    }
-                                                }));
-                                            }
-                                            parts
-                                        };
-                                        gemini_contents.push(serde_json::json!({
-                                            "role": "model",
-                                            "parts": model_parts
-                                        }));
-
-                                        // Also store in chat_session for history
-                                        let tool_calls_json: Vec<serde_json::Value> = gemini_tool_calls.iter().map(|tc| {
-                                            serde_json::json!({
-                                                "id": tc.id,
-                                                "type": "function",
-                                                "function": {
-                                                    "name": tc.function.name,
-                                                    "arguments": tc.function.arguments
-                                                }
+                                match serde_json::from_str::<serde_json::Value>(&body) {
+                                    Ok(gemini_json) => {
+                                        // Extract text from candidates[0].content.parts[].text
+                                        let text: String = gemini_json
+                                            .get("candidates")
+                                            .and_then(|c| c.get(0))
+                                            .and_then(|c| c.get("content"))
+                                            .and_then(|c| c.get("parts"))
+                                            .and_then(|p| p.as_array())
+                                            .map(|parts| {
+                                                parts
+                                                    .iter()
+                                                    .filter_map(|p| {
+                                                        p.get("text").and_then(|t| t.as_str())
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                                    .join("")
                                             })
-                                        }).collect();
-                                        chat_session.messages.push(serde_json::json!({
+                                            .unwrap_or_default();
+
+                                        if !text.is_empty() {
+                                            print!("{}", text);
+                                            std::io::stdout().flush().ok();
+                                            full_content.push_str(&text);
+                                        }
+
+                                        // Extract function calls from candidates[0].content.parts[].functionCall
+                                        let mut gemini_tool_calls: Vec<tools::ToolCall> =
+                                            gemini_json
+                                                .get("candidates")
+                                                .and_then(|c| c.get(0))
+                                                .and_then(|c| c.get("content"))
+                                                .and_then(|c| c.get("parts"))
+                                                .and_then(|p| p.as_array())
+                                                .map(|parts| {
+                                                    parts
+                                                        .iter()
+                                                        .filter_map(|p| {
+                                                            let fc = p.get("functionCall")?;
+                                                            let name = fc
+                                                                .get("name")?
+                                                                .as_str()?
+                                                                .to_string();
+                                                            let args = fc
+                                                                .get("args")
+                                                                .map(|a| {
+                                                                    serde_json::to_string(a)
+                                                                        .unwrap_or_default()
+                                                                })
+                                                                .unwrap_or_else(|| {
+                                                                    "{}".to_string()
+                                                                });
+                                                            Some(tools::ToolCall {
+                                                                id: format!(
+                                                                    "call_{}",
+                                                                    uuid::Uuid::new_v4()
+                                                                ),
+                                                                call_type: "function".to_string(),
+                                                                function: tools::FunctionCall {
+                                                                    name,
+                                                                    arguments: args,
+                                                                },
+                                                            })
+                                                        })
+                                                        .collect()
+                                                })
+                                                .unwrap_or_default();
+
+                                        // Extract usage
+                                        let input_tokens = gemini_json
+                                            .get("usageMetadata")
+                                            .and_then(|u| u.get("promptTokenCount"))
+                                            .and_then(|t| t.as_u64())
+                                            .unwrap_or(0);
+                                        let output_tokens = gemini_json
+                                            .get("usageMetadata")
+                                            .and_then(|u| u.get("candidatesTokenCount"))
+                                            .and_then(|t| t.as_u64())
+                                            .unwrap_or(0);
+
+                                        // Audit: log model response
+                                        audit_logger.log(
+                                            "model_response",
+                                            &serde_json::json!({
+                                                "model": &model,
+                                                "content_length": full_content.len(),
+                                                "tool_calls": gemini_tool_calls.len(),
+                                                "cancelled": false,
+                                            }),
+                                        );
+
+                                        // ── Gemini tool execution loop ──
+                                        let max_iterations = config.session.max_turns;
+                                        let mut iteration: u32 = 0;
+                                        // Track conversation in Gemini's native format
+                                        let mut gemini_contents: Vec<serde_json::Value> =
+                                            serde_json::from_value(
+                                                request_body
+                                                    .get("contents")
+                                                    .cloned()
+                                                    .unwrap_or(serde_json::json!([])),
+                                            )
+                                            .unwrap_or_default();
+
+                                        while !gemini_tool_calls.is_empty()
+                                            && (max_iterations == 0 || iteration < max_iterations)
+                                        {
+                                            iteration += 1;
+                                            guardrails::reset_turn();
+
+                                            // Store model response with functionCall parts
+                                            let model_parts: Vec<serde_json::Value> = {
+                                                let mut parts = Vec::new();
+                                                if !full_content.is_empty() {
+                                                    parts.push(
+                                                        serde_json::json!({"text": full_content}),
+                                                    );
+                                                }
+                                                for tc in &gemini_tool_calls {
+                                                    let args: serde_json::Value =
+                                                        serde_json::from_str(
+                                                            &tc.function.arguments,
+                                                        )
+                                                        .unwrap_or(serde_json::json!({}));
+                                                    parts.push(serde_json::json!({
+                                                        "functionCall": {
+                                                            "name": tc.function.name,
+                                                            "args": args
+                                                        }
+                                                    }));
+                                                }
+                                                parts
+                                            };
+                                            gemini_contents.push(serde_json::json!({
+                                                "role": "model",
+                                                "parts": model_parts
+                                            }));
+
+                                            // Also store in chat_session for history
+                                            let tool_calls_json: Vec<serde_json::Value> =
+                                                gemini_tool_calls
+                                                    .iter()
+                                                    .map(|tc| {
+                                                        serde_json::json!({
+                                                            "id": tc.id,
+                                                            "type": "function",
+                                                            "function": {
+                                                                "name": tc.function.name,
+                                                                "arguments": tc.function.arguments
+                                                            }
+                                                        })
+                                                    })
+                                                    .collect();
+                                            chat_session.messages.push(serde_json::json!({
                                             "role": "assistant",
                                             "content": if full_content.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(full_content.clone()) },
                                             "tool_calls": tool_calls_json
                                         }));
 
-                                        // Execute tools and collect functionResponse parts
-                                        let mut function_responses: Vec<serde_json::Value> = Vec::new();
-                                        for tool_call in &gemini_tool_calls {
-                                            // Plan mode check
-                                            if let Some(block_msg) = check_plan_mode_restriction(
-                                                &chat_session,
-                                                &tool_call.function.name,
-                                                &tool_call.function.arguments,
-                                            ) {
-                                                println!("\n\x1b[33m⚠ Blocked in plan mode: {}\x1b[0m", tool_call.function.name);
+                                            // Execute tools and collect functionResponse parts
+                                            let mut function_responses: Vec<serde_json::Value> =
+                                                Vec::new();
+                                            for tool_call in &gemini_tool_calls {
+                                                // Plan mode check
+                                                if let Some(block_msg) = check_plan_mode_restriction(
+                                                    &chat_session,
+                                                    &tool_call.function.name,
+                                                    &tool_call.function.arguments,
+                                                ) {
+                                                    println!("\n\x1b[33m⚠ Blocked in plan mode: {}\x1b[0m", tool_call.function.name);
+                                                    function_responses.push(serde_json::json!({
+                                                        "functionResponse": {
+                                                            "name": tool_call.function.name,
+                                                            "response": {"error": block_msg}
+                                                        }
+                                                    }));
+                                                    chat_session.messages.push(serde_json::json!({
+                                                        "role": "tool",
+                                                        "tool_call_id": tool_call.id,
+                                                        "content": format!("[ERROR] {}", block_msg),
+                                                        "is_error": true
+                                                    }));
+                                                    continue;
+                                                }
+
+                                                println!(
+                                                    "\n\x1b[36m⚡ Running {}...\x1b[0m",
+                                                    tool_call.function.name
+                                                );
+
+                                                audit_logger.log(
+                                                    "tool_call",
+                                                    &serde_json::json!({
+                                                        "name": &tool_call.function.name,
+                                                        "arguments": &tool_call.function.arguments,
+                                                        "id": &tool_call.id,
+                                                    }),
+                                                );
+
+                                                let result = if let Some(ref db) = memory_db {
+                                                    tools::execute_tool_with_memory(
+                                                        tool_call,
+                                                        Some(db),
+                                                    )
+                                                } else {
+                                                    tools::execute_tool(tool_call)
+                                                };
+
+                                                let (final_content, _was_marker) =
+                                                    process_tool_result_marker(
+                                                        &mut chat_session,
+                                                        &tool_call.function.name,
+                                                        &result.content,
+                                                    );
+                                                let final_is_error = if _was_marker {
+                                                    false
+                                                } else {
+                                                    result.is_error
+                                                };
+
+                                                // Show result preview
+                                                let preview: String = final_content
+                                                    .lines()
+                                                    .take(5)
+                                                    .collect::<Vec<_>>()
+                                                    .join("\n");
+                                                if final_is_error {
+                                                    println!("\x1b[31m✗ Error:\x1b[0m {}", preview);
+                                                } else {
+                                                    println!(
+                                                        "\x1b[32m✓\x1b[0m {}",
+                                                        if preview.len() > 200 {
+                                                            format!(
+                                                                "{}...",
+                                                                safe_truncate(&preview, 200)
+                                                            )
+                                                        } else {
+                                                            preview
+                                                        }
+                                                    );
+                                                }
+
+                                                // Build Gemini functionResponse
+                                                let response_content = if final_is_error {
+                                                    serde_json::json!({"error": final_content})
+                                                } else {
+                                                    serde_json::json!({"result": final_content})
+                                                };
                                                 function_responses.push(serde_json::json!({
                                                     "functionResponse": {
                                                         "name": tool_call.function.name,
-                                                        "response": {"error": block_msg}
+                                                        "response": response_content
                                                     }
                                                 }));
+
+                                                // Store in session
+                                                let result_content = if final_is_error {
+                                                    format!("[ERROR] {}", final_content)
+                                                } else {
+                                                    final_content
+                                                };
                                                 chat_session.messages.push(serde_json::json!({
                                                     "role": "tool",
-                                                    "tool_call_id": tool_call.id,
-                                                    "content": format!("[ERROR] {}", block_msg),
-                                                    "is_error": true
+                                                    "tool_call_id": result.tool_call_id,
+                                                    "content": result_content,
+                                                    "is_error": final_is_error
                                                 }));
-                                                continue;
                                             }
 
-                                            println!("\n\x1b[36m⚡ Running {}...\x1b[0m", tool_call.function.name);
-
-                                            audit_logger.log("tool_call", &serde_json::json!({
-                                                "name": &tool_call.function.name,
-                                                "arguments": &tool_call.function.arguments,
-                                                "id": &tool_call.id,
+                                            // Add user turn with functionResponse parts
+                                            gemini_contents.push(serde_json::json!({
+                                                "role": "user",
+                                                "parts": function_responses
                                             }));
 
-                                            let result = if let Some(ref db) = memory_db {
-                                                tools::execute_tool_with_memory(tool_call, Some(db))
-                                            } else {
-                                                tools::execute_tool(tool_call)
-                                            };
-
-                                            let (final_content, _was_marker) = process_tool_result_marker(
-                                                &mut chat_session,
-                                                &tool_call.function.name,
-                                                &result.content,
-                                            );
-                                            let final_is_error = if _was_marker { false } else { result.is_error };
-
-                                            // Show result preview
-                                            let preview: String = final_content.lines().take(5).collect::<Vec<_>>().join("\n");
-                                            if final_is_error {
-                                                println!("\x1b[31m✗ Error:\x1b[0m {}", preview);
-                                            } else {
-                                                println!("\x1b[32m✓\x1b[0m {}", if preview.len() > 200 { format!("{}...", &preview[..200]) } else { preview });
-                                            }
-
-                                            // Build Gemini functionResponse
-                                            let response_content = if final_is_error {
-                                                serde_json::json!({"error": final_content})
-                                            } else {
-                                                serde_json::json!({"result": final_content})
-                                            };
-                                            function_responses.push(serde_json::json!({
-                                                "functionResponse": {
-                                                    "name": tool_call.function.name,
-                                                    "response": response_content
-                                                }
-                                            }));
-
-                                            // Store in session
-                                            let result_content = if final_is_error {
-                                                format!("[ERROR] {}", final_content)
-                                            } else {
-                                                final_content
-                                            };
-                                            chat_session.messages.push(serde_json::json!({
-                                                "role": "tool",
-                                                "tool_call_id": result.tool_call_id,
-                                                "content": result_content,
-                                                "is_error": final_is_error
-                                            }));
-                                        }
-
-                                        // Add user turn with functionResponse parts
-                                        gemini_contents.push(serde_json::json!({
-                                            "role": "user",
-                                            "parts": function_responses
-                                        }));
-
-                                        // Send follow-up to Gemini
-                                        println!("\n\x1b[90m(Sending {} tool result{} to Gemini...)\x1b[0m",
+                                            // Send follow-up to Gemini
+                                            println!("\n\x1b[90m(Sending {} tool result{} to Gemini...)\x1b[0m",
                                             gemini_tool_calls.len(),
                                             if gemini_tool_calls.len() == 1 { "" } else { "s" }
                                         );
 
-                                        let openai_tools = tools::get_all_tool_definitions(stateful, true);
-                                        let tools_vec = openai_tools.as_array().cloned().unwrap_or_default();
-                                        let functions: Vec<serde_json::Value> = tools_vec.iter().filter_map(|tool| {
+                                            let openai_tools =
+                                                tools::get_all_tool_definitions(stateful, true);
+                                            let tools_vec = openai_tools
+                                                .as_array()
+                                                .cloned()
+                                                .unwrap_or_default();
+                                            let functions: Vec<serde_json::Value> = tools_vec.iter().filter_map(|tool| {
                                             let func = tool.get("function")?;
                                             Some(serde_json::json!({
                                                 "name": func.get("name")?,
@@ -4770,48 +4854,63 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                             }))
                                         }).collect();
 
-                                        let mut followup_req = serde_json::json!({
-                                            "contents": gemini_contents,
-                                            "generationConfig": {"maxOutputTokens": 4096},
-                                            "tools": [{"functionDeclarations": functions}]
-                                        });
-                                        if let Some(sys) = request_body.get("systemInstruction") {
-                                            followup_req["systemInstruction"] = sys.clone();
-                                        }
+                                            let mut followup_req = serde_json::json!({
+                                                "contents": gemini_contents,
+                                                "generationConfig": {"maxOutputTokens": 4096},
+                                                "tools": [{"functionDeclarations": functions}]
+                                            });
+                                            if let Some(sys) = request_body.get("systemInstruction")
+                                            {
+                                                followup_req["systemInstruction"] = sys.clone();
+                                            }
 
-                                        let mut req = client.post(&endpoint).json(&followup_req);
-                                        for (key, value) in &headers {
-                                            req = req.header(key, value);
-                                        }
+                                            let mut req =
+                                                client.post(&endpoint).json(&followup_req);
+                                            for (key, value) in &headers {
+                                                req = req.header(key, value);
+                                            }
 
-                                        match req.send().await {
-                                            Ok(resp) if resp.status().is_success() => {
-                                                let resp_body = resp.text().await.unwrap_or_default();
-                                                full_content = String::new();
-                                                gemini_tool_calls = Vec::new();
+                                            match req.send().await {
+                                                Ok(resp) if resp.status().is_success() => {
+                                                    let resp_body =
+                                                        resp.text().await.unwrap_or_default();
+                                                    full_content = String::new();
+                                                    gemini_tool_calls = Vec::new();
 
-                                                if let Ok(resp_json) = serde_json::from_str::<serde_json::Value>(&resp_body) {
-                                                    // Extract text
-                                                    let resp_text: String = resp_json
-                                                        .get("candidates").and_then(|c| c.get(0))
-                                                        .and_then(|c| c.get("content"))
-                                                        .and_then(|c| c.get("parts"))
-                                                        .and_then(|p| p.as_array())
-                                                        .map(|parts| {
-                                                            parts.iter()
-                                                                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
-                                                                .collect::<Vec<_>>().join("")
-                                                        }).unwrap_or_default();
+                                                    if let Ok(resp_json) =
+                                                        serde_json::from_str::<serde_json::Value>(
+                                                            &resp_body,
+                                                        )
+                                                    {
+                                                        // Extract text
+                                                        let resp_text: String = resp_json
+                                                            .get("candidates")
+                                                            .and_then(|c| c.get(0))
+                                                            .and_then(|c| c.get("content"))
+                                                            .and_then(|c| c.get("parts"))
+                                                            .and_then(|p| p.as_array())
+                                                            .map(|parts| {
+                                                                parts
+                                                                    .iter()
+                                                                    .filter_map(|p| {
+                                                                        p.get("text").and_then(
+                                                                            |t| t.as_str(),
+                                                                        )
+                                                                    })
+                                                                    .collect::<Vec<_>>()
+                                                                    .join("")
+                                                            })
+                                                            .unwrap_or_default();
 
-                                                    if !resp_text.is_empty() {
-                                                        println!();
-                                                        print!("{}", resp_text);
-                                                        std::io::stdout().flush().ok();
-                                                        full_content = resp_text;
-                                                    }
+                                                        if !resp_text.is_empty() {
+                                                            println!();
+                                                            print!("{}", resp_text);
+                                                            std::io::stdout().flush().ok();
+                                                            full_content = resp_text;
+                                                        }
 
-                                                    // Extract new tool calls
-                                                    gemini_tool_calls = resp_json
+                                                        // Extract new tool calls
+                                                        gemini_tool_calls = resp_json
                                                         .get("candidates").and_then(|c| c.get(0))
                                                         .and_then(|c| c.get("content"))
                                                         .and_then(|c| c.get("parts"))
@@ -4830,609 +4929,708 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                                 })
                                                             }).collect()
                                                         }).unwrap_or_default();
-                                                    // Loop continues — will check gemini_tool_calls at top
-                                                } else {
-                                                    eprintln!("\nFailed to parse Gemini follow-up response");
+                                                        // Loop continues — will check gemini_tool_calls at top
+                                                    } else {
+                                                        eprintln!("\nFailed to parse Gemini follow-up response");
+                                                        break;
+                                                    }
+                                                }
+                                                Ok(resp) => {
+                                                    let status = resp.status();
+                                                    let err_body =
+                                                        resp.text().await.unwrap_or_default();
+                                                    eprintln!(
+                                                        "\nGemini follow-up failed: {} {}",
+                                                        status, err_body
+                                                    );
+                                                    break;
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("\nGemini follow-up error: {}", e);
                                                     break;
                                                 }
                                             }
-                                            Ok(resp) => {
-                                                let status = resp.status();
-                                                let err_body = resp.text().await.unwrap_or_default();
-                                                eprintln!("\nGemini follow-up failed: {} {}", status, err_body);
-                                                break;
-                                            }
-                                            Err(e) => {
-                                                eprintln!("\nGemini follow-up error: {}", e);
-                                                break;
+                                        } // end Gemini tool loop
+
+                                        // Save final assistant message
+                                        if !full_content.trim().is_empty() {
+                                            chat_session.messages.push(serde_json::json!({
+                                                "role": "assistant",
+                                                "content": full_content.trim()
+                                            }));
+                                            chat_session.touch();
+                                            if let Err(e) = save_chat_session(&chat_session) {
+                                                tracing::warn!("Failed to save session: {}", e);
                                             }
                                         }
-                                    } // end Gemini tool loop
 
-                                    // Save final assistant message
-                                    if !full_content.trim().is_empty() {
-                                        chat_session.messages.push(serde_json::json!({
-                                            "role": "assistant",
-                                            "content": full_content.trim()
-                                        }));
-                                        chat_session.touch();
-                                        if let Err(e) = save_chat_session(&chat_session) {
-                                            tracing::warn!("Failed to save session: {}", e);
-                                        }
-                                    }
+                                        // VDD: Run adversarial review if enabled
+                                        if let Some(ref engine) = vdd_engine {
+                                            let user_task = chat_session
+                                                .messages
+                                                .iter()
+                                                .rev()
+                                                .find(|m| {
+                                                    m.get("role").and_then(|r| r.as_str())
+                                                        == Some("user")
+                                                })
+                                                .and_then(|m| {
+                                                    m.get("content").and_then(|c| c.as_str())
+                                                })
+                                                .unwrap_or("");
 
-                                    // VDD: Run adversarial review if enabled
-                                    if let Some(ref engine) = vdd_engine {
-                                        let user_task = chat_session.messages.iter().rev()
-                                            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
-                                            .and_then(|m| m.get("content").and_then(|c| c.as_str()))
-                                            .unwrap_or("");
-
-                                        match engine.review_text(&full_content, user_task).await {
-                                            Ok(result) => {
-                                                if !result.findings.is_empty() {
-                                                    let genuine_count = result.findings.iter()
-                                                        .filter(|f| f.status == vdd::FindingStatus::Genuine)
-                                                        .count();
-                                                    println!("\n\x1b[33m🔍 VDD Review: {} finding(s) ({} genuine)\x1b[0m",
+                                            match engine.review_text(&full_content, user_task).await
+                                            {
+                                                Ok(result) => {
+                                                    if !result.findings.is_empty() {
+                                                        let genuine_count = result
+                                                            .findings
+                                                            .iter()
+                                                            .filter(|f| {
+                                                                f.status
+                                                                    == vdd::FindingStatus::Genuine
+                                                            })
+                                                            .count();
+                                                        println!("\n\x1b[33m🔍 VDD Review: {} finding(s) ({} genuine)\x1b[0m",
                                                         result.findings.len(), genuine_count);
-                                                    for finding in &result.findings {
-                                                        let status_icon = match finding.status {
+                                                        for finding in &result.findings {
+                                                            let status_icon = match finding.status {
                                                             vdd::FindingStatus::Genuine => "⚠",
                                                             vdd::FindingStatus::FalsePositive => "✗",
                                                             vdd::FindingStatus::Disputed => "?",
                                                         };
-                                                        println!("  {} [{}] {}", status_icon, finding.severity, finding.description);
-                                                    }
-                                                    if !result.context_injection.is_empty() {
-                                                        chat_session.messages.push(serde_json::json!({
+                                                            println!(
+                                                                "  {} [{}] {}",
+                                                                status_icon,
+                                                                finding.severity,
+                                                                finding.description
+                                                            );
+                                                        }
+                                                        if !result.context_injection.is_empty() {
+                                                            chat_session.messages.push(serde_json::json!({
                                                             "role": "system",
                                                             "content": format!("<vdd-review>\n{}\n</vdd-review>", result.context_injection)
                                                         }));
+                                                        }
+                                                    } else {
+                                                        println!("\n\x1b[32m✓ VDD Review: No issues found\x1b[0m");
                                                     }
-                                                } else {
-                                                    println!("\n\x1b[32m✓ VDD Review: No issues found\x1b[0m");
                                                 }
-                                            }
-                                            Err(e) => {
-                                                tracing::warn!("VDD review failed: {}", e);
-                                                println!("\n\x1b[31m⚠ VDD review failed: {}\x1b[0m", e);
-                                            }
-                                        }
-                                    }
-
-                                    // Update status bar
-                                    let tokens = estimate_session_tokens(&chat_session) + full_content.len() / 4;
-                                    let cost = session::calculate_cost(&model, &openclaudia::session::TokenUsage {
-                                        input_tokens: input_tokens.max(tokens as u64),
-                                        output_tokens: output_tokens.max(full_content.len() as u64 / 4),
-                                        cache_read_tokens: 0,
-                                        cache_write_tokens: 0,
-                                    });
-                                    let duration = chrono::Utc::now().signed_duration_since(chat_session.created_at);
-                                    let dur_str = format!("{}m", duration.num_minutes());
-                                    tui::draw_status_bar(&model, tokens, cost, chat_session.mode.display(), &dur_str);
-                                }
-                                Err(e) => {
-                                    eprintln!("\nFailed to parse Gemini response: {}", e);
-                                    eprintln!("Raw body: {}", &body[..body.len().min(500)]);
-                                    chat_session.messages.pop(); // Remove failed user message
-                                }
-                            }
-
-                            println!();
-                          } else {
-                            // Stream the response (Anthropic SSE / OpenAI SSE)
-                            use crossterm::event::{self, Event, KeyEventKind};
-                            use futures::StreamExt;
-                            use std::io::Write;
-
-                            println!();
-                            let mut full_content = String::new();
-                            let mut stream = response.bytes_stream();
-                            let mut buffer = String::new();
-                            let mut cancelled = false;
-                            let mut pending_action: Option<SlashCommandResult> = None;
-                            let mut tool_accumulator = tools::ToolCallAccumulator::new();
-                            let mut anthropic_accumulator = tools::AnthropicToolAccumulator::new();
-
-                            // Thinking display state
-                            let mut in_thinking_block = false;
-                            let mut thinking_start_time: Option<std::time::Instant> = None;
-
-                            // SSE usage accumulator
-                            let mut stream_usage = openclaudia::session::TokenUsage::default();
-
-                            // Stream timeout tracking
-                            let mut last_data_time = std::time::Instant::now();
-                            let stream_timeout = std::time::Duration::from_secs(
-                                proxy::SSE_STREAM_TIMEOUT_SECS,
-                            );
-
-                            // Audit: log model request
-                            audit_logger.log("model_request", &serde_json::json!({
-                                "model": &model,
-                                "provider": &config.proxy.target,
-                            }));
-
-                            while let Some(chunk_result) = stream.next().await {
-                                // Check stream timeout
-                                if last_data_time.elapsed() > stream_timeout {
-                                    eprintln!("\nStream timeout: no data received for {}s", proxy::SSE_STREAM_TIMEOUT_SECS);
-                                    break;
-                                }
-
-                                // Check for configured keybindings during streaming
-                                if event::poll(std::time::Duration::from_millis(1)).unwrap_or(false)
-                                {
-                                    if let Ok(Event::Key(key_event)) = event::read() {
-                                        if key_event.kind == KeyEventKind::Press {
-                                            // Convert key event to binding string and look up action
-                                            if let Some(key_str) =
-                                                key_event_to_string(&key_event, false)
-                                            {
-                                                if config.keybindings.is_bound(&key_str) {
-                                                    let action = config
-                                                        .keybindings
-                                                        .get_action_or_default(&key_str);
-                                                    // Cancel immediately stops streaming
-                                                    if action == config::KeyAction::Cancel {
-                                                        cancelled = true;
-                                                        print!(" (cancelled)");
-                                                        std::io::stdout().flush().ok();
-                                                        break;
-                                                    }
-                                                    // Other actions queued for after streaming completes
-                                                    if let Some(result) =
-                                                        execute_key_action(&action)
-                                                    {
-                                                        pending_action = Some(result);
-                                                    }
+                                                Err(e) => {
+                                                    tracing::warn!("VDD review failed: {}", e);
+                                                    println!(
+                                                        "\n\x1b[31m⚠ VDD review failed: {}\x1b[0m",
+                                                        e
+                                                    );
                                                 }
                                             }
                                         }
-                                    }
-                                }
 
-                                match chunk_result {
-                                    Ok(chunk) => {
-                                        last_data_time = std::time::Instant::now();
-                                        // Append chunk to buffer
-                                        buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-                                        // Process complete SSE lines
-                                        while let Some(line_end) = buffer.find('\n') {
-                                            let line = buffer[..line_end].trim().to_string();
-                                            buffer = buffer[line_end + 1..].to_string();
-
-                                            // Skip empty lines and comments
-                                            if line.is_empty() || line.starts_with(':') {
-                                                continue;
-                                            }
-
-                                            // Parse SSE data lines
-                                            if let Some(data) = line.strip_prefix("data: ") {
-                                                // Check for stream end
-                                                if data == "[DONE]" {
-                                                    break;
-                                                }
-
-                                                // Parse JSON
-                                                if let Ok(json) =
-                                                    serde_json::from_str::<serde_json::Value>(data)
-                                                {
-                                                    // Extract SSE usage from streaming events
-                                                    if let Some(usage) = proxy::extract_usage_from_sse_event(&json) {
-                                                        stream_usage.accumulate(&usage);
-                                                    }
-
-                                                    // Thinking block detection (Anthropic)
-                                                    if let Some(event_type) = json.get("type").and_then(|t| t.as_str()) {
-                                                        if event_type == "content_block_start" {
-                                                            if let Some(block_type) = json.get("content_block")
-                                                                .and_then(|b| b.get("type"))
-                                                                .and_then(|t| t.as_str())
-                                                            {
-                                                                if block_type == "thinking" {
-                                                                    in_thinking_block = true;
-                                                                    thinking_start_time = Some(std::time::Instant::now());
-                                                                    tui::print_thinking_start();
-                                                                    continue;
-                                                                }
-                                                            }
-                                                        }
-                                                        if event_type == "content_block_stop" && in_thinking_block {
-                                                            let elapsed = thinking_start_time
-                                                                .map(|t| t.elapsed().as_secs_f64())
-                                                                .unwrap_or(0.0);
-                                                            tui::print_thinking_end(elapsed);
-                                                            in_thinking_block = false;
-                                                            thinking_start_time = None;
-                                                            continue;
-                                                        }
-                                                        if event_type == "content_block_delta" && in_thinking_block {
-                                                            if let Some(text) = json.get("delta")
-                                                                .and_then(|d| d.get("thinking"))
-                                                                .and_then(|t| t.as_str())
-                                                            {
-                                                                tui::print_thinking_chunk(text);
-                                                            } else if let Some(text) = json.get("delta")
-                                                                .and_then(|d| d.get("text"))
-                                                                .and_then(|t| t.as_str())
-                                                            {
-                                                                tui::print_thinking_chunk(text);
-                                                            }
-                                                            continue;
-                                                        }
-                                                    }
-
-                                                    // Anthropic format: process all streaming events
-                                                    // through the accumulator (handles text_delta,
-                                                    // tool_use blocks, and stop_reason).
-                                                    if let Some(text) =
-                                                        anthropic_accumulator.process_event(&json)
-                                                    {
-                                                        print!("{}", text);
-                                                        std::io::stdout().flush().ok();
-                                                        full_content.push_str(&text);
-                                                    }
-                                                    // OpenAI format: choices[0].delta.content
-                                                    else if let Some(delta) = json
-                                                        .get("choices")
-                                                        .and_then(|c| c.get(0))
-                                                        .and_then(|c| c.get("delta"))
-                                                    {
-                                                        // Handle text content
-                                                        if let Some(content) = delta
-                                                            .get("content")
-                                                            .and_then(|c| c.as_str())
-                                                        {
-                                                            print!("{}", content);
-                                                            std::io::stdout().flush().ok();
-                                                            full_content.push_str(content);
-                                                        }
-                                                        // Accumulate tool calls
-                                                        tool_accumulator.process_delta(delta);
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        // Update status bar
+                                        let tokens = estimate_session_tokens(&chat_session)
+                                            + full_content.len() / 4;
+                                        let cost = session::calculate_cost(
+                                            &model,
+                                            &openclaudia::session::TokenUsage {
+                                                input_tokens: input_tokens.max(tokens as u64),
+                                                output_tokens: output_tokens
+                                                    .max(full_content.len() as u64 / 4),
+                                                cache_read_tokens: 0,
+                                                cache_write_tokens: 0,
+                                            },
+                                        );
+                                        let duration = chrono::Utc::now()
+                                            .signed_duration_since(chat_session.created_at);
+                                        let dur_str = format!("{}m", duration.num_minutes());
+                                        tui::draw_status_bar(
+                                            &model,
+                                            tokens,
+                                            cost,
+                                            chat_session.mode.display(),
+                                            &dur_str,
+                                        );
                                     }
                                     Err(e) => {
-                                        eprintln!("\nStream error: {}", e);
-                                        break;
+                                        eprintln!("\nFailed to parse Gemini response: {}", e);
+                                        eprintln!("Raw body: {}", &body[..body.len().min(500)]);
+                                        chat_session.messages.pop(); // Remove failed user message
                                     }
                                 }
-                            }
 
-                            println!();
+                                println!();
+                            } else {
+                                // Stream the response (Anthropic SSE / OpenAI SSE)
+                                use crossterm::event::{self, Event, KeyEventKind};
+                                use futures::StreamExt;
+                                use std::io::Write;
 
-                            // Audit: log model response
-                            audit_logger.log("model_response", &serde_json::json!({
-                                "model": &model,
-                                "content_length": full_content.len(),
-                                "cancelled": cancelled,
-                                "stream_usage": {
-                                    "input_tokens": stream_usage.input_tokens,
-                                    "output_tokens": stream_usage.output_tokens,
-                                },
-                            }));
+                                println!();
+                                let mut full_content = String::new();
+                                let mut stream = response.bytes_stream();
+                                let mut buffer = String::new();
+                                let mut cancelled = false;
+                                let mut pending_action: Option<SlashCommandResult> = None;
+                                let mut tool_accumulator = tools::ToolCallAccumulator::new();
+                                let mut anthropic_accumulator =
+                                    tools::AnthropicToolAccumulator::new();
 
-                            // Update status bar after streaming completes
-                            {
-                                let tokens = estimate_session_tokens(&chat_session)
-                                    + full_content.len() / 4;
-                                let cost = session::calculate_cost(&model, &openclaudia::session::TokenUsage {
-                                    input_tokens: tokens as u64,
-                                    output_tokens: stream_usage.output_tokens.max(full_content.len() as u64 / 4),
-                                    cache_read_tokens: stream_usage.cache_read_tokens,
-                                    cache_write_tokens: stream_usage.cache_write_tokens,
-                                });
-                                let duration = chrono::Utc::now().signed_duration_since(chat_session.created_at);
-                                let dur_str = format!("{}m", duration.num_minutes());
-                                tui::draw_status_bar(
-                                    &model,
-                                    tokens,
-                                    cost,
-                                    chat_session.mode.display(),
-                                    &dur_str,
+                                // Thinking display state
+                                let mut in_thinking_block = false;
+                                let mut thinking_start_time: Option<std::time::Instant> = None;
+
+                                // SSE usage accumulator
+                                let mut stream_usage = openclaudia::session::TokenUsage::default();
+
+                                // Stream timeout tracking
+                                let mut last_data_time = std::time::Instant::now();
+                                let stream_timeout =
+                                    std::time::Duration::from_secs(proxy::SSE_STREAM_TIMEOUT_SECS);
+
+                                // Audit: log model request
+                                audit_logger.log(
+                                    "model_request",
+                                    &serde_json::json!({
+                                        "model": &model,
+                                        "provider": &config.proxy.target,
+                                    }),
                                 );
-                            }
 
-                            // If cancelled, append note to content
-                            if cancelled && !full_content.is_empty() {
-                                full_content.push_str("\n\n[Response interrupted by user]");
-                            }
+                                while let Some(chunk_result) = stream.next().await {
+                                    // Check stream timeout
+                                    if last_data_time.elapsed() > stream_timeout {
+                                        eprintln!(
+                                            "\nStream timeout: no data received for {}s",
+                                            proxy::SSE_STREAM_TIMEOUT_SECS
+                                        );
+                                        break;
+                                    }
 
-                            // PROXY MODE TOOL INTERCEPTION
-                            // When tools are included in the API request, the model returns
-                            // structured tool_use content blocks. If that fails, fall back to
-                            // XML-style tool interception from text output.
-                            if using_proxy && !cancelled {
-                                let mut handled_structured = false;
+                                    // Check for configured keybindings during streaming
+                                    if event::poll(std::time::Duration::from_millis(1))
+                                        .unwrap_or(false)
+                                    {
+                                        if let Ok(Event::Key(key_event)) = event::read() {
+                                            if key_event.kind == KeyEventKind::Press {
+                                                // Convert key event to binding string and look up action
+                                                if let Some(key_str) =
+                                                    key_event_to_string(&key_event, false)
+                                                {
+                                                    if config.keybindings.is_bound(&key_str) {
+                                                        let action = config
+                                                            .keybindings
+                                                            .get_action_or_default(&key_str);
+                                                        // Cancel immediately stops streaming
+                                                        if action == config::KeyAction::Cancel {
+                                                            cancelled = true;
+                                                            print!(" (cancelled)");
+                                                            std::io::stdout().flush().ok();
+                                                            break;
+                                                        }
+                                                        // Other actions queued for after streaming completes
+                                                        if let Some(result) =
+                                                            execute_key_action(&action)
+                                                        {
+                                                            pending_action = Some(result);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
 
-                                // STRUCTURED TOOL_USE PATH
-                                // The model returned tool_use content blocks with
-                                // stop_reason: "tool_use" — execute tools and loop.
-                                if anthropic_accumulator.has_tool_use() {
-                                    handled_structured = true;
-                                    let max_proxy_iterations = config.session.max_turns;
-                                    let mut proxy_iteration: u32 = 0;
-                                    let mut executed_tool_sigs: std::collections::HashSet<String> =
-                                        std::collections::HashSet::new();
+                                    match chunk_result {
+                                        Ok(chunk) => {
+                                            last_data_time = std::time::Instant::now();
+                                            // Append chunk to buffer
+                                            buffer.push_str(&String::from_utf8_lossy(&chunk));
 
-                                    loop {
-                                        if !anthropic_accumulator.has_tool_use() {
+                                            // Process complete SSE lines
+                                            while let Some(line_end) = buffer.find('\n') {
+                                                let line = buffer[..line_end].trim().to_string();
+                                                buffer = buffer[line_end + 1..].to_string();
+
+                                                // Skip empty lines and comments
+                                                if line.is_empty() || line.starts_with(':') {
+                                                    continue;
+                                                }
+
+                                                // Parse SSE data lines
+                                                if let Some(data) = line.strip_prefix("data: ") {
+                                                    // Check for stream end
+                                                    if data == "[DONE]" {
+                                                        break;
+                                                    }
+
+                                                    // Parse JSON
+                                                    if let Ok(json) =
+                                                        serde_json::from_str::<serde_json::Value>(
+                                                            data,
+                                                        )
+                                                    {
+                                                        // Extract SSE usage from streaming events
+                                                        if let Some(usage) =
+                                                            proxy::extract_usage_from_sse_event(
+                                                                &json,
+                                                            )
+                                                        {
+                                                            stream_usage.accumulate(&usage);
+                                                        }
+
+                                                        // Thinking block detection (Anthropic)
+                                                        if let Some(event_type) = json
+                                                            .get("type")
+                                                            .and_then(|t| t.as_str())
+                                                        {
+                                                            if event_type == "content_block_start" {
+                                                                if let Some(block_type) = json
+                                                                    .get("content_block")
+                                                                    .and_then(|b| b.get("type"))
+                                                                    .and_then(|t| t.as_str())
+                                                                {
+                                                                    if block_type == "thinking" {
+                                                                        in_thinking_block = true;
+                                                                        thinking_start_time = Some(
+                                                                            std::time::Instant::now(
+                                                                            ),
+                                                                        );
+                                                                        tui::print_thinking_start();
+                                                                        continue;
+                                                                    }
+                                                                }
+                                                            }
+                                                            if event_type == "content_block_stop"
+                                                                && in_thinking_block
+                                                            {
+                                                                let elapsed = thinking_start_time
+                                                                    .map(|t| {
+                                                                        t.elapsed().as_secs_f64()
+                                                                    })
+                                                                    .unwrap_or(0.0);
+                                                                tui::print_thinking_end(elapsed);
+                                                                in_thinking_block = false;
+                                                                thinking_start_time = None;
+                                                                continue;
+                                                            }
+                                                            if event_type == "content_block_delta"
+                                                                && in_thinking_block
+                                                            {
+                                                                if let Some(text) = json
+                                                                    .get("delta")
+                                                                    .and_then(|d| d.get("thinking"))
+                                                                    .and_then(|t| t.as_str())
+                                                                {
+                                                                    tui::print_thinking_chunk(text);
+                                                                } else if let Some(text) = json
+                                                                    .get("delta")
+                                                                    .and_then(|d| d.get("text"))
+                                                                    .and_then(|t| t.as_str())
+                                                                {
+                                                                    tui::print_thinking_chunk(text);
+                                                                }
+                                                                continue;
+                                                            }
+                                                        }
+
+                                                        // Anthropic format: process all streaming events
+                                                        // through the accumulator (handles text_delta,
+                                                        // tool_use blocks, and stop_reason).
+                                                        if let Some(text) = anthropic_accumulator
+                                                            .process_event(&json)
+                                                        {
+                                                            print!("{}", text);
+                                                            std::io::stdout().flush().ok();
+                                                            full_content.push_str(&text);
+                                                        }
+                                                        // OpenAI format: choices[0].delta.content
+                                                        else if let Some(delta) = json
+                                                            .get("choices")
+                                                            .and_then(|c| c.get(0))
+                                                            .and_then(|c| c.get("delta"))
+                                                        {
+                                                            // Handle text content
+                                                            if let Some(content) = delta
+                                                                .get("content")
+                                                                .and_then(|c| c.as_str())
+                                                            {
+                                                                print!("{}", content);
+                                                                std::io::stdout().flush().ok();
+                                                                full_content.push_str(content);
+                                                            }
+                                                            // Accumulate tool calls
+                                                            tool_accumulator.process_delta(delta);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            eprintln!("\nStream error: {}", e);
                                             break;
                                         }
-                                        if max_proxy_iterations > 0
-                                            && proxy_iteration >= max_proxy_iterations
-                                        {
-                                            eprintln!(
+                                    }
+                                }
+
+                                println!();
+
+                                // Audit: log model response
+                                audit_logger.log(
+                                    "model_response",
+                                    &serde_json::json!({
+                                        "model": &model,
+                                        "content_length": full_content.len(),
+                                        "cancelled": cancelled,
+                                        "stream_usage": {
+                                            "input_tokens": stream_usage.input_tokens,
+                                            "output_tokens": stream_usage.output_tokens,
+                                        },
+                                    }),
+                                );
+
+                                // Update status bar after streaming completes
+                                {
+                                    let tokens = estimate_session_tokens(&chat_session)
+                                        + full_content.len() / 4;
+                                    let cost = session::calculate_cost(
+                                        &model,
+                                        &openclaudia::session::TokenUsage {
+                                            input_tokens: tokens as u64,
+                                            output_tokens: stream_usage
+                                                .output_tokens
+                                                .max(full_content.len() as u64 / 4),
+                                            cache_read_tokens: stream_usage.cache_read_tokens,
+                                            cache_write_tokens: stream_usage.cache_write_tokens,
+                                        },
+                                    );
+                                    let duration = chrono::Utc::now()
+                                        .signed_duration_since(chat_session.created_at);
+                                    let dur_str = format!("{}m", duration.num_minutes());
+                                    tui::draw_status_bar(
+                                        &model,
+                                        tokens,
+                                        cost,
+                                        chat_session.mode.display(),
+                                        &dur_str,
+                                    );
+                                }
+
+                                // If cancelled, append note to content
+                                if cancelled && !full_content.is_empty() {
+                                    full_content.push_str("\n\n[Response interrupted by user]");
+                                }
+
+                                // PROXY MODE TOOL INTERCEPTION
+                                // When tools are included in the API request, the model returns
+                                // structured tool_use content blocks. If that fails, fall back to
+                                // XML-style tool interception from text output.
+                                if using_proxy && !cancelled {
+                                    let mut handled_structured = false;
+
+                                    // STRUCTURED TOOL_USE PATH
+                                    // The model returned tool_use content blocks with
+                                    // stop_reason: "tool_use" — execute tools and loop.
+                                    if anthropic_accumulator.has_tool_use() {
+                                        handled_structured = true;
+                                        let max_proxy_iterations = config.session.max_turns;
+                                        let mut proxy_iteration: u32 = 0;
+                                        let mut executed_tool_sigs: std::collections::HashSet<
+                                            String,
+                                        > = std::collections::HashSet::new();
+
+                                        loop {
+                                            if !anthropic_accumulator.has_tool_use() {
+                                                break;
+                                            }
+                                            if max_proxy_iterations > 0
+                                                && proxy_iteration >= max_proxy_iterations
+                                            {
+                                                eprintln!(
                                                 "\n\x1b[33m⚠ Reached max_turns limit ({} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m",
                                                 max_proxy_iterations
                                             );
-                                            break;
-                                        }
-                                        proxy_iteration += 1;
+                                                break;
+                                            }
+                                            proxy_iteration += 1;
 
-                                        // Reset per-turn blast radius tracking
-                                        guardrails::reset_turn();
+                                            // Reset per-turn blast radius tracking
+                                            guardrails::reset_turn();
 
-                                        let text = anthropic_accumulator.get_text();
-                                        let tool_calls =
-                                            anthropic_accumulator.finalize_tool_calls();
-                                        let tool_calls_json =
-                                            anthropic_accumulator.to_openai_tool_calls_json();
+                                            let text = anthropic_accumulator.get_text();
+                                            let tool_calls =
+                                                anthropic_accumulator.finalize_tool_calls();
+                                            let tool_calls_json =
+                                                anthropic_accumulator.to_openai_tool_calls_json();
 
-                                        // Duplicate tool call detection
-                                        if proxy_iteration > 0 {
-                                            let mut all_dups = true;
+                                            // Duplicate tool call detection
+                                            if proxy_iteration > 0 {
+                                                let mut all_dups = true;
+                                                for tc in &tool_calls {
+                                                    let sig = format!(
+                                                        "{}:{}",
+                                                        tc.function.name, tc.function.arguments
+                                                    );
+                                                    if !executed_tool_sigs.contains(&sig) {
+                                                        all_dups = false;
+                                                    }
+                                                }
+                                                if all_dups && !tool_calls.is_empty() {
+                                                    eprintln!("\n\x1b[33m⚠ Detected duplicate tool calls - breaking agentic loop\x1b[0m");
+                                                    break;
+                                                }
+                                            }
                                             for tc in &tool_calls {
                                                 let sig = format!(
                                                     "{}:{}",
                                                     tc.function.name, tc.function.arguments
                                                 );
-                                                if !executed_tool_sigs.contains(&sig) {
-                                                    all_dups = false;
-                                                }
+                                                executed_tool_sigs.insert(sig);
                                             }
-                                            if all_dups && !tool_calls.is_empty() {
-                                                eprintln!("\n\x1b[33m⚠ Detected duplicate tool calls - breaking agentic loop\x1b[0m");
-                                                break;
-                                            }
-                                        }
-                                        for tc in &tool_calls {
-                                            let sig = format!(
-                                                "{}:{}",
-                                                tc.function.name, tc.function.arguments
-                                            );
-                                            executed_tool_sigs.insert(sig);
-                                        }
 
-                                        // Store assistant message with tool_calls in OpenAI format.
-                                        // convert_messages_to_anthropic handles back-conversion
-                                        // to tool_use blocks for the API.
-                                        chat_session.messages.push(serde_json::json!({
+                                            // Store assistant message with tool_calls in OpenAI format.
+                                            // convert_messages_to_anthropic handles back-conversion
+                                            // to tool_use blocks for the API.
+                                            chat_session.messages.push(serde_json::json!({
                                             "role": "assistant",
                                             "content": if text.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(text.clone()) },
                                             "tool_calls": tool_calls_json
                                         }));
 
-                                        // Execute each tool locally
-                                        for tool_call in &tool_calls {
-                                            // Check plan mode restrictions before executing
-                                            if let Some(block_msg) = check_plan_mode_restriction(
-                                                &chat_session,
-                                                &tool_call.function.name,
-                                                &tool_call.function.arguments,
-                                            ) {
-                                                println!(
+                                            // Execute each tool locally
+                                            for tool_call in &tool_calls {
+                                                // Check plan mode restrictions before executing
+                                                if let Some(block_msg) = check_plan_mode_restriction(
+                                                    &chat_session,
+                                                    &tool_call.function.name,
+                                                    &tool_call.function.arguments,
+                                                ) {
+                                                    println!(
                                                     "\n\x1b[33m⚠ Blocked in plan mode: {}\x1b[0m",
                                                     tool_call.function.name
                                                 );
+                                                    chat_session.messages.push(serde_json::json!({
+                                                        "role": "tool",
+                                                        "tool_call_id": tool_call.id,
+                                                        "content": format!("[ERROR] {}", block_msg),
+                                                        "is_error": true
+                                                    }));
+                                                    continue;
+                                                }
+
+                                                println!(
+                                                    "\n\x1b[36m⚡ Running {}...\x1b[0m",
+                                                    tool_call.function.name
+                                                );
+
+                                                // Audit: log tool call
+                                                audit_logger.log(
+                                                    "tool_call",
+                                                    &serde_json::json!({
+                                                        "name": &tool_call.function.name,
+                                                        "arguments": &tool_call.function.arguments,
+                                                        "id": &tool_call.id,
+                                                    }),
+                                                );
+
+                                                let result = if let Some(ref db) = memory_db {
+                                                    tools::execute_tool_with_memory(
+                                                        tool_call,
+                                                        Some(db),
+                                                    )
+                                                } else {
+                                                    tools::execute_tool(tool_call)
+                                                };
+
+                                                // Check for special markers (user_question, plan mode)
+                                                let (final_content, _was_marker) =
+                                                    process_tool_result_marker(
+                                                        &mut chat_session,
+                                                        &tool_call.function.name,
+                                                        &result.content,
+                                                    );
+                                                let final_is_error = if _was_marker {
+                                                    false
+                                                } else {
+                                                    result.is_error
+                                                };
+
+                                                // Audit: log tool result
+                                                audit_logger.log(
+                                                    "tool_result",
+                                                    &serde_json::json!({
+                                                        "name": &tool_call.function.name,
+                                                        "id": &tool_call.id,
+                                                        "is_error": final_is_error,
+                                                        "content_length": final_content.len(),
+                                                    }),
+                                                );
+
+                                                // Show result preview
+                                                let preview: String = final_content
+                                                    .lines()
+                                                    .take(5)
+                                                    .collect::<Vec<_>>()
+                                                    .join("\n");
+                                                if final_is_error {
+                                                    println!("\x1b[31m✗ Error:\x1b[0m {}", preview);
+                                                } else {
+                                                    println!(
+                                                        "\x1b[32m✓\x1b[0m {}",
+                                                        if preview.len() > 200 {
+                                                            format!(
+                                                                "{}...",
+                                                                safe_truncate(&preview, 200)
+                                                            )
+                                                        } else {
+                                                            preview
+                                                        }
+                                                    );
+                                                }
+
+                                                // Store tool result with error flag
+                                                let result_content = if final_is_error {
+                                                    format!("[ERROR] {}", final_content)
+                                                } else {
+                                                    final_content
+                                                };
                                                 chat_session.messages.push(serde_json::json!({
                                                     "role": "tool",
-                                                    "tool_call_id": tool_call.id,
-                                                    "content": format!("[ERROR] {}", block_msg),
-                                                    "is_error": true
+                                                    "tool_call_id": result.tool_call_id,
+                                                    "content": result_content,
+                                                    "is_error": final_is_error
                                                 }));
-                                                continue;
                                             }
 
-                                            println!(
-                                                "\n\x1b[36m⚡ Running {}...\x1b[0m",
-                                                tool_call.function.name
-                                            );
-
-                                            // Audit: log tool call
-                                            audit_logger.log("tool_call", &serde_json::json!({
-                                                "name": &tool_call.function.name,
-                                                "arguments": &tool_call.function.arguments,
-                                                "id": &tool_call.id,
-                                            }));
-
-                                            let result = if let Some(ref db) = memory_db {
-                                                tools::execute_tool_with_memory(tool_call, Some(db))
-                                            } else {
-                                                tools::execute_tool(tool_call)
-                                            };
-
-                                            // Check for special markers (user_question, plan mode)
-                                            let (final_content, _was_marker) =
-                                                process_tool_result_marker(
-                                                    &mut chat_session,
-                                                    &tool_call.function.name,
-                                                    &result.content,
-                                                );
-                                            let final_is_error = if _was_marker {
-                                                false
-                                            } else {
-                                                result.is_error
-                                            };
-
-                                            // Audit: log tool result
-                                            audit_logger.log("tool_result", &serde_json::json!({
-                                                "name": &tool_call.function.name,
-                                                "id": &tool_call.id,
-                                                "is_error": final_is_error,
-                                                "content_length": final_content.len(),
-                                            }));
-
-                                            // Show result preview
-                                            let preview: String = final_content
-                                                .lines()
-                                                .take(5)
-                                                .collect::<Vec<_>>()
-                                                .join("\n");
-                                            if final_is_error {
-                                                println!("\x1b[31m✗ Error:\x1b[0m {}", preview);
-                                            } else {
-                                                println!(
-                                                    "\x1b[32m✓\x1b[0m {}",
-                                                    if preview.len() > 200 {
-                                                        format!("{}...", &preview[..200])
+                                            // Run quality gates after tool execution (if configured for every_turn)
+                                            let qg_results = guardrails::run_quality_gates();
+                                            for qg in &qg_results {
+                                                if qg.passed {
+                                                    tracing::debug!(name = %qg.name, "Quality gate passed");
+                                                } else {
+                                                    let severity = if qg.required {
+                                                        "FAILED"
                                                     } else {
-                                                        preview
-                                                    }
-                                                );
-                                            }
-
-                                            // Store tool result with error flag
-                                            let result_content = if final_is_error {
-                                                format!("[ERROR] {}", final_content)
-                                            } else {
-                                                final_content
-                                            };
-                                            chat_session.messages.push(serde_json::json!({
-                                                "role": "tool",
-                                                "tool_call_id": result.tool_call_id,
-                                                "content": result_content,
-                                                "is_error": final_is_error
-                                            }));
-                                        }
-
-                                        // Run quality gates after tool execution (if configured for every_turn)
-                                        let qg_results = guardrails::run_quality_gates();
-                                        for qg in &qg_results {
-                                            if qg.passed {
-                                                tracing::debug!(name = %qg.name, "Quality gate passed");
-                                            } else {
-                                                let severity =
-                                                    if qg.required { "FAILED" } else { "warning" };
-                                                eprintln!(
+                                                        "warning"
+                                                    };
+                                                    eprintln!(
                                                     "\x1b[33m⚠ Quality gate '{}' {} (exit {})\x1b[0m",
                                                     qg.name, severity, qg.exit_code
                                                 );
-                                                if !qg.stderr.is_empty() {
-                                                    let preview: String = qg
-                                                        .stderr
-                                                        .lines()
-                                                        .take(3)
-                                                        .collect::<Vec<_>>()
-                                                        .join("\n");
-                                                    eprintln!("  {}", preview);
-                                                }
-                                                // Inject findings into context so model can address them
-                                                chat_session.messages.push(serde_json::json!({
+                                                    if !qg.stderr.is_empty() {
+                                                        let preview: String = qg
+                                                            .stderr
+                                                            .lines()
+                                                            .take(3)
+                                                            .collect::<Vec<_>>()
+                                                            .join("\n");
+                                                        eprintln!("  {}", preview);
+                                                    }
+                                                    // Inject findings into context so model can address them
+                                                    chat_session.messages.push(serde_json::json!({
                                                     "role": "system",
                                                     "content": format!(
                                                         "[Quality Gate '{}' {}] exit code {}\nstdout: {}\nstderr: {}",
                                                         qg.name, severity,
                                                         qg.exit_code,
-                                                        if qg.stdout.len() > 500 { &qg.stdout[..500] } else { &qg.stdout },
-                                                        if qg.stderr.len() > 500 { &qg.stderr[..500] } else { &qg.stderr }
+                                                        if qg.stdout.len() > 500 { safe_truncate(&qg.stdout, 500) } else { &qg.stdout },
+                                                        if qg.stderr.len() > 500 { safe_truncate(&qg.stderr, 500) } else { &qg.stderr }
                                                     )
                                                 }));
+                                                }
                                             }
-                                        }
 
-                                        // Clear accumulator for next response
-                                        anthropic_accumulator.clear();
+                                            // Clear accumulator for next response
+                                            anthropic_accumulator.clear();
 
-                                        // Send follow-up request WITH tool definitions
-                                        println!(
+                                            // Send follow-up request WITH tool definitions
+                                            println!(
                                             "\n\x1b[90m(Sending {} tool result{} to Claude...)\x1b[0m",
                                             tool_calls.len(),
                                             if tool_calls.len() == 1 { "" } else { "s" }
                                         );
 
-                                        let anthropic_messages =
-                                            convert_messages_to_anthropic(&chat_session.messages);
-                                        let system_msg = chat_session
-                                            .messages
-                                            .iter()
-                                            .find(|m| {
-                                                m.get("role").and_then(|r| r.as_str())
-                                                    == Some("system")
-                                            })
-                                            .and_then(|m| m.get("content").and_then(|c| c.as_str()))
-                                            .map(String::from);
+                                            let anthropic_messages = convert_messages_to_anthropic(
+                                                &chat_session.messages,
+                                            );
+                                            let system_msg = chat_session
+                                                .messages
+                                                .iter()
+                                                .find(|m| {
+                                                    m.get("role").and_then(|r| r.as_str())
+                                                        == Some("system")
+                                                })
+                                                .and_then(|m| {
+                                                    m.get("content").and_then(|c| c.as_str())
+                                                })
+                                                .map(String::from);
 
-                                        let openai_tools =
-                                            tools::get_all_tool_definitions(stateful, true);
-                                        let anthropic_tools = convert_tools_to_anthropic(
-                                            openai_tools.as_array().unwrap_or(&vec![]),
-                                        );
+                                            let openai_tools =
+                                                tools::get_all_tool_definitions(stateful, true);
+                                            let anthropic_tools = convert_tools_to_anthropic(
+                                                openai_tools.as_array().unwrap_or(&vec![]),
+                                            );
 
-                                        let mut followup_req = serde_json::json!({
-                                            "model": model,
-                                            "messages": anthropic_messages,
-                                            "max_tokens": 4096,
-                                            "stream": true,
-                                            "tools": anthropic_tools
-                                        });
-                                        if let Some(sys) = system_msg {
-                                            followup_req["system"] = serde_json::json!(sys);
-                                        }
+                                            let mut followup_req = serde_json::json!({
+                                                "model": model,
+                                                "messages": anthropic_messages,
+                                                "max_tokens": 4096,
+                                                "stream": true,
+                                                "tools": anthropic_tools
+                                            });
+                                            if let Some(sys) = system_msg {
+                                                followup_req["system"] = serde_json::json!(sys);
+                                            }
 
-                                        let mut req = client.post(&endpoint).json(&followup_req);
-                                        for (key, value) in &headers {
-                                            req = req.header(key, value);
-                                        }
+                                            let mut req =
+                                                client.post(&endpoint).json(&followup_req);
+                                            for (key, value) in &headers {
+                                                req = req.header(key, value);
+                                            }
 
-                                        match req.send().await {
-                                            Ok(response) if response.status().is_success() => {
-                                                use futures::StreamExt;
-                                                let mut stream = response.bytes_stream();
-                                                let mut buffer = String::new();
-                                                full_content = String::new();
+                                            match req.send().await {
+                                                Ok(response) if response.status().is_success() => {
+                                                    use futures::StreamExt;
+                                                    let mut stream = response.bytes_stream();
+                                                    let mut buffer = String::new();
+                                                    full_content = String::new();
 
-                                                println!();
+                                                    println!();
 
-                                                while let Some(chunk_result) = stream.next().await {
-                                                    match chunk_result {
-                                                        Ok(chunk) => {
-                                                            buffer.push_str(
-                                                                &String::from_utf8_lossy(&chunk),
-                                                            );
-                                                            while let Some(line_end) =
-                                                                buffer.find('\n')
-                                                            {
-                                                                let line = buffer[..line_end]
-                                                                    .trim()
-                                                                    .to_string();
-                                                                buffer = buffer[line_end + 1..]
-                                                                    .to_string();
-                                                                if line.is_empty()
-                                                                    || line.starts_with(':')
+                                                    while let Some(chunk_result) =
+                                                        stream.next().await
+                                                    {
+                                                        match chunk_result {
+                                                            Ok(chunk) => {
+                                                                buffer.push_str(
+                                                                    &String::from_utf8_lossy(
+                                                                        &chunk,
+                                                                    ),
+                                                                );
+                                                                while let Some(line_end) =
+                                                                    buffer.find('\n')
                                                                 {
-                                                                    continue;
-                                                                }
-                                                                if let Some(data) =
-                                                                    line.strip_prefix("data: ")
-                                                                {
-                                                                    if data == "[DONE]" {
-                                                                        break;
-                                                                    }
-                                                                    if let Ok(json) =
-                                                                        serde_json::from_str::<
-                                                                            serde_json::Value,
-                                                                        >(
-                                                                            data
-                                                                        )
+                                                                    let line = buffer[..line_end]
+                                                                        .trim()
+                                                                        .to_string();
+                                                                    buffer = buffer[line_end + 1..]
+                                                                        .to_string();
+                                                                    if line.is_empty()
+                                                                        || line.starts_with(':')
                                                                     {
-                                                                        if let Some(text) =
+                                                                        continue;
+                                                                    }
+                                                                    if let Some(data) =
+                                                                        line.strip_prefix("data: ")
+                                                                    {
+                                                                        if data == "[DONE]" {
+                                                                            break;
+                                                                        }
+                                                                        if let Ok(json) =
+                                                                            serde_json::from_str::<
+                                                                                serde_json::Value,
+                                                                            >(
+                                                                                data
+                                                                            )
+                                                                        {
+                                                                            if let Some(text) =
                                                                             anthropic_accumulator
                                                                                 .process_event(
                                                                                     &json,
@@ -5445,203 +5643,213 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                                             full_content
                                                                                 .push_str(&text);
                                                                         }
+                                                                        }
                                                                     }
                                                                 }
                                                             }
-                                                        }
-                                                        Err(e) => {
-                                                            eprintln!("\nStream error: {}", e);
-                                                            break;
+                                                            Err(e) => {
+                                                                eprintln!("\nStream error: {}", e);
+                                                                break;
+                                                            }
                                                         }
                                                     }
+                                                    // Loop continues — will check
+                                                    // has_tool_use() at top
                                                 }
-                                                // Loop continues — will check
-                                                // has_tool_use() at top
+                                                Ok(response) => {
+                                                    eprintln!(
+                                                        "\nFollow-up request failed: {}",
+                                                        response.status()
+                                                    );
+                                                    break;
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("\nFollow-up request error: {}", e);
+                                                    break;
+                                                }
                                             }
-                                            Ok(response) => {
-                                                eprintln!(
-                                                    "\nFollow-up request failed: {}",
-                                                    response.status()
-                                                );
-                                                break;
-                                            }
-                                            Err(e) => {
-                                                eprintln!("\nFollow-up request error: {}", e);
-                                                break;
-                                            }
+                                        }
+
+                                        // Add final assistant message
+                                        if !full_content.trim().is_empty() {
+                                            chat_session.messages.push(serde_json::json!({
+                                                "role": "assistant",
+                                                "content": full_content.trim()
+                                            }));
                                         }
                                     }
 
-                                    // Add final assistant message
-                                    if !full_content.trim().is_empty() {
-                                        chat_session.messages.push(serde_json::json!({
-                                            "role": "assistant",
-                                            "content": full_content.trim()
-                                        }));
-                                    }
-                                }
+                                    // TEXT-BASED XML TOOL INTERCEPTION (fallback)
+                                    // If the model returned text with XML tool calls instead of
+                                    // structured tool_use blocks, fall back to text interception.
+                                    if !handled_structured {
+                                        let mut tool_interceptor =
+                                            tool_intercept::ToolInterceptor::new();
+                                        tool_interceptor.push(&full_content);
 
-                                // TEXT-BASED XML TOOL INTERCEPTION (fallback)
-                                // If the model returned text with XML tool calls instead of
-                                // structured tool_use blocks, fall back to text interception.
-                                if !handled_structured {
-                                    let mut tool_interceptor =
-                                        tool_intercept::ToolInterceptor::new();
-                                    tool_interceptor.push(&full_content);
+                                        // Agentic loop for proxy mode with local tool execution
+                                        // 0 = unlimited (matches Claude Code behavior)
+                                        let max_proxy_iterations = config.session.max_turns;
+                                        let mut proxy_iteration: u32 = 0;
 
-                                    // Agentic loop for proxy mode with local tool execution
-                                    // 0 = unlimited (matches Claude Code behavior)
-                                    let max_proxy_iterations = config.session.max_turns;
-                                    let mut proxy_iteration: u32 = 0;
-
-                                    // Track executed tool calls to detect loops
-                                    let mut executed_tool_signatures: std::collections::HashSet<
+                                        // Track executed tool calls to detect loops
+                                        let mut executed_tool_signatures: std::collections::HashSet<
                                         String,
                                     > = std::collections::HashSet::new();
 
-                                    while tool_interceptor.has_complete_block()
-                                        && (max_proxy_iterations == 0
-                                            || proxy_iteration < max_proxy_iterations)
-                                    {
-                                        proxy_iteration += 1;
+                                        while tool_interceptor.has_complete_block()
+                                            && (max_proxy_iterations == 0
+                                                || proxy_iteration < max_proxy_iterations)
+                                        {
+                                            proxy_iteration += 1;
 
-                                        // Extract ALL tool calls at once, stripping hallucinated
-                                        // <function_results> blocks the model generated inline.
-                                        // Without this, the model generates 8+ tool calls with
-                                        // fabricated results in a single response, but only one
-                                        // would execute per turn.
-                                        let (all_tools, text_parts) =
-                                            tool_interceptor.extract_all_tool_calls();
+                                            // Extract ALL tool calls at once, stripping hallucinated
+                                            // <function_results> blocks the model generated inline.
+                                            // Without this, the model generates 8+ tool calls with
+                                            // fabricated results in a single response, but only one
+                                            // would execute per turn.
+                                            let (all_tools, text_parts) =
+                                                tool_interceptor.extract_all_tool_calls();
 
-                                        if all_tools.is_empty() {
-                                            break;
-                                        }
-
-                                        // Check for duplicate tool calls (model stuck in loop)
-                                        let mut all_duplicates = true;
-                                        for tool in &all_tools {
-                                            // Create a signature from tool name and parameters
-                                            let params_str: String = tool
-                                                .parameters
-                                                .iter()
-                                                .map(|(k, v)| format!("{}={}", k, v))
-                                                .collect::<Vec<_>>()
-                                                .join(",");
-                                            let sig = format!("{}:{}", tool.name, params_str);
-                                            if !executed_tool_signatures.contains(&sig) {
-                                                all_duplicates = false;
-                                                executed_tool_signatures.insert(sig);
+                                            if all_tools.is_empty() {
+                                                break;
                                             }
-                                        }
 
-                                        if all_duplicates && proxy_iteration > 1 {
-                                            eprintln!(
+                                            // Check for duplicate tool calls (model stuck in loop)
+                                            let mut all_duplicates = true;
+                                            for tool in &all_tools {
+                                                // Create a signature from tool name and parameters
+                                                let params_str: String = tool
+                                                    .parameters
+                                                    .iter()
+                                                    .map(|(k, v)| format!("{}={}", k, v))
+                                                    .collect::<Vec<_>>()
+                                                    .join(",");
+                                                let sig = format!("{}:{}", tool.name, params_str);
+                                                if !executed_tool_signatures.contains(&sig) {
+                                                    all_duplicates = false;
+                                                    executed_tool_signatures.insert(sig);
+                                                }
+                                            }
+
+                                            if all_duplicates && proxy_iteration > 1 {
+                                                eprintln!(
                                                 "\n\x1b[33m⚠ Detected duplicate tool calls - breaking loop\x1b[0m"
                                             );
-                                            break;
-                                        }
+                                                break;
+                                            }
 
-                                        // Add assistant message with text content between tools
-                                        let combined_text = text_parts.join("\n\n");
-                                        if !combined_text.is_empty() {
+                                            // Add assistant message with text content between tools
+                                            let combined_text = text_parts.join("\n\n");
+                                            if !combined_text.is_empty() {
+                                                chat_session.messages.push(serde_json::json!({
+                                                    "role": "assistant",
+                                                    "content": combined_text
+                                                }));
+                                            }
+
+                                            // Execute ALL tools locally
+                                            let results = tool_intercept::execute_intercepted_tools(
+                                                &all_tools,
+                                                memory_db.as_ref(),
+                                            );
+
+                                            // Format ALL results for Claude and add as user message
+                                            // Uses the new format with tool names for better completion signaling
+                                            let results_xml =
+                                                tool_intercept::format_execution_results_xml(
+                                                    &results,
+                                                );
                                             chat_session.messages.push(serde_json::json!({
-                                                "role": "assistant",
-                                                "content": combined_text
+                                                "role": "user",
+                                                "content": results_xml
                                             }));
-                                        }
 
-                                        // Execute ALL tools locally
-                                        let results = tool_intercept::execute_intercepted_tools(
-                                            &all_tools,
-                                            memory_db.as_ref(),
-                                        );
-
-                                        // Format ALL results for Claude and add as user message
-                                        // Uses the new format with tool names for better completion signaling
-                                        let results_xml =
-                                            tool_intercept::format_execution_results_xml(&results);
-                                        chat_session.messages.push(serde_json::json!({
-                                            "role": "user",
-                                            "content": results_xml
-                                        }));
-
-                                        // Send follow-up request
-                                        println!(
+                                            // Send follow-up request
+                                            println!(
                                         "\n\x1b[90m(Sending {} tool result{} to Claude...)\x1b[0m",
                                         results.len(),
                                         if results.len() == 1 { "" } else { "s" }
                                     );
 
-                                        let anthropic_messages =
-                                            convert_messages_to_anthropic(&chat_session.messages);
-                                        let system_msg = chat_session
-                                            .messages
-                                            .iter()
-                                            .find(|m| {
-                                                m.get("role").and_then(|r| r.as_str())
-                                                    == Some("system")
-                                            })
-                                            .and_then(|m| m.get("content").and_then(|c| c.as_str()))
-                                            .map(String::from);
+                                            let anthropic_messages = convert_messages_to_anthropic(
+                                                &chat_session.messages,
+                                            );
+                                            let system_msg = chat_session
+                                                .messages
+                                                .iter()
+                                                .find(|m| {
+                                                    m.get("role").and_then(|r| r.as_str())
+                                                        == Some("system")
+                                                })
+                                                .and_then(|m| {
+                                                    m.get("content").and_then(|c| c.as_str())
+                                                })
+                                                .map(String::from);
 
-                                        // Proxy mode: omit tools from follow-up requests
-                                        // (OAuth credentials reject tools in body)
-                                        let mut followup_req = serde_json::json!({
-                                            "model": model,
-                                            "messages": anthropic_messages,
-                                            "max_tokens": 4096,
-                                            "stream": true
-                                        });
-                                        if let Some(sys) = system_msg {
-                                            followup_req["system"] = serde_json::json!(sys);
-                                        }
+                                            // Proxy mode: omit tools from follow-up requests
+                                            // (OAuth credentials reject tools in body)
+                                            let mut followup_req = serde_json::json!({
+                                                "model": model,
+                                                "messages": anthropic_messages,
+                                                "max_tokens": 4096,
+                                                "stream": true
+                                            });
+                                            if let Some(sys) = system_msg {
+                                                followup_req["system"] = serde_json::json!(sys);
+                                            }
 
-                                        let mut req = client.post(&endpoint).json(&followup_req);
-                                        for (key, value) in &headers {
-                                            req = req.header(key, value);
-                                        }
+                                            let mut req =
+                                                client.post(&endpoint).json(&followup_req);
+                                            for (key, value) in &headers {
+                                                req = req.header(key, value);
+                                            }
 
-                                        match req.send().await {
-                                            Ok(response) if response.status().is_success() => {
-                                                use futures::StreamExt;
+                                            match req.send().await {
+                                                Ok(response) if response.status().is_success() => {
+                                                    use futures::StreamExt;
 
-                                                let mut stream = response.bytes_stream();
-                                                let mut buffer = String::new();
-                                                let mut followup_content = String::new();
+                                                    let mut stream = response.bytes_stream();
+                                                    let mut buffer = String::new();
+                                                    let mut followup_content = String::new();
 
-                                                while let Some(chunk_result) = stream.next().await {
-                                                    match chunk_result {
-                                                        Ok(chunk) => {
-                                                            buffer.push_str(
-                                                                &String::from_utf8_lossy(&chunk),
-                                                            );
-                                                            while let Some(line_end) =
-                                                                buffer.find('\n')
-                                                            {
-                                                                let line = buffer[..line_end]
-                                                                    .trim()
-                                                                    .to_string();
-                                                                buffer = buffer[line_end + 1..]
-                                                                    .to_string();
-                                                                if line.is_empty()
-                                                                    || line.starts_with(':')
+                                                    while let Some(chunk_result) =
+                                                        stream.next().await
+                                                    {
+                                                        match chunk_result {
+                                                            Ok(chunk) => {
+                                                                buffer.push_str(
+                                                                    &String::from_utf8_lossy(
+                                                                        &chunk,
+                                                                    ),
+                                                                );
+                                                                while let Some(line_end) =
+                                                                    buffer.find('\n')
                                                                 {
-                                                                    continue;
-                                                                }
-                                                                if let Some(data) =
-                                                                    line.strip_prefix("data: ")
-                                                                {
-                                                                    if data == "[DONE]" {
-                                                                        break;
-                                                                    }
-                                                                    if let Ok(json) =
-                                                                        serde_json::from_str::<
-                                                                            serde_json::Value,
-                                                                        >(
-                                                                            data
-                                                                        )
+                                                                    let line = buffer[..line_end]
+                                                                        .trim()
+                                                                        .to_string();
+                                                                    buffer = buffer[line_end + 1..]
+                                                                        .to_string();
+                                                                    if line.is_empty()
+                                                                        || line.starts_with(':')
                                                                     {
-                                                                        if json
+                                                                        continue;
+                                                                    }
+                                                                    if let Some(data) =
+                                                                        line.strip_prefix("data: ")
+                                                                    {
+                                                                        if data == "[DONE]" {
+                                                                            break;
+                                                                        }
+                                                                        if let Ok(json) =
+                                                                            serde_json::from_str::<
+                                                                                serde_json::Value,
+                                                                            >(
+                                                                                data
+                                                                            )
+                                                                        {
+                                                                            if json
                                                                         .get("type")
                                                                         .and_then(|t| t.as_str())
                                                                         == Some(
@@ -5665,605 +5873,112 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                                                 .push_str(text);
                                                                         }
                                                                     }
+                                                                        }
                                                                     }
                                                                 }
                                                             }
-                                                        }
-                                                        Err(e) => {
-                                                            eprintln!("\nStream error: {}", e);
-                                                            break;
+                                                            Err(e) => {
+                                                                eprintln!("\nStream error: {}", e);
+                                                                break;
+                                                            }
                                                         }
                                                     }
-                                                }
 
-                                                // Check if follow-up contains more tool calls
-                                                tool_interceptor.clear();
-                                                tool_interceptor.push(&followup_content);
-                                                full_content = followup_content;
-                                            }
-                                            Ok(response) => {
-                                                eprintln!(
-                                                    "\nFollow-up request failed: {}",
-                                                    response.status()
-                                                );
-                                                break;
-                                            }
-                                            Err(e) => {
-                                                eprintln!("\nFollow-up request error: {}", e);
-                                                break;
+                                                    // Check if follow-up contains more tool calls
+                                                    tool_interceptor.clear();
+                                                    tool_interceptor.push(&followup_content);
+                                                    full_content = followup_content;
+                                                }
+                                                Ok(response) => {
+                                                    eprintln!(
+                                                        "\nFollow-up request failed: {}",
+                                                        response.status()
+                                                    );
+                                                    break;
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("\nFollow-up request error: {}", e);
+                                                    break;
+                                                }
                                             }
                                         }
-                                    }
 
-                                    // Log if we hit the max_turns limit while tools were still pending
-                                    if max_proxy_iterations > 0
-                                        && proxy_iteration >= max_proxy_iterations
-                                        && tool_interceptor.has_complete_block()
-                                    {
-                                        eprintln!(
+                                        // Log if we hit the max_turns limit while tools were still pending
+                                        if max_proxy_iterations > 0
+                                            && proxy_iteration >= max_proxy_iterations
+                                            && tool_interceptor.has_complete_block()
+                                        {
+                                            eprintln!(
                                         "\n\x1b[33m⚠ Reached max_turns limit ({} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m",
                                         max_proxy_iterations
                                     );
-                                    }
+                                        }
 
-                                    // Add final assistant message
-                                    if !full_content.trim().is_empty()
-                                        && !tool_interceptor.has_pending_tool_calls()
-                                    {
-                                        chat_session.messages.push(serde_json::json!({
-                                            "role": "assistant",
-                                            "content": full_content.trim()
-                                        }));
-                                    }
-                                } // end if !handled_structured (XML fallback)
+                                        // Add final assistant message
+                                        if !full_content.trim().is_empty()
+                                            && !tool_interceptor.has_pending_tool_calls()
+                                        {
+                                            chat_session.messages.push(serde_json::json!({
+                                                "role": "assistant",
+                                                "content": full_content.trim()
+                                            }));
+                                        }
+                                    } // end if !handled_structured (XML fallback)
 
-                                // VDD: Run adversarial review if enabled
-                                if let Some(ref engine) = vdd_engine {
-                                    // Extract the user's original task from the last user message
-                                    let user_task = chat_session
-                                        .messages
-                                        .iter()
-                                        .rev()
-                                        .find(|m| {
-                                            m.get("role").and_then(|r| r.as_str()) == Some("user")
-                                        })
-                                        .and_then(|m| m.get("content").and_then(|c| c.as_str()))
-                                        .unwrap_or("");
+                                    // VDD: Run adversarial review if enabled
+                                    if let Some(ref engine) = vdd_engine {
+                                        // Extract the user's original task from the last user message
+                                        let user_task = chat_session
+                                            .messages
+                                            .iter()
+                                            .rev()
+                                            .find(|m| {
+                                                m.get("role").and_then(|r| r.as_str())
+                                                    == Some("user")
+                                            })
+                                            .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                                            .unwrap_or("");
 
-                                    match engine.review_text(&full_content, user_task).await {
-                                        Ok(result) => {
-                                            if !result.findings.is_empty() {
-                                                let genuine_count = result
-                                                    .findings
-                                                    .iter()
-                                                    .filter(|f| {
-                                                        f.status == vdd::FindingStatus::Genuine
-                                                    })
-                                                    .count();
-                                                println!(
+                                        match engine.review_text(&full_content, user_task).await {
+                                            Ok(result) => {
+                                                if !result.findings.is_empty() {
+                                                    let genuine_count = result
+                                                        .findings
+                                                        .iter()
+                                                        .filter(|f| {
+                                                            f.status == vdd::FindingStatus::Genuine
+                                                        })
+                                                        .count();
+                                                    println!(
                                                     "\n\x1b[33m🔍 VDD Review: {} finding(s) ({} genuine)\x1b[0m",
                                                     result.findings.len(),
                                                     genuine_count
                                                 );
-                                                // Display findings
-                                                for finding in &result.findings {
-                                                    let status_icon = match finding.status {
-                                                        vdd::FindingStatus::Genuine => "⚠",
-                                                        vdd::FindingStatus::FalsePositive => "✗",
-                                                        vdd::FindingStatus::Disputed => "?",
-                                                    };
-                                                    println!(
-                                                        "  {} [{}] {}",
-                                                        status_icon,
-                                                        finding.severity,
-                                                        finding.description
-                                                    );
-                                                }
-                                                // Inject findings as context for next turn (advisory mode)
-                                                if !result.context_injection.is_empty() {
-                                                    chat_session.messages.push(serde_json::json!({
+                                                    // Display findings
+                                                    for finding in &result.findings {
+                                                        let status_icon = match finding.status {
+                                                            vdd::FindingStatus::Genuine => "⚠",
+                                                            vdd::FindingStatus::FalsePositive => {
+                                                                "✗"
+                                                            }
+                                                            vdd::FindingStatus::Disputed => "?",
+                                                        };
+                                                        println!(
+                                                            "  {} [{}] {}",
+                                                            status_icon,
+                                                            finding.severity,
+                                                            finding.description
+                                                        );
+                                                    }
+                                                    // Inject findings as context for next turn (advisory mode)
+                                                    if !result.context_injection.is_empty() {
+                                                        chat_session.messages.push(serde_json::json!({
                                                         "role": "system",
                                                         "content": format!(
                                                             "<vdd-review>\n{}\n</vdd-review>",
                                                             result.context_injection
                                                         )
                                                     }));
-                                                }
-                                            } else {
-                                                println!("\n\x1b[32m✓ VDD Review: No issues found\x1b[0m");
-                                            }
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!("VDD review failed: {}", e);
-                                            println!("\n\x1b[31m⚠ VDD review failed: {}\x1b[0m", e);
-                                        }
-                                    }
-                                }
-
-                                println!();
-                                continue; // Skip the regular agentic loop since we handled proxy mode
-                            }
-
-                            // Agentic loop - continue while there are tool calls
-                            // 0 = unlimited, default: 25
-                            let max_iterations = config.session.max_turns;
-                            let mut iteration: u32 = 0;
-                            let mut current_content = full_content;
-                            let mut executed_tool_sigs: std::collections::HashSet<String> =
-                                std::collections::HashSet::new();
-
-                            while tool_accumulator.has_tool_calls()
-                                && !cancelled
-                                && (max_iterations == 0 || iteration < max_iterations)
-                            {
-                                iteration += 1;
-
-                                // Reset per-turn blast radius tracking
-                                guardrails::reset_turn();
-
-                                // Get tool calls
-                                let tool_calls = tool_accumulator.finalize();
-
-                                // Duplicate tool call detection
-                                if iteration > 1 {
-                                    let mut all_dups = true;
-                                    for tc in &tool_calls {
-                                        let sig = format!(
-                                            "{}:{}",
-                                            tc.function.name, tc.function.arguments
-                                        );
-                                        if !executed_tool_sigs.contains(&sig) {
-                                            all_dups = false;
-                                        }
-                                    }
-                                    if all_dups && !tool_calls.is_empty() {
-                                        eprintln!("\n\x1b[33m⚠ Detected duplicate tool calls - breaking agentic loop\x1b[0m");
-                                        break;
-                                    }
-                                }
-                                for tc in &tool_calls {
-                                    let sig =
-                                        format!("{}:{}", tc.function.name, tc.function.arguments);
-                                    executed_tool_sigs.insert(sig);
-                                }
-
-                                // Add assistant message with tool calls
-                                let tool_calls_json: Vec<serde_json::Value> = tool_calls
-                                    .iter()
-                                    .map(|tc| {
-                                        serde_json::json!({
-                                            "id": tc.id,
-                                            "type": tc.call_type,
-                                            "function": {
-                                                "name": tc.function.name,
-                                                "arguments": tc.function.arguments
-                                            }
-                                        })
-                                    })
-                                    .collect();
-
-                                chat_session.messages.push(serde_json::json!({
-                                    "role": "assistant",
-                                    "content": if current_content.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(current_content.clone()) },
-                                    "tool_calls": tool_calls_json
-                                }));
-
-                                // Execute each tool and collect results
-                                for tool_call in &tool_calls {
-                                    // Check plan mode restrictions before executing
-                                    if let Some(block_msg) = check_plan_mode_restriction(
-                                        &chat_session,
-                                        &tool_call.function.name,
-                                        &tool_call.function.arguments,
-                                    ) {
-                                        println!(
-                                            "\n\x1b[33m⚠ Blocked in plan mode: {}\x1b[0m",
-                                            tool_call.function.name
-                                        );
-                                        chat_session.messages.push(serde_json::json!({
-                                            "role": "tool",
-                                            "tool_call_id": tool_call.id,
-                                            "content": format!("[ERROR] {}", block_msg),
-                                            "is_error": true
-                                        }));
-                                        continue;
-                                    }
-
-                                    println!(
-                                        "\n\x1b[36m⚡ Running {}...\x1b[0m",
-                                        tool_call.function.name
-                                    );
-
-                                    // Use appropriate tool executor based on stateful mode
-                                    let result = if let Some(ref db) = memory_db {
-                                        tools::execute_tool_with_memory(tool_call, Some(db))
-                                    } else {
-                                        tools::execute_tool(tool_call)
-                                    };
-
-                                    // Check for special markers (user_question, plan mode)
-                                    let (final_content, _was_marker) =
-                                        process_tool_result_marker(
-                                            &mut chat_session,
-                                            &tool_call.function.name,
-                                            &result.content,
-                                        );
-                                    let final_is_error = if _was_marker {
-                                        false
-                                    } else {
-                                        result.is_error
-                                    };
-
-                                    // Log activity for short-term memory
-                                    if let Some(ref db) = memory_db {
-                                        let activity_type = match tool_call.function.name.as_str() {
-                                            "read_file" => "file_read",
-                                            "write_file" => "file_write",
-                                            "edit_file" => "file_edit",
-                                            "bash" => "bash_command",
-                                            "chainlink" => {
-                                                // Parse chainlink subcommand
-                                                if let Ok(args) =
-                                                    serde_json::from_str::<serde_json::Value>(
-                                                        &tool_call.function.arguments,
-                                                    )
-                                                {
-                                                    if let Some(cmd) =
-                                                        args.get("command").and_then(|v| v.as_str())
-                                                    {
-                                                        if cmd.starts_with("create") {
-                                                            "issue_created"
-                                                        } else if cmd.starts_with("close") {
-                                                            "issue_closed"
-                                                        } else if cmd.starts_with("comment") {
-                                                            "issue_comment"
-                                                        } else {
-                                                            "chainlink"
-                                                        }
-                                                    } else {
-                                                        "chainlink"
-                                                    }
-                                                } else {
-                                                    "chainlink"
-                                                }
-                                            }
-                                            other => other,
-                                        };
-
-                                        // Extract target from args
-                                        let target = if let Ok(args) =
-                                            serde_json::from_str::<serde_json::Value>(
-                                                &tool_call.function.arguments,
-                                            ) {
-                                            args.get("path")
-                                                .or_else(|| args.get("file_path"))
-                                                .or_else(|| args.get("command"))
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or(&tool_call.function.name)
-                                                .to_string()
-                                        } else {
-                                            tool_call.function.name.clone()
-                                        };
-
-                                        let _ = db.log_activity(
-                                            &chat_session.id,
-                                            activity_type,
-                                            &target,
-                                            if final_is_error { Some("error") } else { None },
-                                        );
-                                    }
-
-                                    // Show result preview
-                                    let preview: String = final_content
-                                        .lines()
-                                        .take(5)
-                                        .collect::<Vec<_>>()
-                                        .join("\n");
-                                    if final_is_error {
-                                        println!("\x1b[31m✗ Error:\x1b[0m {}", preview);
-                                    } else {
-                                        println!(
-                                            "\x1b[32m✓\x1b[0m {}",
-                                            if preview.len() > 200 {
-                                                format!("{}...", &preview[..200])
-                                            } else {
-                                                preview
-                                            }
-                                        );
-                                    }
-
-                                    // Add tool result with error flag
-                                    let result_content = if final_is_error {
-                                        format!("[ERROR] {}", final_content)
-                                    } else {
-                                        final_content
-                                    };
-                                    chat_session.messages.push(serde_json::json!({
-                                        "role": "tool",
-                                        "tool_call_id": result.tool_call_id,
-                                        "content": result_content,
-                                        "is_error": final_is_error
-                                    }));
-                                }
-
-                                // Run quality gates after tool execution (if configured for every_turn)
-                                let qg_results = guardrails::run_quality_gates();
-                                for qg in &qg_results {
-                                    if qg.passed {
-                                        tracing::debug!(name = %qg.name, "Quality gate passed");
-                                    } else {
-                                        let severity =
-                                            if qg.required { "FAILED" } else { "warning" };
-                                        eprintln!(
-                                            "\x1b[33m⚠ Quality gate '{}' {} (exit {})\x1b[0m",
-                                            qg.name, severity, qg.exit_code
-                                        );
-                                        if !qg.stderr.is_empty() {
-                                            let preview: String = qg
-                                                .stderr
-                                                .lines()
-                                                .take(3)
-                                                .collect::<Vec<_>>()
-                                                .join("\n");
-                                            eprintln!("  {}", preview);
-                                        }
-                                        // Inject findings into context so model can address them
-                                        chat_session.messages.push(serde_json::json!({
-                                            "role": "system",
-                                            "content": format!(
-                                                "[Quality Gate '{}' {}] exit code {}\nstdout: {}\nstderr: {}",
-                                                qg.name, severity,
-                                                qg.exit_code,
-                                                if qg.stdout.len() > 500 { &qg.stdout[..500] } else { &qg.stdout },
-                                                if qg.stderr.len() > 500 { &qg.stderr[..500] } else { &qg.stderr }
-                                            )
-                                        }));
-                                    }
-                                }
-
-                                // Clear accumulator for next iteration
-                                tool_accumulator.clear();
-
-                                // Continue the conversation - send tool results back to model
-                                println!("\n\x1b[90mContinuing with tool results...\x1b[0m\n");
-
-                                // Build new request with tool results
-                                // Use minimal format for proxy, native Anthropic for direct, OpenAI for others
-                                let request_body = if using_proxy {
-                                    // Extract system message to top-level
-                                    let system_msg = chat_session
-                                        .messages
-                                        .iter()
-                                        .find(|m| {
-                                            m.get("role").and_then(|r| r.as_str()) == Some("system")
-                                        })
-                                        .and_then(|m| m.get("content").and_then(|c| c.as_str()))
-                                        .map(String::from);
-
-                                    // Convert messages to Anthropic format (handles tool_calls and tool results)
-                                    // Proxy mode still talks to Anthropic API, so needs proper format
-                                    let anthropic_messages =
-                                        convert_messages_to_anthropic(&chat_session.messages);
-
-                                    // Proxy mode (OAuth) — include tool definitions
-                                    let openai_tools =
-                                        tools::get_all_tool_definitions(stateful, true);
-                                    let anthropic_tools = convert_tools_to_anthropic(
-                                        openai_tools.as_array().unwrap_or(&vec![]),
-                                    );
-
-                                    let mut req = serde_json::json!({
-                                        "model": model,
-                                        "messages": anthropic_messages,
-                                        "max_tokens": 4096,
-                                        "stream": true,
-                                        "tools": anthropic_tools
-                                    });
-
-                                    if let Some(sys) = system_msg {
-                                        req["system"] = serde_json::json!(sys);
-                                    }
-
-                                    req
-                                } else if config.proxy.target == "anthropic" {
-                                    // Anthropic direct API - convert messages to Anthropic format
-                                    let system_msg = chat_session
-                                        .messages
-                                        .iter()
-                                        .find(|m| {
-                                            m.get("role").and_then(|r| r.as_str()) == Some("system")
-                                        })
-                                        .and_then(|m| m.get("content").and_then(|c| c.as_str()))
-                                        .map(String::from);
-
-                                    // Convert messages with proper tool_use/tool_result handling
-                                    let anthropic_messages =
-                                        convert_messages_to_anthropic(&chat_session.messages);
-
-                                    let openai_tools =
-                                        tools::get_all_tool_definitions(stateful, true);
-                                    let anthropic_tools = convert_tools_to_anthropic(
-                                        openai_tools.as_array().unwrap_or(&vec![]),
-                                    );
-
-                                    let mut req = serde_json::json!({
-                                        "model": model,
-                                        "messages": anthropic_messages,
-                                        "max_tokens": 4096,
-                                        "stream": true,
-                                        "tools": anthropic_tools
-                                    });
-
-                                    if let Some(sys) = system_msg {
-                                        req["system"] = serde_json::json!([{
-                                            "type": "text",
-                                            "text": sys,
-                                            "cache_control": {"type": "ephemeral"}
-                                        }]);
-                                    }
-
-                                    req
-                                } else {
-                                    // OpenAI-compatible format for other providers
-                                    serde_json::json!({
-                                        "model": model,
-                                        "messages": chat_session.messages,
-                                        "max_tokens": 4096,
-                                        "stream": true,
-                                        "tools": tools::get_all_tool_definitions(stateful, true)
-                                    })
-                                };
-
-                                // Send follow-up request
-                                let mut req = client.post(&endpoint).json(&request_body);
-                                for (key, value) in &headers {
-                                    req = req.header(key, value);
-                                }
-
-                                current_content = String::new();
-
-                                if let Ok(response) = req.send().await {
-                                    if response.status().is_success() {
-                                        let mut stream = response.bytes_stream();
-                                        let mut buffer = String::new();
-
-                                        while let Some(chunk_result) = stream.next().await {
-                                            if let Ok(chunk) = chunk_result {
-                                                buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-                                                while let Some(line_end) = buffer.find('\n') {
-                                                    let line =
-                                                        buffer[..line_end].trim().to_string();
-                                                    buffer = buffer[line_end + 1..].to_string();
-
-                                                    if line.is_empty() || line.starts_with(':') {
-                                                        continue;
-                                                    }
-
-                                                    if let Some(data) = line.strip_prefix("data: ")
-                                                    {
-                                                        if data == "[DONE]" {
-                                                            break;
-                                                        }
-
-                                                        if let Ok(json) = serde_json::from_str::<
-                                                            serde_json::Value,
-                                                        >(
-                                                            data
-                                                        ) {
-                                                            // Anthropic format: content_block_delta
-                                                            if json
-                                                                .get("type")
-                                                                .and_then(|t| t.as_str())
-                                                                == Some("content_block_delta")
-                                                            {
-                                                                if let Some(text) = json
-                                                                    .get("delta")
-                                                                    .and_then(|d| d.get("text"))
-                                                                    .and_then(|t| t.as_str())
-                                                                {
-                                                                    print!("{}", text);
-                                                                    std::io::stdout().flush().ok();
-                                                                    current_content.push_str(text);
-                                                                }
-                                                            }
-                                                            // OpenAI format: choices[0].delta.content
-                                                            else if let Some(delta) = json
-                                                                .get("choices")
-                                                                .and_then(|c| c.get(0))
-                                                                .and_then(|c| c.get("delta"))
-                                                            {
-                                                                // Handle text content
-                                                                if let Some(content) = delta
-                                                                    .get("content")
-                                                                    .and_then(|c| c.as_str())
-                                                                {
-                                                                    print!("{}", content);
-                                                                    std::io::stdout().flush().ok();
-                                                                    current_content
-                                                                        .push_str(content);
-                                                                }
-                                                                // Accumulate tool calls for next iteration
-                                                                tool_accumulator
-                                                                    .process_delta(delta);
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        println!();
-                                    }
-                                }
-                            }
-
-                            // Log if we hit the max_turns limit while tools were still pending
-                            if max_iterations > 0
-                                && iteration >= max_iterations
-                                && tool_accumulator.has_tool_calls()
-                            {
-                                eprintln!(
-                                    "\n\x1b[33m⚠ Reached max_turns limit ({} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m",
-                                    max_iterations
-                                );
-                            }
-
-                            // Save final response
-                            if !current_content.is_empty() && !tool_accumulator.has_tool_calls() {
-                                // Add final assistant message (text response after tool loop or direct response)
-                                chat_session.messages.push(serde_json::json!({
-                                    "role": "assistant",
-                                    "content": current_content
-                                }));
-                                chat_session.touch();
-                                if let Err(e) = save_chat_session(&chat_session) {
-                                    tracing::warn!("Failed to save session: {}", e);
-                                }
-                            } else if iteration > 0 {
-                                // Tool loop completed but no final text - still save session
-                                chat_session.touch();
-                                if let Err(e) = save_chat_session(&chat_session) {
-                                    tracing::warn!("Failed to save session: {}", e);
-                                }
-                            } else if current_content.is_empty()
-                                && !tool_accumulator.has_tool_calls()
-                            {
-                                // No content and no tool calls - remove the failed user message
-                                chat_session.messages.pop();
-                            }
-
-                            // VDD: Run adversarial review if enabled (non-proxy path)
-                            if !using_proxy && !cancelled {
-                                if let Some(ref engine) = vdd_engine {
-                                    let vdd_content = &current_content;
-                                    if !vdd_content.trim().is_empty() {
-                                        let user_task = chat_session.messages.iter().rev()
-                                            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
-                                            .and_then(|m| m.get("content").and_then(|c| c.as_str()))
-                                            .unwrap_or("");
-
-                                        match engine.review_text(vdd_content, user_task).await {
-                                            Ok(result) => {
-                                                if !result.findings.is_empty() {
-                                                    let genuine_count = result.findings.iter()
-                                                        .filter(|f| f.status == vdd::FindingStatus::Genuine)
-                                                        .count();
-                                                    println!("\n\x1b[33m🔍 VDD Review: {} finding(s) ({} genuine)\x1b[0m",
-                                                        result.findings.len(), genuine_count);
-                                                    for finding in &result.findings {
-                                                        let status_icon = match finding.status {
-                                                            vdd::FindingStatus::Genuine => "⚠",
-                                                            vdd::FindingStatus::FalsePositive => "✗",
-                                                            vdd::FindingStatus::Disputed => "?",
-                                                        };
-                                                        println!("  {} [{}] {}", status_icon, finding.severity, finding.description);
-                                                    }
-                                                    if !result.context_injection.is_empty() {
-                                                        chat_session.messages.push(serde_json::json!({
-                                                            "role": "system",
-                                                            "content": format!("<vdd-review>\n{}\n</vdd-review>", result.context_injection)
-                                                        }));
                                                     }
                                                 } else {
                                                     println!("\n\x1b[32m✓ VDD Review: No issues found\x1b[0m");
@@ -6271,53 +5986,586 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                             }
                                             Err(e) => {
                                                 tracing::warn!("VDD review failed: {}", e);
-                                                println!("\n\x1b[31m⚠ VDD review failed: {}\x1b[0m", e);
+                                                println!(
+                                                    "\n\x1b[31m⚠ VDD review failed: {}\x1b[0m",
+                                                    e
+                                                );
+                                            }
+                                        }
+                                    }
+
+                                    println!();
+                                    continue; // Skip the regular agentic loop since we handled proxy mode
+                                }
+
+                                // Agentic loop - continue while there are tool calls
+                                // 0 = unlimited, default: 25
+                                let max_iterations = config.session.max_turns;
+                                let mut iteration: u32 = 0;
+                                let mut current_content = full_content;
+                                let mut executed_tool_sigs: std::collections::HashSet<String> =
+                                    std::collections::HashSet::new();
+
+                                while tool_accumulator.has_tool_calls()
+                                    && !cancelled
+                                    && (max_iterations == 0 || iteration < max_iterations)
+                                {
+                                    iteration += 1;
+
+                                    // Reset per-turn blast radius tracking
+                                    guardrails::reset_turn();
+
+                                    // Get tool calls
+                                    let tool_calls = tool_accumulator.finalize();
+
+                                    // Duplicate tool call detection
+                                    if iteration > 1 {
+                                        let mut all_dups = true;
+                                        for tc in &tool_calls {
+                                            let sig = format!(
+                                                "{}:{}",
+                                                tc.function.name, tc.function.arguments
+                                            );
+                                            if !executed_tool_sigs.contains(&sig) {
+                                                all_dups = false;
+                                            }
+                                        }
+                                        if all_dups && !tool_calls.is_empty() {
+                                            eprintln!("\n\x1b[33m⚠ Detected duplicate tool calls - breaking agentic loop\x1b[0m");
+                                            break;
+                                        }
+                                    }
+                                    for tc in &tool_calls {
+                                        let sig = format!(
+                                            "{}:{}",
+                                            tc.function.name, tc.function.arguments
+                                        );
+                                        executed_tool_sigs.insert(sig);
+                                    }
+
+                                    // Add assistant message with tool calls
+                                    let tool_calls_json: Vec<serde_json::Value> = tool_calls
+                                        .iter()
+                                        .map(|tc| {
+                                            serde_json::json!({
+                                                "id": tc.id,
+                                                "type": tc.call_type,
+                                                "function": {
+                                                    "name": tc.function.name,
+                                                    "arguments": tc.function.arguments
+                                                }
+                                            })
+                                        })
+                                        .collect();
+
+                                    chat_session.messages.push(serde_json::json!({
+                                    "role": "assistant",
+                                    "content": if current_content.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(current_content.clone()) },
+                                    "tool_calls": tool_calls_json
+                                }));
+
+                                    // Execute each tool and collect results
+                                    for tool_call in &tool_calls {
+                                        // Check plan mode restrictions before executing
+                                        if let Some(block_msg) = check_plan_mode_restriction(
+                                            &chat_session,
+                                            &tool_call.function.name,
+                                            &tool_call.function.arguments,
+                                        ) {
+                                            println!(
+                                                "\n\x1b[33m⚠ Blocked in plan mode: {}\x1b[0m",
+                                                tool_call.function.name
+                                            );
+                                            chat_session.messages.push(serde_json::json!({
+                                                "role": "tool",
+                                                "tool_call_id": tool_call.id,
+                                                "content": format!("[ERROR] {}", block_msg),
+                                                "is_error": true
+                                            }));
+                                            continue;
+                                        }
+
+                                        println!(
+                                            "\n\x1b[36m⚡ Running {}...\x1b[0m",
+                                            tool_call.function.name
+                                        );
+
+                                        // Use appropriate tool executor based on stateful mode
+                                        let result = if let Some(ref db) = memory_db {
+                                            tools::execute_tool_with_memory(tool_call, Some(db))
+                                        } else {
+                                            tools::execute_tool(tool_call)
+                                        };
+
+                                        // Check for special markers (user_question, plan mode)
+                                        let (final_content, _was_marker) =
+                                            process_tool_result_marker(
+                                                &mut chat_session,
+                                                &tool_call.function.name,
+                                                &result.content,
+                                            );
+                                        let final_is_error =
+                                            if _was_marker { false } else { result.is_error };
+
+                                        // Log activity for short-term memory
+                                        if let Some(ref db) = memory_db {
+                                            let activity_type =
+                                                match tool_call.function.name.as_str() {
+                                                    "read_file" => "file_read",
+                                                    "write_file" => "file_write",
+                                                    "edit_file" => "file_edit",
+                                                    "bash" => "bash_command",
+                                                    "chainlink" => {
+                                                        // Parse chainlink subcommand
+                                                        if let Ok(args) = serde_json::from_str::<
+                                                            serde_json::Value,
+                                                        >(
+                                                            &tool_call.function.arguments,
+                                                        ) {
+                                                            if let Some(cmd) = args
+                                                                .get("command")
+                                                                .and_then(|v| v.as_str())
+                                                            {
+                                                                if cmd.starts_with("create") {
+                                                                    "issue_created"
+                                                                } else if cmd.starts_with("close") {
+                                                                    "issue_closed"
+                                                                } else if cmd.starts_with("comment")
+                                                                {
+                                                                    "issue_comment"
+                                                                } else {
+                                                                    "chainlink"
+                                                                }
+                                                            } else {
+                                                                "chainlink"
+                                                            }
+                                                        } else {
+                                                            "chainlink"
+                                                        }
+                                                    }
+                                                    other => other,
+                                                };
+
+                                            // Extract target from args
+                                            let target = if let Ok(args) =
+                                                serde_json::from_str::<serde_json::Value>(
+                                                    &tool_call.function.arguments,
+                                                ) {
+                                                args.get("path")
+                                                    .or_else(|| args.get("file_path"))
+                                                    .or_else(|| args.get("command"))
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or(&tool_call.function.name)
+                                                    .to_string()
+                                            } else {
+                                                tool_call.function.name.clone()
+                                            };
+
+                                            let _ = db.log_activity(
+                                                &chat_session.id,
+                                                activity_type,
+                                                &target,
+                                                if final_is_error { Some("error") } else { None },
+                                            );
+                                        }
+
+                                        // Show result preview
+                                        let preview: String = final_content
+                                            .lines()
+                                            .take(5)
+                                            .collect::<Vec<_>>()
+                                            .join("\n");
+                                        if final_is_error {
+                                            println!("\x1b[31m✗ Error:\x1b[0m {}", preview);
+                                        } else {
+                                            println!(
+                                                "\x1b[32m✓\x1b[0m {}",
+                                                if preview.len() > 200 {
+                                                    format!("{}...", safe_truncate(&preview, 200))
+                                                } else {
+                                                    preview
+                                                }
+                                            );
+                                        }
+
+                                        // Add tool result with error flag
+                                        let result_content = if final_is_error {
+                                            format!("[ERROR] {}", final_content)
+                                        } else {
+                                            final_content
+                                        };
+                                        chat_session.messages.push(serde_json::json!({
+                                            "role": "tool",
+                                            "tool_call_id": result.tool_call_id,
+                                            "content": result_content,
+                                            "is_error": final_is_error
+                                        }));
+                                    }
+
+                                    // Run quality gates after tool execution (if configured for every_turn)
+                                    let qg_results = guardrails::run_quality_gates();
+                                    for qg in &qg_results {
+                                        if qg.passed {
+                                            tracing::debug!(name = %qg.name, "Quality gate passed");
+                                        } else {
+                                            let severity =
+                                                if qg.required { "FAILED" } else { "warning" };
+                                            eprintln!(
+                                                "\x1b[33m⚠ Quality gate '{}' {} (exit {})\x1b[0m",
+                                                qg.name, severity, qg.exit_code
+                                            );
+                                            if !qg.stderr.is_empty() {
+                                                let preview: String = qg
+                                                    .stderr
+                                                    .lines()
+                                                    .take(3)
+                                                    .collect::<Vec<_>>()
+                                                    .join("\n");
+                                                eprintln!("  {}", preview);
+                                            }
+                                            // Inject findings into context so model can address them
+                                            chat_session.messages.push(serde_json::json!({
+                                            "role": "system",
+                                            "content": format!(
+                                                "[Quality Gate '{}' {}] exit code {}\nstdout: {}\nstderr: {}",
+                                                qg.name, severity,
+                                                qg.exit_code,
+                                                if qg.stdout.len() > 500 { safe_truncate(&qg.stdout, 500) } else { &qg.stdout },
+                                                if qg.stderr.len() > 500 { safe_truncate(&qg.stderr, 500) } else { &qg.stderr }
+                                            )
+                                        }));
+                                        }
+                                    }
+
+                                    // Clear accumulator for next iteration
+                                    tool_accumulator.clear();
+
+                                    // Continue the conversation - send tool results back to model
+                                    println!("\n\x1b[90mContinuing with tool results...\x1b[0m\n");
+
+                                    // Build new request with tool results
+                                    // Use minimal format for proxy, native Anthropic for direct, OpenAI for others
+                                    let request_body = if using_proxy {
+                                        // Extract system message to top-level
+                                        let system_msg = chat_session
+                                            .messages
+                                            .iter()
+                                            .find(|m| {
+                                                m.get("role").and_then(|r| r.as_str())
+                                                    == Some("system")
+                                            })
+                                            .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                                            .map(String::from);
+
+                                        // Convert messages to Anthropic format (handles tool_calls and tool results)
+                                        // Proxy mode still talks to Anthropic API, so needs proper format
+                                        let anthropic_messages =
+                                            convert_messages_to_anthropic(&chat_session.messages);
+
+                                        // Proxy mode (OAuth) — include tool definitions
+                                        let openai_tools =
+                                            tools::get_all_tool_definitions(stateful, true);
+                                        let anthropic_tools = convert_tools_to_anthropic(
+                                            openai_tools.as_array().unwrap_or(&vec![]),
+                                        );
+
+                                        let mut req = serde_json::json!({
+                                            "model": model,
+                                            "messages": anthropic_messages,
+                                            "max_tokens": 4096,
+                                            "stream": true,
+                                            "tools": anthropic_tools
+                                        });
+
+                                        if let Some(sys) = system_msg {
+                                            req["system"] = serde_json::json!(sys);
+                                        }
+
+                                        req
+                                    } else if config.proxy.target == "anthropic" {
+                                        // Anthropic direct API - convert messages to Anthropic format
+                                        let system_msg = chat_session
+                                            .messages
+                                            .iter()
+                                            .find(|m| {
+                                                m.get("role").and_then(|r| r.as_str())
+                                                    == Some("system")
+                                            })
+                                            .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                                            .map(String::from);
+
+                                        // Convert messages with proper tool_use/tool_result handling
+                                        let anthropic_messages =
+                                            convert_messages_to_anthropic(&chat_session.messages);
+
+                                        let openai_tools =
+                                            tools::get_all_tool_definitions(stateful, true);
+                                        let anthropic_tools = convert_tools_to_anthropic(
+                                            openai_tools.as_array().unwrap_or(&vec![]),
+                                        );
+
+                                        let mut req = serde_json::json!({
+                                            "model": model,
+                                            "messages": anthropic_messages,
+                                            "max_tokens": 4096,
+                                            "stream": true,
+                                            "tools": anthropic_tools
+                                        });
+
+                                        if let Some(sys) = system_msg {
+                                            req["system"] = serde_json::json!([{
+                                                "type": "text",
+                                                "text": sys,
+                                                "cache_control": {"type": "ephemeral"}
+                                            }]);
+                                        }
+
+                                        req
+                                    } else {
+                                        // OpenAI-compatible format for other providers
+                                        serde_json::json!({
+                                            "model": model,
+                                            "messages": chat_session.messages,
+                                            "max_tokens": 4096,
+                                            "stream": true,
+                                            "tools": tools::get_all_tool_definitions(stateful, true)
+                                        })
+                                    };
+
+                                    // Send follow-up request
+                                    let mut req = client.post(&endpoint).json(&request_body);
+                                    for (key, value) in &headers {
+                                        req = req.header(key, value);
+                                    }
+
+                                    current_content = String::new();
+
+                                    if let Ok(response) = req.send().await {
+                                        if response.status().is_success() {
+                                            let mut stream = response.bytes_stream();
+                                            let mut buffer = String::new();
+
+                                            while let Some(chunk_result) = stream.next().await {
+                                                if let Ok(chunk) = chunk_result {
+                                                    buffer
+                                                        .push_str(&String::from_utf8_lossy(&chunk));
+
+                                                    while let Some(line_end) = buffer.find('\n') {
+                                                        let line =
+                                                            buffer[..line_end].trim().to_string();
+                                                        buffer = buffer[line_end + 1..].to_string();
+
+                                                        if line.is_empty() || line.starts_with(':')
+                                                        {
+                                                            continue;
+                                                        }
+
+                                                        if let Some(data) =
+                                                            line.strip_prefix("data: ")
+                                                        {
+                                                            if data == "[DONE]" {
+                                                                break;
+                                                            }
+
+                                                            if let Ok(json) = serde_json::from_str::<
+                                                                serde_json::Value,
+                                                            >(
+                                                                data
+                                                            ) {
+                                                                // Anthropic format: content_block_delta
+                                                                if json
+                                                                    .get("type")
+                                                                    .and_then(|t| t.as_str())
+                                                                    == Some("content_block_delta")
+                                                                {
+                                                                    if let Some(text) = json
+                                                                        .get("delta")
+                                                                        .and_then(|d| d.get("text"))
+                                                                        .and_then(|t| t.as_str())
+                                                                    {
+                                                                        print!("{}", text);
+                                                                        std::io::stdout()
+                                                                            .flush()
+                                                                            .ok();
+                                                                        current_content
+                                                                            .push_str(text);
+                                                                    }
+                                                                }
+                                                                // OpenAI format: choices[0].delta.content
+                                                                else if let Some(delta) = json
+                                                                    .get("choices")
+                                                                    .and_then(|c| c.get(0))
+                                                                    .and_then(|c| c.get("delta"))
+                                                                {
+                                                                    // Handle text content
+                                                                    if let Some(content) = delta
+                                                                        .get("content")
+                                                                        .and_then(|c| c.as_str())
+                                                                    {
+                                                                        print!("{}", content);
+                                                                        std::io::stdout()
+                                                                            .flush()
+                                                                            .ok();
+                                                                        current_content
+                                                                            .push_str(content);
+                                                                    }
+                                                                    // Accumulate tool calls for next iteration
+                                                                    tool_accumulator
+                                                                        .process_delta(delta);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            println!();
+                                        }
+                                    }
+                                }
+
+                                // Log if we hit the max_turns limit while tools were still pending
+                                if max_iterations > 0
+                                    && iteration >= max_iterations
+                                    && tool_accumulator.has_tool_calls()
+                                {
+                                    eprintln!(
+                                    "\n\x1b[33m⚠ Reached max_turns limit ({} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m",
+                                    max_iterations
+                                );
+                                }
+
+                                // Save final response
+                                if !current_content.is_empty() && !tool_accumulator.has_tool_calls()
+                                {
+                                    // Add final assistant message (text response after tool loop or direct response)
+                                    chat_session.messages.push(serde_json::json!({
+                                        "role": "assistant",
+                                        "content": current_content
+                                    }));
+                                    chat_session.touch();
+                                    if let Err(e) = save_chat_session(&chat_session) {
+                                        tracing::warn!("Failed to save session: {}", e);
+                                    }
+                                } else if iteration > 0 {
+                                    // Tool loop completed but no final text - still save session
+                                    chat_session.touch();
+                                    if let Err(e) = save_chat_session(&chat_session) {
+                                        tracing::warn!("Failed to save session: {}", e);
+                                    }
+                                } else if current_content.is_empty()
+                                    && !tool_accumulator.has_tool_calls()
+                                {
+                                    // No content and no tool calls - remove the failed user message
+                                    chat_session.messages.pop();
+                                }
+
+                                // VDD: Run adversarial review if enabled (non-proxy path)
+                                if !using_proxy && !cancelled {
+                                    if let Some(ref engine) = vdd_engine {
+                                        let vdd_content = &current_content;
+                                        if !vdd_content.trim().is_empty() {
+                                            let user_task = chat_session
+                                                .messages
+                                                .iter()
+                                                .rev()
+                                                .find(|m| {
+                                                    m.get("role").and_then(|r| r.as_str())
+                                                        == Some("user")
+                                                })
+                                                .and_then(|m| {
+                                                    m.get("content").and_then(|c| c.as_str())
+                                                })
+                                                .unwrap_or("");
+
+                                            match engine.review_text(vdd_content, user_task).await {
+                                                Ok(result) => {
+                                                    if !result.findings.is_empty() {
+                                                        let genuine_count = result
+                                                            .findings
+                                                            .iter()
+                                                            .filter(|f| {
+                                                                f.status
+                                                                    == vdd::FindingStatus::Genuine
+                                                            })
+                                                            .count();
+                                                        println!("\n\x1b[33m🔍 VDD Review: {} finding(s) ({} genuine)\x1b[0m",
+                                                        result.findings.len(), genuine_count);
+                                                        for finding in &result.findings {
+                                                            let status_icon = match finding.status {
+                                                            vdd::FindingStatus::Genuine => "⚠",
+                                                            vdd::FindingStatus::FalsePositive => "✗",
+                                                            vdd::FindingStatus::Disputed => "?",
+                                                        };
+                                                            println!(
+                                                                "  {} [{}] {}",
+                                                                status_icon,
+                                                                finding.severity,
+                                                                finding.description
+                                                            );
+                                                        }
+                                                        if !result.context_injection.is_empty() {
+                                                            chat_session.messages.push(serde_json::json!({
+                                                            "role": "system",
+                                                            "content": format!("<vdd-review>\n{}\n</vdd-review>", result.context_injection)
+                                                        }));
+                                                        }
+                                                    } else {
+                                                        println!("\n\x1b[32m✓ VDD Review: No issues found\x1b[0m");
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!("VDD review failed: {}", e);
+                                                    println!(
+                                                        "\n\x1b[31m⚠ VDD review failed: {}\x1b[0m",
+                                                        e
+                                                    );
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
 
-                            // Handle any keybinding action pressed during streaming
-                            if let Some(action_result) = pending_action {
-                                match action_result {
-                                    SlashCommandResult::Exit => {
-                                        // Save history before exit
-                                        if let Err(e) = rl.save_history(&history_path) {
-                                            tracing::warn!("Failed to save history: {}", e);
+                                // Handle any keybinding action pressed during streaming
+                                if let Some(action_result) = pending_action {
+                                    match action_result {
+                                        SlashCommandResult::Exit => {
+                                            // Save history before exit
+                                            if let Err(e) = rl.save_history(&history_path) {
+                                                tracing::warn!("Failed to save history: {}", e);
+                                            }
+                                            println!("\nGoodbye!");
+                                            return Ok(());
                                         }
-                                        println!("\nGoodbye!");
-                                        return Ok(());
-                                    }
-                                    SlashCommandResult::ToggleMode => {
-                                        chat_session.mode = chat_session.mode.toggle();
-                                        println!(
-                                            "\nSwitched to {} mode: {}\n",
-                                            chat_session.mode.display(),
-                                            chat_session.mode.description()
-                                        );
-                                    }
-                                    SlashCommandResult::Status => {
-                                        let tokens = estimate_session_tokens(&chat_session);
-                                        let duration = chrono::Utc::now()
-                                            .signed_duration_since(chat_session.created_at);
-                                        println!(
-                                            "\n[{}] {} | ~{} tokens | {} min\n",
-                                            chat_session.mode.display(),
-                                            chat_session.model,
-                                            tokens,
-                                            duration.num_minutes()
-                                        );
-                                    }
-                                    SlashCommandResult::Export => {
-                                        export_chat_session(&chat_session);
-                                    }
-                                    _ => {
-                                        // Other actions print their own messages via execute_key_action
+                                        SlashCommandResult::ToggleMode => {
+                                            chat_session.mode = chat_session.mode.toggle();
+                                            println!(
+                                                "\nSwitched to {} mode: {}\n",
+                                                chat_session.mode.display(),
+                                                chat_session.mode.description()
+                                            );
+                                        }
+                                        SlashCommandResult::Status => {
+                                            let tokens = estimate_session_tokens(&chat_session);
+                                            let duration = chrono::Utc::now()
+                                                .signed_duration_since(chat_session.created_at);
+                                            println!(
+                                                "\n[{}] {} | ~{} tokens | {} min\n",
+                                                chat_session.mode.display(),
+                                                chat_session.model,
+                                                tokens,
+                                                duration.num_minutes()
+                                            );
+                                        }
+                                        SlashCommandResult::Export => {
+                                            export_chat_session(&chat_session);
+                                        }
+                                        _ => {
+                                            // Other actions print their own messages via execute_key_action
+                                        }
                                     }
                                 }
-                            }
-                          } // end else (non-Google streaming)
+                            } // end else (non-Google streaming)
                         } else {
                             let status = response.status();
                             let body = response.text().await.unwrap_or_default();

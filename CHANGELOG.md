@@ -23,6 +23,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Read-before-edit enforcement on edit_file tool
 
 ### Fixed
+- MCP StdioTransport creates new BufReader per request losing data (#62)
+- MCP tool name parsing breaks on underscored server names (#61)
+- .unwrap() on Option in session.rs causes panics (#60)
+- H-7: MCP StdioTransport creates new BufReader per request (#55)
+- H-6: MCP tool name parsing breaks on underscored server names (#53)
+- H-5: .unwrap() on Option in session.rs state methods (#52)
+- Fix kill_shell to actually terminate OS processes (#50)
+- Fix .unwrap() on RwLock in oauth.rs causing cascading panics (#54)
 - Fix Google adapter using retired `gemini-pro` model — now defaults to `gemini-2.5-flash`
 - Fix `chat_endpoint()` across all 7 adapters to accept model parameter for dynamic URL construction
 - Fix VDD review only triggering in proxy mode — now works with Google, direct Anthropic, and OpenAI
@@ -39,13 +47,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Refactor `TaskManager::update_task` from 8 args to `TaskUpdateParams` struct (clippy fix)
 - Replace manual `find_closing_char` loop with iterator `.find()` (clippy fix)
 - Change `PermissionsConfig` from manual `impl Default` to `#[derive(Default)]`
+- **Major dependency updates**: all 9 outdated major versions bumped to latest
+  - reqwest 0.12 → 0.13 (added `form` and `query` feature flags)
+  - rusqlite 0.32 → 0.38
+  - rustyline 14 → 17
+  - crossterm 0.28 → 0.29
+  - rand 0.8 → 0.10 (migrated `RngCore::fill_bytes` → `Rng::fill_bytes`, `thread_rng()` → `rng()`)
+  - config 0.14 → 0.15
+  - axum-extra 0.10 → 0.12
+  - indicatif 0.17 → 0.18
+  - scraper 0.20 → 0.25
+- Update model lists across all providers to 2026 models:
+  - Anthropic: Claude Opus 4.6, Sonnet 4.6, Haiku 4.5
+  - OpenAI: GPT-5.2, GPT-5, GPT-4.1, o3, o4-mini
+  - Google: Gemini 3.1 Pro, Gemini 3 Flash, Gemini 2.5 GA
+  - DeepSeek: V3.2 unified (deepseek-chat/deepseek-reasoner)
+  - Qwen: Qwen3.5-plus, Qwen3-max, QwQ-plus, Qwen3-coder-plus
+  - Z.AI: GLM-5, GLM-4.7, GLM-4.6
+- Update default models: Anthropic → `claude-sonnet-4-6`, OpenAI → `gpt-5.2`, Z.AI → `glm-5`, Qwen → `qwen3.5-plus`
+- Update `determine_provider()` to detect `o4-*`, `qwq-*`, `qvq-*` model prefixes
+- Update context window sizes: GPT-5 (400K), GPT-4.1 (1M)
+- Update token pricing for GPT-5.x, GPT-4.1.x model families
+- Update subagent default models to Claude Opus 4.6 / Sonnet 4.6
 
 ### Removed
 - Remove obsolete TestBuilder adversarial subagent code (#205)
 
 ### Security
+- SSRF via unvalidated URL in web.rs (#57)
+- Fix dangerously_disable_sandbox bypassing all permission checks (#51)
+- Fix SSRF via unvalidated URL in web.rs (#49)
+- H-8: OAuth tokens stored in plaintext on disk (#21)
+- H-4: Naive dangerous pattern detection trivially bypassable (#17)
+- H-9: edit_file missing absolute path validation (#22)
+- C-2: write_file missing absolute path validation (#12)
 - Fix lru crate Stacked Borrows vulnerability by updating to 0.16.3 (#99)
 - Add path traversal protection to `read_file` tool (reject relative paths)
+- Comprehensive adversarial code review identifying 38 findings (see ADVERSARIAL_REVIEW.md)
 
 ### Previous
 - Add Claude Code parity design document (#1)

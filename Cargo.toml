@@ -12,12 +12,12 @@ tokio = { version = "1", features = ["full"] }
 
 # HTTP server (axum 0.8)
 axum = { version = "0.8", features = ["json", "ws"] }
-axum-extra = { version = "0.10", features = ["typed-header"] }
+axum-extra = { version = "0.12", features = ["typed-header"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # HTTP client for upstream requests
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.13", features = ["json", "stream", "form", "query"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -25,7 +25,7 @@ serde_json = "1"
 serde_yaml = "0.9"
 
 # Configuration
-config = "0.14"
+config = "0.15"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -57,24 +57,25 @@ regex = "1"
 # OAuth and cryptography
 base64 = "0.22"
 sha2 = "0.10"
-rand = "0.8"
+rand = "0.10"
+url = "2"
 urlencoding = "2"
 
 # CLI enhancements
-rustyline = { version = "14", features = ["derive"] }
-indicatif = "0.17"
-crossterm = "0.28"
+rustyline = { version = "17", features = ["derive"] }
+indicatif = "0.18"
+crossterm = "0.29"
 arboard = "3"
 
 # TUI framework
 ratatui = "0.30"
 
 # SQLite for stateful memory
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.38", features = ["bundled"] }
 
 # Headless browser for web scraping (optional, heavy dependency)
 headless_chrome = { version = "1", optional = true }
-scraper = { version = "0.20", optional = true }
+scraper = { version = "0.25", optional = true }
 
 [features]
 default = ["browser"]

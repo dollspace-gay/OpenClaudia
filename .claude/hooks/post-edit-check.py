@@ -246,7 +246,7 @@ def get_test_reminder(file_path, project_root):
 
     # Check for marker file
     marker_dir = project_root or os.path.dirname(file_path)
-    marker_file = os.path.join(marker_dir, '.chainlink', 'last_test_run')
+    marker_file = os.path.join(marker_dir, '.crosslink', 'last_test_run')
 
     code_modified_after_tests = False
 
@@ -326,11 +326,35 @@ def main():
         'pyproject.toml', '.git'
     ])
 
-    # Check for stubs
+    # Check for stubs (always - instant regex check)
     stub_findings = check_for_stubs(file_path)
 
-    # Run linter
-    linter_errors = run_linter(file_path)
+    # Debounced linting: only run linter if no edits in last 10 seconds
+    # Track last edit time via marker file
+    linter_errors = []
+    lint_marker = None
+    if project_root:
+        crosslink_cache = os.path.join(project_root, '.crosslink', '.cache')
+        lint_marker = os.path.join(crosslink_cache, 'last-edit-time')
+
+    should_lint = True
+    if lint_marker:
+        try:
+            os.makedirs(os.path.dirname(lint_marker), exist_ok=True)
+            if os.path.exists(lint_marker):
+                last_edit = os.path.getmtime(lint_marker)
+                elapsed = time.time() - last_edit
+                # If last edit was < 10 seconds ago, skip linting (rapid edits)
+                if elapsed < 10:
+                    should_lint = False
+            # Update the marker to current time
+            with open(lint_marker, 'w') as f:
+                f.write(str(time.time()))
+        except OSError:
+            pass
+
+    if should_lint:
+        linter_errors = run_linter(file_path)
 
     # Check for test reminder
     test_reminder = get_test_reminder(file_path, project_root)

@@ -361,11 +361,11 @@ async fn list_models(State(_state): State<ProxyState>) -> impl IntoResponse {
     Json(serde_json::json!({
         "object": "list",
         "data": [
-            {"id": "claude-3-5-sonnet-20241022", "object": "model", "owned_by": "anthropic"},
-            {"id": "claude-3-5-haiku-20241022", "object": "model", "owned_by": "anthropic"},
-            {"id": "claude-3-opus-20240229", "object": "model", "owned_by": "anthropic"},
-            {"id": "gpt-4o", "object": "model", "owned_by": "openai"},
-            {"id": "gpt-4o-mini", "object": "model", "owned_by": "openai"},
+            {"id": "claude-opus-4-6", "object": "model", "owned_by": "anthropic"},
+            {"id": "claude-sonnet-4-6", "object": "model", "owned_by": "anthropic"},
+            {"id": "claude-haiku-4-5-20251001", "object": "model", "owned_by": "anthropic"},
+            {"id": "gpt-5.2", "object": "model", "owned_by": "openai"},
+            {"id": "gpt-4.1", "object": "model", "owned_by": "openai"},
         ]
     }))
 }
@@ -377,19 +377,7 @@ async fn run_pre_tool_use_hooks(
     tool_name: &str,
     tool_input: &serde_json::Value,
 ) -> HookResult {
-    // Check for dangerous tool patterns and deny if needed
-    // Serialize the entire tool_input JSON to a string so we catch patterns
-    // inside nested fields (e.g. {"command": "rm -rf /"})
-    let dangerous_patterns = ["rm -rf", "format c:", "drop table", "delete from"];
-    let input_str = tool_input.to_string().to_lowercase();
-    for pattern in dangerous_patterns {
-        if input_str.contains(pattern) {
-            return HookResult::denied(format!(
-                "Tool '{}' contains dangerous pattern: {}",
-                tool_name, pattern
-            ));
-        }
-    }
+    // Security enforcement handled by the permissions system (src/permissions.rs)
 
     // Extract file extensions from tool input for context
     let extensions = extract_extensions_from_tool_input(tool_name, tool_input);
@@ -748,8 +736,7 @@ async fn proxy_chat_completions(
 
                 // Warn if approaching context limit
                 let warn_threshold = state.config.session.token_tracking.warn_threshold;
-                let usage_pct =
-                    (estimated_input as f64 / context_window as f64) * 100.0;
+                let usage_pct = (estimated_input as f64 / context_window as f64) * 100.0;
                 if estimated_input as f32 > context_window as f32 * warn_threshold {
                     warn!(
                         estimated = estimated_input,
@@ -1140,6 +1127,7 @@ pub fn determine_provider(model: &str, config: &AppConfig) -> String {
     } else if model_lower.starts_with("gpt")
         || model_lower.starts_with("o1")
         || model_lower.starts_with("o3")
+        || model_lower.starts_with("o4")
     {
         "openai".to_string()
     } else if model_lower.starts_with("gemini") {
@@ -1150,8 +1138,11 @@ pub fn determine_provider(model: &str, config: &AppConfig) -> String {
     } else if model_lower.starts_with("deepseek") {
         // DeepSeek models (OpenAI-compatible)
         "deepseek".to_string()
-    } else if model_lower.starts_with("qwen") {
-        // Alibaba Qwen models (OpenAI-compatible)
+    } else if model_lower.starts_with("qwen")
+        || model_lower.starts_with("qwq")
+        || model_lower.starts_with("qvq")
+    {
+        // Alibaba Qwen/QwQ/QvQ models (OpenAI-compatible)
         "qwen".to_string()
     } else {
         // Fall back to configured target

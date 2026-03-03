@@ -281,31 +281,40 @@ openclaudia doctor             # Check connectivity and API keys
 ## Supported Models
 
 ### Anthropic
-- `claude-sonnet-4-20250514`, `claude-opus-4-20250514`
-- `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022`
-- `claude-3-opus-20240229`
+- `claude-opus-4-6`, `claude-sonnet-4-6` — Latest (2026)
+- `claude-haiku-4-5-20251001` — Fast, near-frontier
+- `claude-sonnet-4-5-20250929`, `claude-opus-4-5-20251101`, `claude-opus-4-1-20250805` — Legacy
+- `claude-sonnet-4-20250514`, `claude-opus-4-20250514` — Legacy
 
 ### OpenAI
-- `gpt-4`, `gpt-4-turbo`, `gpt-4o`, `gpt-4o-mini`
-- `gpt-3.5-turbo`
-- `o1-preview`, `o1-mini`
+- `gpt-5.2`, `gpt-5.2-codex`, `gpt-5.2-pro` — Latest (Dec 2025)
+- `gpt-5`, `gpt-5-mini`, `gpt-5-nano` — GPT-5 family (Aug 2025)
+- `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano` — Non-reasoning, 1M context
+- `o3`, `o4-mini` — Reasoning models
+- `gpt-4o`, `gpt-4o-mini` — Legacy
 
 ### Google Gemini
-- `gemini-2.5-pro`, `gemini-2.5-flash`
-- `gemini-1.5-pro`, `gemini-1.5-flash`
+- `gemini-3.1-pro-preview`, `gemini-3-flash-preview` — Latest (2026)
+- `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` — Stable GA
 
 ### DeepSeek
-- `deepseek-chat`, `deepseek-coder`, `deepseek-reasoner`
+- `deepseek-chat` — V3.2, general (non-thinking)
+- `deepseek-reasoner` — V3.2, reasoning (thinking mode)
 
 ### Qwen
-- `qwen-turbo`, `qwen-plus`, `qwen-max`, `qwen-long`
+- `qwen3.5-plus`, `qwen3-max` — Latest (2026)
+- `qwen-plus`, `qwen-turbo` — General
+- `qwq-plus` — Reasoning
+- `qwen3-coder-plus` — Coding specialist
 
 ### Z.AI (GLM)
-- `glm-4.7`, `glm-4-plus`, `glm-4-air`, `glm-4-flash`
+- `glm-5` — Flagship (Feb 2026), 745B MoE
+- `glm-4.7`, `glm-4.7-flash` — Coding/reasoning
+- `glm-4.6`, `glm-4.5-flash` — Previous gen
 
 ### Ollama (Local)
-- Any model installed: `llama3`, `codellama`, `mistral`, `mixtral`, `phi`, `gemma`, etc.
-- Run `ollama list` to see available models
+- Popular: `llama3.1`, `deepseek-r1`, `gemma3`, `qwen3`, `mistral`, `phi4`, `llava`
+- Any model installed — run `ollama list` to see available models
 
 ### OpenAI-Compatible (Local)
 - Works with LM Studio, LocalAI, text-generation-webui, vLLM, and any OpenAI-compatible server

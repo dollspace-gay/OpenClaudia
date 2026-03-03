@@ -9,9 +9,16 @@
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 use tracing::{debug, info, warn};
+
+/// Global cache for compiled glob-to-regex patterns.
+/// Avoids recompiling the same glob pattern into a `Regex` on every permission check.
+static GLOB_CACHE: LazyLock<Mutex<HashMap<String, Regex>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Decision for a permission check
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,10 +53,7 @@ pub enum CheckResult {
     /// Tool use is denied
     Denied(String),
     /// No rule matched; the caller should prompt the user
-    NeedsPrompt {
-        tool: String,
-        target: String,
-    },
+    NeedsPrompt { tool: String, target: String },
 }
 
 /// Manages permission rules for tool execution.
@@ -74,7 +78,11 @@ pub struct PermissionManager {
 
 impl PermissionManager {
     /// Create a new PermissionManager, loading persisted rules from disk.
-    pub fn new(persist_path: impl Into<PathBuf>, enabled: bool, default_allow: Vec<String>) -> Self {
+    pub fn new(
+        persist_path: impl Into<PathBuf>,
+        enabled: bool,
+        default_allow: Vec<String>,
+    ) -> Self {
         let persist_path = persist_path.into();
         let persisted_rules = Self::load_persisted_rules(&persist_path);
         Self {
@@ -92,11 +100,7 @@ impl PermissionManager {
     /// - `tool_args`: the parsed arguments map from the tool call
     ///
     /// Returns `Allowed`, `Denied`, or `NeedsPrompt`.
-    pub fn check(
-        &self,
-        tool_name: &str,
-        tool_args: &serde_json::Value,
-    ) -> CheckResult {
+    pub fn check(&self, tool_name: &str, tool_args: &serde_json::Value) -> CheckResult {
         if !self.enabled {
             return CheckResult::Allowed;
         }
@@ -110,16 +114,18 @@ impl PermissionManager {
             }
         };
 
-        // Check for dangerously_disable_sandbox on Bash tool
+        // SECURITY: Ignore dangerously_disable_sandbox from tool args.
+        // This flag must ONLY be honored from user-level config (AppConfig),
+        // never from model-controlled tool call arguments.
         if canonical_tool == "Bash" {
             if let Some(disable) = tool_args.get("dangerously_disable_sandbox") {
                 if disable.as_bool().unwrap_or(false) {
                     warn!(
                         tool = %canonical_tool,
                         target = %target,
-                        "dangerously_disable_sandbox=true: skipping permission checks"
+                        "Model attempted dangerously_disable_sandbox=true in tool args — IGNORED. \
+                         This flag is only honored from user-level configuration."
                     );
-                    return CheckResult::Allowed;
                 }
             }
         }
@@ -230,17 +236,11 @@ impl PermissionManager {
                 Some(("Bash".to_string(), cmd.to_string()))
             }
             "edit_file" => {
-                let path = tool_args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let path = tool_args.get("path").and_then(|v| v.as_str()).unwrap_or("");
                 Some(("Edit".to_string(), path.to_string()))
             }
             "write_file" => {
-                let path = tool_args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let path = tool_args.get("path").and_then(|v| v.as_str()).unwrap_or("");
                 Some(("Write".to_string(), path.to_string()))
             }
             // Read-only tools, task tools, and memory tools don't need permission checks
@@ -265,13 +265,30 @@ impl PermissionManager {
     /// - Literal characters match themselves
     ///
     /// The pattern is anchored (must match the entire target).
+    /// Compiled regexes are cached in `GLOB_CACHE` so each pattern is only compiled once.
     fn glob_matches(pattern: &str, target: &str) -> bool {
+        let re = Self::glob_to_regex_cached(pattern);
+        match re {
+            Some(re) => re.is_match(target),
+            None => false,
+        }
+    }
+
+    /// Return a cached compiled `Regex` for a glob pattern, compiling and caching it on first use.
+    fn glob_to_regex_cached(pattern: &str) -> Option<Regex> {
+        let mut cache = GLOB_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(re) = cache.get(pattern) {
+            return Some(re.clone());
+        }
         let regex_str = Self::glob_to_regex(pattern);
         match Regex::new(&regex_str) {
-            Ok(re) => re.is_match(target),
+            Ok(re) => {
+                cache.insert(pattern.to_string(), re.clone());
+                Some(re)
+            }
             Err(e) => {
                 warn!(pattern = %pattern, error = %e, "Invalid glob pattern");
-                false
+                None
             }
         }
     }
@@ -522,13 +539,18 @@ mod tests {
     }
 
     #[test]
-    fn test_dangerously_disable_sandbox() {
+    fn test_dangerously_disable_sandbox_in_tool_args_is_ignored() {
         let (mgr, _dir) = make_manager(true, vec![]);
+        // Model-supplied dangerously_disable_sandbox must NOT bypass permission checks
         let result = mgr.check(
             "bash",
             &json!({"command": "rm -rf /", "dangerously_disable_sandbox": true}),
         );
-        assert_eq!(result, CheckResult::Allowed);
+        // Should require a prompt, NOT be auto-allowed
+        assert!(
+            matches!(result, CheckResult::NeedsPrompt { .. }),
+            "dangerously_disable_sandbox in tool args must not bypass permissions"
+        );
     }
 
     #[test]

@@ -6,7 +6,7 @@
 //! Claude Code uses an XML format with antml:function_calls and antml:invoke tags.
 //! This module parses those invocations and maps them to local tool execution.
 
-use crate::tools::{FunctionCall, ToolCall};
+use crate::tools::{safe_truncate, FunctionCall, ToolCall};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -450,7 +450,7 @@ impl ToolInterceptor {
             parameters,
             id: format!(
                 "toolu_{}",
-                &Uuid::new_v4().to_string().replace("-", "")[..24]
+                safe_truncate(&Uuid::new_v4().to_string().replace("-", ""), 24)
             ),
         })
     }
@@ -638,7 +638,7 @@ pub fn execute_intercepted_tools(
             println!(
                 "\x1b[32m✓\x1b[0m {}",
                 if preview.len() > 200 {
-                    format!("{}...", &preview[..200])
+                    format!("{}...", safe_truncate(&preview, 200))
                 } else {
                     preview
                 }
@@ -685,6 +685,17 @@ pub fn format_tool_results_xml(results: &[(String, String, bool)]) -> String {
     )
 }
 
+/// Escape special XML characters in content to prevent malformed XML output.
+///
+/// This must be applied to any user/tool content before interpolation into XML tags.
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
 /// Format tool results with tool names for better completion signaling
 pub fn format_tool_results_xml_with_names(results: &[(&str, Option<&str>, &str, bool)]) -> String {
     let mut xml = String::new();
@@ -692,17 +703,17 @@ pub fn format_tool_results_xml_with_names(results: &[(&str, Option<&str>, &str, 
 
     for (id, tool_name, content, is_error) in results {
         xml.push_str("<result>\n");
-        xml.push_str(&format!("<tool_use_id>{}</tool_use_id>\n", id));
+        xml.push_str(&format!("<tool_use_id>{}</tool_use_id>\n", xml_escape(id)));
 
         if *is_error {
             xml.push_str("<status>error</status>\n");
             xml.push_str("<error>");
-            xml.push_str(content);
+            xml.push_str(&xml_escape(content));
             xml.push_str("</error>\n");
         } else {
             xml.push_str("<status>success</status>\n");
             xml.push_str("<output>");
-            xml.push_str(content);
+            xml.push_str(&xml_escape(content));
             xml.push_str("</output>\n");
 
             // Add explicit completion hint for file operations

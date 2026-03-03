@@ -9,6 +9,7 @@
 
 use crate::hooks::{HookEngine, HookEvent, HookInput};
 use crate::proxy::{ChatCompletionRequest, ChatMessage, MessageContent};
+use crate::tui::capitalize_first;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
@@ -16,8 +17,10 @@ use tracing::{debug, info, warn};
 const CLAUDE_OPUS_CONTEXT: usize = 200_000;
 const CLAUDE_SONNET_CONTEXT: usize = 200_000;
 const CLAUDE_HAIKU_CONTEXT: usize = 200_000;
+const GPT5_CONTEXT: usize = 400_000;
 const GPT4_CONTEXT: usize = 128_000;
 const GPT4O_CONTEXT: usize = 128_000;
+const GPT41_CONTEXT: usize = 1_000_000;
 const GPT35_CONTEXT: usize = 16_385;
 const GEMINI_PRO_CONTEXT: usize = 1_000_000;
 const DEFAULT_CONTEXT: usize = 128_000;
@@ -81,6 +84,10 @@ pub fn get_context_window(model: &str) -> usize {
         CLAUDE_HAIKU_CONTEXT
     } else if model_lower.contains("claude") {
         CLAUDE_SONNET_CONTEXT // Default Claude
+    } else if model_lower.contains("gpt-5") {
+        GPT5_CONTEXT
+    } else if model_lower.contains("gpt-4.1") {
+        GPT41_CONTEXT
     } else if model_lower.contains("gpt-4o") {
         GPT4O_CONTEXT
     } else if model_lower.contains("gpt-4") {
@@ -89,14 +96,24 @@ pub fn get_context_window(model: &str) -> usize {
         GPT35_CONTEXT
     } else if model_lower.contains("gemini") {
         GEMINI_PRO_CONTEXT
-    } else if model_lower.contains("o1") || model_lower.contains("o3") {
+    } else if model_lower.contains("o1") || model_lower.contains("o3") || model_lower.contains("o4")
+    {
         GPT4O_CONTEXT
     } else {
         DEFAULT_CONTEXT
     }
 }
 
-/// Estimate token count for a string (approximate: ~4 chars per token)
+/// Estimate token count for a string (approximate: ~4 chars per token for ASCII).
+///
+/// NOTE: This is a heuristic. Real tokenizers (tiktoken, SentencePiece) use
+/// subword vocabularies that vary by model. The ~4 chars/token ratio is a
+/// reasonable average for English ASCII text but under-counts for:
+/// - CJK characters (often 1 token each)
+/// - Emoji (1-3 tokens each)
+/// - Other non-ASCII scripts
+///
+/// We apply a safety adjustment for non-ASCII content to reduce under-estimation.
 pub fn estimate_tokens(text: &str) -> usize {
     // More accurate estimation considering whitespace and punctuation
     let char_count = text.chars().count();
@@ -108,7 +125,16 @@ pub fn estimate_tokens(text: &str) -> usize {
     let word_estimate = (word_count as f32 * 1.3) as usize;
 
     // Take the average, biased toward character count
-    (char_estimate * 2 + word_estimate) / 3
+    let base_estimate = (char_estimate * 2 + word_estimate) / 3;
+
+    // Apply safety factor for non-ASCII content (CJK, emoji, etc.)
+    // Multi-byte characters are often individual tokens, so the ~4 chars/token
+    // ratio significantly under-counts them. Add roughly half the non-ASCII
+    // character count as additional tokens.
+    let non_ascii_count = text.chars().filter(|c| !c.is_ascii()).count();
+    let non_ascii_adjustment = non_ascii_count / 2;
+
+    base_estimate + non_ascii_adjustment
 }
 
 /// Estimate token count for a message
@@ -551,7 +577,10 @@ fn capitalize(s: &str) -> String {
 
 /// Helper to truncate text for summary
 fn truncate_for_summary(text: &str, max_chars: usize) -> String {
-    if text.len() <= max_chars {
+    // Use chars().count() for comparison to be consistent with the
+    // chars().take() truncation below. text.len() returns bytes, which
+    // differs from character count for multi-byte (CJK, emoji, etc.) text.
+    if text.chars().count() <= max_chars {
         text.to_string()
     } else {
         let truncated: String = text.chars().take(max_chars).collect();

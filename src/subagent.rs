@@ -8,7 +8,7 @@
 //! - Background execution with async tracking
 
 use crate::config::AppConfig;
-use crate::tools::{execute_tool, ToolCall};
+use crate::tools::{execute_tool, safe_truncate, ToolCall};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -195,7 +195,7 @@ impl BackgroundAgentManager {
 
     /// Register a new background agent
     pub fn register(&self, agent_type: AgentType, task: &str) -> String {
-        let id = Uuid::new_v4().to_string()[..8].to_string();
+        let id = safe_truncate(&Uuid::new_v4().to_string(), 8).to_string();
         let agent = Arc::new(BackgroundAgent {
             id: id.clone(),
             agent_type,
@@ -323,7 +323,9 @@ fn load_transcript(agent_id: &str) -> Option<(Vec<Value>, AgentType)> {
         let now = Instant::now();
         store.retain(|_, t| now.duration_since(t.created_at).as_secs() < TRANSCRIPT_TTL_SECS);
 
-        store.get(agent_id).map(|t| (t.messages.clone(), t.agent_type))
+        store
+            .get(agent_id)
+            .map(|t| (t.messages.clone(), t.agent_type))
     } else {
         None
     }
@@ -388,7 +390,12 @@ impl WorktreeIsolation {
     /// Check if the worktree has uncommitted changes
     pub fn has_changes(&self) -> bool {
         let result = std::process::Command::new("git")
-            .args(["-C", self.worktree_path.to_str().unwrap_or(""), "diff", "--stat"])
+            .args([
+                "-C",
+                self.worktree_path.to_str().unwrap_or(""),
+                "diff",
+                "--stat",
+            ])
             .output();
 
         match result {
@@ -437,12 +444,12 @@ impl WorktreeIsolation {
 fn resolve_model_name(friendly: &str, provider: &str) -> String {
     match friendly.to_lowercase().as_str() {
         "opus" => match provider {
-            "anthropic" => "claude-opus-4-20250514".to_string(),
-            _ => "claude-opus-4-20250514".to_string(),
+            "anthropic" => "claude-opus-4-6".to_string(),
+            _ => "claude-opus-4-6".to_string(),
         },
         "sonnet" => match provider {
-            "anthropic" => "claude-sonnet-4-20250514".to_string(),
-            _ => "claude-sonnet-4-20250514".to_string(),
+            "anthropic" => "claude-sonnet-4-6".to_string(),
+            _ => "claude-sonnet-4-6".to_string(),
         },
         "haiku" => match provider {
             "anthropic" => "claude-haiku-4-5-20251001".to_string(),
@@ -666,7 +673,7 @@ pub async fn run_subagent(
                 .providers
                 .get(&app_config.proxy.target)
                 .and_then(|p| p.model.clone())
-                .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string())
+                .unwrap_or_else(|| "claude-sonnet-4-6".to_string())
         });
 
     // Get provider config
@@ -1038,7 +1045,7 @@ fn transform_to_anthropic(request: &Value) -> Value {
         .unwrap_or_default();
 
     let mut body = json!({
-        "model": request.get("model").and_then(|m| m.as_str()).unwrap_or("claude-sonnet-4-20250514"),
+        "model": request.get("model").and_then(|m| m.as_str()).unwrap_or("claude-sonnet-4-6"),
         "messages": converted_messages,
         "max_tokens": request.get("max_tokens").and_then(|m| m.as_u64()).unwrap_or(SUBAGENT_MAX_TOKENS as u64)
     });
@@ -1135,7 +1142,10 @@ pub fn execute_task_tool(args: &HashMap<String, Value>, app_config: &AppConfig) 
     };
 
     // Handle resume: if resume ID is provided, load previous transcript
-    let resume_id = args.get("resume").and_then(|v| v.as_str()).map(String::from);
+    let resume_id = args
+        .get("resume")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     let subagent_type_str = match args.get("subagent_type").and_then(|v| v.as_str()) {
         Some(t) => t,
@@ -1261,7 +1271,7 @@ pub fn execute_agent_output_tool(args: &HashMap<String, Value>) -> (String, bool
             for (id, agent_type, task, finished) in agents {
                 let status = if finished { "finished" } else { "running" };
                 let task_preview = if task.len() > 50 {
-                    format!("{}...", &task[..50])
+                    format!("{}...", safe_truncate(&task, 50))
                 } else {
                     task
                 };

@@ -8,6 +8,44 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use url::Url;
+
+/// Validate that a URL is safe to fetch (prevents SSRF and restricts schemes)
+fn validate_url(url_str: &str) -> Result<(), String> {
+    let parsed = Url::parse(url_str).map_err(|e| format!("Invalid URL: {}", e))?;
+
+    // Only allow http/https schemes (blocks file://, data:, ftp://, etc.)
+    match parsed.scheme() {
+        "http" | "https" => {}
+        scheme => return Err(format!("Unsupported URL scheme: {}", scheme)),
+    }
+
+    // Block private/internal network addresses to prevent SSRF
+    if let Some(host) = parsed.host_str() {
+        let host_lower = host.to_lowercase();
+        if host_lower == "localhost"
+            || host_lower == "[::1]"
+            || host.starts_with("127.")
+            || host.starts_with("10.")
+            || host.starts_with("192.168.")
+            || host.starts_with("172.16.")
+            || host.starts_with("172.17.")
+            || host.starts_with("172.18.")
+            || host.starts_with("172.19.")
+            || host.starts_with("172.2")
+            || host.starts_with("172.30.")
+            || host.starts_with("172.31.")
+            || host.starts_with("169.254.")
+            || host == "0.0.0.0"
+        {
+            return Err(format!("URL points to private/internal network: {}", host));
+        }
+    } else {
+        return Err("URL has no host".to_string());
+    }
+
+    Ok(())
+}
 
 /// Jina Reader base URL - converts any URL to clean markdown
 const JINA_READER_URL: &str = "https://r.jina.ai/";
@@ -62,6 +100,8 @@ pub struct SearchResult {
 /// - Cloudflare bypass
 /// - Clean markdown output
 pub async fn fetch_url(url: &str) -> Result<FetchResult, String> {
+    validate_url(url)?;
+
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -384,6 +424,8 @@ pub fn search_duckduckgo(_query: &str, _limit: usize) -> Result<Vec<SearchResult
 /// Use this when Jina Reader fails (e.g., complex authentication, specific Cloudflare challenges)
 #[cfg(feature = "browser")]
 pub fn fetch_with_browser(url: &str) -> Result<FetchResult, String> {
+    validate_url(url)?;
+
     use headless_chrome::{Browser, LaunchOptions};
 
     let browser = Browser::new(
@@ -423,7 +465,8 @@ pub fn fetch_with_browser(url: &str) -> Result<FetchResult, String> {
 }
 
 #[cfg(not(feature = "browser"))]
-pub fn fetch_with_browser(_url: &str) -> Result<FetchResult, String> {
+pub fn fetch_with_browser(url: &str) -> Result<FetchResult, String> {
+    validate_url(url)?;
     Err("Browser feature not enabled. Rebuild with `cargo build --features browser`".to_string())
 }
 
@@ -476,5 +519,99 @@ mod tests {
         let results: Vec<SearchResult> = vec![];
         let formatted = format_search_results(&results);
         assert!(formatted.contains("No results found"));
+    }
+
+    #[test]
+    fn test_validate_url_allows_http() {
+        assert!(validate_url("http://example.com").is_ok());
+    }
+
+    #[test]
+    fn test_validate_url_allows_https() {
+        assert!(validate_url("https://example.com/path?q=1").is_ok());
+    }
+
+    #[test]
+    fn test_validate_url_blocks_file_scheme() {
+        let result = validate_url("file:///etc/passwd");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unsupported URL scheme"));
+    }
+
+    #[test]
+    fn test_validate_url_blocks_data_scheme() {
+        let result = validate_url("data:text/html,<h1>hi</h1>");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unsupported URL scheme"));
+    }
+
+    #[test]
+    fn test_validate_url_blocks_ftp_scheme() {
+        let result = validate_url("ftp://files.example.com/secret");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unsupported URL scheme"));
+    }
+
+    #[test]
+    fn test_validate_url_blocks_localhost() {
+        let result = validate_url("http://localhost:8080/admin");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("private/internal network"));
+    }
+
+    #[test]
+    fn test_validate_url_blocks_127() {
+        let result = validate_url("http://127.0.0.1:9090/");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("private/internal network"));
+    }
+
+    #[test]
+    fn test_validate_url_blocks_10_network() {
+        let result = validate_url("http://10.0.0.1/internal");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("private/internal network"));
+    }
+
+    #[test]
+    fn test_validate_url_blocks_192_168() {
+        let result = validate_url("http://192.168.1.1/router");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("private/internal network"));
+    }
+
+    #[test]
+    fn test_validate_url_blocks_172_16() {
+        let result = validate_url("http://172.16.0.1/");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("private/internal network"));
+    }
+
+    #[test]
+    fn test_validate_url_blocks_169_254_link_local() {
+        let result = validate_url("http://169.254.169.254/latest/meta-data/");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("private/internal network"));
+    }
+
+    #[test]
+    fn test_validate_url_blocks_zero_address() {
+        let result = validate_url("http://0.0.0.0/");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("private/internal network"));
+    }
+
+    #[test]
+    fn test_validate_url_blocks_ipv6_loopback() {
+        let result = validate_url("http://[::1]:8080/");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("private/internal network"));
+    }
+
+    #[test]
+    fn test_validate_url_rejects_invalid_url() {
+        let result = validate_url("not a url at all");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid URL"));
     }
 }
