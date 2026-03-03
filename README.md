@@ -14,7 +14,7 @@ OpenClaudia is a Rust-based CLI that transforms any LLM into an agentic coding a
 - **28 Agentic Tools** — Bash, file ops, web search, notebooks, task tracking, plan mode, MCP resources
 - **Tool Execution Loop** — Multi-turn tool calling with automatic result feedback (works across all providers)
 - **Web Search** — DuckDuckGo (free, no API key), Tavily, or Brave APIs
-- **Stateful Memory** — Letta/MemGPT-style archival + core memory that persists across sessions
+- **Auto-Learning Memory** — Automatically captures coding patterns, error resolutions, file relationships, and user preferences across sessions
 - **Background Shells** — Run long-running processes, check output, and kill them on demand
 - **Thinking Mode** — Extended reasoning for Anthropic, OpenAI o1/o3, Gemini 2.5, DeepSeek R1, Qwen QwQ, GLM
 - **VDD Adversarial Review** — Verification-Driven Development: a separate adversary model reviews code for bugs/vulnerabilities
@@ -160,7 +160,6 @@ keybindings:
 ```bash
 openclaudia                    # Start interactive chat (default)
 openclaudia -m <model>         # Use specific model (auto-detects provider)
-openclaudia --stateful         # Enable persistent memory
 openclaudia -v                 # Verbose logging
 
 openclaudia init               # Initialize config in current directory
@@ -204,14 +203,16 @@ openclaudia doctor             # Check connectivity and API keys
 | `!<command>` | Run shell command directly |
 | `@<file>` | Attach file to prompt |
 
-### Memory Commands (Stateful Mode)
+### Memory Commands (Auto-Learning)
 
 | Command | Description |
 |---------|-------------|
-| `/memory` | Show memory stats |
-| `/memory list` | List recent memories |
-| `/memory search <query>` | Search memories |
-| `/memory show <id>` | Show memory by ID |
+| `/memory` | Show auto-learning statistics |
+| `/memory patterns` | Show learned coding patterns |
+| `/memory errors <file>` | Show known error patterns for a file |
+| `/memory prefs` | Show learned user preferences |
+| `/memory files <file>` | Show file co-edit relationships |
+| `/memory reset` | Reset all learned data (with confirmation) |
 
 ## Keyboard Shortcuts
 
@@ -268,15 +269,6 @@ openclaudia doctor             # Check connectivity and API keys
 |------|-------------|
 | `list_mcp_resources` | Browse resources from connected MCP servers |
 | `read_mcp_resource` | Read a specific MCP resource by URI |
-
-### Memory Tools (Stateful Mode)
-
-| Tool | Description |
-|------|-------------|
-| `memory_save` | Save information to archival memory with tags |
-| `memory_search` | Search archival memory by query |
-| `memory_update` | Update an existing memory entry |
-| `core_memory_update` | Update persona, project info, or user preferences |
 
 ## Supported Models
 
@@ -374,21 +366,17 @@ hooks:
 - `post_tool_use` — After executing a tool
 - `stop` — For iteration/loop mode control
 
-## Stateful Mode
+## Auto-Learning Memory
 
-Enable persistent memory with `--stateful`:
+OpenClaudia automatically learns from your coding sessions without any flags or model intervention. A SQLite database (`.openclaudia/memory.db`) captures knowledge from tool execution signals:
 
-```bash
-openclaudia --stateful
-```
+- **Coding Patterns** — Conventions, pitfalls, and architecture observed from lint output and edit failures
+- **Error Resolutions** — Errors encountered and how they were fixed, matched automatically when subsequent commands succeed
+- **File Relationships** — Files frequently edited together (co-edit tracking), surfaced when you touch related code
+- **User Preferences** — Style and workflow preferences detected from corrections ("no, use tabs") and explicit statements ("always use snake_case")
+- **Session Continuity** — Recent session summaries and activity logs for context across restarts
 
-This creates a SQLite database in `.openclaudia/memory.db` with:
-
-- **Archival Memory** — Long-term storage for facts, decisions, patterns
-- **Core Memory** — Always-present context (persona, project info, user preferences)
-- **Short-term Memory** — Session summaries and recent activity (always active, even without `--stateful`)
-
-The agent can save and recall information across sessions using memory tools.
+Knowledge is injected into the model's context automatically — file-specific patterns when you read/edit a file, and preferences in every system prompt. Use `/memory` commands to inspect what's been learned.
 
 ## Project Structure
 
@@ -396,7 +384,7 @@ The agent can save and recall information across sessions using memory tools.
 .openclaudia/
 ├── config.yaml        # Main configuration
 ├── session/           # Persisted chat sessions
-├── memory.db          # Stateful memory database
+├── memory.db          # Auto-learning memory database
 ├── hooks/             # Custom hook scripts
 ├── rules/             # Language-specific rules (*.md)
 ├── plugins/           # Plugin manifests

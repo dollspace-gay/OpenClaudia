@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Auto-learning memory system** — Replaces MemGPT-style tools with automatic knowledge capture from tool execution signals (#67)
+  - Coding patterns: conventions, pitfalls, and architecture learned from lint output and edit failures
+  - Error resolutions: errors matched to their fixes when subsequent commands succeed
+  - File relationships: co-edit tracking across sessions surfaces related files
+  - User preferences: detected from corrections and explicit statements
+  - File-specific knowledge injected into context when reading/editing files
+  - Learned preferences injected into every system prompt
+  - New `/memory` subcommands: `patterns`, `errors`, `prefs`, `files`, `reset`
+  - Schema v3 migration with 4 new tables: `coding_patterns`, `file_relationships`, `error_patterns`, `learned_preferences`
 - Google Gemini full native integration with non-streaming response parsing, tool execution loop, and multi-turn functionCall/functionResponse support
 - Provider auto-detection from `-m` flag: `gemini-*` → Google, `gpt-*` → OpenAI, `claude-*` → Anthropic, etc.
 - VDD adversarial review now runs for all providers (previously only proxy/Anthropic OAuth mode)
@@ -42,6 +51,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix missing `permissions` field in test AppConfig initializers after merge
 
 ### Changed
+- Memory system is now always-on — no `--stateful` flag needed; auto-learning activates when `.openclaudia/memory.db` opens successfully (#67)
+- `/memory` command now shows auto-learning statistics (patterns, errors, preferences, file relationships) instead of raw archival memory (#67)
+- System prompt injects learned preferences and file-specific knowledge instead of MemGPT core memory sections (#67)
+- `get_all_tool_definitions()` simplified from 2 parameters (`stateful`, `subagents`) to 1 (`subagents`) (#67)
 - Make `determine_provider()` public for use in chat mode provider auto-detection
 - Update default Google model from retired `gemini-pro` to `gemini-2.5-flash`
 - Refactor `TaskManager::update_task` from 8 args to `TaskUpdateParams` struct (clippy fix)
@@ -71,6 +84,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Update subagent default models to Claude Opus 4.6 / Sonnet 4.6
 
 ### Removed
+- Remove `--stateful` CLI flag — memory is now always-on when the database opens successfully (#67)
+- Remove MemGPT-style memory tools: `memory_save`, `memory_search`, `memory_update`, `core_memory_update` (#67)
+- Remove `get_memory_tool_definitions()` and all memory tool execution branches from tools.rs (#67)
 - Remove obsolete TestBuilder adversarial subagent code (#205)
 
 ### Security
