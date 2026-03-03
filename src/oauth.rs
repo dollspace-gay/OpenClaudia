@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
-use rand::RngCore;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -103,7 +103,7 @@ impl PkceParams {
 /// Generate a cryptographically secure random string (base64url encoded)
 fn generate_random_string(byte_length: usize) -> String {
     let mut bytes = vec![0u8; byte_length];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(&bytes)
 }
 
@@ -284,13 +284,19 @@ impl OAuthStore {
     /// Store PKCE challenge for pending authorization
     pub fn store_challenge(&self, pkce: PkceParams) {
         let state = pkce.state.clone();
-        let mut challenges = self.pending_challenges.write().unwrap();
+        let mut challenges = self
+            .pending_challenges
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         challenges.insert(state, pkce);
     }
 
     /// Retrieve and remove PKCE challenge by state
     pub fn take_challenge(&self, state: &str) -> Option<PkceParams> {
-        let mut challenges = self.pending_challenges.write().unwrap();
+        let mut challenges = self
+            .pending_challenges
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         challenges.remove(state)
     }
 
@@ -298,7 +304,7 @@ impl OAuthStore {
     pub fn store_session(&self, session: OAuthSession) {
         let id = session.id.clone();
         {
-            let mut sessions = self.sessions.write().unwrap();
+            let mut sessions = self.sessions.write().unwrap_or_else(|e| e.into_inner());
             sessions.insert(id.clone(), session);
         }
         self.persist_to_disk();
@@ -307,13 +313,13 @@ impl OAuthStore {
 
     /// Retrieve session by ID
     pub fn get_session(&self, id: &str) -> Option<OAuthSession> {
-        let sessions = self.sessions.read().unwrap();
+        let sessions = self.sessions.read().unwrap_or_else(|e| e.into_inner());
         sessions.get(id).cloned()
     }
 
     /// Get any valid (non-expired) session - used when no specific session ID is provided
     pub fn get_any_valid_session(&self) -> Option<OAuthSession> {
-        let sessions = self.sessions.read().unwrap();
+        let sessions = self.sessions.read().unwrap_or_else(|e| e.into_inner());
         for (id, session) in sessions.iter() {
             let expired = session.credentials.is_expired();
             tracing::debug!(
@@ -351,7 +357,7 @@ impl OAuthStore {
                         })
                         .collect();
 
-                    let mut sessions = self.sessions.write().unwrap();
+                    let mut sessions = self.sessions.write().unwrap_or_else(|e| e.into_inner());
                     *sessions = valid_sessions;
                     info!("Loaded {} OAuth sessions from disk", sessions.len());
                 }
@@ -365,7 +371,7 @@ impl OAuthStore {
         }
     }
 
-    /// Persist sessions to disk
+    /// Persist sessions to disk with restrictive file permissions
     fn persist_to_disk(&self) {
         let Some(path) = &self.persist_path else {
             return;
@@ -376,11 +382,26 @@ impl OAuthStore {
             let _ = fs::create_dir_all(parent);
         }
 
-        let sessions = self.sessions.read().unwrap();
+        let sessions = self.sessions.read().unwrap_or_else(|e| e.into_inner());
         match serde_json::to_string_pretty(&*sessions) {
             Ok(json) => {
-                if let Err(e) = fs::write(path, json) {
+                if let Err(e) = fs::write(path, &json) {
                     error!("Failed to persist OAuth sessions: {}", e);
+                    return;
+                }
+
+                // Set restrictive permissions so only the file owner can read/write
+                // (mitigates plaintext token exposure to other users on the system)
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(metadata) = fs::metadata(path) {
+                        let mut perms = metadata.permissions();
+                        perms.set_mode(0o600);
+                        if let Err(e) = fs::set_permissions(path, perms) {
+                            error!("Failed to set permissions on OAuth session file: {}", e);
+                        }
+                    }
                 }
             }
             Err(e) => {
