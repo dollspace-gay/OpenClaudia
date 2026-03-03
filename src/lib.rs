@@ -7,6 +7,7 @@
 
 #![recursion_limit = "256"]
 
+pub mod auto_learn;
 pub mod compaction;
 pub mod config;
 pub mod context;

@@ -13,7 +13,7 @@
 //! - core_memory_update: Update core memory sections
 //!
 use crate::config::AppConfig;
-use crate::memory::{MemoryDb, SECTION_PERSONA, SECTION_PROJECT_INFO, SECTION_USER_PREFS};
+use crate::memory::MemoryDb;
 use crate::permissions::{CheckResult, PermissionManager};
 use crate::session::TaskManager;
 use crate::subagent;
@@ -2347,112 +2347,9 @@ impl AnthropicToolAccumulator {
     }
 }
 
-// === Memory Tools (Stateful Mode) ===
-
-/// Get memory tool definitions for stateful mode
-pub fn get_memory_tool_definitions() -> Value {
-    json!([
-        {
-            "type": "function",
-            "function": {
-                "name": "memory_save",
-                "description": "Save important information to archival memory for long-term storage. Use this to remember facts, decisions, patterns, and anything worth preserving across sessions.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "content": {
-                            "type": "string",
-                            "description": "The information to save to memory"
-                        },
-                        "tags": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "Optional tags for categorizing the memory (e.g., ['architecture', 'decision'])"
-                        }
-                    },
-                    "required": ["content"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "memory_search",
-                "description": "Search archival memory for relevant information. Use this to recall previously saved facts, decisions, or context.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The search query to find relevant memories"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum number of results to return (default: 10)"
-                        }
-                    },
-                    "required": ["query"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "memory_update",
-                "description": "Update an existing memory entry by ID. Use this to correct or expand previously saved information.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "id": {
-                            "type": "integer",
-                            "description": "The ID of the memory to update"
-                        },
-                        "content": {
-                            "type": "string",
-                            "description": "The new content for the memory"
-                        }
-                    },
-                    "required": ["id", "content"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "core_memory_update",
-                "description": "Update a core memory section. Core memory is always present in context. Sections: 'persona' (your identity/role), 'project_info' (project knowledge), 'user_preferences' (user's preferences).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "section": {
-                            "type": "string",
-                            "enum": ["persona", "project_info", "user_preferences"],
-                            "description": "The core memory section to update"
-                        },
-                        "content": {
-                            "type": "string",
-                            "description": "The new content for this section"
-                        }
-                    },
-                    "required": ["section", "content"]
-                }
-            }
-        }
-    ])
-}
-
-/// Get all tool definitions, optionally including memory and subagent tools
-pub fn get_all_tool_definitions(stateful: bool, subagents: bool) -> Value {
+/// Get all tool definitions, optionally including subagent tools
+pub fn get_all_tool_definitions(subagents: bool) -> Value {
     let mut tools = get_tool_definitions();
-
-    if stateful {
-        if let (Some(base_arr), Some(memory_arr)) = (
-            tools.as_array_mut(),
-            get_memory_tool_definitions().as_array().cloned(),
-        ) {
-            base_arr.extend(memory_arr);
-        }
-    }
 
     if subagents {
         if let (Some(base_arr), Some(subagent_arr)) = (
@@ -2468,8 +2365,8 @@ pub fn get_all_tool_definitions(stateful: bool, subagents: bool) -> Value {
     tools
 }
 
-/// Execute a tool call, with optional memory database for stateful mode
-pub fn execute_tool_with_memory(tool_call: &ToolCall, memory_db: Option<&MemoryDb>) -> ToolResult {
+/// Execute a tool call (memory_db kept for API compatibility with execute_tool_full)
+pub fn execute_tool_with_memory(tool_call: &ToolCall, _memory_db: Option<&MemoryDb>) -> ToolResult {
     let args: HashMap<String, Value> =
         serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
 
@@ -2484,48 +2381,6 @@ pub fn execute_tool_with_memory(tool_call: &ToolCall, memory_db: Option<&MemoryD
         "notebook_edit" => execute_notebook_edit(&args),
         "list_files" => execute_list_files(&args),
         "chainlink" => execute_chainlink(&args),
-
-        // Memory tools (require stateful mode)
-        "memory_save" => {
-            if let Some(db) = memory_db {
-                execute_memory_save(&args, db)
-            } else {
-                (
-                    "Memory tools require stateful mode (--stateful flag)".to_string(),
-                    true,
-                )
-            }
-        }
-        "memory_search" => {
-            if let Some(db) = memory_db {
-                execute_memory_search(&args, db)
-            } else {
-                (
-                    "Memory tools require stateful mode (--stateful flag)".to_string(),
-                    true,
-                )
-            }
-        }
-        "memory_update" => {
-            if let Some(db) = memory_db {
-                execute_memory_update(&args, db)
-            } else {
-                (
-                    "Memory tools require stateful mode (--stateful flag)".to_string(),
-                    true,
-                )
-            }
-        }
-        "core_memory_update" => {
-            if let Some(db) = memory_db {
-                execute_core_memory_update(&args, db)
-            } else {
-                (
-                    "Memory tools require stateful mode (--stateful flag)".to_string(),
-                    true,
-                )
-            }
-        }
 
         // Web tools
         "web_fetch" => execute_web_fetch(&args),
@@ -2593,108 +2448,6 @@ pub fn execute_tool_full(
         tool_call_id: tool_call.id.clone(),
         content,
         is_error,
-    }
-}
-
-/// Save content to archival memory
-fn execute_memory_save(args: &HashMap<String, Value>, db: &MemoryDb) -> (String, bool) {
-    let content = match args.get("content").and_then(|v| v.as_str()) {
-        Some(c) => c,
-        None => return ("Missing 'content' argument".to_string(), true),
-    };
-
-    let tags: Vec<String> = args
-        .get("tags")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    match db.memory_save(content, &tags) {
-        Ok(id) => (
-            format!("Memory saved with ID {}. Tags: {:?}", id, tags),
-            false,
-        ),
-        Err(e) => (format!("Failed to save memory: {}", e), true),
-    }
-}
-
-/// Search archival memory
-fn execute_memory_search(args: &HashMap<String, Value>, db: &MemoryDb) -> (String, bool) {
-    let query = match args.get("query").and_then(|v| v.as_str()) {
-        Some(q) => q,
-        None => return ("Missing 'query' argument".to_string(), true),
-    };
-
-    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
-
-    match db.memory_search(query, limit) {
-        Ok(memories) => {
-            if memories.is_empty() {
-                return ("No memories found matching query.".to_string(), false);
-            }
-
-            let mut result = format!("Found {} memories:\n\n", memories.len());
-            for mem in memories {
-                result.push_str(&format!(
-                    "[ID {}] ({})\n{}\nTags: {:?}\n\n",
-                    mem.id, mem.updated_at, mem.content, mem.tags
-                ));
-            }
-            (result, false)
-        }
-        Err(e) => (format!("Failed to search memory: {}", e), true),
-    }
-}
-
-/// Update an existing memory
-fn execute_memory_update(args: &HashMap<String, Value>, db: &MemoryDb) -> (String, bool) {
-    let id = match args.get("id").and_then(|v| v.as_i64()) {
-        Some(id) => id,
-        None => return ("Missing 'id' argument".to_string(), true),
-    };
-
-    let content = match args.get("content").and_then(|v| v.as_str()) {
-        Some(c) => c,
-        None => return ("Missing 'content' argument".to_string(), true),
-    };
-
-    match db.memory_update(id, content) {
-        Ok(true) => (format!("Memory {} updated successfully.", id), false),
-        Ok(false) => (format!("Memory {} not found.", id), true),
-        Err(e) => (format!("Failed to update memory: {}", e), true),
-    }
-}
-
-/// Update a core memory section
-fn execute_core_memory_update(args: &HashMap<String, Value>, db: &MemoryDb) -> (String, bool) {
-    let section = match args.get("section").and_then(|v| v.as_str()) {
-        Some(s) => s,
-        None => return ("Missing 'section' argument".to_string(), true),
-    };
-
-    // Validate section name
-    if ![SECTION_PERSONA, SECTION_PROJECT_INFO, SECTION_USER_PREFS].contains(&section) {
-        return (
-            format!(
-                "Invalid section '{}'. Must be: {}, {}, or {}",
-                section, SECTION_PERSONA, SECTION_PROJECT_INFO, SECTION_USER_PREFS
-            ),
-            true,
-        );
-    }
-
-    let content = match args.get("content").and_then(|v| v.as_str()) {
-        Some(c) => c,
-        None => return ("Missing 'content' argument".to_string(), true),
-    };
-
-    match db.update_core_memory(section, content) {
-        Ok(()) => (format!("Core memory section '{}' updated.", section), false),
-        Err(e) => (format!("Failed to update core memory: {}", e), true),
     }
 }
 

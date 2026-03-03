@@ -240,12 +240,14 @@ pub fn build_system_prompt(
     // Start with base personality
     prompt.push_str(BASE_PROMPT);
 
-    // Add core memory context if in stateful mode
+    // Add auto-learned knowledge
     if let Some(db) = memory_db {
-        if let Ok(core_memory) = db.format_core_memory_for_prompt() {
-            if !core_memory.is_empty() {
-                prompt.push_str("\n\n## Your Memory\n");
-                prompt.push_str(&core_memory);
+        // Inject learned user preferences (always relevant)
+        if let Ok(prefs) = db.format_learned_preferences() {
+            if !prefs.is_empty() {
+                prompt.push_str("\n\n## Learned Preferences\n");
+                prompt.push_str("These preferences were learned from previous interactions. Follow them:\n\n");
+                prompt.push_str(&prefs);
             }
         }
 

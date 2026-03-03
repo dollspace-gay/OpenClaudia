@@ -1,6 +1,7 @@
-//! Stateful memory module for OpenClaudia
+//! Auto-learning memory module for OpenClaudia
 //!
-//! Implements Letta/MemGPT-style archival memory using SQLite.
+//! Provides structured, automatic knowledge capture using SQLite.
+//! Learns from tool execution signals, user corrections, and session patterns.
 //! Each project gets its own memory database that persists across sessions.
 
 use anyhow::{Context, Result};
@@ -12,7 +13,7 @@ use std::sync::Mutex;
 const MEMORY_DB_NAME: &str = "memory.db";
 
 /// Current schema version - increment when adding migrations
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// Short-term memory expiration (hours)
 const SHORT_TERM_EXPIRY_HOURS: i64 = 48;
@@ -60,6 +61,42 @@ pub struct ArchivalMemory {
 pub struct CoreMemory {
     pub section: String,
     pub content: String,
+    pub updated_at: String,
+}
+
+/// A coding pattern observed in the codebase
+#[derive(Debug, Clone)]
+pub struct CodingPattern {
+    pub id: i64,
+    pub file_glob: String,
+    pub pattern_type: String, // "convention", "pitfall", "dependency", "architecture"
+    pub description: String,
+    pub confidence: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// An error pattern and its resolution
+#[derive(Debug, Clone)]
+pub struct ErrorPattern {
+    pub id: i64,
+    pub error_signature: String,
+    pub file_context: Option<String>,
+    pub resolution: Option<String>,
+    pub occurrences: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// A user preference learned from corrections or explicit statements
+#[derive(Debug, Clone)]
+pub struct LearnedPreference {
+    pub id: i64,
+    pub category: String, // "style", "workflow", "naming", "tool_usage", "correction"
+    pub preference: String,
+    pub source: Option<String>,
+    pub confidence: i64,
+    pub created_at: String,
     pub updated_at: String,
 }
 
@@ -143,6 +180,11 @@ impl MemoryDb {
         // Version 2: Add short-term memory tables
         if from_version < 2 {
             Self::migrate_v2_on(conn)?;
+        }
+
+        // Version 3: Add auto-learning tables
+        if from_version < 3 {
+            Self::migrate_v3_on(conn)?;
         }
 
         // Record current version
@@ -247,6 +289,63 @@ impl MemoryDb {
             "#,
         )
         .context("Failed to create v2 schema (short-term memory)")?;
+
+        Ok(())
+    }
+
+    /// Migration v3: Add auto-learning tables
+    fn migrate_v3_on(conn: &Connection) -> Result<()> {
+        tracing::debug!("Running migration v3: auto-learning tables");
+        conn.execute_batch(
+            r#"
+            -- Patterns observed in the codebase
+            CREATE TABLE IF NOT EXISTS coding_patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_glob TEXT NOT NULL,
+                pattern_type TEXT NOT NULL,
+                description TEXT NOT NULL,
+                confidence INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_coding_patterns_glob ON coding_patterns(file_glob);
+            CREATE INDEX IF NOT EXISTS idx_coding_patterns_type ON coding_patterns(pattern_type);
+
+            -- Files that tend to need changes together
+            CREATE TABLE IF NOT EXISTS file_relationships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_a TEXT NOT NULL,
+                file_b TEXT NOT NULL,
+                co_edit_count INTEGER DEFAULT 1,
+                last_seen TEXT DEFAULT (datetime('now')),
+                UNIQUE(file_a, file_b)
+            );
+
+            -- Errors and how they were resolved
+            CREATE TABLE IF NOT EXISTS error_patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                error_signature TEXT NOT NULL,
+                file_context TEXT,
+                resolution TEXT,
+                occurrences INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_error_patterns_sig ON error_patterns(error_signature);
+
+            -- User preferences learned from corrections
+            CREATE TABLE IF NOT EXISTS learned_preferences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                preference TEXT NOT NULL,
+                source TEXT,
+                confidence INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+            "#,
+        )
+        .context("Failed to create v3 schema (auto-learning tables)")?;
 
         Ok(())
     }
@@ -667,7 +766,337 @@ impl MemoryDb {
         Ok(output)
     }
 
-    /// Reset everything including core memory and short-term memory
+    // === Auto-Learning: Coding Patterns ===
+
+    /// Save a coding pattern for a file glob
+    pub fn save_coding_pattern(
+        &self,
+        file_glob: &str,
+        pattern_type: &str,
+        description: &str,
+    ) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        // Upsert: if same glob+type+description exists, bump confidence
+        let existing: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM coding_patterns WHERE file_glob = ?1 AND pattern_type = ?2 AND description = ?3",
+                params![file_glob, pattern_type, description],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if let Some(id) = existing {
+            conn.execute(
+                "UPDATE coding_patterns SET confidence = confidence + 1, updated_at = datetime('now') WHERE id = ?1",
+                params![id],
+            )?;
+            Ok(id)
+        } else {
+            conn.execute(
+                "INSERT INTO coding_patterns (file_glob, pattern_type, description) VALUES (?1, ?2, ?3)",
+                params![file_glob, pattern_type, description],
+            )?;
+            Ok(conn.last_insert_rowid())
+        }
+    }
+
+    /// Get coding patterns matching a file path (checks against globs)
+    pub fn get_patterns_for_file(&self, file_path: &str) -> Result<Vec<CodingPattern>> {
+        let conn = self.conn.lock().unwrap();
+        // Fetch all patterns and filter by glob match in Rust
+        let mut stmt = conn.prepare(
+            "SELECT id, file_glob, pattern_type, description, confidence, created_at, updated_at FROM coding_patterns ORDER BY confidence DESC",
+        )?;
+
+        let all_patterns = stmt
+            .query_map([], |row| {
+                Ok(CodingPattern {
+                    id: row.get(0)?,
+                    file_glob: row.get(1)?,
+                    pattern_type: row.get(2)?,
+                    description: row.get(3)?,
+                    confidence: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Filter by glob match
+        Ok(all_patterns
+            .into_iter()
+            .filter(|p| glob_matches(&p.file_glob, file_path))
+            .collect())
+    }
+
+    // === Auto-Learning: File Relationships ===
+
+    /// Record that two files were edited together (upsert)
+    pub fn save_file_relationship(&self, file_a: &str, file_b: &str) -> Result<()> {
+        // Normalize order so (a, b) and (b, a) map to the same row
+        let (fa, fb) = if file_a <= file_b {
+            (file_a, file_b)
+        } else {
+            (file_b, file_a)
+        };
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            r#"INSERT INTO file_relationships (file_a, file_b)
+               VALUES (?1, ?2)
+               ON CONFLICT(file_a, file_b) DO UPDATE SET
+                   co_edit_count = co_edit_count + 1,
+                   last_seen = datetime('now')"#,
+            params![fa, fb],
+        )?;
+        Ok(())
+    }
+
+    /// Get files frequently co-edited with the given file
+    pub fn get_related_files(&self, file_path: &str) -> Result<Vec<(String, i64)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            r#"SELECT
+                   CASE WHEN file_a = ?1 THEN file_b ELSE file_a END as related,
+                   co_edit_count
+               FROM file_relationships
+               WHERE file_a = ?1 OR file_b = ?1
+               ORDER BY co_edit_count DESC
+               LIMIT 10"#,
+        )?;
+
+        let results = stmt
+            .query_map(params![file_path], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(results)
+    }
+
+    // === Auto-Learning: Error Patterns ===
+
+    /// Save or update an error pattern
+    pub fn save_error_pattern(
+        &self,
+        error_signature: &str,
+        file_context: Option<&str>,
+        resolution: Option<&str>,
+    ) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        // Check for existing by signature + file
+        let existing: Option<(i64, Option<String>)> = conn
+            .query_row(
+                "SELECT id, resolution FROM error_patterns WHERE error_signature = ?1 AND (file_context = ?2 OR (?2 IS NULL AND file_context IS NULL))",
+                params![error_signature, file_context],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+
+        if let Some((id, existing_resolution)) = existing {
+            // Bump occurrences, update resolution if we have a new one
+            if resolution.is_some() && existing_resolution.is_none() {
+                conn.execute(
+                    "UPDATE error_patterns SET occurrences = occurrences + 1, resolution = ?1, updated_at = datetime('now') WHERE id = ?2",
+                    params![resolution, id],
+                )?;
+            } else {
+                conn.execute(
+                    "UPDATE error_patterns SET occurrences = occurrences + 1, updated_at = datetime('now') WHERE id = ?1",
+                    params![id],
+                )?;
+            }
+            Ok(id)
+        } else {
+            conn.execute(
+                "INSERT INTO error_patterns (error_signature, file_context, resolution) VALUES (?1, ?2, ?3)",
+                params![error_signature, file_context, resolution],
+            )?;
+            Ok(conn.last_insert_rowid())
+        }
+    }
+
+    /// Get error patterns for a specific file
+    pub fn get_error_patterns_for_file(&self, file_path: &str) -> Result<Vec<ErrorPattern>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            r#"SELECT id, error_signature, file_context, resolution, occurrences, created_at, updated_at
+               FROM error_patterns
+               WHERE file_context = ?1
+               ORDER BY occurrences DESC
+               LIMIT 10"#,
+        )?;
+
+        let patterns = stmt
+            .query_map(params![file_path], |row| {
+                Ok(ErrorPattern {
+                    id: row.get(0)?,
+                    error_signature: row.get(1)?,
+                    file_context: row.get(2)?,
+                    resolution: row.get(3)?,
+                    occurrences: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(patterns)
+    }
+
+    /// Update the resolution for an existing error pattern
+    pub fn resolve_error_pattern(&self, error_signature: &str, file_context: Option<&str>, resolution: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
+            "UPDATE error_patterns SET resolution = ?1, updated_at = datetime('now') WHERE error_signature = ?2 AND (file_context = ?3 OR (?3 IS NULL AND file_context IS NULL)) AND resolution IS NULL",
+            params![resolution, error_signature, file_context],
+        )?;
+        Ok(rows > 0)
+    }
+
+    // === Auto-Learning: Learned Preferences ===
+
+    /// Save a learned user preference
+    pub fn save_learned_preference(
+        &self,
+        category: &str,
+        preference: &str,
+        source: Option<&str>,
+    ) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        // Check for similar existing preference
+        let existing: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM learned_preferences WHERE category = ?1 AND preference = ?2",
+                params![category, preference],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if let Some(id) = existing {
+            conn.execute(
+                "UPDATE learned_preferences SET confidence = confidence + 1, updated_at = datetime('now') WHERE id = ?1",
+                params![id],
+            )?;
+            Ok(id)
+        } else {
+            conn.execute(
+                "INSERT INTO learned_preferences (category, preference, source) VALUES (?1, ?2, ?3)",
+                params![category, preference, source],
+            )?;
+            Ok(conn.last_insert_rowid())
+        }
+    }
+
+    /// Get all learned preferences
+    pub fn get_all_preferences(&self) -> Result<Vec<LearnedPreference>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, category, preference, source, confidence, created_at, updated_at FROM learned_preferences ORDER BY confidence DESC",
+        )?;
+
+        let prefs = stmt
+            .query_map([], |row| {
+                Ok(LearnedPreference {
+                    id: row.get(0)?,
+                    category: row.get(1)?,
+                    preference: row.get(2)?,
+                    source: row.get(3)?,
+                    confidence: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(prefs)
+    }
+
+    // === Formatting for Context Injection ===
+
+    /// Format knowledge about a specific file for context injection
+    pub fn format_file_knowledge(&self, file_path: &str) -> Result<String> {
+        let patterns = self.get_patterns_for_file(file_path)?;
+        let errors = self.get_error_patterns_for_file(file_path)?;
+        let related = self.get_related_files(file_path)?;
+
+        if patterns.is_empty() && errors.is_empty() && related.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut output = format!("<file_knowledge path=\"{}\">\n", file_path);
+
+        if !patterns.is_empty() {
+            output.push_str("Patterns:\n");
+            for p in patterns.iter().take(5) {
+                output.push_str(&format!("- [{}] {} (seen {}x)\n", p.pattern_type, p.description, p.confidence));
+            }
+        }
+
+        if !errors.is_empty() {
+            output.push_str("Known issues:\n");
+            for e in errors.iter().take(5) {
+                output.push_str(&format!("- {} ({}x)", e.error_signature, e.occurrences));
+                if let Some(ref res) = e.resolution {
+                    output.push_str(&format!(" → fix: {}", res));
+                }
+                output.push('\n');
+            }
+        }
+
+        if !related.is_empty() {
+            let related_str: Vec<String> = related
+                .iter()
+                .take(5)
+                .map(|(f, count)| format!("{} ({}x)", f, count))
+                .collect();
+            output.push_str(&format!("Often co-edited with: {}\n", related_str.join(", ")));
+        }
+
+        output.push_str("</file_knowledge>");
+        Ok(output)
+    }
+
+    /// Format learned preferences for system prompt injection
+    pub fn format_learned_preferences(&self) -> Result<String> {
+        let prefs = self.get_all_preferences()?;
+
+        if prefs.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut output = String::from("<learned_preferences>\n");
+        for p in prefs.iter().take(15) {
+            output.push_str(&format!("- [{}] {} (confidence: {})\n", p.category, p.preference, p.confidence));
+        }
+        output.push_str("</learned_preferences>");
+        Ok(output)
+    }
+
+    /// Get auto-learning statistics
+    pub fn auto_learn_stats(&self) -> Result<AutoLearnStats> {
+        let conn = self.conn.lock().unwrap();
+        let patterns: i64 =
+            conn.query_row("SELECT COUNT(*) FROM coding_patterns", [], |row| row.get(0))?;
+        let relationships: i64 =
+            conn.query_row("SELECT COUNT(*) FROM file_relationships", [], |row| row.get(0))?;
+        let errors: i64 =
+            conn.query_row("SELECT COUNT(*) FROM error_patterns", [], |row| row.get(0))?;
+        let resolved: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM error_patterns WHERE resolution IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        let preferences: i64 =
+            conn.query_row("SELECT COUNT(*) FROM learned_preferences", [], |row| row.get(0))?;
+
+        Ok(AutoLearnStats {
+            coding_patterns: patterns as usize,
+            file_relationships: relationships as usize,
+            error_patterns: errors as usize,
+            errors_resolved: resolved as usize,
+            learned_preferences: preferences as usize,
+        })
+    }
+
+    /// Reset everything including core memory, short-term memory, and auto-learning data
     pub fn reset_all(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch(
@@ -676,6 +1105,10 @@ impl MemoryDb {
             DELETE FROM core_memory;
             DELETE FROM recent_sessions;
             DELETE FROM recent_activity;
+            DELETE FROM coding_patterns;
+            DELETE FROM file_relationships;
+            DELETE FROM error_patterns;
+            DELETE FROM learned_preferences;
             INSERT INTO core_memory (section, content) VALUES
                 ('persona', 'I am an AI assistant helping with this project. I will learn about the codebase and remember important details across sessions.'),
                 ('project_info', 'No project information recorded yet.'),
@@ -686,12 +1119,42 @@ impl MemoryDb {
     }
 }
 
+/// Simple glob matching (supports * and exact match)
+pub fn glob_matches(pattern: &str, path: &str) -> bool {
+    if pattern == path {
+        return true;
+    }
+    if let Some(prefix) = pattern.strip_suffix("*") {
+        return path.starts_with(prefix);
+    }
+    if let Some(suffix) = pattern.strip_prefix("*") {
+        return path.ends_with(suffix);
+    }
+    // Handle patterns like "src/*.rs"
+    if let Some(star_pos) = pattern.find('*') {
+        let prefix = &pattern[..star_pos];
+        let suffix = &pattern[star_pos + 1..];
+        return path.starts_with(prefix) && path.ends_with(suffix);
+    }
+    false
+}
+
 /// Memory statistics
 #[derive(Debug, Clone)]
 pub struct MemoryStats {
     pub count: usize,
     pub total_size: usize,
     pub last_updated: Option<String>,
+}
+
+/// Auto-learning statistics
+#[derive(Debug, Clone)]
+pub struct AutoLearnStats {
+    pub coding_patterns: usize,
+    pub file_relationships: usize,
+    pub error_patterns: usize,
+    pub errors_resolved: usize,
+    pub learned_preferences: usize,
 }
 
 #[cfg(test)]

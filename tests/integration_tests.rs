@@ -1302,352 +1302,192 @@ mod web_tools {
 // MEMORY TOOLS TESTS
 // ============================================================================
 
-mod memory_tools {
+mod auto_learn_integration {
     use super::*;
-    use openclaudia::tools::execute_tool_with_memory;
+    use openclaudia::auto_learn::AutoLearner;
 
     fn setup_memory_db() -> (TempDir, MemoryDb) {
-        // Create temp directory with memory database for testing
         let dir = TempDir::new().expect("Failed to create temp dir");
         let db_path = dir.path().join("test_memory.db");
         let db = MemoryDb::open(&db_path).expect("Failed to create memory db");
-        (dir, db) // Return dir to keep it alive
+        (dir, db)
     }
 
     #[test]
-    fn test_memory_save_and_search() {
+    fn test_coding_pattern_save_and_retrieve() {
         let (_dir, db) = setup_memory_db();
 
-        // Save a memory
-        let save_call = make_tool_call(
-            "memory_save",
-            json!({
-                "content": "Important fact: Rust is a systems programming language",
-                "tags": ["programming", "rust"]
-            }),
-        );
+        let id = db
+            .save_coding_pattern("src/*.rs", "convention", "Use snake_case for functions")
+            .unwrap();
+        assert!(id > 0);
 
-        let save_result = execute_tool_with_memory(&save_call, Some(&db));
-        assert!(
-            !save_result.is_error,
-            "Save should succeed: {}",
-            save_result.content
-        );
-
-        // Search for the memory
-        let search_call = make_tool_call(
-            "memory_search",
-            json!({
-                "query": "Rust programming"
-            }),
-        );
-
-        let search_result = execute_tool_with_memory(&search_call, Some(&db));
-        assert!(
-            !search_result.is_error,
-            "Search should succeed: {}",
-            search_result.content
-        );
-        // Should find the saved memory
-        assert!(
-            search_result.content.contains("Rust") || search_result.content.contains("systems"),
-            "Should find saved memory: {}",
-            search_result.content
-        );
+        let patterns = db.get_patterns_for_file("src/main.rs").unwrap();
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(patterns[0].description, "Use snake_case for functions");
     }
 
     #[test]
-    fn test_memory_search_no_results() {
+    fn test_coding_pattern_confidence_increment() {
         let (_dir, db) = setup_memory_db();
 
-        let search_call = make_tool_call(
-            "memory_search",
-            json!({
-                "query": "nonexistent topic xyz123"
-            }),
-        );
+        db.save_coding_pattern("src/*.rs", "convention", "Use snake_case")
+            .unwrap();
+        db.save_coding_pattern("src/*.rs", "convention", "Use snake_case")
+            .unwrap();
 
-        let result = execute_tool_with_memory(&search_call, Some(&db));
-
-        // Should succeed but with no results
-        assert!(
-            !result.is_error,
-            "Search should succeed: {}",
-            result.content
-        );
-        // Verify it actually reports zero/no results rather than silently passing
-        assert!(
-            result.content.to_lowercase().contains("no ")
-                || result.content.to_lowercase().contains("0 ")
-                || result.content.to_lowercase().contains("empty")
-                || result.content.is_empty(),
-            "Should indicate no results found, got: {}",
-            result.content
-        );
+        let patterns = db.get_patterns_for_file("src/main.rs").unwrap();
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(patterns[0].confidence, 2);
     }
 
     #[test]
-    fn test_memory_multiple_saves_search() {
+    fn test_error_pattern_save_and_resolve() {
         let (_dir, db) = setup_memory_db();
 
-        // Store multiple memories
-        for i in 0..3 {
-            let save_call = make_tool_call(
-                "memory_save",
-                json!({
-                    "content": format!("Searchable fact number {} about testing", i),
-                    "tags": ["test", "fact"]
-                }),
-            );
-            execute_tool_with_memory(&save_call, Some(&db));
-        }
+        db.save_error_pattern("error[E0308]: mismatched types", Some("src/main.rs"), None)
+            .unwrap();
 
-        // Search for content
-        let search_call = make_tool_call(
-            "memory_search",
-            json!({
-                "query": "testing"
-            }),
-        );
+        let errors = db.get_error_patterns_for_file("src/main.rs").unwrap();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].resolution.is_none());
 
-        let result = execute_tool_with_memory(&search_call, Some(&db));
+        // Resolve it
+        db.resolve_error_pattern(
+            "error[E0308]: mismatched types",
+            Some("src/main.rs"),
+            "Changed return type to match",
+        )
+        .unwrap();
 
-        assert!(
-            !result.is_error,
-            "Search should succeed: {}",
-            result.content
-        );
-        // Should find at least one match
-        assert!(
-            result.content.contains("fact")
-                || result.content.contains("testing")
-                || result.content.contains("Searchable"),
-            "Should find matching memories: {}",
-            result.content
-        );
+        let errors = db.get_error_patterns_for_file("src/main.rs").unwrap();
+        assert!(errors[0].resolution.is_some());
     }
 
     #[test]
-    fn test_core_memory_update() {
+    fn test_file_relationships() {
         let (_dir, db) = setup_memory_db();
 
-        // Update project info core memory
-        let update_call = make_tool_call(
-            "core_memory_update",
-            json!({
-                "section": "project_info",
-                "content": "This is a Rust project for testing"
-            }),
-        );
+        db.save_file_relationship("src/main.rs", "src/tools.rs")
+            .unwrap();
+        db.save_file_relationship("src/tools.rs", "src/main.rs")
+            .unwrap(); // Should upsert
 
-        let result = execute_tool_with_memory(&update_call, Some(&db));
-
-        assert!(
-            !result.is_error,
-            "Core memory update should succeed: {}",
-            result.content
-        );
+        let related = db.get_related_files("src/main.rs").unwrap();
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].0, "src/tools.rs");
+        assert_eq!(related[0].1, 2); // co_edit_count incremented
     }
 
-    // =========== EXTENDED MEMORY TESTS ===========
-
     #[test]
-    fn test_core_memory_update_persona() {
+    fn test_learned_preferences() {
         let (_dir, db) = setup_memory_db();
 
-        let update_call = make_tool_call(
-            "core_memory_update",
-            json!({
-                "section": "persona",
-                "content": "I am a helpful coding assistant specialized in Rust"
-            }),
-        );
+        db.save_learned_preference("style", "always use snake_case", Some("user_message"))
+            .unwrap();
 
-        let result = execute_tool_with_memory(&update_call, Some(&db));
-
-        assert!(
-            !result.is_error,
-            "Persona update should succeed: {}",
-            result.content
-        );
+        let prefs = db.get_all_preferences().unwrap();
+        assert_eq!(prefs.len(), 1);
+        assert_eq!(prefs[0].category, "style");
     }
 
     #[test]
-    fn test_core_memory_update_user_preferences() {
+    fn test_auto_learner_tool_failure_records_error() {
+        let (_dir, db) = setup_memory_db();
+        let mut learner = AutoLearner::new(&db);
+
+        let args = json!({"command": "cargo build"});
+        learner.on_tool_failure(
+            "bash",
+            &args,
+            "error[E0308]: mismatched types\n  --> src/main.rs:42:5",
+        );
+
+        let errors = db.get_error_patterns_for_file("src/main.rs").unwrap();
+        assert_eq!(errors.len(), 1);
+    }
+
+    #[test]
+    fn test_auto_learner_session_end_records_relationships() {
+        let (_dir, db) = setup_memory_db();
+        let mut learner = AutoLearner::new(&db);
+
+        // Simulate editing files
+        let args_a = json!({"path": "src/main.rs"});
+        let args_b = json!({"path": "src/tools.rs"});
+        learner.on_tool_success("edit_file", &args_a, "ok");
+        learner.on_tool_success("edit_file", &args_b, "ok");
+
+        learner.on_session_end();
+
+        let related = db.get_related_files("src/main.rs").unwrap();
+        assert_eq!(related.len(), 1);
+    }
+
+    #[test]
+    fn test_auto_learn_stats() {
         let (_dir, db) = setup_memory_db();
 
-        let update_call = make_tool_call(
-            "core_memory_update",
-            json!({
-                "section": "user_preferences",
-                "content": "Prefers concise responses, uses VS Code"
-            }),
-        );
+        db.save_coding_pattern("src/*.rs", "convention", "test")
+            .unwrap();
+        db.save_error_pattern("error", Some("src/main.rs"), Some("fix"))
+            .unwrap();
+        db.save_learned_preference("style", "use tabs", None)
+            .unwrap();
+        db.save_file_relationship("a.rs", "b.rs").unwrap();
 
-        let result = execute_tool_with_memory(&update_call, Some(&db));
-
-        assert!(
-            !result.is_error,
-            "User prefs update should succeed: {}",
-            result.content
-        );
+        let stats = db.auto_learn_stats().unwrap();
+        assert_eq!(stats.coding_patterns, 1);
+        assert_eq!(stats.error_patterns, 1);
+        assert_eq!(stats.errors_resolved, 1);
+        assert_eq!(stats.learned_preferences, 1);
+        assert_eq!(stats.file_relationships, 1);
     }
 
     #[test]
-    fn test_memory_save_with_tags() {
+    fn test_format_file_knowledge() {
         let (_dir, db) = setup_memory_db();
 
-        let save_call = make_tool_call(
-            "memory_save",
-            json!({
-                "content": "User prefers async/await over callbacks",
-                "tags": ["code-style", "javascript", "preferences"]
-            }),
-        );
+        db.save_coding_pattern("src/main.rs", "pitfall", "Watch out for unwrap")
+            .unwrap();
+        db.save_error_pattern("type mismatch", Some("src/main.rs"), Some("use Into"))
+            .unwrap();
 
-        let result = execute_tool_with_memory(&save_call, Some(&db));
-
-        assert!(
-            !result.is_error,
-            "Save with tags should succeed: {}",
-            result.content
-        );
+        let knowledge = db.format_file_knowledge("src/main.rs").unwrap();
+        assert!(knowledge.contains("file_knowledge"));
+        assert!(knowledge.contains("Watch out for unwrap"));
+        assert!(knowledge.contains("type mismatch"));
     }
 
     #[test]
-    fn test_memory_save_long_content() {
+    fn test_format_learned_preferences() {
         let (_dir, db) = setup_memory_db();
 
-        // Save a large piece of content
-        let long_content: String = (0..100)
-            .map(|i| format!("Line {} of important information. ", i))
-            .collect();
+        db.save_learned_preference("style", "prefer snake_case", None)
+            .unwrap();
 
-        let save_call = make_tool_call(
-            "memory_save",
-            json!({
-                "content": long_content,
-                "tags": ["long", "test"]
-            }),
-        );
-
-        let result = execute_tool_with_memory(&save_call, Some(&db));
-
-        assert!(
-            !result.is_error,
-            "Long content save should succeed: {}",
-            result.content
-        );
+        let prefs = db.format_learned_preferences().unwrap();
+        assert!(prefs.contains("learned_preferences"));
+        assert!(prefs.contains("prefer snake_case"));
     }
 
     #[test]
-    fn test_memory_search_with_limit() {
+    fn test_memory_reset_clears_auto_learn_data() {
         let (_dir, db) = setup_memory_db();
 
-        // Save multiple memories
-        for i in 0..10 {
-            let save_call = make_tool_call(
-                "memory_save",
-                json!({
-                    "content": format!("Database fact {} about SQL queries", i),
-                    "tags": ["database", "sql"]
-                }),
-            );
-            execute_tool_with_memory(&save_call, Some(&db));
-        }
+        db.save_coding_pattern("src/*.rs", "convention", "test")
+            .unwrap();
+        db.save_learned_preference("style", "test", None).unwrap();
+        db.save_file_relationship("a.rs", "b.rs").unwrap();
+        db.save_error_pattern("err", None, None).unwrap();
 
-        let search_call = make_tool_call(
-            "memory_search",
-            json!({
-                "query": "database SQL",
-                "limit": 3
-            }),
-        );
+        db.reset_all().unwrap();
 
-        let result = execute_tool_with_memory(&search_call, Some(&db));
-
-        assert!(
-            !result.is_error,
-            "Search with limit should succeed: {}",
-            result.content
-        );
-    }
-
-    #[test]
-    fn test_memory_unicode_content() {
-        let (_dir, db) = setup_memory_db();
-
-        let unicode_content = "User's name is 田中さん and prefers 日本語 documentation";
-
-        let save_call = make_tool_call(
-            "memory_save",
-            json!({
-                "content": unicode_content,
-                "tags": ["user", "japanese"]
-            }),
-        );
-
-        let save_result = execute_tool_with_memory(&save_call, Some(&db));
-        assert!(
-            !save_result.is_error,
-            "Unicode save should succeed: {}",
-            save_result.content
-        );
-
-        let search_call = make_tool_call(
-            "memory_search",
-            json!({
-                "query": "田中"
-            }),
-        );
-
-        let search_result = execute_tool_with_memory(&search_call, Some(&db));
-        assert!(!search_result.is_error, "Unicode search should succeed");
-    }
-
-    #[test]
-    fn test_memory_special_characters() {
-        let (_dir, db) = setup_memory_db();
-
-        let content = "Code pattern: if (x && y || z) { return $value; }";
-
-        let save_call = make_tool_call(
-            "memory_save",
-            json!({
-                "content": content,
-                "tags": ["code", "pattern"]
-            }),
-        );
-
-        let result = execute_tool_with_memory(&save_call, Some(&db));
-
-        assert!(
-            !result.is_error,
-            "Special characters should be handled: {}",
-            result.content
-        );
-    }
-
-    #[test]
-    fn test_memory_without_db() {
-        // Test that memory tools gracefully handle missing DB
-        let save_call = make_tool_call(
-            "memory_save",
-            json!({
-                "content": "test content",
-                "tags": ["test"]
-            }),
-        );
-
-        let result = execute_tool_with_memory(&save_call, None);
-
-        // Should fail gracefully or indicate no database
-        assert!(
-            result.is_error
-                || result.content.to_lowercase().contains("no")
-                || result.content.to_lowercase().contains("stateful"),
-            "Should indicate memory not available"
-        );
+        let stats = db.auto_learn_stats().unwrap();
+        assert_eq!(stats.coding_patterns, 0);
+        assert_eq!(stats.error_patterns, 0);
+        assert_eq!(stats.learned_preferences, 0);
+        assert_eq!(stats.file_relationships, 0);
     }
 }
 
@@ -1686,33 +1526,19 @@ mod tool_definitions {
     }
 
     #[test]
-    fn test_get_all_tool_definitions_includes_memory() {
-        // Without stateful flag, without subagents
-        let tools_no_memory = get_all_tool_definitions(false, false);
-        let no_memory_names: Vec<&str> = tools_no_memory
+    fn test_get_all_tool_definitions_no_memory_tools() {
+        // Memory tools were removed in favor of auto-learning
+        let tools = get_all_tool_definitions(false);
+        let tool_names: Vec<&str> = tools
             .as_array()
             .unwrap()
             .iter()
             .filter_map(|t| t["function"]["name"].as_str())
             .collect();
 
-        // With stateful flag
-        let tools_with_memory = get_all_tool_definitions(true, false);
-        let with_memory_names: Vec<&str> = tools_with_memory
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|t| t["function"]["name"].as_str())
-            .collect();
-
-        // Memory tools should only be present when stateful=true
         assert!(
-            with_memory_names.len() > no_memory_names.len(),
-            "Stateful mode should have more tools"
-        );
-        assert!(
-            with_memory_names.iter().any(|n| n.contains("memory")),
-            "Stateful mode should include memory tools"
+            !tool_names.iter().any(|n| n.contains("memory")),
+            "Memory tools should not be present (replaced by auto-learning)"
         );
     }
 
@@ -1754,7 +1580,7 @@ mod tool_definitions {
     #[test]
     fn test_subagent_tools_with_subagents_flag() {
         // With subagents flag, should include task and agent_output
-        let tools_with_subagents = get_all_tool_definitions(false, true);
+        let tools_with_subagents = get_all_tool_definitions(true);
         let tool_names: Vec<&str> = tools_with_subagents
             .as_array()
             .unwrap()

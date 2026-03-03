@@ -28,10 +28,6 @@ struct Cli {
     /// Enable verbose logging
     #[arg(short, long, global = true)]
     verbose: bool,
-
-    /// Enable stateful agent mode with per-project memory
-    #[arg(long, global = true)]
-    stateful: bool,
 }
 
 #[derive(Subcommand)]
@@ -110,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
-        None => cmd_chat(cli.model, cli.stateful).await,
+        None => cmd_chat(cli.model).await,
         Some(Commands::Init { force }) => cmd_init(force),
         Some(Commands::Auth { status, logout }) => cmd_auth(status, logout).await,
         Some(Commands::Start { port, host, target }) => cmd_start(port, host, target).await,
@@ -1847,17 +1843,15 @@ fn handle_slash_command(
             println!("  /version         - Show version and system information");
             println!("  /debug           - Show debug info (paths, env vars, config)");
             println!();
-            println!("Memory Commands (stateful mode):");
-            println!("  /memory          - Show memory stats");
-            println!("  /memory list     - List recent memories");
-            println!("  /memory search q - Search memories for query");
-            println!("  /memory show <n> - Show memory by ID or section name");
-            println!("  /memory delete n - Delete memory by ID");
-            println!("  /memory core     - Show core memory sections");
-            println!("  /memory clear    - Clear archival memory (keeps core)");
-            println!("  /memory reset    - Reset all memory (with confirmation)");
+            println!("Memory Commands (auto-learning):");
+            println!("  /memory          - Show auto-learning stats");
+            println!("  /memory patterns - Show learned coding patterns");
+            println!("  /memory errors   - Show known error patterns");
+            println!("  /memory prefs    - Show learned preferences");
+            println!("  /memory files    - Show file co-edit relationships");
+            println!("  /memory reset    - Reset all learned data (with confirmation)");
             println!();
-            println!("Activity Commands (stateful mode):");
+            println!("Activity Commands:");
             println!("  /activity        - Show current session activities");
             println!("  /activity sessions - Show recent session summaries");
             println!("  /activity files  - Show files modified this session");
@@ -2232,13 +2226,12 @@ fn handle_slash_command(
     }
 }
 
-/// Handle /memory command for viewing and managing archival memory
+/// Handle /memory command for viewing auto-learned knowledge
 fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
     let db = match memory_db {
         Some(db) => db,
         None => {
-            println!("\n\x1b[33mMemory commands require stateful mode.\x1b[0m");
-            println!("Start with: openclaudia --stateful\n");
+            println!("\n\x1b[33mMemory database not available.\x1b[0m\n");
             return;
         }
     };
@@ -2249,181 +2242,121 @@ fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
 
     match subcmd.as_str() {
         "" | "stats" => {
-            // Show memory statistics
-            match db.memory_stats() {
+            match db.auto_learn_stats() {
                 Ok(stats) => {
-                    println!("\n=== Memory Statistics ===");
-                    println!("  Archival memories: {}", stats.count);
-                    println!("  Total size:        {} bytes", stats.total_size);
-                    if let Some(last) = stats.last_updated {
-                        println!("  Last updated:      {}", last);
-                    }
-                    println!("  Database path:     {}", db.path().display());
+                    println!("\n=== Auto-Learning Statistics ===");
+                    println!("  Coding patterns:      {}", stats.coding_patterns);
+                    println!("  File relationships:   {}", stats.file_relationships);
+                    println!("  Error patterns:       {}", stats.error_patterns);
+                    println!("  Errors resolved:      {}", stats.errors_resolved);
+                    println!("  Learned preferences:  {}", stats.learned_preferences);
+                    println!("  Database path:        {}", db.path().display());
                     println!();
                 }
-                Err(e) => eprintln!("\nFailed to get memory stats: {}\n", e),
+                Err(e) => eprintln!("\nFailed to get auto-learn stats: {}\n", e),
             }
         }
-        "list" | "ls" => {
-            let limit = subargs.parse().unwrap_or(10);
-            match db.memory_list(limit) {
-                Ok(memories) => {
-                    if memories.is_empty() {
-                        println!("\nNo memories stored yet.\n");
+        "patterns" => {
+            match db.get_patterns_for_file(if subargs.is_empty() { "*" } else { subargs }) {
+                Ok(patterns) => {
+                    if patterns.is_empty() {
+                        println!("\nNo coding patterns learned yet.\n");
                     } else {
-                        println!("\n=== Recent Memories ({}) ===\n", memories.len());
-                        for mem in memories {
-                            let preview = if mem.content.len() > 80 {
-                                format!("{}...", safe_truncate(&mem.content, 77))
-                            } else {
-                                mem.content.clone()
-                            };
-                            let tags = if mem.tags.is_empty() {
-                                String::new()
-                            } else {
-                                format!(" [{}]", mem.tags.join(", "))
-                            };
-                            println!("  \x1b[36m#{}\x1b[0m {}{}", mem.id, preview, tags);
+                        println!("\n=== Coding Patterns ({}) ===\n", patterns.len());
+                        for p in patterns.iter().take(20) {
+                            println!(
+                                "  \x1b[36m[{}]\x1b[0m {} \x1b[90m({}x, {})\x1b[0m",
+                                p.pattern_type, p.description, p.confidence, p.file_glob
+                            );
                         }
                         println!();
                     }
                 }
-                Err(e) => eprintln!("\nFailed to list memories: {}\n", e),
+                Err(e) => eprintln!("\nFailed to get patterns: {}\n", e),
             }
         }
-        "search" | "find" => {
-            if subargs.is_empty() {
-                println!("\nUsage: /memory search <query>\n");
-                return;
-            }
-            match db.memory_search(subargs, 10) {
-                Ok(memories) => {
-                    if memories.is_empty() {
-                        println!("\nNo memories found matching '{}'.\n", subargs);
-                    } else {
-                        println!(
-                            "\n=== Search Results for '{}' ({}) ===\n",
-                            subargs,
-                            memories.len()
-                        );
-                        for mem in memories {
-                            let preview = if mem.content.len() > 100 {
-                                format!("{}...", safe_truncate(&mem.content, 97))
-                            } else {
-                                mem.content.clone()
-                            };
-                            println!("  \x1b[36m#{}\x1b[0m ({})", mem.id, mem.updated_at);
-                            println!("  {}", preview);
-                            if !mem.tags.is_empty() {
-                                println!("  Tags: {}", mem.tags.join(", "));
+        "errors" => {
+            if !subargs.is_empty() {
+                match db.get_error_patterns_for_file(subargs) {
+                    Ok(errors) => {
+                        if errors.is_empty() {
+                            println!("\nNo error patterns for '{}'.\n", subargs);
+                        } else {
+                            println!("\n=== Error Patterns for '{}' ({}) ===\n", subargs, errors.len());
+                            for e in &errors {
+                                print!("  \x1b[31m{}\x1b[0m ({}x)", e.error_signature, e.occurrences);
+                                if let Some(ref res) = e.resolution {
+                                    print!(" \x1b[32m-> {}\x1b[0m", res);
+                                }
+                                println!();
                             }
                             println!();
                         }
                     }
+                    Err(e) => eprintln!("\nFailed to get error patterns: {}\n", e),
                 }
-                Err(e) => eprintln!("\nFailed to search memories: {}\n", e),
+            } else {
+                println!("\nUsage: /memory errors <file_path>");
+                println!("Example: /memory errors src/main.rs\n");
             }
         }
-        "show" | "get" => {
-            // First try to parse as an ID for archival memory
-            if let Ok(id) = subargs.parse::<i64>() {
-                match db.memory_get(id) {
-                    Ok(Some(mem)) => {
-                        println!("\n=== Memory #{} ===", mem.id);
-                        println!("Created:  {}", mem.created_at);
-                        println!("Updated:  {}", mem.updated_at);
-                        if !mem.tags.is_empty() {
-                            println!("Tags:     {}", mem.tags.join(", "));
+        "prefs" | "preferences" => {
+            match db.get_all_preferences() {
+                Ok(prefs) => {
+                    if prefs.is_empty() {
+                        println!("\nNo preferences learned yet.\n");
+                    } else {
+                        println!("\n=== Learned Preferences ({}) ===\n", prefs.len());
+                        for p in &prefs {
+                            println!(
+                                "  \x1b[35m[{}]\x1b[0m {} \x1b[90m(confidence: {})\x1b[0m",
+                                p.category, p.preference, p.confidence
+                            );
                         }
-                        println!("\n{}\n", mem.content);
+                        println!();
                     }
-                    Ok(None) => println!("\nMemory #{} not found.\n", id),
-                    Err(e) => eprintln!("\nFailed to get memory: {}\n", e),
                 }
-            } else if !subargs.is_empty() {
-                // Try as core memory section name
-                match db.get_core_memory_section(subargs) {
-                    Ok(Some(section)) => {
-                        println!("\n=== Core Memory: {} ===", section.section);
-                        println!("Updated: {}\n", section.updated_at);
-                        println!("{}\n", section.content);
-                    }
-                    Ok(None) => {
-                        println!("\nSection '{}' not found.", subargs);
-                        println!("Available sections: persona, project_info, user_preferences\n");
-                    }
-                    Err(e) => eprintln!("\nFailed to get core memory section: {}\n", e),
-                }
-            } else {
-                println!("\nUsage:");
-                println!("  /memory show <id>        - Show archival memory by ID");
-                println!("  /memory show <section>   - Show core memory section");
-                println!("  Available sections: persona, project_info, user_preferences\n");
+                Err(e) => eprintln!("\nFailed to get preferences: {}\n", e),
             }
         }
-        "delete" | "rm" => {
-            let id: i64 = match subargs.parse() {
-                Ok(id) => id,
-                Err(_) => {
-                    println!("\nUsage: /memory delete <id>\n");
-                    return;
-                }
-            };
-            match db.memory_delete(id) {
-                Ok(true) => println!("\nDeleted memory #{}.\n", id),
-                Ok(false) => println!("\nMemory #{} not found.\n", id),
-                Err(e) => eprintln!("\nFailed to delete memory: {}\n", e),
-            }
-        }
-        "core" => match db.get_core_memory() {
-            Ok(sections) => {
-                println!("\n=== Core Memory ===\n");
-                for section in sections {
-                    println!(
-                        "\x1b[35m[{}]\x1b[0m (updated: {})",
-                        section.section, section.updated_at
-                    );
-                    println!("{}\n", section.content);
-                }
-            }
-            Err(e) => eprintln!("\nFailed to get core memory: {}\n", e),
-        },
-        "clear" => {
-            // Clear only archival memory, keep core memory
-            if subargs == "confirm" || subargs == "yes" {
-                match db.clear_archival_memory() {
-                    Ok(count) => {
-                        println!("\n\x1b[32mCleared {} archival memories.\x1b[0m", count);
-                        println!("Core memory sections preserved.\n");
+        "files" | "relationships" => {
+            if !subargs.is_empty() {
+                match db.get_related_files(subargs) {
+                    Ok(related) => {
+                        if related.is_empty() {
+                            println!("\nNo file relationships for '{}'.\n", subargs);
+                        } else {
+                            println!("\n=== Files Co-Edited with '{}' ===\n", subargs);
+                            for (file, count) in &related {
+                                println!("  {} ({}x)", file, count);
+                            }
+                            println!();
+                        }
                     }
-                    Err(e) => eprintln!("\nFailed to clear archival memory: {}\n", e),
+                    Err(e) => eprintln!("\nFailed to get file relationships: {}\n", e),
                 }
             } else {
-                println!("\n\x1b[33mWarning: This will delete all archival memories!\x1b[0m");
-                println!("Core memory sections (persona, project_info, user_preferences) will be preserved.");
-                println!("\nTo confirm, run: /memory clear confirm\n");
+                println!("\nUsage: /memory files <file_path>");
+                println!("Example: /memory files src/main.rs\n");
             }
         }
         "reset" => {
-            // Full reset - clears both archival AND core memory
             if subargs == "confirm" || subargs == "yes" {
                 match db.reset_all() {
                     Ok(()) => {
-                        println!("\n\x1b[32mMemory completely reset.\x1b[0m");
-                        println!("All archival memories deleted.");
-                        println!("Core memory sections reset to defaults.\n");
+                        println!("\n\x1b[32mAll learned data reset.\x1b[0m\n");
                     }
                     Err(e) => eprintln!("\nFailed to reset memory: {}\n", e),
                 }
             } else {
-                println!("\n\x1b[31mWarning: This will delete ALL memories!\x1b[0m");
-                println!("This includes archival memory AND core memory sections.");
+                println!("\n\x1b[31mWarning: This will delete ALL learned data!\x1b[0m");
+                println!("This includes coding patterns, error patterns, preferences, and file relationships.");
                 println!("\nTo confirm, run: /memory reset confirm\n");
             }
         }
         _ => {
             println!("\nUnknown memory subcommand: {}", subcmd);
-            println!("Available: list, search, show, delete, core, clear, reset\n");
+            println!("Available: patterns, errors, prefs, files, reset\n");
         }
     }
 }
@@ -2437,8 +2370,7 @@ fn handle_activity_command(
     let db = match memory_db {
         Some(db) => db,
         None => {
-            println!("\n\x1b[33mActivity tracking requires stateful mode.\x1b[0m");
-            println!("Start with: openclaudia --stateful\n");
+            println!("\n\x1b[33mActivity tracking not available (memory database failed to open).\x1b[0m\n");
             return;
         }
     };
@@ -3691,7 +3623,7 @@ async fn start_builtin_oauth_flow(config: &config::AppConfig) -> Option<OAuthFlo
 }
 
 /// Interactive chat mode (default command)
-async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Result<()> {
+async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
     use indicatif::{ProgressBar, ProgressStyle};
     use openclaudia::hooks::{
         load_claude_code_hooks, merge_hooks_config, HookEngine, HookEvent, HookInput,
@@ -3864,9 +3796,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
     // Initialize audit logger for this session
     let mut audit_logger = openclaudia::session::AuditLogger::new(&chat_session.id);
 
-    // Initialize memory database
-    // Short-term memory (session summaries, recent activity) is ALWAYS available
-    // Full stateful mode (memory tools, core memory in prompt) requires --stateful flag
+    // Initialize memory database (always-on for auto-learning)
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let memory_db: Option<memory::MemoryDb> = match memory::MemoryDb::open_for_project(&cwd) {
         Ok(db) => {
@@ -3879,29 +3809,17 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                 );
             }
 
-            if stateful {
-                println!(
-                    "\x1b[35m🧠 Stateful mode enabled\x1b[0m - Memory: {}",
-                    db.path().display()
-                );
-
-                // Inject core memory into session at start (only in full stateful mode)
-                if let Ok(core_memory) = db.format_core_memory_for_prompt() {
-                    chat_session.messages.push(serde_json::json!({
-                        "role": "system",
-                        "content": format!(
-                            "You are running in STATEFUL MODE. You have persistent memory across sessions.\n\n\
-                            {}\n\n\
-                            IMPORTANT: Use your memory tools to:\n\
-                            - Save important facts, decisions, and learnings with memory_save\n\
-                            - Search for relevant context with memory_search\n\
-                            - Update your core memory sections to refine your understanding\n\
-                            - Your core memory is always present in context and persists across sessions",
-                            core_memory
-                        )
-                    }));
+            // Show auto-learning stats
+            if let Ok(stats) = db.auto_learn_stats() {
+                let total = stats.coding_patterns + stats.error_patterns + stats.learned_preferences + stats.file_relationships;
+                if total > 0 {
+                    println!(
+                        "\x1b[90m🧠 Auto-learned: {} patterns, {} error fixes, {} preferences, {} file relationships\x1b[0m",
+                        stats.coding_patterns, stats.errors_resolved, stats.learned_preferences, stats.file_relationships
+                    );
                 }
             }
+
             tracing::debug!("Memory database: {}", db.path().display());
             Some(db)
         }
@@ -3910,6 +3828,11 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
             None
         }
     };
+
+    // Initialize auto-learner (captures knowledge from tool signals)
+    let mut auto_learner: Option<openclaudia::auto_learn::AutoLearner> = memory_db
+        .as_ref()
+        .map(openclaudia::auto_learn::AutoLearner::new);
 
     // Initialize permissions cache for sensitive operations
     let mut permissions: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -4261,6 +4184,16 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                     // Clear undo stack since we're adding new messages
                     chat_session.clear_undo_stack();
 
+                    // Auto-learn from user message (correction/preference detection)
+                    if let Some(ref mut learner) = auto_learner {
+                        // Get the last assistant message for context
+                        let prev_assistant = chat_session.messages.iter().rev()
+                            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
+                            .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                            .map(|s| s.to_string());
+                        learner.on_user_message(&expanded_input, prev_assistant.as_deref());
+                    }
+
                     // Run UserPromptSubmit hooks
                     let hook_input =
                         HookInput::new(HookEvent::UserPromptSubmit).with_prompt(&expanded_input);
@@ -4344,11 +4277,51 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                     .map(|s| s.to_string())
                     .reduce(|acc, s| format!("{}\n\n{}", acc, s));
 
-                let system_prompt = prompt::build_system_prompt(
+                let mut system_prompt = prompt::build_system_prompt(
                     hook_instructions.as_deref(),
                     None, // Custom instructions could come from config in future
                     memory_db.as_ref(),
                 );
+
+                // Inject file-specific knowledge for recently-touched files
+                if let Some(ref db) = memory_db {
+                    let mut injected_files: std::collections::HashSet<String> = std::collections::HashSet::new();
+                    // Look at recent tool results for file paths
+                    for msg in chat_session.messages.iter().rev().take(10) {
+                        if let Some(role) = msg.get("role").and_then(|r| r.as_str()) {
+                            if role == "tool" || role == "assistant" {
+                                // Check for file paths in tool call arguments
+                                if let Some(tool_calls) = msg.get("tool_calls").and_then(|t| t.as_array()) {
+                                    for tc in tool_calls {
+                                        let name = tc.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).unwrap_or("");
+                                        if matches!(name, "read_file" | "edit_file" | "write_file") {
+                                            if let Some(args_str) = tc.get("function").and_then(|f| f.get("arguments")).and_then(|a| a.as_str()) {
+                                                if let Ok(args) = serde_json::from_str::<serde_json::Value>(args_str) {
+                                                    if let Some(path) = args.get("path").or_else(|| args.get("file_path")).and_then(|p| p.as_str()) {
+                                                        injected_files.insert(path.to_string());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Inject knowledge for each file (limited to avoid bloating prompt)
+                    let mut file_knowledge_parts = Vec::new();
+                    for file_path in injected_files.iter().take(3) {
+                        if let Ok(knowledge) = db.format_file_knowledge(file_path) {
+                            if !knowledge.is_empty() {
+                                file_knowledge_parts.push(knowledge);
+                            }
+                        }
+                    }
+                    if !file_knowledge_parts.is_empty() {
+                        system_prompt.push_str("\n\n## File Knowledge\n");
+                        system_prompt.push_str(&file_knowledge_parts.join("\n"));
+                    }
+                }
 
                 // Insert core system prompt at position 0 (becomes first message)
                 if !chat_session.messages.iter().any(|m| {
@@ -4414,7 +4387,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                     let anthropic_messages = convert_messages_to_anthropic(&chat_session.messages);
 
                     // Get tools in OpenAI format and convert to Anthropic format
-                    let openai_tools = tools::get_all_tool_definitions(stateful, true);
+                    let openai_tools = tools::get_all_tool_definitions(true);
                     let anthropic_tools =
                         convert_tools_to_anthropic(openai_tools.as_array().unwrap_or(&vec![]));
 
@@ -4439,7 +4412,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                 } else if config.proxy.target == "google" {
                     // Google Gemini - build native Gemini format
                     // Convert OpenAI-style messages to Gemini contents
-                    let openai_tools = tools::get_all_tool_definitions(stateful, true);
+                    let openai_tools = tools::get_all_tool_definitions(true);
                     let tools_vec = openai_tools.as_array().cloned().unwrap_or_default();
                     let functions: Vec<serde_json::Value> = tools_vec.iter().filter_map(|tool| {
                         let func = tool.get("function")?;
@@ -4483,7 +4456,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                         "messages": chat_session.messages,
                         "max_tokens": 4096,
                         "stream": true,
-                        "tools": tools::get_all_tool_definitions(stateful, true)
+                        "tools": tools::get_all_tool_definitions(true)
                     })
                 };
 
@@ -4766,6 +4739,16 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                     tools::execute_tool(tool_call)
                                                 };
 
+                                                // Auto-learn from tool result
+                                                if let Some(ref mut learner) = auto_learner {
+                                                    let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+                                                    if result.is_error {
+                                                        learner.on_tool_failure(&tool_call.function.name, &args, &result.content);
+                                                    } else {
+                                                        learner.on_tool_success(&tool_call.function.name, &args, &result.content);
+                                                    }
+                                                }
+
                                                 let (final_content, _was_marker) =
                                                     process_tool_result_marker(
                                                         &mut chat_session,
@@ -4840,7 +4823,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                         );
 
                                             let openai_tools =
-                                                tools::get_all_tool_definitions(stateful, true);
+                                                tools::get_all_tool_definitions(true);
                                             let tools_vec = openai_tools
                                                 .as_array()
                                                 .cloned()
@@ -5439,6 +5422,16 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                     tools::execute_tool(tool_call)
                                                 };
 
+                                                // Auto-learn from tool result
+                                                if let Some(ref mut learner) = auto_learner {
+                                                    let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+                                                    if result.is_error {
+                                                        learner.on_tool_failure(&tool_call.function.name, &args, &result.content);
+                                                    } else {
+                                                        learner.on_tool_success(&tool_call.function.name, &args, &result.content);
+                                                    }
+                                                }
+
                                                 // Check for special markers (user_question, plan mode)
                                                 let (final_content, _was_marker) =
                                                     process_tool_result_marker(
@@ -5563,7 +5556,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                                 .map(String::from);
 
                                             let openai_tools =
-                                                tools::get_all_tool_definitions(stateful, true);
+                                                tools::get_all_tool_definitions(true);
                                             let anthropic_tools = convert_tools_to_anthropic(
                                                 openai_tools.as_array().unwrap_or(&vec![]),
                                             );
@@ -6090,12 +6083,22 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                             tool_call.function.name
                                         );
 
-                                        // Use appropriate tool executor based on stateful mode
+                                        // Execute tool
                                         let result = if let Some(ref db) = memory_db {
                                             tools::execute_tool_with_memory(tool_call, Some(db))
                                         } else {
                                             tools::execute_tool(tool_call)
                                         };
+
+                                        // Auto-learn from tool result
+                                        if let Some(ref mut learner) = auto_learner {
+                                            let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+                                            if result.is_error {
+                                                learner.on_tool_failure(&tool_call.function.name, &args, &result.content);
+                                            } else {
+                                                learner.on_tool_success(&tool_call.function.name, &args, &result.content);
+                                            }
+                                        }
 
                                         // Check for special markers (user_question, plan mode)
                                         let (final_content, _was_marker) =
@@ -6264,7 +6267,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
 
                                         // Proxy mode (OAuth) — include tool definitions
                                         let openai_tools =
-                                            tools::get_all_tool_definitions(stateful, true);
+                                            tools::get_all_tool_definitions(true);
                                         let anthropic_tools = convert_tools_to_anthropic(
                                             openai_tools.as_array().unwrap_or(&vec![]),
                                         );
@@ -6299,7 +6302,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                             convert_messages_to_anthropic(&chat_session.messages);
 
                                         let openai_tools =
-                                            tools::get_all_tool_definitions(stateful, true);
+                                            tools::get_all_tool_definitions(true);
                                         let anthropic_tools = convert_tools_to_anthropic(
                                             openai_tools.as_array().unwrap_or(&vec![]),
                                         );
@@ -6328,7 +6331,7 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
                                             "messages": chat_session.messages,
                                             "max_tokens": 4096,
                                             "stream": true,
-                                            "tools": tools::get_all_tool_definitions(stateful, true)
+                                            "tools": tools::get_all_tool_definitions(true)
                                         })
                                     };
 
@@ -6602,6 +6605,11 @@ async fn cmd_chat(model_override: Option<String>, stateful: bool) -> anyhow::Res
     }
 
     // Save session to short-term memory on any exit
+    // Finalize auto-learning (compute file relationships, etc.)
+    if let Some(ref mut learner) = auto_learner {
+        learner.on_session_end();
+    }
+
     save_session_to_short_term_memory(&chat_session, memory_db.as_ref());
 
     // Save history
