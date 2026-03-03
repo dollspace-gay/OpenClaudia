@@ -6,6 +6,7 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// Memory database file name
 const MEMORY_DB_NAME: &str = "memory.db";
@@ -64,7 +65,7 @@ pub struct CoreMemory {
 
 /// Memory database handle
 pub struct MemoryDb {
-    conn: Connection,
+    conn: Mutex<Connection>,
     path: PathBuf,
 }
 

@@ -19,7 +19,7 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::io::{self, stdout, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Purple color for branding (from logo)
 const PURPLE: Color = Color::Rgb(147, 112, 219);

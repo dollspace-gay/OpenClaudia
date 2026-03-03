@@ -886,10 +886,10 @@ pub async fn handle_mcp_tool_call(
 ) -> Result<serde_json::Value, ProxyError> {
     let mcp = mcp_manager.read().await;
 
-    // Check if the MCP server is connected
-    let parts: Vec<&str> = tool_name.splitn(2, '_').collect();
-    if parts.len() >= 2 {
-        let server_name = parts[0];
+    // Check if the MCP server is connected (format: mcp__servername__toolname)
+    let parts: Vec<&str> = tool_name.splitn(3, "__").collect();
+    if parts.len() == 3 && parts[0] == "mcp" {
+        let server_name = parts[1];
         if !mcp.is_connected(server_name) {
             return Err(ProxyError::InvalidBody(format!(
                 "MCP server '{}' is not connected",

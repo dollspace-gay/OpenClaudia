@@ -9,7 +9,6 @@
 
 use crate::hooks::{HookEngine, HookEvent, HookInput};
 use crate::proxy::{ChatCompletionRequest, ChatMessage, MessageContent};
-use crate::tui::capitalize_first;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 

@@ -386,7 +386,7 @@ async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
                     .and_then(|c| c.get("expires_at"))
                     .and_then(|e| e.as_str())
                     .unwrap_or("unknown");
-                println!("  {} (expires: {})", safe_truncate(&id, 8), expires);
+                println!("  {} (expires: {})", safe_truncate(id, 8), expires);
             }
         }
         return Ok(());
@@ -658,7 +658,7 @@ impl ChatSession {
         {
             if let Some(content) = first_user.get("content").and_then(|c| c.as_str()) {
                 let title = if content.len() > 50 {
-                    format!("{}...", safe_truncate(&content, 47))
+                    format!("{}...", safe_truncate(content, 47))
                 } else {
                     content.to_string()
                 };
@@ -1631,7 +1631,7 @@ fn compact_chat_session(session: &mut ChatSession) -> (usize, usize) {
 
         // Truncate long messages in summary
         let preview = if content.len() > 200 {
-            format!("{}...", safe_truncate(&content, 197))
+            format!("{}...", safe_truncate(content, 197))
         } else {
             content.to_string()
         };
@@ -1957,7 +1957,7 @@ fn handle_slash_command(
                     let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("?");
                     let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
                     let preview = if content.len() > 60 {
-                        format!("{}...", safe_truncate(&content, 57))
+                        format!("{}...", safe_truncate(content, 57))
                     } else {
                         content.to_string()
                     };

@@ -599,7 +599,10 @@ impl McpManager {
             .collect()
     }
 
-    /// Convert MCP tools to OpenAI function format
+    /// Convert MCP tools to OpenAI function format.
+    ///
+    /// Tool names use `mcp__servername__toolname` with double-underscore
+    /// delimiters, allowing server and tool names to contain single underscores.
     pub fn tools_as_openai_functions(&self) -> Vec<Value> {
         self.all_tools()
             .iter()
@@ -607,7 +610,7 @@ impl McpManager {
                 json!({
                     "type": "function",
                     "function": {
-                        "name": format!("{}__{}", server_name, tool.name),
+                        "name": format!("mcp__{}__{}", server_name, tool.name),
                         "description": tool.description.as_deref().unwrap_or(""),
                         "parameters": tool.input_schema.clone().unwrap_or(json!({"type": "object", "properties": {}}))
                     }
@@ -616,19 +619,22 @@ impl McpManager {
             .collect()
     }
 
-    /// Call a tool by its full name (server__toolname)
+    /// Call a tool by its full name (`mcp__servername__toolname`).
+    ///
+    /// Uses double-underscore (`__`) delimiters so that server and tool names
+    /// may themselves contain single underscores.
     pub async fn call_tool(&self, full_name: &str, arguments: Value) -> Result<Value, McpError> {
-        // Parse server name and tool name from full_name using double underscore delimiter
-        let parts: Vec<&str> = full_name.splitn(2, "__").collect();
-        if parts.len() != 2 {
+        // Format: mcp__servername__toolname
+        let parts: Vec<&str> = full_name.splitn(3, "__").collect();
+        if parts.len() != 3 || parts[0] != "mcp" {
             return Err(McpError::ToolNotFound(format!(
-                "Invalid tool name format: {}. Expected server__toolname",
+                "Invalid tool name format: {}. Expected mcp__servername__toolname",
                 full_name
             )));
         }
 
-        let server_name = parts[0];
-        let tool_name = parts[1];
+        let server_name = parts[1];
+        let tool_name = parts[2];
 
         let server = self
             .servers
@@ -861,8 +867,16 @@ mod tests {
     async fn test_mcp_manager_call_tool_invalid_format() {
         let manager = McpManager::new();
 
-        // Test with invalid tool name format (no underscore)
+        // Test with no delimiters
         let result = manager.call_tool("invalidtool", json!({})).await;
+        assert!(matches!(result, Err(McpError::ToolNotFound(_))));
+
+        // Test with old single-underscore format (should fail)
+        let result = manager.call_tool("server_tool", json!({})).await;
+        assert!(matches!(result, Err(McpError::ToolNotFound(_))));
+
+        // Test with double-underscore but no mcp prefix
+        let result = manager.call_tool("server__tool", json!({})).await;
         assert!(matches!(result, Err(McpError::ToolNotFound(_))));
     }
 
@@ -870,9 +884,24 @@ mod tests {
     async fn test_mcp_manager_call_tool_not_connected() {
         let manager = McpManager::new();
 
-        // Test with valid format but server not connected
-        let result = manager.call_tool("server_tool", json!({})).await;
+        // Test with valid mcp__server__tool format but server not connected
+        let result = manager.call_tool("mcp__server__tool", json!({})).await;
         assert!(matches!(result, Err(McpError::NotConnected(_))));
+    }
+
+    #[tokio::test]
+    async fn test_mcp_manager_call_tool_underscored_server_name() {
+        let manager = McpManager::new();
+
+        // Server names with underscores should parse correctly
+        let result = manager
+            .call_tool("mcp__my_server__my_tool", json!({}))
+            .await;
+        // Should get NotConnected (not ToolNotFound), proving parse worked
+        assert!(matches!(result, Err(McpError::NotConnected(_))));
+        if let Err(McpError::NotConnected(name)) = result {
+            assert_eq!(name, "my_server");
+        }
     }
 
     #[tokio::test]
@@ -881,7 +910,7 @@ mod tests {
 
         // Test timeout (will fail because no server, but exercises the code path)
         let result = manager
-            .call_tool_with_timeout("server_tool", json!({}), Duration::from_millis(100))
+            .call_tool_with_timeout("mcp__server__tool", json!({}), Duration::from_millis(100))
             .await;
         // Should get NotConnected error, not Timeout (since call fails immediately)
         assert!(matches!(result, Err(McpError::NotConnected(_))));

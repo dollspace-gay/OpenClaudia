@@ -113,7 +113,9 @@ impl TaskManager {
             created_at: Utc::now(),
         };
         self.tasks.push(task);
-        self.tasks.last().unwrap()
+        self.tasks
+            .last()
+            .expect("tasks must be non-empty after push")
     }
 
     /// Get a task by ID.
@@ -205,8 +207,10 @@ impl TaskManager {
             }
         }
 
-        // Apply updates to the task
-        let task = self.get_task_mut(task_id).unwrap();
+        // Apply updates to the task — task existence validated above
+        let task = self
+            .get_task_mut(task_id)
+            .expect("task must exist after validation");
 
         if let Some(s) = new_status {
             task.status = s;
@@ -278,7 +282,9 @@ impl TaskManager {
             }
         }
 
-        Ok(self.get_task(&task_id_owned).unwrap())
+        Ok(self
+            .get_task(&task_id_owned)
+            .expect("task must exist after update"))
     }
 
     /// List all tasks.
@@ -898,7 +904,9 @@ impl SessionManager {
         if self.current_session.is_none() {
             self.current_session = Some(self.create_session());
         }
-        self.current_session.as_ref().unwrap()
+        self.current_session
+            .as_ref()
+            .expect("session must exist after get_or_create")
     }
 
     /// Get the current session mutably
@@ -941,7 +949,9 @@ impl SessionManager {
         let session = Session::new_initializer();
         info!(session_id = %session.id, "Started initializer session");
         self.current_session = Some(session);
-        self.current_session.as_ref().unwrap()
+        self.current_session
+            .as_ref()
+            .expect("session must exist after assignment")
     }
 
     /// Start a coding session from a parent
@@ -953,7 +963,9 @@ impl SessionManager {
             "Started coding session"
         );
         self.current_session = Some(session);
-        self.current_session.as_ref().unwrap()
+        self.current_session
+            .as_ref()
+            .expect("session must exist after assignment")
     }
 
     /// End the current session and persist it

@@ -34,14 +34,6 @@ use std::thread;
 use tokio::runtime::Handle;
 use uuid::Uuid;
 
-/// Internal tool execution result: `(output_text, is_error)`.
-///
-/// Many internal `execute_*` functions return this tuple. The public API wraps
-/// these into the richer [`ToolResult`] struct which also carries the tool-call
-/// ID. This alias exists to document the convention and make signatures easier
-/// to read.
-pub(crate) type RawToolOutput = (String, bool);
-
 /// Safely truncate a string at a byte boundary without splitting multi-byte UTF-8 characters.
 /// Returns the longest prefix of `s` that is at most `max_bytes` bytes and ends on a char boundary.
 pub fn safe_truncate(s: &str, max_bytes: usize) -> &str {
