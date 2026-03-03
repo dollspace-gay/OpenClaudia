@@ -12,18 +12,20 @@
 //! - memory_update: Update existing memory
 //! - core_memory_update: Update core memory sections
 //!
-use base64::Engine;
 use crate::config::AppConfig;
 use crate::memory::{MemoryDb, SECTION_PERSONA, SECTION_PROJECT_INFO, SECTION_USER_PREFS};
 use crate::permissions::{CheckResult, PermissionManager};
 use crate::session::TaskManager;
 use crate::subagent;
 use crate::web::{self, WebConfig};
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,6 +34,30 @@ use std::thread;
 use tokio::runtime::Handle;
 use uuid::Uuid;
 
+/// Internal tool execution result: `(output_text, is_error)`.
+///
+/// Many internal `execute_*` functions return this tuple. The public API wraps
+/// these into the richer [`ToolResult`] struct which also carries the tool-call
+/// ID. This alias exists to document the convention and make signatures easier
+/// to read.
+pub(crate) type RawToolOutput = (String, bool);
+
+/// Safely truncate a string at a byte boundary without splitting multi-byte UTF-8 characters.
+/// Returns the longest prefix of `s` that is at most `max_bytes` bytes and ends on a char boundary.
+pub fn safe_truncate(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// Maximum number of background shells allowed before refusing new ones
+const MAX_BACKGROUND_SHELLS: usize = 50;
+
 /// Background shell process with captured output
 struct BackgroundShell {
     stdout_buffer: Arc<Mutex<Vec<String>>>,
@@ -39,6 +65,10 @@ struct BackgroundShell {
     command: String,
     finished: Arc<AtomicBool>,
     exit_status: Arc<Mutex<Option<i32>>>,
+    /// PID of the spawned process, used to send SIGTERM on kill
+    pid: u32,
+    /// Whether output has been retrieved at least once after the process finished
+    output_retrieved_after_finish: AtomicBool,
 }
 
 /// Manager for background shell processes
@@ -55,7 +85,7 @@ impl BackgroundShellManager {
 
     /// Spawn a new background shell and return its ID
     fn spawn(&self, command: &str) -> Result<String, String> {
-        let shell_id = Uuid::new_v4().to_string()[..8].to_string();
+        let shell_id = safe_truncate(&Uuid::new_v4().to_string(), 8).to_string();
         // IMPORTANT: Set current_dir to ensure bash runs in the same directory as the process
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
@@ -78,14 +108,20 @@ impl BackgroundShellManager {
         };
 
         #[cfg(not(windows))]
-        let child = Command::new("bash")
-            .args(["-c", command])
-            .current_dir(&cwd)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn();
+        let child = {
+            let mut cmd = Command::new("bash");
+            cmd.args(["-c", command])
+                .current_dir(&cwd)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .process_group(0); // Put child in its own process group for clean kill
+            cmd.spawn()
+        };
 
         let mut child = child.map_err(|e| format!("Failed to spawn background shell: {}", e))?;
+
+        // Capture PID before moving the child handle into the wait thread
+        let pid = child.id();
 
         let stdout_buffer = Arc::new(Mutex::new(Vec::new()));
         let stderr_buffer = Arc::new(Mutex::new(Vec::new()));
@@ -139,9 +175,29 @@ impl BackgroundShellManager {
             command: command.to_string(),
             finished,
             exit_status,
+            pid,
+            output_retrieved_after_finish: AtomicBool::new(false),
         };
 
         if let Ok(mut shells) = self.shells.lock() {
+            // GC sweep: remove finished shells whose output has been retrieved at least once
+            shells.retain(|_id, s| {
+                let is_finished = s.finished.load(Ordering::SeqCst);
+                let output_retrieved = s.output_retrieved_after_finish.load(Ordering::SeqCst);
+                // Keep shells that are still running, or haven't had their output retrieved yet
+                !is_finished || !output_retrieved
+            });
+
+            // Enforce maximum shell limit
+            if shells.len() >= MAX_BACKGROUND_SHELLS {
+                // The process was already spawned, so kill it before returning the error
+                terminate_process_tree(pid);
+                return Err(format!(
+                    "Maximum background shell limit ({}) reached. Kill or wait for existing shells to finish.",
+                    MAX_BACKGROUND_SHELLS
+                ));
+            }
+
             shells.insert(shell_id.clone(), shell);
         }
 
@@ -177,21 +233,37 @@ impl BackgroundShellManager {
             }
         }
 
-        let is_running = !shell.finished.load(Ordering::SeqCst);
+        let is_finished = shell.finished.load(Ordering::SeqCst);
+        let is_running = !is_finished;
         let exit_code = shell.exit_status.lock().ok().and_then(|es| *es);
+
+        // Mark that output has been retrieved after process finished (for GC eligibility)
+        if is_finished {
+            shell
+                .output_retrieved_after_finish
+                .store(true, Ordering::SeqCst);
+        }
 
         Ok((output, is_running, exit_code))
     }
 
-    /// Kill a background shell
+    /// Kill a background shell by terminating the OS process and its process group.
+    ///
+    /// Sends SIGTERM first, waits for graceful exit, then escalates to SIGKILL
+    /// if needed. Only removes the shell from tracking after the process has
+    /// been terminated.
     fn kill(&self, shell_id: &str) -> Result<String, String> {
         let mut shells = self.shells.lock().map_err(|_| "Failed to lock shells")?;
 
         if let Some(shell) = shells.remove(shell_id) {
+            if !shell.finished.load(Ordering::SeqCst) {
+                // Terminate the process group (SIGTERM -> wait -> SIGKILL)
+                terminate_process_tree(shell.pid);
+            }
             shell.finished.store(true, Ordering::SeqCst);
             Ok(format!(
-                "Shell '{}' terminated (command: {})",
-                shell_id, shell.command
+                "Shell '{}' terminated (command: {}, pid: {})",
+                shell_id, shell.command, shell.pid
             ))
         } else {
             Err(format!("Shell '{}' not found", shell_id))
@@ -214,6 +286,61 @@ impl BackgroundShellManager {
         } else {
             Vec::new()
         }
+    }
+}
+
+/// Terminate a process and its entire process group.
+///
+/// On Unix, sends SIGTERM to the process group (negative PID), waits up to
+/// 2 seconds for the process to exit, then escalates to SIGKILL if needed.
+/// The process must have been spawned with `process_group(0)` for group
+/// killing to work correctly.
+///
+/// On Windows, uses `taskkill /T` which terminates the process tree.
+fn terminate_process_tree(pid: u32) {
+    #[cfg(unix)]
+    {
+        use std::time::{Duration, Instant};
+
+        let pgid = pid.to_string();
+        let neg_pgid = format!("-{}", pid);
+
+        // Step 1: Send SIGTERM to the entire process group
+        let _ = Command::new("kill").args(["-TERM", &neg_pgid]).output();
+
+        // Step 2: Wait up to 2 seconds for the process to exit
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut exited = false;
+        while Instant::now() < deadline {
+            // `kill -0` checks if process exists without sending a signal
+            let check = Command::new("kill").args(["-0", &pgid]).output();
+            match check {
+                Ok(output) if !output.status.success() => {
+                    // Process no longer exists
+                    exited = true;
+                    break;
+                }
+                _ => {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+        }
+
+        // Step 3: If still alive, send SIGKILL to the process group
+        if !exited {
+            let _ = Command::new("kill").args(["-KILL", &neg_pgid]).output();
+
+            // Brief wait for SIGKILL to take effect
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        // /T kills the process tree, /F forces termination
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .output();
     }
 }
 
@@ -242,6 +369,9 @@ static TODO_LIST: std::sync::LazyLock<Mutex<Vec<TodoItem>>> =
 static READ_TRACKER: std::sync::LazyLock<ReadFileTracker> =
     std::sync::LazyLock::new(ReadFileTracker::new);
 
+/// Maximum number of entries in the read tracker before eviction kicks in
+const READ_TRACKER_MAX_ENTRIES: usize = 10_000;
+
 struct ReadFileTracker {
     read_files: Mutex<std::collections::HashSet<std::path::PathBuf>>,
 }
@@ -265,8 +395,8 @@ impl ReadFileTracker {
                 set.insert(path.to_path_buf());
             }
         }
+        self.enforce_size_cap(READ_TRACKER_MAX_ENTRIES);
     }
-
     /// Check if a file has been read
     fn has_been_read(&self, path: &Path) -> bool {
         let check_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
@@ -278,10 +408,27 @@ impl ReadFileTracker {
     }
 
     /// Clear tracking (called on new session)
-    #[allow(dead_code)]
     fn clear(&self) {
         if let Ok(mut set) = self.read_files.lock() {
             set.clear();
+        }
+    }
+
+    /// Enforce a size cap on tracked files to prevent unbounded memory growth.
+    /// If the tracker exceeds `max_entries`, the oldest half of entries are removed.
+    fn enforce_size_cap(&self, max_entries: usize) {
+        if let Ok(mut set) = self.read_files.lock() {
+            if set.len() > max_entries {
+                // HashSet has no ordering, so we drain half arbitrarily.
+                // This is acceptable because the tracker is advisory (for the
+                // "you must read before editing" guard) and losing some entries
+                // only means the user may be asked to re-read a file.
+                let to_remove = set.len() / 2;
+                let keys: Vec<_> = set.iter().take(to_remove).cloned().collect();
+                for k in keys {
+                    set.remove(&k);
+                }
+            }
         }
     }
 }
@@ -335,10 +482,6 @@ pub fn get_tool_definitions() -> Value {
                         "run_in_background": {
                             "type": "boolean",
                             "description": "If true, run the command in the background and return a shell_id. Use bash_output to retrieve output later."
-                        },
-                        "dangerously_disable_sandbox": {
-                            "type": "boolean",
-                            "description": "If true, skip all permission checks for this command. Use with extreme caution. A warning will be logged."
                         }
                     },
                     "required": ["command"]
@@ -989,7 +1132,7 @@ fn execute_bash(args: &HashMap<String, Value>) -> (String, bool) {
                 if result.len() > 50000 {
                     result = format!(
                         "{}...\n(output truncated, {} total chars)",
-                        &result[..50000],
+                        safe_truncate(&result, 50000),
                         result.len()
                     );
                 }
@@ -1015,7 +1158,7 @@ fn execute_bash_output(args: &HashMap<String, Value>) -> (String, bool) {
             for (id, command, is_running) in shells {
                 let status = if is_running { "running" } else { "finished" };
                 let cmd_preview = if command.len() > 50 {
-                    format!("{}...", &command[..50])
+                    format!("{}...", safe_truncate(&command, 50))
                 } else {
                     command
                 };
@@ -1215,22 +1358,25 @@ fn read_pdf_file(path: &str, pages: Option<&str>) -> (String, bool) {
         Ok(output) => {
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return (
-                    format!("pdftotext failed for '{}': {}", path, stderr),
-                    true,
-                );
+                return (format!("pdftotext failed for '{}': {}", path, stderr), true);
             }
             let text = String::from_utf8_lossy(&output.stdout).to_string();
             if text.trim().is_empty() {
                 (
-                    format!("PDF '{}' produced no extractable text (may be image-based).", path),
+                    format!(
+                        "PDF '{}' produced no extractable text (may be image-based).",
+                        path
+                    ),
                     false,
                 )
             } else {
                 (text, false)
             }
         }
-        Err(e) => (format!("Failed to run pdftotext on '{}': {}", path, e), true),
+        Err(e) => (
+            format!("Failed to run pdftotext on '{}': {}", path, e),
+            true,
+        ),
     }
 }
 
@@ -1274,7 +1420,10 @@ fn read_notebook_file(path: &str) -> (String, bool) {
             _ => String::new(),
         };
 
-        output.push_str(&format!("Cell {} ({}):\n```\n{}\n```\n", i, cell_type, source));
+        output.push_str(&format!(
+            "Cell {} ({}):\n```\n{}\n```\n",
+            i, cell_type, source
+        ));
 
         // For code cells, include text outputs (skip binary/image outputs)
         if cell_type == "code" {
@@ -1416,7 +1565,7 @@ fn read_text_file(path: &str, args: &HashMap<String, Value>) -> (String, bool) {
                 (
                     format!(
                         "{}...\n(file truncated, {} total chars){}",
-                        &result[..100000],
+                        safe_truncate(&result, 100000),
                         result.len(),
                         context
                     ),
@@ -1436,6 +1585,33 @@ fn execute_write_file(args: &HashMap<String, Value>) -> (String, bool) {
         Some(p) => p,
         None => return ("Missing 'path' argument".to_string(), true),
     };
+
+    // Reject path traversal attempts (relative paths with ..)
+    let p = Path::new(path);
+    if !p.is_absolute() {
+        return (
+            format!("Path must be absolute, got relative path: '{}'", path),
+            true,
+        );
+    }
+
+    // Resolve symlinks to prevent symlink-based path traversal
+    let canonical = match std::fs::canonicalize(p) {
+        Ok(canon) => canon,
+        Err(_) => {
+            // File doesn't exist yet (new file) - canonicalize the parent
+            if let Some(parent) = p.parent() {
+                match std::fs::canonicalize(parent) {
+                    Ok(canon_parent) => canon_parent.join(p.file_name().unwrap_or_default()),
+                    Err(_) => std::path::PathBuf::from(path), // Parent doesn't exist either
+                }
+            } else {
+                std::path::PathBuf::from(path)
+            }
+        }
+    };
+    let path = canonical.to_string_lossy().to_string();
+    let path = path.as_str();
 
     let content = match args.get("content").and_then(|v| v.as_str()) {
         Some(c) => c,
@@ -1483,6 +1659,24 @@ fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
         Some(p) => p,
         None => return ("Missing 'path' argument".to_string(), true),
     };
+
+    // Reject path traversal attempts (relative paths with ..)
+    let p = Path::new(path);
+    if !p.is_absolute() {
+        return (
+            format!("Path must be absolute, got relative path: '{}'", path),
+            true,
+        );
+    }
+
+    // Resolve symlinks to prevent symlink-based path traversal.
+    // For edit_file the file must already exist, so canonicalize should succeed directly.
+    let canonical = match std::fs::canonicalize(p) {
+        Ok(canon) => canon,
+        Err(_) => std::path::PathBuf::from(path),
+    };
+    let path = canonical.to_string_lossy().to_string();
+    let path = path.as_str();
 
     // ENFORCE: Must read file before editing
     // This prevents the model from making edits based on hallucinated file contents
@@ -1687,13 +1881,11 @@ fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
         "insert" => {
             let ct = match cell_type {
                 Some(ct) => ct,
-                None => {
-                    return (
-                        "cell_type is required when inserting a new cell. Use 'code' or 'markdown'."
-                            .to_string(),
-                        true,
-                    )
-                }
+                None => return (
+                    "cell_type is required when inserting a new cell. Use 'code' or 'markdown'."
+                        .to_string(),
+                    true,
+                ),
             };
 
             if cell_number > cells.len() {
@@ -1754,7 +1946,11 @@ fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
                     );
                     let action = match edit_mode {
                         "replace" => format!("Replaced cell {} contents", cell_number),
-                        "insert" => format!("Inserted new {} cell at position {}", cell_type.unwrap_or("unknown"), cell_number),
+                        "insert" => format!(
+                            "Inserted new {} cell at position {}",
+                            cell_type.unwrap_or("unknown"),
+                            cell_number
+                        ),
                         "delete" => format!("Deleted cell {}", cell_number),
                         _ => unreachable!(),
                     };
@@ -1762,7 +1958,11 @@ fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
                         "Successfully edited '{}'. {}. Notebook now has {} cells.",
                         notebook_path,
                         action,
-                        notebook.get("cells").and_then(|c| c.as_array()).map(|a| a.len()).unwrap_or(0)
+                        notebook
+                            .get("cells")
+                            .and_then(|c| c.as_array())
+                            .map(|a| a.len())
+                            .unwrap_or(0)
                     );
                     if let Some(warning) = crate::guardrails::check_diff_thresholds() {
                         result.push_str(&format!("\n\nWarning: {}", warning.message));
@@ -1775,10 +1975,7 @@ fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
                 ),
             }
         }
-        Err(e) => (
-            format!("Failed to serialize notebook: {}", e),
-            true,
-        ),
+        Err(e) => (format!("Failed to serialize notebook: {}", e), true),
     }
 }
 
@@ -2554,7 +2751,7 @@ fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool) {
             if output.len() > 50000 {
                 output = format!(
                     "{}...\n\n(content truncated, {} total chars)",
-                    &output[..50000],
+                    safe_truncate(&output, 50000),
                     output.len()
                 );
             }
@@ -2624,7 +2821,7 @@ fn execute_web_browser(args: &HashMap<String, Value>) -> (String, bool) {
             if output.len() > 50000 {
                 output = format!(
                     "{}...\n\n(content truncated, {} total chars)",
-                    &output[..50000],
+                    safe_truncate(&output, 50000),
                     output.len()
                 );
             }
@@ -2801,10 +2998,7 @@ fn execute_ask_user_question(args: &HashMap<String, Value>) -> (String, bool) {
     };
 
     if questions.is_empty() || questions.len() > 4 {
-        return (
-            "Must provide 1-4 questions".to_string(),
-            true,
-        );
+        return ("Must provide 1-4 questions".to_string(), true);
     }
 
     // Validate each question
@@ -2838,10 +3032,7 @@ fn execute_ask_user_question(args: &HashMap<String, Value>) -> (String, bool) {
                 }
                 for (j, opt) in opts.iter().enumerate() {
                     if opt.get("label").and_then(|v| v.as_str()).is_none() {
-                        return (
-                            format!("Question {} option {} missing 'label'", i, j),
-                            true,
-                        );
+                        return (format!("Question {} option {} missing 'label'", i, j), true);
                     }
                     if opt.get("description").and_then(|v| v.as_str()).is_none() {
                         return (
@@ -2884,10 +3075,7 @@ fn execute_exit_plan_mode(args: &HashMap<String, Value>) -> (String, bool) {
     // Validate allowed_prompts structure
     for (i, prompt) in allowed_prompts.iter().enumerate() {
         if prompt.get("tool").and_then(|v| v.as_str()).is_none() {
-            return (
-                format!("allowed_prompts[{}] missing 'tool' field", i),
-                true,
-            );
+            return (format!("allowed_prompts[{}] missing 'tool' field", i), true);
         }
         if prompt.get("prompt").and_then(|v| v.as_str()).is_none() {
             return (
@@ -2953,7 +3141,10 @@ pub fn parse_exit_plan_mode_prompts(content: &str) -> Vec<crate::session::Allowe
 // =========================================================================
 
 /// Execute the task_create tool
-fn execute_task_create(args: &HashMap<String, Value>, task_mgr: &mut TaskManager) -> (String, bool) {
+fn execute_task_create(
+    args: &HashMap<String, Value>,
+    task_mgr: &mut TaskManager,
+) -> (String, bool) {
     let subject = match args.get("subject").and_then(|v| v.as_str()) {
         Some(s) => s.to_string(),
         None => return ("Missing 'subject' argument".to_string(), true),
@@ -2970,30 +3161,46 @@ fn execute_task_create(args: &HashMap<String, Value>, task_mgr: &mut TaskManager
         .map(|s| s.to_string());
 
     let task = task_mgr.create_task(subject, description, active_form);
-    let output = format!("Created task: {}\n{}", task.id, TaskManager::format_task_detail(task));
+    let output = format!(
+        "Created task: {}\n{}",
+        task.id,
+        TaskManager::format_task_detail(task)
+    );
     (output, false)
 }
 
 /// Execute the task_update tool
-fn execute_task_update(args: &HashMap<String, Value>, task_mgr: &mut TaskManager) -> (String, bool) {
+fn execute_task_update(
+    args: &HashMap<String, Value>,
+    task_mgr: &mut TaskManager,
+) -> (String, bool) {
     let task_id = match args.get("task_id").and_then(|v| v.as_str()) {
         Some(id) => id,
         None => return ("Missing 'task_id' argument".to_string(), true),
     };
 
     let status = args.get("status").and_then(|v| v.as_str());
-    let subject = args.get("subject").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let description = args.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let active_form = args.get("active_form").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let subject = args
+        .get("subject")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let description = args
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let active_form = args
+        .get("active_form")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
-    let add_blocks: Option<Vec<String>> = args
-        .get("add_blocks")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        });
+    let add_blocks: Option<Vec<String>> =
+        args.get("add_blocks")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            });
 
     let add_blocked_by: Option<Vec<String>> = args
         .get("add_blocked_by")
@@ -3004,16 +3211,23 @@ fn execute_task_update(args: &HashMap<String, Value>, task_mgr: &mut TaskManager
                 .collect()
         });
 
-    match task_mgr.update_task(task_id, crate::session::TaskUpdateParams {
-        status: status.map(String::from),
-        subject,
-        description,
-        active_form,
-        add_blocks,
-        add_blocked_by,
-    }) {
+    match task_mgr.update_task(
+        task_id,
+        crate::session::TaskUpdateParams {
+            status: status.map(String::from),
+            subject,
+            description,
+            active_form,
+            add_blocks,
+            add_blocked_by,
+        },
+    ) {
         Ok(task) => {
-            let output = format!("Updated task: {}\n{}", task.id, TaskManager::format_task_detail(task));
+            let output = format!(
+                "Updated task: {}\n{}",
+                task.id,
+                TaskManager::format_task_detail(task)
+            );
             (output, false)
         }
         Err(msg) => {
@@ -3054,13 +3268,25 @@ fn execute_task_list(task_mgr: &TaskManager) -> (String, bool) {
         output.push('\n');
     }
 
-    let completed = tasks.iter().filter(|t| t.status == crate::session::TaskStatus::Completed).count();
-    let in_progress = tasks.iter().filter(|t| t.status == crate::session::TaskStatus::InProgress).count();
-    let pending = tasks.iter().filter(|t| t.status == crate::session::TaskStatus::Pending).count();
+    let completed = tasks
+        .iter()
+        .filter(|t| t.status == crate::session::TaskStatus::Completed)
+        .count();
+    let in_progress = tasks
+        .iter()
+        .filter(|t| t.status == crate::session::TaskStatus::InProgress)
+        .count();
+    let pending = tasks
+        .iter()
+        .filter(|t| t.status == crate::session::TaskStatus::Pending)
+        .count();
 
     output.push_str(&format!(
         "\n({} total: {} completed, {} in progress, {} pending)",
-        tasks.len(), completed, in_progress, pending
+        tasks.len(),
+        completed,
+        in_progress,
+        pending
     ));
 
     (output, false)
@@ -3435,13 +3661,34 @@ mod tests {
 
     #[test]
     fn test_detect_file_type_images() {
-        assert!(matches!(detect_file_type("photo.png"), FileType::Image("image/png")));
-        assert!(matches!(detect_file_type("photo.PNG"), FileType::Image("image/png")));
-        assert!(matches!(detect_file_type("photo.jpg"), FileType::Image("image/jpeg")));
-        assert!(matches!(detect_file_type("photo.jpeg"), FileType::Image("image/jpeg")));
-        assert!(matches!(detect_file_type("photo.JPEG"), FileType::Image("image/jpeg")));
-        assert!(matches!(detect_file_type("anim.gif"), FileType::Image("image/gif")));
-        assert!(matches!(detect_file_type("modern.webp"), FileType::Image("image/webp")));
+        assert!(matches!(
+            detect_file_type("photo.png"),
+            FileType::Image("image/png")
+        ));
+        assert!(matches!(
+            detect_file_type("photo.PNG"),
+            FileType::Image("image/png")
+        ));
+        assert!(matches!(
+            detect_file_type("photo.jpg"),
+            FileType::Image("image/jpeg")
+        ));
+        assert!(matches!(
+            detect_file_type("photo.jpeg"),
+            FileType::Image("image/jpeg")
+        ));
+        assert!(matches!(
+            detect_file_type("photo.JPEG"),
+            FileType::Image("image/jpeg")
+        ));
+        assert!(matches!(
+            detect_file_type("anim.gif"),
+            FileType::Image("image/gif")
+        ));
+        assert!(matches!(
+            detect_file_type("modern.webp"),
+            FileType::Image("image/webp")
+        ));
     }
 
     #[test]
@@ -3452,7 +3699,10 @@ mod tests {
 
     #[test]
     fn test_detect_file_type_notebook() {
-        assert!(matches!(detect_file_type("analysis.ipynb"), FileType::Notebook));
+        assert!(matches!(
+            detect_file_type("analysis.ipynb"),
+            FileType::Notebook
+        ));
         assert!(matches!(detect_file_type("test.IPYNB"), FileType::Notebook));
     }
 
@@ -3596,12 +3846,19 @@ mod tests {
         READ_TRACKER.mark_read(&nb_path);
 
         let mut args = HashMap::new();
-        args.insert("notebook_path".to_string(), json!(nb_path.to_str().unwrap()));
+        args.insert(
+            "notebook_path".to_string(),
+            json!(nb_path.to_str().unwrap()),
+        );
         args.insert("cell_number".to_string(), json!(0));
         args.insert("new_source".to_string(), json!("new code\nline 2"));
 
         let (output, is_error) = execute_notebook_edit(&args);
-        assert!(!is_error, "notebook_edit replace should succeed: {}", output);
+        assert!(
+            !is_error,
+            "notebook_edit replace should succeed: {}",
+            output
+        );
         assert!(output.contains("Replaced cell 0"));
 
         // Verify the file was updated
@@ -3635,7 +3892,10 @@ mod tests {
         READ_TRACKER.mark_read(&nb_path);
 
         let mut args = HashMap::new();
-        args.insert("notebook_path".to_string(), json!(nb_path.to_str().unwrap()));
+        args.insert(
+            "notebook_path".to_string(),
+            json!(nb_path.to_str().unwrap()),
+        );
         args.insert("cell_number".to_string(), json!(0));
         args.insert("new_source".to_string(), json!("# New markdown cell"));
         args.insert("cell_type".to_string(), json!("markdown"));
@@ -3684,7 +3944,10 @@ mod tests {
         READ_TRACKER.mark_read(&nb_path);
 
         let mut args = HashMap::new();
-        args.insert("notebook_path".to_string(), json!(nb_path.to_str().unwrap()));
+        args.insert(
+            "notebook_path".to_string(),
+            json!(nb_path.to_str().unwrap()),
+        );
         args.insert("cell_number".to_string(), json!(0));
         args.insert("new_source".to_string(), json!(""));
         args.insert("edit_mode".to_string(), json!("delete"));
@@ -3739,7 +4002,10 @@ mod tests {
         READ_TRACKER.mark_read(&nb_path);
 
         let mut args = HashMap::new();
-        args.insert("notebook_path".to_string(), json!(nb_path.to_str().unwrap()));
+        args.insert(
+            "notebook_path".to_string(),
+            json!(nb_path.to_str().unwrap()),
+        );
         args.insert("cell_number".to_string(), json!(5));
         args.insert("new_source".to_string(), json!("test"));
 
@@ -3763,7 +4029,10 @@ mod tests {
         READ_TRACKER.mark_read(&nb_path);
 
         let mut args = HashMap::new();
-        args.insert("notebook_path".to_string(), json!(nb_path.to_str().unwrap()));
+        args.insert(
+            "notebook_path".to_string(),
+            json!(nb_path.to_str().unwrap()),
+        );
         args.insert("cell_number".to_string(), json!(0));
         args.insert("new_source".to_string(), json!("test"));
         args.insert("edit_mode".to_string(), json!("insert"));
@@ -3811,7 +4080,10 @@ mod tests {
         READ_TRACKER.mark_read(&nb_path);
 
         let mut args = HashMap::new();
-        args.insert("notebook_path".to_string(), json!(nb_path.to_str().unwrap()));
+        args.insert(
+            "notebook_path".to_string(),
+            json!(nb_path.to_str().unwrap()),
+        );
         args.insert("cell_number".to_string(), json!(0));
         args.insert("new_source".to_string(), json!("x = 1"));
         args.insert("cell_type".to_string(), json!("code"));
@@ -3824,9 +4096,15 @@ mod tests {
         let updated: Value = serde_json::from_str(&content).unwrap();
         let cell = &updated["cells"][0];
         assert_eq!(cell["cell_type"], json!("code"));
-        assert!(cell.get("outputs").is_some(), "Code cell should have outputs field");
+        assert!(
+            cell.get("outputs").is_some(),
+            "Code cell should have outputs field"
+        );
         assert!(cell["outputs"].as_array().unwrap().is_empty());
-        assert!(cell.get("execution_count").is_some(), "Code cell should have execution_count");
+        assert!(
+            cell.get("execution_count").is_some(),
+            "Code cell should have execution_count"
+        );
     }
 
     // ====================================================================
@@ -3838,7 +4116,10 @@ mod tests {
         let mut task_mgr = TaskManager::new();
         let mut args = HashMap::new();
         args.insert("subject".to_string(), json!("Fix the bug"));
-        args.insert("description".to_string(), json!("There is a null pointer dereference in main"));
+        args.insert(
+            "description".to_string(),
+            json!("There is a null pointer dereference in main"),
+        );
         args.insert("active_form".to_string(), json!("Fixing the bug"));
 
         let (output, is_error) = execute_task_create(&args, &mut task_mgr);
