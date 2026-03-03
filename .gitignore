@@ -38,3 +38,4 @@ tool_struggles.txt
 #   .claude/settings.json         — Claude Code project settings
 #   .claude/settings.local.json is per-developer, ignore separately if needed
 # === End crosslink managed ===
+.claude/worktrees/
