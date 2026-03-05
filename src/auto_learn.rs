@@ -101,10 +101,7 @@ impl<'a> AutoLearner<'a> {
     // === Internal: Bash Success ===
 
     fn handle_bash_success(&mut self, args: &serde_json::Value, result: &str) {
-        let command = args
-            .get("command")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
 
         // If a bash command succeeds after a pending error, record the resolution
         if let Some(pending) = self.pending_error.take() {
@@ -127,10 +124,7 @@ impl<'a> AutoLearner<'a> {
     // === Internal: Bash Failure ===
 
     fn handle_bash_failure(&mut self, args: &serde_json::Value, error: &str) {
-        let command = args
-            .get("command")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
 
         // Extract error signature (first meaningful line)
         let error_sig = extract_error_signature(error);
@@ -139,8 +133,8 @@ impl<'a> AutoLearner<'a> {
         }
 
         // Try to extract file context from the error or command
-        let file_context = extract_file_from_error(error)
-            .or_else(|| extract_file_from_command(command));
+        let file_context =
+            extract_file_from_error(error).or_else(|| extract_file_from_command(command));
 
         debug!(
             "Recording error pattern: sig={}, file={:?}",
@@ -193,11 +187,10 @@ impl<'a> AutoLearner<'a> {
         // Look for clippy warnings that mention files
         for line in result.lines() {
             if let Some(pattern) = parse_clippy_warning(line) {
-                if let Err(e) = self.db.save_coding_pattern(
-                    &pattern.file,
-                    "convention",
-                    &pattern.description,
-                ) {
+                if let Err(e) =
+                    self.db
+                        .save_coding_pattern(&pattern.file, "convention", &pattern.description)
+                {
                     warn!("Failed to save lint pattern: {}", e);
                 }
             }
@@ -222,11 +215,10 @@ impl<'a> AutoLearner<'a> {
         for (prefix, category) in &preference_patterns {
             if trimmed.starts_with(prefix) && trimmed.len() < 200 {
                 // Short enough to be a preference, not a code block
-                if let Err(e) = self.db.save_learned_preference(
-                    category,
-                    message.trim(),
-                    Some("user_message"),
-                ) {
+                if let Err(e) =
+                    self.db
+                        .save_learned_preference(category, message.trim(), Some("user_message"))
+                {
                     warn!("Failed to save preference: {}", e);
                 }
                 return;
@@ -318,7 +310,17 @@ fn extract_file_from_error(error: &str) -> Option<String> {
                     || word.ends_with(".js"))
                     && (word.contains('/') || word.contains('\\'))
                 {
-                    return Some(word.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '\\' && c != '.' && c != '_' && c != '-').to_string());
+                    return Some(
+                        word.trim_matches(|c: char| {
+                            !c.is_alphanumeric()
+                                && c != '/'
+                                && c != '\\'
+                                && c != '.'
+                                && c != '_'
+                                && c != '-'
+                        })
+                        .to_string(),
+                    );
                 }
             }
         }

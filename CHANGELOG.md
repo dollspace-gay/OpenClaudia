@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Replace MemGPT memory tools with auto-learning system (#67)
 - **Auto-learning memory system** — Replaces MemGPT-style tools with automatic knowledge capture from tool execution signals (#67)
   - Coding patterns: conventions, pitfalls, and architecture learned from lint output and edit failures
   - Error resolutions: errors matched to their fixes when subsequent commands succeed
@@ -51,6 +52,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix missing `permissions` field in test AppConfig initializers after merge
 
 ### Changed
+- Update README and CHANGELOG for auto-learning system (#68)
 - Memory system is now always-on — no `--stateful` flag needed; auto-learning activates when `.openclaudia/memory.db` opens successfully (#67)
 - `/memory` command now shows auto-learning statistics (patterns, errors, preferences, file relationships) instead of raw archival memory (#67)
 - System prompt injects learned preferences and file-specific knowledge instead of MemGPT core memory sections (#67)

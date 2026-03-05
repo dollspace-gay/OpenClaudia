@@ -246,7 +246,9 @@ pub fn build_system_prompt(
         if let Ok(prefs) = db.format_learned_preferences() {
             if !prefs.is_empty() {
                 prompt.push_str("\n\n## Learned Preferences\n");
-                prompt.push_str("These preferences were learned from previous interactions. Follow them:\n\n");
+                prompt.push_str(
+                    "These preferences were learned from previous interactions. Follow them:\n\n",
+                );
                 prompt.push_str(&prefs);
             }
         }

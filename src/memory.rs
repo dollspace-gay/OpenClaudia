@@ -942,7 +942,12 @@ impl MemoryDb {
     }
 
     /// Update the resolution for an existing error pattern
-    pub fn resolve_error_pattern(&self, error_signature: &str, file_context: Option<&str>, resolution: &str) -> Result<bool> {
+    pub fn resolve_error_pattern(
+        &self,
+        error_signature: &str,
+        file_context: Option<&str>,
+        resolution: &str,
+    ) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let rows = conn.execute(
             "UPDATE error_patterns SET resolution = ?1, updated_at = datetime('now') WHERE error_signature = ?2 AND (file_context = ?3 OR (?3 IS NULL AND file_context IS NULL)) AND resolution IS NULL",
@@ -1026,7 +1031,10 @@ impl MemoryDb {
         if !patterns.is_empty() {
             output.push_str("Patterns:\n");
             for p in patterns.iter().take(5) {
-                output.push_str(&format!("- [{}] {} (seen {}x)\n", p.pattern_type, p.description, p.confidence));
+                output.push_str(&format!(
+                    "- [{}] {} (seen {}x)\n",
+                    p.pattern_type, p.description, p.confidence
+                ));
             }
         }
 
@@ -1047,7 +1055,10 @@ impl MemoryDb {
                 .take(5)
                 .map(|(f, count)| format!("{} ({}x)", f, count))
                 .collect();
-            output.push_str(&format!("Often co-edited with: {}\n", related_str.join(", ")));
+            output.push_str(&format!(
+                "Often co-edited with: {}\n",
+                related_str.join(", ")
+            ));
         }
 
         output.push_str("</file_knowledge>");
@@ -1064,7 +1075,10 @@ impl MemoryDb {
 
         let mut output = String::from("<learned_preferences>\n");
         for p in prefs.iter().take(15) {
-            output.push_str(&format!("- [{}] {} (confidence: {})\n", p.category, p.preference, p.confidence));
+            output.push_str(&format!(
+                "- [{}] {} (confidence: {})\n",
+                p.category, p.preference, p.confidence
+            ));
         }
         output.push_str("</learned_preferences>");
         Ok(output)
@@ -1076,7 +1090,9 @@ impl MemoryDb {
         let patterns: i64 =
             conn.query_row("SELECT COUNT(*) FROM coding_patterns", [], |row| row.get(0))?;
         let relationships: i64 =
-            conn.query_row("SELECT COUNT(*) FROM file_relationships", [], |row| row.get(0))?;
+            conn.query_row("SELECT COUNT(*) FROM file_relationships", [], |row| {
+                row.get(0)
+            })?;
         let errors: i64 =
             conn.query_row("SELECT COUNT(*) FROM error_patterns", [], |row| row.get(0))?;
         let resolved: i64 = conn.query_row(
@@ -1085,7 +1101,9 @@ impl MemoryDb {
             |row| row.get(0),
         )?;
         let preferences: i64 =
-            conn.query_row("SELECT COUNT(*) FROM learned_preferences", [], |row| row.get(0))?;
+            conn.query_row("SELECT COUNT(*) FROM learned_preferences", [], |row| {
+                row.get(0)
+            })?;
 
         Ok(AutoLearnStats {
             coding_patterns: patterns as usize,

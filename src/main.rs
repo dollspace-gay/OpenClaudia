@@ -2241,21 +2241,19 @@ fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
     let subargs = parts.get(1).copied().unwrap_or("");
 
     match subcmd.as_str() {
-        "" | "stats" => {
-            match db.auto_learn_stats() {
-                Ok(stats) => {
-                    println!("\n=== Auto-Learning Statistics ===");
-                    println!("  Coding patterns:      {}", stats.coding_patterns);
-                    println!("  File relationships:   {}", stats.file_relationships);
-                    println!("  Error patterns:       {}", stats.error_patterns);
-                    println!("  Errors resolved:      {}", stats.errors_resolved);
-                    println!("  Learned preferences:  {}", stats.learned_preferences);
-                    println!("  Database path:        {}", db.path().display());
-                    println!();
-                }
-                Err(e) => eprintln!("\nFailed to get auto-learn stats: {}\n", e),
+        "" | "stats" => match db.auto_learn_stats() {
+            Ok(stats) => {
+                println!("\n=== Auto-Learning Statistics ===");
+                println!("  Coding patterns:      {}", stats.coding_patterns);
+                println!("  File relationships:   {}", stats.file_relationships);
+                println!("  Error patterns:       {}", stats.error_patterns);
+                println!("  Errors resolved:      {}", stats.errors_resolved);
+                println!("  Learned preferences:  {}", stats.learned_preferences);
+                println!("  Database path:        {}", db.path().display());
+                println!();
             }
-        }
+            Err(e) => eprintln!("\nFailed to get auto-learn stats: {}\n", e),
+        },
         "patterns" => {
             match db.get_patterns_for_file(if subargs.is_empty() { "*" } else { subargs }) {
                 Ok(patterns) => {
@@ -2282,9 +2280,16 @@ fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
                         if errors.is_empty() {
                             println!("\nNo error patterns for '{}'.\n", subargs);
                         } else {
-                            println!("\n=== Error Patterns for '{}' ({}) ===\n", subargs, errors.len());
+                            println!(
+                                "\n=== Error Patterns for '{}' ({}) ===\n",
+                                subargs,
+                                errors.len()
+                            );
                             for e in &errors {
-                                print!("  \x1b[31m{}\x1b[0m ({}x)", e.error_signature, e.occurrences);
+                                print!(
+                                    "  \x1b[31m{}\x1b[0m ({}x)",
+                                    e.error_signature, e.occurrences
+                                );
                                 if let Some(ref res) = e.resolution {
                                     print!(" \x1b[32m-> {}\x1b[0m", res);
                                 }
@@ -2300,25 +2305,23 @@ fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
                 println!("Example: /memory errors src/main.rs\n");
             }
         }
-        "prefs" | "preferences" => {
-            match db.get_all_preferences() {
-                Ok(prefs) => {
-                    if prefs.is_empty() {
-                        println!("\nNo preferences learned yet.\n");
-                    } else {
-                        println!("\n=== Learned Preferences ({}) ===\n", prefs.len());
-                        for p in &prefs {
-                            println!(
-                                "  \x1b[35m[{}]\x1b[0m {} \x1b[90m(confidence: {})\x1b[0m",
-                                p.category, p.preference, p.confidence
-                            );
-                        }
-                        println!();
+        "prefs" | "preferences" => match db.get_all_preferences() {
+            Ok(prefs) => {
+                if prefs.is_empty() {
+                    println!("\nNo preferences learned yet.\n");
+                } else {
+                    println!("\n=== Learned Preferences ({}) ===\n", prefs.len());
+                    for p in &prefs {
+                        println!(
+                            "  \x1b[35m[{}]\x1b[0m {} \x1b[90m(confidence: {})\x1b[0m",
+                            p.category, p.preference, p.confidence
+                        );
                     }
+                    println!();
                 }
-                Err(e) => eprintln!("\nFailed to get preferences: {}\n", e),
             }
-        }
+            Err(e) => eprintln!("\nFailed to get preferences: {}\n", e),
+        },
         "files" | "relationships" => {
             if !subargs.is_empty() {
                 match db.get_related_files(subargs) {
@@ -3811,7 +3814,10 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
 
             // Show auto-learning stats
             if let Ok(stats) = db.auto_learn_stats() {
-                let total = stats.coding_patterns + stats.error_patterns + stats.learned_preferences + stats.file_relationships;
+                let total = stats.coding_patterns
+                    + stats.error_patterns
+                    + stats.learned_preferences
+                    + stats.file_relationships;
                 if total > 0 {
                     println!(
                         "\x1b[90m🧠 Auto-learned: {} patterns, {} error fixes, {} preferences, {} file relationships\x1b[0m",
@@ -4187,7 +4193,10 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
                     // Auto-learn from user message (correction/preference detection)
                     if let Some(ref mut learner) = auto_learner {
                         // Get the last assistant message for context
-                        let prev_assistant = chat_session.messages.iter().rev()
+                        let prev_assistant = chat_session
+                            .messages
+                            .iter()
+                            .rev()
                             .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
                             .and_then(|m| m.get("content").and_then(|c| c.as_str()))
                             .map(|s| s.to_string());
@@ -4285,19 +4294,39 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
 
                 // Inject file-specific knowledge for recently-touched files
                 if let Some(ref db) = memory_db {
-                    let mut injected_files: std::collections::HashSet<String> = std::collections::HashSet::new();
+                    let mut injected_files: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
                     // Look at recent tool results for file paths
                     for msg in chat_session.messages.iter().rev().take(10) {
                         if let Some(role) = msg.get("role").and_then(|r| r.as_str()) {
                             if role == "tool" || role == "assistant" {
                                 // Check for file paths in tool call arguments
-                                if let Some(tool_calls) = msg.get("tool_calls").and_then(|t| t.as_array()) {
+                                if let Some(tool_calls) =
+                                    msg.get("tool_calls").and_then(|t| t.as_array())
+                                {
                                     for tc in tool_calls {
-                                        let name = tc.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).unwrap_or("");
-                                        if matches!(name, "read_file" | "edit_file" | "write_file") {
-                                            if let Some(args_str) = tc.get("function").and_then(|f| f.get("arguments")).and_then(|a| a.as_str()) {
-                                                if let Ok(args) = serde_json::from_str::<serde_json::Value>(args_str) {
-                                                    if let Some(path) = args.get("path").or_else(|| args.get("file_path")).and_then(|p| p.as_str()) {
+                                        let name = tc
+                                            .get("function")
+                                            .and_then(|f| f.get("name"))
+                                            .and_then(|n| n.as_str())
+                                            .unwrap_or("");
+                                        if matches!(name, "read_file" | "edit_file" | "write_file")
+                                        {
+                                            if let Some(args_str) = tc
+                                                .get("function")
+                                                .and_then(|f| f.get("arguments"))
+                                                .and_then(|a| a.as_str())
+                                            {
+                                                if let Ok(args) =
+                                                    serde_json::from_str::<serde_json::Value>(
+                                                        args_str,
+                                                    )
+                                                {
+                                                    if let Some(path) = args
+                                                        .get("path")
+                                                        .or_else(|| args.get("file_path"))
+                                                        .and_then(|p| p.as_str())
+                                                    {
                                                         injected_files.insert(path.to_string());
                                                     }
                                                 }
@@ -4741,11 +4770,23 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
 
                                                 // Auto-learn from tool result
                                                 if let Some(ref mut learner) = auto_learner {
-                                                    let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+                                                    let args: serde_json::Value =
+                                                        serde_json::from_str(
+                                                            &tool_call.function.arguments,
+                                                        )
+                                                        .unwrap_or_default();
                                                     if result.is_error {
-                                                        learner.on_tool_failure(&tool_call.function.name, &args, &result.content);
+                                                        learner.on_tool_failure(
+                                                            &tool_call.function.name,
+                                                            &args,
+                                                            &result.content,
+                                                        );
                                                     } else {
-                                                        learner.on_tool_success(&tool_call.function.name, &args, &result.content);
+                                                        learner.on_tool_success(
+                                                            &tool_call.function.name,
+                                                            &args,
+                                                            &result.content,
+                                                        );
                                                     }
                                                 }
 
@@ -5424,11 +5465,23 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
 
                                                 // Auto-learn from tool result
                                                 if let Some(ref mut learner) = auto_learner {
-                                                    let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+                                                    let args: serde_json::Value =
+                                                        serde_json::from_str(
+                                                            &tool_call.function.arguments,
+                                                        )
+                                                        .unwrap_or_default();
                                                     if result.is_error {
-                                                        learner.on_tool_failure(&tool_call.function.name, &args, &result.content);
+                                                        learner.on_tool_failure(
+                                                            &tool_call.function.name,
+                                                            &args,
+                                                            &result.content,
+                                                        );
                                                     } else {
-                                                        learner.on_tool_success(&tool_call.function.name, &args, &result.content);
+                                                        learner.on_tool_success(
+                                                            &tool_call.function.name,
+                                                            &args,
+                                                            &result.content,
+                                                        );
                                                     }
                                                 }
 
@@ -6092,11 +6145,21 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
 
                                         // Auto-learn from tool result
                                         if let Some(ref mut learner) = auto_learner {
-                                            let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+                                            let args: serde_json::Value =
+                                                serde_json::from_str(&tool_call.function.arguments)
+                                                    .unwrap_or_default();
                                             if result.is_error {
-                                                learner.on_tool_failure(&tool_call.function.name, &args, &result.content);
+                                                learner.on_tool_failure(
+                                                    &tool_call.function.name,
+                                                    &args,
+                                                    &result.content,
+                                                );
                                             } else {
-                                                learner.on_tool_success(&tool_call.function.name, &args, &result.content);
+                                                learner.on_tool_success(
+                                                    &tool_call.function.name,
+                                                    &args,
+                                                    &result.content,
+                                                );
                                             }
                                         }
 
@@ -6266,8 +6329,7 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
                                             convert_messages_to_anthropic(&chat_session.messages);
 
                                         // Proxy mode (OAuth) — include tool definitions
-                                        let openai_tools =
-                                            tools::get_all_tool_definitions(true);
+                                        let openai_tools = tools::get_all_tool_definitions(true);
                                         let anthropic_tools = convert_tools_to_anthropic(
                                             openai_tools.as_array().unwrap_or(&vec![]),
                                         );
@@ -6301,8 +6363,7 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
                                         let anthropic_messages =
                                             convert_messages_to_anthropic(&chat_session.messages);
 
-                                        let openai_tools =
-                                            tools::get_all_tool_definitions(true);
+                                        let openai_tools = tools::get_all_tool_definitions(true);
                                         let anthropic_tools = convert_tools_to_anthropic(
                                             openai_tools.as_array().unwrap_or(&vec![]),
                                         );
