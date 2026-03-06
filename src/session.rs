@@ -1155,12 +1155,31 @@ pub fn is_tool_allowed_in_plan_mode(
     if tool_name == "write_file" {
         if let Some(path_str) = args.get("path").and_then(|v| v.as_str()) {
             let target = Path::new(path_str);
-            // Compare canonical paths to handle relative vs absolute
-            let target_canonical =
-                std::fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
-            let plan_canonical =
-                std::fs::canonicalize(plan_file).unwrap_or_else(|_| plan_file.to_path_buf());
-            return target_canonical == plan_canonical;
+            // Try canonical comparison first (handles symlinks, relative paths)
+            if let (Ok(tc), Ok(pc)) = (
+                std::fs::canonicalize(target),
+                std::fs::canonicalize(plan_file),
+            ) {
+                return tc == pc;
+            }
+            // Fallback: normalize both to absolute paths for comparison.
+            // This handles the case where the file doesn't exist yet or
+            // canonicalize fails for other reasons.
+            let abs_target = if target.is_absolute() {
+                target.to_path_buf()
+            } else {
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(target))
+                    .unwrap_or_else(|_| target.to_path_buf())
+            };
+            let abs_plan = if plan_file.is_absolute() {
+                plan_file.to_path_buf()
+            } else {
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(plan_file))
+                    .unwrap_or_else(|_| plan_file.to_path_buf())
+            };
+            return abs_target == abs_plan;
         }
         return false;
     }

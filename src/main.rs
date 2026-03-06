@@ -853,6 +853,9 @@ fn handle_enter_plan_mode(chat_session: &mut ChatSession) -> String {
         return format!("Failed to create plans directory: {}", e);
     }
 
+    // Canonicalize to absolute path so the plan mode check can compare
+    // against absolute paths that models provide to write_file
+    let plans_dir = std::fs::canonicalize(&plans_dir).unwrap_or(plans_dir);
     let plan_file = plans_dir.join(format!("{}.md", chat_session.id));
 
     // Initialize plan file if it doesn't exist
@@ -5793,6 +5796,35 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
                                                     "content": combined_text
                                                 }));
                                             }
+
+                                            // Filter out tools blocked by plan mode
+                                            let all_tools: Vec<_> = all_tools
+                                                .into_iter()
+                                                .filter(|tool| {
+                                                    let args_json = serde_json::to_string(&tool.parameters
+                                                        .iter()
+                                                        .collect::<std::collections::HashMap<_, _>>())
+                                                        .unwrap_or_default();
+                                                    if let Some(block_msg) = check_plan_mode_restriction(
+                                                        &chat_session,
+                                                        &tool.name,
+                                                        &args_json,
+                                                    ) {
+                                                        println!(
+                                                            "\n\x1b[33m⚠ Blocked in plan mode: {}\x1b[0m",
+                                                            tool.name
+                                                        );
+                                                        // Add error result to messages
+                                                        chat_session.messages.push(serde_json::json!({
+                                                            "role": "user",
+                                                            "content": format!("[ERROR] {}", block_msg)
+                                                        }));
+                                                        false
+                                                    } else {
+                                                        true
+                                                    }
+                                                })
+                                                .collect();
 
                                             // Execute ALL tools locally
                                             let results = tool_intercept::execute_intercepted_tools(

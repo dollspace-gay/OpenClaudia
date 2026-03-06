@@ -33,6 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Read-before-edit enforcement on edit_file tool
 
 ### Fixed
+- Fix plan mode blocking write_file calls to the plan file (#72)
 - MCP StdioTransport creates new BufReader per request losing data (#62)
 - MCP tool name parsing breaks on underscored server names (#61)
 - .unwrap() on Option in session.rs causes panics (#60)
