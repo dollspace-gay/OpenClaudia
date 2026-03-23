@@ -4534,6 +4534,13 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
                     adapter.get_headers(&api_key)
                 };
 
+                // Merge in any custom headers from provider config
+                let headers: Vec<(String, String)> = {
+                    let mut h = headers;
+                    h.extend(provider.headers.iter().map(|(k, v)| (k.clone(), v.clone())));
+                    h
+                };
+
                 // Show spinner while connecting
                 let spinner = ProgressBar::new_spinner();
                 spinner.set_style(
