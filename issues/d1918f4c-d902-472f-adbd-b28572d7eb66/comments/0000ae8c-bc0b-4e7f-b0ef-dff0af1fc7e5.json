@@ -1,0 +1,8 @@
+{
+  "uuid": "0000ae8c-bc0b-4e7f-b0ef-dff0af1fc7e5",
+  "issue_uuid": "d1918f4c-d902-472f-adbd-b28572d7eb66",
+  "author": "anon-b5959f1a",
+  "content": "Applied fix: added provider.headers merge block after the headers construction at main.rs:4536-4540. Custom headers from config are now extended onto the adapter headers for all code paths.",
+  "created_at": "2026-03-23T17:10:19.328326842Z",
+  "kind": "result"
+}
