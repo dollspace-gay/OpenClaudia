@@ -1,0 +1,10 @@
+{
+  "uuid": "d46ad86e-64ab-4c75-b69b-5cc01db5f19a",
+  "display_id": 2,
+  "title": "Fix raw HTML dumped to terminal on non-2xx provider responses",
+  "status": "open",
+  "priority": "high",
+  "created_by": "anon-b5959f1a",
+  "created_at": "2026-03-23T17:14:15.166180779Z",
+  "updated_at": "2026-03-23T17:14:15.166180779Z"
+}
