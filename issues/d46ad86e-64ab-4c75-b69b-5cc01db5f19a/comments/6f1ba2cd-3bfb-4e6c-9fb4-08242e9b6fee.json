@@ -1,0 +1,8 @@
+{
+  "uuid": "6f1ba2cd-3bfb-4e6c-9fb4-08242e9b6fee",
+  "issue_uuid": "d46ad86e-64ab-4c75-b69b-5cc01db5f19a",
+  "author": "anon-b5959f1a",
+  "content": "Design doc drafted: .design/acp-protocol-server.md — covers all stable ACP methods, tool-to-ACP-client delegation, bidirectional JSON-RPC transport, and SessionManager integration",
+  "created_at": "2026-03-23T17:34:38.752935533Z",
+  "kind": "plan"
+}
