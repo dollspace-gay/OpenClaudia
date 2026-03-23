@@ -1,0 +1,8 @@
+{
+  "uuid": "6d197220-7bbf-45f6-9705-0536accf2e3e",
+  "issue_uuid": "076d5691-ab93-4937-a75f-8f44629b6def",
+  "author": "anon-b5959f1a",
+  "content": "Design doc: .design/acp-protocol-server.md. All open questions resolved. Implementing all stable ACP methods with tool delegation via ACP client methods, SessionManager wrapping, full config inheritance, and MCP tool passthrough.",
+  "created_at": "2026-03-23T17:38:00.076167858Z",
+  "kind": "plan"
+}
