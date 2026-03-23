@@ -6671,8 +6671,17 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
                             } // end else (non-Google streaming)
                         } else {
                             let status = response.status();
+                            let content_type = response.headers()
+                                .get("content-type")
+                                .and_then(|v| v.to_str().ok())
+                                .unwrap_or("")
+                                .to_string();
                             let body = response.text().await.unwrap_or_default();
-                            eprintln!("\nError {}: {}\n", status, body);
+                            if content_type.contains("text/html") {
+                                eprintln!("\nError {}: (HTML response — check your provider configuration)\n", status);
+                            } else {
+                                eprintln!("\nError {}: {}\n", status, body);
+                            }
                             // Remove the failed user message
                             chat_session.messages.pop();
                         }
