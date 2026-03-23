@@ -131,6 +131,7 @@ pub struct AcpServer {
     /// Request ID counter for server→client requests
     next_request_id: AtomicU64,
     /// Pending responses for server→client requests
+    #[allow(clippy::type_complexity)]
     pending_responses: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, JsonRpcError>>>>>,
     /// Cancellation flag for in-flight prompts
     cancel_flag: Arc<AtomicBool>,
@@ -854,20 +855,17 @@ impl AcpServer {
                     // Handle Anthropic event: lines
                     if line.starts_with("event: ") {
                         let event_type = line.trim_start_matches("event: ");
-                        match event_type {
-                            "message_stop" => {
-                                if tool_calls.is_empty() {
-                                    return StreamResult::EndTurn {
-                                        content: full_content,
-                                    };
-                                } else {
-                                    return StreamResult::ToolCalls {
-                                        content: full_content,
-                                        tool_calls,
-                                    };
-                                }
+                        if event_type == "message_stop" {
+                            if tool_calls.is_empty() {
+                                return StreamResult::EndTurn {
+                                    content: full_content,
+                                };
+                            } else {
+                                return StreamResult::ToolCalls {
+                                    content: full_content,
+                                    tool_calls,
+                                };
                             }
-                            _ => {}
                         }
                     }
                     continue;
@@ -1297,18 +1295,16 @@ impl AcpServer {
         let (new_content, count) = if replace_all {
             let count = file_content.matches(old_string).count();
             (file_content.replace(old_string, new_string), count)
+        } else if file_content.contains(old_string) {
+            (file_content.replacen(old_string, new_string, 1), 1)
         } else {
-            if let Some(_) = file_content.find(old_string) {
-                (file_content.replacen(old_string, new_string, 1), 1)
-            } else {
-                return AcpToolResult {
-                    content: format!(
-                        "old_string not found in {}. Read the file first to see exact content.",
-                        path
-                    ),
-                    is_error: true,
-                };
-            }
+            return AcpToolResult {
+                content: format!(
+                    "old_string not found in {}. Read the file first to see exact content.",
+                    path
+                ),
+                is_error: true,
+            };
         };
 
         if count == 0 {
@@ -1559,7 +1555,7 @@ impl AcpServer {
                 let file_type = args.get("type").and_then(|v| v.as_str());
                 let glob = args.get("glob").and_then(|v| v.as_str());
 
-                let mut cmd = format!("rg --no-heading");
+                let mut cmd = "rg --no-heading".to_string();
                 if let Some(ft) = file_type {
                     cmd.push_str(&format!(" --type {}", ft));
                 }
@@ -1653,10 +1649,8 @@ pub async fn run_acp_server(
             match line_result {
                 Ok(line) => {
                     let trimmed = line.trim().to_string();
-                    if !trimmed.is_empty() {
-                        if stdin_tx.send(trimmed).is_err() {
-                            break;
-                        }
+                    if !trimmed.is_empty() && stdin_tx.send(trimmed).is_err() {
+                        break;
                     }
                 }
                 Err(_) => break,

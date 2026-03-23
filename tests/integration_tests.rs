@@ -16,6 +16,10 @@ use tempfile::TempDir;
 /// Tests that call reset_read_tracker() must hold this lock to avoid races.
 static READ_TRACKER_LOCK: Mutex<()> = Mutex::new(());
 
+/// Global lock for tests that depend on the shared TODO_LIST state.
+/// Tests that call clear_todo_list() must hold this lock to avoid races.
+static TODO_LIST_LOCK: Mutex<()> = Mutex::new(());
+
 /// Helper to create a ToolCall from name and arguments
 fn make_tool_call(name: &str, args: Value) -> ToolCall {
     ToolCall {
@@ -1608,7 +1612,7 @@ mod todo_tools {
 
     #[test]
     fn test_todo_write_basic() {
-        // Clear any existing todos
+        let _lock = TODO_LIST_LOCK.lock().unwrap();
         clear_todo_list();
 
         let tool_call = make_tool_call(
@@ -1655,6 +1659,7 @@ mod todo_tools {
 
     #[test]
     fn test_todo_write_with_completed() {
+        let _lock = TODO_LIST_LOCK.lock().unwrap();
         clear_todo_list();
 
         let tool_call = make_tool_call(
@@ -1697,6 +1702,7 @@ mod todo_tools {
 
     #[test]
     fn test_todo_write_multiple_in_progress_warning() {
+        let _lock = TODO_LIST_LOCK.lock().unwrap();
         clear_todo_list();
 
         let tool_call = make_tool_call(
@@ -1730,6 +1736,7 @@ mod todo_tools {
 
     #[test]
     fn test_todo_write_missing_field() {
+        let _lock = TODO_LIST_LOCK.lock().unwrap();
         clear_todo_list();
 
         // Missing activeForm
@@ -1761,6 +1768,7 @@ mod todo_tools {
 
     #[test]
     fn test_todo_write_invalid_status() {
+        let _lock = TODO_LIST_LOCK.lock().unwrap();
         clear_todo_list();
 
         let tool_call = make_tool_call(
@@ -1795,6 +1803,7 @@ mod todo_tools {
 
     #[test]
     fn test_todo_read_empty() {
+        let _lock = TODO_LIST_LOCK.lock().unwrap();
         clear_todo_list();
 
         let tool_call = make_tool_call("todo_read", json!({}));
@@ -1812,6 +1821,7 @@ mod todo_tools {
 
     #[test]
     fn test_todo_read_after_write() {
+        let _lock = TODO_LIST_LOCK.lock().unwrap();
         clear_todo_list();
 
         // Write some todos
@@ -1873,6 +1883,7 @@ mod todo_tools {
 
     #[test]
     fn test_todo_list_persistence() {
+        let _lock = TODO_LIST_LOCK.lock().unwrap();
         clear_todo_list();
 
         // Write todos
@@ -1901,6 +1912,7 @@ mod todo_tools {
 
     #[test]
     fn test_todo_write_replaces_list() {
+        let _lock = TODO_LIST_LOCK.lock().unwrap();
         clear_todo_list();
 
         // First write
@@ -1945,6 +1957,7 @@ mod todo_tools {
 
     #[test]
     fn test_todo_write_empty_list() {
+        let _lock = TODO_LIST_LOCK.lock().unwrap();
         clear_todo_list();
 
         // First add some todos
