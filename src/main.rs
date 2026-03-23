@@ -71,6 +71,17 @@ enum Commands {
     /// Check configuration and connectivity
     Doctor,
 
+    /// Start ACP server on stdin/stdout for agent interoperability (acpx)
+    Acp {
+        /// Target provider (overrides config)
+        #[arg(short, long)]
+        target: Option<String>,
+
+        /// Model to use
+        #[arg(short, long)]
+        model: Option<String>,
+    },
+
     /// Run in iteration/loop mode with Stop hooks
     Loop {
         /// Maximum number of iterations (0 = unlimited)
@@ -109,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
         None => cmd_chat(cli.model).await,
         Some(Commands::Init { force }) => cmd_init(force),
         Some(Commands::Auth { status, logout }) => cmd_auth(status, logout).await,
+        Some(Commands::Acp { target, model: acp_model }) => cmd_acp(target, acp_model.or(cli.model)).await,
         Some(Commands::Start { port, host, target }) => cmd_start(port, host, target).await,
         Some(Commands::Config) => cmd_config(),
         Some(Commands::Doctor) => cmd_doctor().await,
@@ -3626,6 +3638,69 @@ async fn start_builtin_oauth_flow(config: &config::AppConfig) -> Option<OAuthFlo
 
     eprintln!("\n❌ Login timed out (5 min)");
     None
+}
+
+/// ACP server mode — stdin/stdout JSON-RPC for acpx interoperability
+async fn cmd_acp(
+    target_override: Option<String>,
+    model_override: Option<String>,
+) -> anyhow::Result<()> {
+    let config = match config::load_config() {
+        Ok(mut c) => {
+            if let Some(ref target) = target_override {
+                c.proxy.target = target.clone();
+            }
+            c
+        }
+        Err(_) => {
+            eprintln!("No configuration found. Run 'openclaudia init' first.");
+            return Ok(());
+        }
+    };
+
+    let provider = match config.active_provider() {
+        Some(p) => p,
+        None => {
+            eprintln!(
+                "No provider configured for target '{}'",
+                config.proxy.target
+            );
+            return Ok(());
+        }
+    };
+
+    let api_key = if let Some(k) = &provider.api_key {
+        k.clone()
+    } else {
+        let env_var = match config.proxy.target.as_str() {
+            "anthropic" => "ANTHROPIC_API_KEY",
+            "openai" => "OPENAI_API_KEY",
+            "google" => "GOOGLE_API_KEY",
+            "zai" => "ZAI_API_KEY",
+            "deepseek" => "DEEPSEEK_API_KEY",
+            "qwen" => "QWEN_API_KEY",
+            _ => "API_KEY",
+        };
+        eprintln!(
+            "No API key configured for '{}'. Set {} or add to config.",
+            config.proxy.target, env_var
+        );
+        return Ok(());
+    };
+
+    let model = model_override
+        .or_else(|| provider.model.clone())
+        .unwrap_or_else(|| match config.proxy.target.as_str() {
+            "anthropic" => "claude-sonnet-4-6".to_string(),
+            "openai" => "gpt-5.2".to_string(),
+            "google" => "gemini-2.5-flash".to_string(),
+            "zai" => "glm-5".to_string(),
+            "deepseek" => "deepseek-chat".to_string(),
+            "qwen" => "qwen3.5-plus".to_string(),
+            _ => "gpt-5.2".to_string(),
+        });
+
+    openclaudia::acp::run_acp_server(config, model, api_key).await
 }
 
 /// Interactive chat mode (default command)
