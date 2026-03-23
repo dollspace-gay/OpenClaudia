@@ -1,0 +1,8 @@
+{
+  "uuid": "6d5efc6d-7bc5-454c-b0c7-1789abe103f5",
+  "issue_uuid": "d1918f4c-d902-472f-adbd-b28572d7eb66",
+  "author": "anon-b5959f1a",
+  "content": "Bug confirmed: main.rs:4509-4535 builds headers from adapter.get_headers() only, never merging provider.headers. vdd.rs:1205-1207 does it correctly. Fix: extend the headers vec with provider.headers after get_headers() in both proxy and non-proxy branches.",
+  "created_at": "2026-03-23T17:08:32.937169860Z",
+  "kind": "plan"
+}
