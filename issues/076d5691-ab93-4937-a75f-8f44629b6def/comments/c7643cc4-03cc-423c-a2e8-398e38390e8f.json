@@ -1,0 +1,8 @@
+{
+  "uuid": "c7643cc4-03cc-423c-a2e8-398e38390e8f",
+  "issue_uuid": "076d5691-ab93-4937-a75f-8f44629b6def",
+  "author": "anon-b5959f1a",
+  "content": "Implementation complete: src/acp.rs (ACP server module) + CLI subcommand in main.rs + module registration in lib.rs. All 530 tests pass, zero warnings. Features: all stable ACP methods, tool delegation via fs/terminal client methods, bidirectional JSON-RPC transport, streaming provider responses as session/update notifications, SessionManager wrapping, full config inheritance.",
+  "created_at": "2026-03-23T17:49:33.836659429Z",
+  "kind": "result"
+}
