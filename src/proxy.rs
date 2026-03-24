@@ -36,7 +36,7 @@ use crate::vdd::{VddEngine, VddResult};
 
 /// Normalize base URL by stripping trailing slash and /v1 suffix.
 /// This prevents double /v1/v1 when endpoint paths include /v1 prefix.
-fn normalize_base_url(base_url: &str) -> String {
+pub fn normalize_base_url(base_url: &str) -> String {
     base_url
         .trim_end_matches('/')
         .trim_end_matches("/v1")

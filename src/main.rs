@@ -3,7 +3,7 @@
 //! Provides Claude Code-like capabilities for any AI agent.
 
 use openclaudia::{
-    config, guardrails, memory, oauth, plugins, prompt, providers, proxy, session, tool_intercept,
+    config, guardrails, memory, oauth, plugins, prompt, providers, proxy::normalize_base_url, proxy, session, tool_intercept,
     tools::{self, safe_truncate},
     tui, vdd,
 };
@@ -4566,7 +4566,7 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
                         "tools": tools::get_all_tool_definitions(true)
                     })
                 };
-
+                // Build headers based on auth mode
                 // Get endpoint - proxy mode uses our local proxy, which handles OAuth internally
                 let endpoint = if using_proxy {
                     // Use the stored proxy_url for the endpoint
@@ -4574,13 +4574,11 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
                         eprintln!("[debug] Using built-in proxy at: {}", url);
                         format!("{}/v1/messages", url)
                     } else {
-                        format!("{}{}", provider.base_url, adapter.chat_endpoint(&model))
+                        format!("{}{}", normalize_base_url(&provider.base_url), adapter.chat_endpoint(&model))
                     }
                 } else {
-                    format!("{}{}", provider.base_url, adapter.chat_endpoint(&model))
+                    format!("{}{}", normalize_base_url(&provider.base_url), adapter.chat_endpoint(&model))
                 };
-
-                // Build headers based on auth mode
                 let headers: Vec<(String, String)> = if using_proxy {
                     // Proxy mode: send Cookie header with session ID so proxy uses stored OAuth
                     if let Some(ref session) = oauth_session {
