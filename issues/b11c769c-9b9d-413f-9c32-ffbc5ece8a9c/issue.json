@@ -2,11 +2,12 @@
   "uuid": "b11c769c-9b9d-413f-9c32-ffbc5ece8a9c",
   "display_id": null,
   "title": "Add /mcp command for MCP server management",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-03-31T22:20:43.381602533Z",
-  "updated_at": "2026-03-31T22:20:45.147095094Z",
+  "updated_at": "2026-03-31T22:29:39.573771139Z",
+  "closed_at": "2026-03-31T22:29:39.573771139Z",
   "labels": [
     "feature"
   ]
