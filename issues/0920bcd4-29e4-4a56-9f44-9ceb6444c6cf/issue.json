@@ -2,11 +2,12 @@
   "uuid": "0920bcd4-29e4-4a56-9f44-9ceb6444c6cf",
   "display_id": null,
   "title": "Add vim mode state machine for input",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-03-31T17:20:54.763178781Z",
-  "updated_at": "2026-03-31T17:20:54.862267858Z",
+  "updated_at": "2026-03-31T17:39:15.071004671Z",
+  "closed_at": "2026-03-31T17:39:15.071004671Z",
   "labels": [
     "feature"
   ]
