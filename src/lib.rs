@@ -25,6 +25,7 @@ pub mod providers;
 pub mod proxy;
 pub mod rules;
 pub mod session;
+pub mod skills;
 pub mod streaming;
 pub mod subagent;
 pub mod tool_intercept;

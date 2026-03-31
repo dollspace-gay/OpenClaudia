@@ -6,6 +6,7 @@ use crate::cli::commands::init::init_project_rules;
 use crate::cli::display::theme::handle_theme_command;
 use openclaudia::memory;
 use openclaudia::plugins;
+use openclaudia::skills;
 use openclaudia::tools::file_index::FileIndex;
 use openclaudia::tools::safe_truncate;
 use std::fs;
@@ -85,6 +86,8 @@ pub enum SlashCommandResult {
     ThemeChanged(String),
     /// Toggle vim mode (visual indicator in prompt)
     ToggleVim,
+    /// Invoke a skill (inject its prompt as the next user message)
+    Skill(String),
     /// Show help message (already printed)
     Handled,
 }
@@ -124,6 +127,8 @@ pub fn handle_slash_command(
             println!("  /copy            - Copy last assistant response to clipboard");
             println!("  /init            - Generate project rules from codebase");
             println!("  /review          - Review uncommitted git changes");
+            println!("  /commit          - Stage changes and commit with auto-generated message");
+            println!("  /commit-push-pr  - Commit, push, and create a pull request");
             println!("  /review <branch> - Compare current branch against <branch>");
             println!("  /status          - Show session status (model, tokens, etc.)");
             println!("  /connect         - Configure API keys for providers");
@@ -157,6 +162,10 @@ pub fn handle_slash_command(
             println!("  /plugin manage   - Manage installed plugins");
             println!("  /plugin help     - Show all plugin commands");
             println!("  /<plugin>:<cmd>  - Run a plugin command");
+            println!();
+            println!("Skill Commands:");
+            println!("  /skill           - List available skills");
+            println!("  /skill <name>    - Invoke a skill (inject prompt as next message)");
             println!();
             println!("Shell Commands:");
             println!("  !<cmd>           - Execute shell command (e.g., !ls -la)");
@@ -517,6 +526,202 @@ pub fn handle_slash_command(
                 }
             };
             Some(SlashCommandResult::Plugin(action))
+        }
+        "skill" | "skills" => {
+            if args.is_empty() {
+                // List available skills
+                let all_skills = skills::load_skills();
+                if all_skills.is_empty() {
+                    println!("\nNo skills found.");
+                    println!("Add skill files to .openclaudia/skills/ or ~/.openclaudia/skills/");
+                    println!("\nSkill file format (YAML frontmatter + markdown body):");
+                    println!("  ---");
+                    println!("  name: my-skill");
+                    println!("  description: Does something useful");
+                    println!("  ---");
+                    println!("  ");
+                    println!("  You are a specialized agent that...\n");
+                } else {
+                    println!("\n=== Available Skills ({}) ===\n", all_skills.len());
+                    for skill in &all_skills {
+                        println!(
+                            "  \x1b[36m{}\x1b[0m - {}",
+                            skill.name, skill.description
+                        );
+                        println!("    \x1b[90m{}\x1b[0m", skill.path.display());
+                    }
+                    println!("\nUse /skill <name> to invoke a skill.\n");
+                }
+                Some(SlashCommandResult::Handled)
+            } else {
+                let skill_name = args.trim();
+                match skills::get_skill(skill_name) {
+                    Some(skill) => {
+                        println!(
+                            "\n\x1b[36mInvoking skill: {}\x1b[0m\n",
+                            skill.name
+                        );
+                        Some(SlashCommandResult::Skill(skill.prompt))
+                    }
+                    None => {
+                        eprintln!(
+                            "\nSkill '{}' not found. Use /skill to list available skills.\n",
+                            skill_name
+                        );
+                        Some(SlashCommandResult::Handled)
+                    }
+                }
+            }
+        }
+        "commit" => {
+            use std::process::Command;
+            // Check if in a git repo
+            if !Command::new("git").args(["rev-parse", "--is-inside-work-tree"]).output()
+                .map(|o| o.status.success()).unwrap_or(false) {
+                println!("\nNot inside a git repository.\n");
+                return Some(SlashCommandResult::Handled);
+            }
+
+            let staged = Command::new("git").args(["diff", "--cached", "--stat"]).output();
+            let unstaged = Command::new("git").args(["diff", "--stat"]).output();
+            let has_staged = staged.as_ref().map(|o| !o.stdout.is_empty()).unwrap_or(false);
+            let has_unstaged = unstaged.as_ref().map(|o| !o.stdout.is_empty()).unwrap_or(false);
+
+            if !has_staged && !has_unstaged {
+                println!("\nNo changes to commit.\n");
+                return Some(SlashCommandResult::Handled);
+            }
+
+            if !has_staged {
+                println!("\nUnstaged changes:");
+                if let Ok(ref o) = unstaged { println!("{}", String::from_utf8_lossy(&o.stdout)); }
+                print!("Stage all changes? [y/n] ");
+                use std::io::Write;
+                std::io::stdout().flush().ok();
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input).ok();
+                if input.trim().to_lowercase().starts_with('y') {
+                    let _ = Command::new("git").args(["add", "-A"]).output();
+                    println!("All changes staged.");
+                } else {
+                    println!("Commit cancelled.");
+                    return Some(SlashCommandResult::Handled);
+                }
+            }
+
+            let files = Command::new("git").args(["diff", "--cached", "--name-only"]).output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+            let file_list: Vec<&str> = files.trim().lines().collect();
+            let msg = if file_list.len() == 1 {
+                format!("Update {}", file_list[0])
+            } else {
+                format!("Update {} files", file_list.len())
+            };
+
+            println!("\nFiles: {}", files.trim());
+            print!("\nCommit message: \x1b[36m{}\x1b[0m\n[y/e(dit)/n] ", msg);
+            use std::io::Write;
+            std::io::stdout().flush().ok();
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input).ok();
+            match input.trim().to_lowercase().as_str() {
+                "y" | "yes" | "" => {
+                    match Command::new("git").args(["commit", "-m", &msg]).output() {
+                        Ok(o) if o.status.success() => println!("\n✓ {}", String::from_utf8_lossy(&o.stdout).trim()),
+                        Ok(o) => println!("\n✗ {}", String::from_utf8_lossy(&o.stderr).trim()),
+                        Err(e) => println!("\n✗ {}", e),
+                    }
+                }
+                "e" | "edit" => {
+                    print!("Enter commit message: ");
+                    std::io::stdout().flush().ok();
+                    let mut custom = String::new();
+                    std::io::stdin().read_line(&mut custom).ok();
+                    if !custom.trim().is_empty() {
+                        match Command::new("git").args(["commit", "-m", custom.trim()]).output() {
+                            Ok(o) if o.status.success() => println!("\n✓ {}", String::from_utf8_lossy(&o.stdout).trim()),
+                            Ok(o) => println!("\n✗ {}", String::from_utf8_lossy(&o.stderr).trim()),
+                            Err(e) => println!("\n✗ {}", e),
+                        }
+                    }
+                }
+                _ => println!("Commit cancelled."),
+            }
+            Some(SlashCommandResult::Handled)
+        }
+        "commit-push-pr" => {
+            use std::process::Command;
+            if !Command::new("git").args(["rev-parse", "--is-inside-work-tree"]).output()
+                .map(|o| o.status.success()).unwrap_or(false) {
+                println!("\nNot inside a git repository.\n");
+                return Some(SlashCommandResult::Handled);
+            }
+
+            // Commit first (reuse commit logic inline)
+            let staged = Command::new("git").args(["diff", "--cached", "--stat"]).output();
+            let unstaged = Command::new("git").args(["diff", "--stat"]).output();
+            let has_staged = staged.as_ref().map(|o| !o.stdout.is_empty()).unwrap_or(false);
+            let has_unstaged = unstaged.as_ref().map(|o| !o.stdout.is_empty()).unwrap_or(false);
+
+            if has_staged || has_unstaged {
+                if !has_staged {
+                    let _ = Command::new("git").args(["add", "-A"]).output();
+                }
+                let files = Command::new("git").args(["diff", "--cached", "--name-only"]).output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+                let file_list: Vec<&str> = files.trim().lines().collect();
+                let msg = if file_list.len() == 1 {
+                    format!("Update {}", file_list[0])
+                } else {
+                    format!("Update {} files", file_list.len())
+                };
+                match Command::new("git").args(["commit", "-m", &msg]).output() {
+                    Ok(o) if o.status.success() => println!("✓ Committed: {}", msg),
+                    Ok(o) => { println!("✗ Commit failed: {}", String::from_utf8_lossy(&o.stderr).trim()); return Some(SlashCommandResult::Handled); }
+                    Err(e) => { println!("✗ {}", e); return Some(SlashCommandResult::Handled); }
+                }
+            }
+
+            // Push
+            let branch = Command::new("git").args(["rev-parse", "--abbrev-ref", "HEAD"]).output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+            if branch == "main" || branch == "master" {
+                println!("\n⚠ You're on '{}'. Push anyway? [y/n] ", branch);
+                use std::io::Write;
+                std::io::stdout().flush().ok();
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input).ok();
+                if !input.trim().to_lowercase().starts_with('y') {
+                    println!("Push cancelled.");
+                    return Some(SlashCommandResult::Handled);
+                }
+            }
+            match Command::new("git").args(["push", "-u", "origin", &branch]).output() {
+                Ok(o) if o.status.success() => println!("✓ Pushed to origin/{}", branch),
+                Ok(o) => { println!("✗ Push failed: {}", String::from_utf8_lossy(&o.stderr).trim()); return Some(SlashCommandResult::Handled); }
+                Err(e) => { println!("✗ {}", e); return Some(SlashCommandResult::Handled); }
+            }
+
+            // Create PR if gh is available
+            if Command::new("which").arg("gh").output().map(|o| o.status.success()).unwrap_or(false) {
+                let last_msg = Command::new("git").args(["log", "-1", "--format=%s"]).output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or(branch.clone());
+                match Command::new("gh").args(["pr", "create", "--title", &last_msg, "--body", ""]).output() {
+                    Ok(o) if o.status.success() => println!("✓ PR created: {}", String::from_utf8_lossy(&o.stdout).trim()),
+                    Ok(o) => {
+                        let err = String::from_utf8_lossy(&o.stderr);
+                        if err.contains("already exists") {
+                            println!("PR already exists for this branch.");
+                        } else {
+                            println!("✗ PR creation failed: {}", err.trim());
+                        }
+                    }
+                    Err(e) => println!("✗ {}", e),
+                }
+            } else {
+                println!("(gh CLI not found — install it to auto-create PRs)");
+            }
+            Some(SlashCommandResult::Handled)
         }
         _ => {
             if cmd.contains(':') {

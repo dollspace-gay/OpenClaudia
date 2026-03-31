@@ -565,6 +565,21 @@ pub enum CompactionError {
     Failed(String),
 }
 
+/// Check if conversation needs compaction based on token usage.
+/// Returns (should_warn, should_compact, usage_pct)
+///
+/// - Warns at 85% context window usage
+/// - Triggers auto-compaction at 90% context window usage
+pub fn check_context_budget(estimated_tokens: usize, model: &str) -> (bool, bool, f32) {
+    let max_tokens = get_context_window(model);
+    let usage_pct = estimated_tokens as f32 / max_tokens as f32;
+
+    let should_warn = usage_pct >= 0.85;
+    let should_compact = usage_pct >= 0.90;
+
+    (should_warn, should_compact, usage_pct * 100.0)
+}
+
 /// Helper to capitalize first letter
 fn capitalize(s: &str) -> String {
     let mut chars = s.chars();
@@ -1140,5 +1155,42 @@ mod tests {
 
         let failed_err = CompactionError::Failed("Insufficient tokens freed".to_string());
         assert!(format!("{}", failed_err).contains("Insufficient tokens freed"));
+    }
+
+    #[test]
+    fn test_check_context_budget_normal() {
+        let (warn, compact, _) = check_context_budget(50000, "claude-sonnet-4-6");
+        assert!(!warn);
+        assert!(!compact);
+    }
+
+    #[test]
+    fn test_check_context_budget_warn() {
+        // Claude sonnet context is 200k, 85% = 170k
+        let (warn, compact, _) = check_context_budget(175000, "claude-sonnet-4-6");
+        assert!(warn);
+        assert!(!compact);
+    }
+
+    #[test]
+    fn test_check_context_budget_compact() {
+        let (warn, compact, _) = check_context_budget(185000, "claude-sonnet-4-6");
+        assert!(warn);
+        assert!(compact);
+    }
+
+    #[test]
+    fn test_check_context_budget_percentage() {
+        let (_, _, pct) = check_context_budget(100000, "claude-sonnet-4-6");
+        // 100k / 200k = 50%
+        assert!((pct - 50.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_check_context_budget_zero() {
+        let (warn, compact, pct) = check_context_budget(0, "claude-sonnet-4-6");
+        assert!(!warn);
+        assert!(!compact);
+        assert!((pct - 0.0).abs() < 0.01);
     }
 }

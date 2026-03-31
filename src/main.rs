@@ -5,7 +5,7 @@
 mod cli;
 
 use openclaudia::{
-    config, guardrails, memory, plugins, prompt, providers, proxy,
+    compaction, config, guardrails, memory, plugins, prompt, providers, proxy,
     proxy::normalize_base_url,
     session, tool_intercept,
     tools::{self, safe_truncate},
@@ -62,6 +62,11 @@ struct Cli {
     /// Enable verbose logging
     #[arg(short, long, global = true)]
     verbose: bool,
+
+    /// Skip all interactive permission prompts (auto-allow everything).
+    /// WARNING: Only use in CI/automation. Disables safety prompts for write/destructive tools.
+    #[arg(long)]
+    dangerously_skip_permissions: bool,
 }
 
 #[derive(Subcommand)]
@@ -151,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
-        None => cmd_chat(cli.model, cli.resume, cli.session_id, cli.coordinator).await,
+        None => cmd_chat(cli.model, cli.resume, cli.session_id, cli.coordinator, cli.dangerously_skip_permissions).await,
         Some(Commands::Init { force }) => cli::commands::init::cmd_init(force),
         Some(Commands::Auth { status, logout }) => {
             cli::commands::auth::cmd_auth(status, logout).await
@@ -173,8 +178,119 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+/// Result of an interactive permission prompt for a tool call.
+enum ToolPermissionResult {
+    /// User allowed execution (or tool doesn't need permission).
+    Allowed,
+    /// User denied execution.
+    Denied(String),
+}
+
+/// Check whether a tool call requires interactive permission and prompt the user if so.
+///
+/// Read-only / informational tools execute without prompting. Write/destructive tools
+/// (bash, write_file, edit_file, etc.) prompt the user unless:
+/// - `skip_permissions` is true (--dangerously-skip-permissions flag)
+/// - The tool has been marked "always allow" for this session
+///
+/// Returns `Allowed` to proceed, or `Denied(message)` to send back to the model.
+fn check_tool_permission_interactive(
+    tool_name: &str,
+    tool_args: &serde_json::Value,
+    skip_permissions: bool,
+    always_allowed: &mut std::collections::HashSet<String>,
+) -> ToolPermissionResult {
+    // Tools that never need permission (read-only / informational)
+    let needs_permission = !matches!(
+        tool_name,
+        "read_file"
+            | "list_files"
+            | "grep"
+            | "glob"
+            | "web_fetch"
+            | "web_search"
+            | "ask_user_question"
+            | "task_create"
+            | "task_update"
+            | "task_get"
+            | "task_list"
+            | "enter_plan_mode"
+            | "exit_plan_mode"
+            | "lsp"
+            | "memory_search"
+            | "core_memory_get"
+    );
+
+    if !needs_permission || skip_permissions {
+        return ToolPermissionResult::Allowed;
+    }
+
+    // Check session-level "always allow" cache
+    if always_allowed.contains(tool_name) {
+        return ToolPermissionResult::Allowed;
+    }
+
+    // Build a human-readable description of what the tool wants to do
+    let description = match tool_name {
+        "bash" => {
+            let cmd = tool_args
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(unknown)");
+            format!("Run command: {}", cmd)
+        }
+        "write_file" => {
+            let path = tool_args
+                .get("file_path")
+                .or_else(|| tool_args.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("(unknown)");
+            format!("Write file: {}", path)
+        }
+        "edit_file" => {
+            let path = tool_args
+                .get("file_path")
+                .or_else(|| tool_args.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("(unknown)");
+            format!("Edit file: {}", path)
+        }
+        _ => format!("Execute: {}", tool_name),
+    };
+
+    eprint!("\x1b[33m⚠ {}\x1b[0m [y/n/a(lways)] ", description);
+    use std::io::Write as _;
+    std::io::stderr().flush().ok();
+
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_err() {
+        // Non-interactive / broken pipe -> deny
+        return ToolPermissionResult::Denied(format!(
+            "Permission denied (non-interactive) for tool '{}'",
+            tool_name
+        ));
+    }
+    let response = input.trim().to_lowercase();
+
+    match response.as_str() {
+        "y" | "yes" | "" => ToolPermissionResult::Allowed,
+        "a" | "always" => {
+            always_allowed.insert(tool_name.to_string());
+            eprintln!(
+                "\x1b[32m✓ Will auto-allow '{}' for the rest of this session.\x1b[0m",
+                tool_name
+            );
+            ToolPermissionResult::Allowed
+        }
+        _ => ToolPermissionResult::Denied(format!(
+            "Permission denied by user for tool '{}'",
+            tool_name
+        )),
+    }
+}
+
 /// Interactive chat mode (default command)
-async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Option<String>, coordinator: bool) -> anyhow::Result<()> {
+async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Option<String>, coordinator: bool, dangerously_skip_permissions: bool) -> anyhow::Result<()> {
     use indicatif::{ProgressBar, ProgressStyle};
     use openclaudia::hooks::{
         load_claude_code_hooks, merge_hooks_config, HookEngine, HookEvent, HookInput,
@@ -413,6 +529,10 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
     // Initialize permissions cache for sensitive operations
     let mut permissions: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+    // Session-level set of tools the user has chosen to "always allow" during this session.
+    // Populated when the user responds with 'a'/'always' at a permission prompt.
+    let mut always_allowed_tools: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     // Initialize VDD engine if enabled
     let vdd_engine: Option<vdd::VddEngine> = if config.vdd.enabled {
         let http_client = reqwest::Client::builder()
@@ -469,11 +589,11 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
 
                 // Add to history
                 let _ = rl.add_history_entry(&input);
-                let input = input.as_str();
+                let mut input = input.to_string();
 
                 // Handle slash commands
                 if let Some(result) = handle_slash_command(
-                    input,
+                    &input,
                     &mut chat_session.messages,
                     &config.proxy.target,
                     &model,
@@ -730,6 +850,12 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                         SlashCommandResult::Handled => {
                             continue;
                         }
+                        SlashCommandResult::Skill(prompt) => {
+                            // Inject skill prompt as the user message for this turn
+                            eprintln!("\x1b[36m⚡ Running skill...\x1b[0m");
+                            input = prompt;
+                            // Fall through to normal message processing
+                        }
                     }
                 }
 
@@ -765,7 +891,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                 if !editor_message_added {
                     // Expand @file references in input
                     let expanded_input = if input.contains('@') {
-                        expand_file_references(input)
+                        expand_file_references(&input)
                     } else {
                         input.to_string()
                     };
@@ -1296,6 +1422,27 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                         "is_error": true
                                                     }));
                                                     continue;
+                                                }
+
+                                                // Permission check before execution
+                                                let tool_args_val: serde_json::Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+                                                match check_tool_permission_interactive(
+                                                    &tool_call.function.name,
+                                                    &tool_args_val,
+                                                    dangerously_skip_permissions,
+                                                    &mut always_allowed_tools,
+                                                ) {
+                                                    ToolPermissionResult::Denied(msg) => {
+                                                        let denied_content = serde_json::json!([{
+                                                            "type": "tool_result",
+                                                            "tool_use_id": &tool_call.id,
+                                                            "is_error": true,
+                                                            "content": msg
+                                                        }]);
+                                                        // Skip to next tool
+                                                        continue;
+                                                    }
+                                                    ToolPermissionResult::Allowed => {}
                                                 }
 
                                                 println!(
@@ -1975,6 +2122,26 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                         "is_error": true
                                                     }));
                                                     continue;
+                                                }
+
+                                                // Permission check
+                                                let tool_args_val2: serde_json::Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+                                                match check_tool_permission_interactive(
+                                                    &tool_call.function.name,
+                                                    &tool_args_val2,
+                                                    dangerously_skip_permissions,
+                                                    &mut always_allowed_tools,
+                                                ) {
+                                                    ToolPermissionResult::Denied(msg) => {
+                                                        chat_session.messages.push(serde_json::json!({
+                                                            "role": "tool",
+                                                            "tool_call_id": tool_call.id,
+                                                            "content": format!("[ERROR] {}", msg),
+                                                            "is_error": true
+                                                        }));
+                                                        continue;
+                                                    }
+                                                    ToolPermissionResult::Allowed => {}
                                                 }
 
                                                 println!(
@@ -2688,6 +2855,26 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                             continue;
                                         }
 
+                                        // Permission check
+                                        let tool_args_val3: serde_json::Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+                                        match check_tool_permission_interactive(
+                                            &tool_call.function.name,
+                                            &tool_args_val3,
+                                            dangerously_skip_permissions,
+                                            &mut always_allowed_tools,
+                                        ) {
+                                            ToolPermissionResult::Denied(msg) => {
+                                                chat_session.messages.push(serde_json::json!({
+                                                    "role": "tool",
+                                                    "tool_call_id": tool_call.id,
+                                                    "content": format!("[ERROR] {}", msg),
+                                                    "is_error": true
+                                                }));
+                                                continue;
+                                            }
+                                            ToolPermissionResult::Allowed => {}
+                                        }
+
                                         println!(
                                             "\n\x1b[36m⚡ Running {}...\x1b[0m",
                                             tool_call.function.name
@@ -3166,6 +3353,29 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
 
                 // Autosave session after each response (protects against terminal close)
                 save_session_to_short_term_memory(&chat_session, memory_db.as_ref());
+
+                // Auto-compact check: warn at 85%, compact at 90% of context window
+                if chat_session.messages.len() > 6 {
+                    let est = estimate_session_tokens(&chat_session);
+                    let (should_warn, should_compact, pct) =
+                        openclaudia::compaction::check_context_budget(est, &model);
+                    if should_compact {
+                        eprintln!(
+                            "\x1b[33m⚠ Context at {:.0}% — auto-compacting...\x1b[0m",
+                            pct
+                        );
+                        let (before, after) = compact_chat_session(&mut chat_session);
+                        eprintln!(
+                            "\x1b[32m✓ Compacted: {} → {} messages\x1b[0m",
+                            before, after
+                        );
+                    } else if should_warn {
+                        eprintln!(
+                            "\x1b[33m⚠ Context at {:.0}% — use /compact to free space\x1b[0m",
+                            pct
+                        );
+                    }
+                }
             }
             Err(ReadlineError::Interrupted) => {
                 // Ctrl+C - graceful exit (save session before exiting)
