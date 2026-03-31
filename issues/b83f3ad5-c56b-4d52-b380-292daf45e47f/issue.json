@@ -1,0 +1,10 @@
+{
+  "uuid": "b83f3ad5-c56b-4d52-b380-292daf45e47f",
+  "display_id": null,
+  "title": "Restructure: extract plugins/ module directory",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-03-31T15:00:22.421847549Z",
+  "updated_at": "2026-03-31T15:00:22.421847549Z"
+}
