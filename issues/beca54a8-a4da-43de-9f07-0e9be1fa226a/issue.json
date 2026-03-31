@@ -2,9 +2,10 @@
   "uuid": "beca54a8-a4da-43de-9f07-0e9be1fa226a",
   "display_id": 6,
   "title": "Restructure: extract providers/ module directory",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-03-31T14:59:48.089169980Z",
-  "updated_at": "2026-03-31T14:59:48.089169980Z"
+  "updated_at": "2026-03-31T16:33:56.674232126Z",
+  "closed_at": "2026-03-31T16:33:56.674232126Z"
 }
