@@ -2,11 +2,12 @@
   "uuid": "9792f814-735d-4238-8296-e7a573b9ebd8",
   "display_id": null,
   "title": "Add /commit and /commit-push-pr slash commands",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-03-31T21:52:08.144543157Z",
-  "updated_at": "2026-03-31T21:52:08.276123696Z",
+  "updated_at": "2026-03-31T22:19:01.848226410Z",
+  "closed_at": "2026-03-31T22:19:01.848226410Z",
   "labels": [
     "feature"
   ]
