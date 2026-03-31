@@ -11,6 +11,10 @@
       "agent_id": "lOrm",
       "claimed_at": "2026-03-31T16:55:55.747566839Z"
     },
+    "-3": {
+      "agent_id": "lOrm",
+      "claimed_at": "2026-03-31T21:52:01.915479718Z"
+    },
     "2": {
       "agent_id": "lOrm",
       "claimed_at": "2026-03-31T14:59:29.759383778Z"
@@ -18,8 +22,8 @@
   },
   "issues": {},
   "watermark": {
-    "timestamp": "2026-03-31T21:21:40.906438812Z",
+    "timestamp": "2026-03-31T21:52:01.915479718Z",
     "agent_id": "lOrm",
-    "agent_seq": 55
+    "agent_seq": 56
   }
 }
