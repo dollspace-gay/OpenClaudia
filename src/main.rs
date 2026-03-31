@@ -230,40 +230,79 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
         }
     };
 
-    // For Anthropic: Check anthropic-proxy FIRST (auto-start, auto-auth)
-    // This is the primary auth method for Claude Max subscriptions
+    // Authentication priority for Anthropic:
+    // 1. Claude Code credentials (~/.claude/.credentials.json) — zero-config if user has Claude Code
+    // 2. API key from config/env
+    // 3. Built-in OAuth proxy (fallback)
     let mut oauth_session: Option<crate::oauth::OAuthSession> = None;
     let mut proxy_url: Option<String> = None;
+    let mut claude_code_token: Option<String> = None;
 
     let api_key = if config.proxy.target == "anthropic" && provider.api_key.is_none() {
-        // No API key configured - use built-in OAuth proxy (AUTOMATIC)
-        eprintln!("[debug] Anthropic provider with no API key - starting OAuth flow...");
-        match start_builtin_oauth_flow(&config).await {
-            Some(result) => {
-                // Store proxy URL and create session with actual session ID
-                eprintln!("✓ Connected via OpenClaudia proxy");
-                eprintln!("[debug] Proxy URL: {}", result.proxy_url);
-                eprintln!("[debug] Session ID: {}", result.session_id);
-                proxy_url = Some(result.proxy_url);
-                let proxy_session = crate::oauth::OAuthSession {
-                    id: result.session_id, // ACTUAL session ID, not proxy URL!
-                    credentials: crate::oauth::OAuthCredentials {
-                        access_token: String::new(),
-                        refresh_token: None,
-                        expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
-                    },
-                    api_key: None,
-                    auth_mode: crate::oauth::AuthMode::ProxyMode,
-                    granted_scopes: vec![],
-                    created_at: chrono::Utc::now(),
-                    user_id: None,
-                };
-                oauth_session = Some(proxy_session);
-                "proxy-session".to_string()
+        // No API key — try Claude Code credentials first
+        if openclaudia::claude_credentials::has_claude_code_credentials() {
+            match openclaudia::claude_credentials::load_credentials().await {
+                Ok(creds) => {
+                    eprintln!(
+                        "✓ Authenticated via Claude Code ({}, {})",
+                        creds.subscription_type.as_deref().unwrap_or("unknown"),
+                        creds.rate_limit_tier.as_deref().unwrap_or("default"),
+                    );
+                    claude_code_token = Some(creds.access_token);
+                    "claude-code-oauth".to_string()
+                }
+                Err(e) => {
+                    eprintln!("[warn] Claude Code credentials found but unusable: {}", e);
+                    eprintln!("[warn] Falling back to OAuth proxy...");
+                    // Fall through to proxy flow
+                    match start_builtin_oauth_flow(&config).await {
+                        Some(result) => {
+                            eprintln!("✓ Connected via OpenClaudia proxy");
+                            proxy_url = Some(result.proxy_url);
+                            let proxy_session = crate::oauth::OAuthSession {
+                                id: result.session_id,
+                                credentials: crate::oauth::OAuthCredentials {
+                                    access_token: String::new(),
+                                    refresh_token: None,
+                                    expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
+                                },
+                                api_key: None,
+                                auth_mode: crate::oauth::AuthMode::ProxyMode,
+                                granted_scopes: vec![],
+                                created_at: chrono::Utc::now(),
+                                user_id: None,
+                            };
+                            oauth_session = Some(proxy_session);
+                            "proxy-session".to_string()
+                        }
+                        None => return Ok(()),
+                    }
+                }
             }
-            None => {
-                // check_anthropic_proxy already printed the error
-                return Ok(());
+        } else {
+            // No Claude Code credentials — use built-in OAuth proxy
+            eprintln!("[debug] No API key or Claude Code credentials — starting OAuth proxy...");
+            match start_builtin_oauth_flow(&config).await {
+                Some(result) => {
+                    eprintln!("✓ Connected via OpenClaudia proxy");
+                    proxy_url = Some(result.proxy_url);
+                    let proxy_session = crate::oauth::OAuthSession {
+                        id: result.session_id,
+                        credentials: crate::oauth::OAuthCredentials {
+                            access_token: String::new(),
+                            refresh_token: None,
+                            expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
+                        },
+                        api_key: None,
+                        auth_mode: crate::oauth::AuthMode::ProxyMode,
+                        granted_scopes: vec![],
+                        created_at: chrono::Utc::now(),
+                        user_id: None,
+                    };
+                    oauth_session = Some(proxy_session);
+                    "proxy-session".to_string()
+                }
+                None => return Ok(()),
             }
         }
     } else if let Some(k) = &provider.api_key {
@@ -1095,11 +1134,14 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                     })
                 };
                 // Build headers based on auth mode
-                // Get endpoint - proxy mode uses our local proxy, which handles OAuth internally
-                let endpoint = if using_proxy {
+                // Get endpoint - Claude Code OAuth goes direct, proxy mode uses local proxy
+                let endpoint = if claude_code_token.is_some() {
+                    // Direct to Anthropic API with OAuth bearer token
+                    // Uses ?beta=true query param (required by Anthropic SDK for OAuth)
+                    openclaudia::claude_credentials::get_oauth_endpoint(&model)
+                } else if using_proxy {
                     // Use the stored proxy_url for the endpoint
                     if let Some(ref url) = proxy_url {
-                        eprintln!("[debug] Using built-in proxy at: {}", url);
                         format!("{}/v1/messages", url)
                     } else {
                         format!(
@@ -1115,13 +1157,12 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                         adapter.chat_endpoint(&model)
                     )
                 };
-                let headers: Vec<(String, String)> = if using_proxy {
+                let headers: Vec<(String, String)> = if let Some(ref token) = claude_code_token {
+                    // Claude Code OAuth: Bearer token directly to Anthropic API
+                    openclaudia::claude_credentials::get_oauth_headers(token)
+                } else if using_proxy {
                     // Proxy mode: send Cookie header with session ID so proxy uses stored OAuth
                     if let Some(ref session) = oauth_session {
-                        eprintln!(
-                            "[debug] Proxy mode - sending Cookie: anthropic_session={}",
-                            session.id
-                        );
                         vec![
                             ("anthropic-version".to_string(), "2023-06-01".to_string()),
                             ("content-type".to_string(), "application/json".to_string()),
@@ -1131,9 +1172,6 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                             ),
                         ]
                     } else {
-                        eprintln!(
-                            "[debug] Proxy mode - no session, proxy will use any stored session"
-                        );
                         vec![
                             ("anthropic-version".to_string(), "2023-06-01".to_string()),
                             ("content-type".to_string(), "application/json".to_string()),

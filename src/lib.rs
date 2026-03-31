@@ -9,6 +9,7 @@
 
 pub mod acp;
 pub mod auto_learn;
+pub mod claude_credentials;
 pub mod compaction;
 pub mod config;
 pub mod context;
