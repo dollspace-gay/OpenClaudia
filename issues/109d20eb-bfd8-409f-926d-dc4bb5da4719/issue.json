@@ -2,11 +2,12 @@
   "uuid": "109d20eb-bfd8-409f-926d-dc4bb5da4719",
   "display_id": null,
   "title": "Disable proxy system, use direct OAuth as default auth",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-03-31T21:10:19.269430955Z",
-  "updated_at": "2026-03-31T21:10:19.411204481Z",
+  "updated_at": "2026-03-31T21:21:40.163029738Z",
+  "closed_at": "2026-03-31T21:21:40.163029738Z",
   "labels": [
     "refactor"
   ]
