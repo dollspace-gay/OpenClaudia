@@ -6,6 +6,7 @@ use crate::cli::commands::init::init_project_rules;
 use crate::cli::display::theme::handle_theme_command;
 use openclaudia::memory;
 use openclaudia::plugins;
+use openclaudia::tools::file_index::FileIndex;
 use openclaudia::tools::safe_truncate;
 use std::fs;
 
@@ -131,6 +132,7 @@ pub fn handle_slash_command(
             println!("  /rename <title>  - Rename the current session");
             println!("  /version         - Show version and system information");
             println!("  /debug           - Show debug info (paths, env vars, config)");
+            println!("  /find <query>    - Fuzzy-find files in the project");
             println!();
             println!("Memory Commands (auto-learning):");
             println!("  /memory          - Show auto-learning stats");
@@ -385,6 +387,39 @@ pub fn handle_slash_command(
                 println!("  {}: {}", var, status);
             }
             println!();
+            Some(SlashCommandResult::Handled)
+        }
+        "find" | "f" => {
+            if args.is_empty() {
+                println!("\nUsage: /find <query>\n");
+            } else {
+                let root = std::env::current_dir().unwrap_or_else(|_| ".".into());
+                let index = FileIndex::build(&root);
+                let results = index.search(args, 20);
+                if results.is_empty() {
+                    println!(
+                        "\nNo files matching '{}' ({} files indexed)\n",
+                        args,
+                        index.len()
+                    );
+                } else {
+                    println!(
+                        "\nTop {} matches for '{}' ({} files indexed):\n",
+                        results.len(),
+                        args,
+                        index.len()
+                    );
+                    for (i, r) in results.iter().enumerate() {
+                        println!(
+                            "  {:>2}. \x1b[36m{}\x1b[0m \x1b[90m(score: {})\x1b[0m",
+                            i + 1,
+                            r.path,
+                            r.score
+                        );
+                    }
+                    println!();
+                }
+            }
             Some(SlashCommandResult::Handled)
         }
         "memory" | "mem" => Some(SlashCommandResult::Memory(args.to_string())),

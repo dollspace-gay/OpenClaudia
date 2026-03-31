@@ -18,6 +18,7 @@ mod ask_user;
 mod bash;
 mod chainlink;
 mod file;
+pub mod file_index;
 mod plan_mode;
 mod task;
 mod todo;

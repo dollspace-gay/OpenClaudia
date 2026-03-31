@@ -6,6 +6,7 @@ pub mod plan_mode;
 pub mod review;
 pub mod session_io;
 pub mod slash;
+pub mod vim;
 
 use openclaudia::tools::safe_truncate;
 use std::fs;
