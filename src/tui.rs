@@ -20,6 +20,14 @@ use ratatui::{
 };
 use std::io::{self, stdout, Write};
 use std::path::PathBuf;
+use syntect::easy::HighlightLines;
+use syntect::highlighting::ThemeSet;
+use syntect::parsing::SyntaxSet;
+
+static SYNTAX_SET: std::sync::LazyLock<SyntaxSet> =
+    std::sync::LazyLock::new(SyntaxSet::load_defaults_newlines);
+static THEME_SET: std::sync::LazyLock<ThemeSet> =
+    std::sync::LazyLock::new(ThemeSet::load_defaults);
 
 /// Purple color for branding (from logo)
 const PURPLE: Color = Color::Rgb(147, 112, 219);
@@ -203,6 +211,7 @@ pub fn render_markdown_themed(text: &str, theme: &Theme) {
     let mut stdout = io::stdout();
     let mut in_code_block = false;
     let mut code_lang = String::new();
+    let mut highlighter: Option<HighlightLines> = None;
 
     for line in text.lines() {
         if line.starts_with("```") {
@@ -210,12 +219,27 @@ pub fn render_markdown_themed(text: &str, theme: &Theme) {
                 // End code block
                 in_code_block = false;
                 code_lang.clear();
+                highlighter = None;
                 let _ = stdout.execute(ResetColor);
                 println!();
             } else {
                 // Start code block
                 in_code_block = true;
                 code_lang = line.trim_start_matches('`').trim().to_string();
+
+                // Set up syntax highlighter for the detected language
+                let syntax = if !code_lang.is_empty() {
+                    SYNTAX_SET
+                        .find_syntax_by_token(&code_lang)
+                        .unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text())
+                } else {
+                    SYNTAX_SET.find_syntax_plain_text()
+                };
+                let theme_name = "base16-ocean.dark";
+                if let Some(syn_theme) = THEME_SET.themes.get(theme_name) {
+                    highlighter = Some(HighlightLines::new(syntax, syn_theme));
+                }
+
                 if !code_lang.is_empty() {
                     let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
                     println!("  --- {} ---", code_lang);
@@ -226,10 +250,14 @@ pub fn render_markdown_themed(text: &str, theme: &Theme) {
         }
 
         if in_code_block {
-            // Render code block lines with indentation and color
-            let _ = stdout.execute(SetForegroundColor(theme.code_color));
-            println!("    {}", line);
-            let _ = stdout.execute(ResetColor);
+            if let Some(ref mut hl) = highlighter {
+                render_highlighted_code_line(&mut stdout, line, hl, theme.code_color);
+            } else {
+                // Fallback: render with flat code color (same as before)
+                let _ = stdout.execute(SetForegroundColor(theme.code_color));
+                println!("    {}", line);
+                let _ = stdout.execute(ResetColor);
+            }
             continue;
         }
 
@@ -285,6 +313,38 @@ pub fn render_markdown_themed(text: &str, theme: &Theme) {
     }
     let _ = stdout.execute(ResetColor);
     stdout.flush().ok();
+}
+
+/// Render a single code line with syntect syntax highlighting.
+///
+/// Falls back to the theme's `code_color` if highlighting fails.
+fn render_highlighted_code_line(
+    stdout: &mut io::Stdout,
+    line: &str,
+    highlighter: &mut HighlightLines,
+    fallback_color: CtColor,
+) {
+    match highlighter.highlight_line(line, &SYNTAX_SET) {
+        Ok(ranges) => {
+            let _ = stdout.execute(Print("    "));
+            for (style, text) in ranges {
+                let color = CtColor::Rgb {
+                    r: style.foreground.r,
+                    g: style.foreground.g,
+                    b: style.foreground.b,
+                };
+                let _ = stdout.execute(SetForegroundColor(color));
+                let _ = stdout.execute(Print(text));
+            }
+            let _ = stdout.execute(ResetColor);
+            let _ = stdout.execute(Print("\n"));
+        }
+        Err(_) => {
+            let _ = stdout.execute(SetForegroundColor(fallback_color));
+            let _ = stdout.execute(Print(format!("    {}\n", line)));
+            let _ = stdout.execute(ResetColor);
+        }
+    }
 }
 
 /// Render a heading line

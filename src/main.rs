@@ -32,7 +32,9 @@ use cli::repl::slash::{
     handle_activity_command, handle_memory_command, handle_plugin_action, handle_slash_command,
     SlashCommandResult,
 };
-use cli::repl::{get_history_path, load_chat_session, save_chat_session, ChatSession};
+use cli::repl::{
+    get_history_path, list_chat_sessions, load_chat_session, save_chat_session, ChatSession,
+};
 
 #[derive(Parser)]
 #[command(name = "openclaudia")]
@@ -44,6 +46,14 @@ struct Cli {
     /// Model to use for chat
     #[arg(short, long, global = true)]
     model: Option<String>,
+
+    /// Resume the most recent chat session
+    #[arg(long, alias = "continue")]
+    resume: bool,
+
+    /// Resume a specific session by ID (prefix match)
+    #[arg(long)]
+    session_id: Option<String>,
 
     /// Enable verbose logging
     #[arg(short, long, global = true)]
@@ -137,7 +147,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
-        None => cmd_chat(cli.model).await,
+        None => cmd_chat(cli.model, cli.resume, cli.session_id).await,
         Some(Commands::Init { force }) => cli::commands::init::cmd_init(force),
         Some(Commands::Auth { status, logout }) => {
             cli::commands::auth::cmd_auth(status, logout).await
@@ -160,7 +170,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Interactive chat mode (default command)
-async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
+async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Option<String>) -> anyhow::Result<()> {
     use indicatif::{ProgressBar, ProgressStyle};
     use openclaudia::hooks::{
         load_claude_code_hooks, merge_hooks_config, HookEngine, HookEvent, HookInput,
@@ -331,6 +341,26 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
 
     // Initialize chat session
     let mut chat_session = ChatSession::new(&model, &config.proxy.target);
+
+    // Resume a previous session if --resume or --session-id was specified
+    if resume || session_id.is_some() {
+        let sessions = list_chat_sessions();
+        let target = if let Some(ref id) = session_id {
+            sessions.iter().find(|s| s.id.starts_with(id)).cloned()
+        } else {
+            sessions.into_iter().next()
+        };
+        if let Some(loaded) = target {
+            eprintln!(
+                "Resuming session: {} ({})",
+                loaded.title,
+                &loaded.id[..8]
+            );
+            chat_session = loaded;
+        } else {
+            eprintln!("No session found to resume. Starting new session.");
+        }
+    }
 
     // Load saved theme (or default)
     let mut active_theme = tui::Theme::load();
@@ -1355,26 +1385,11 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
                                                 };
 
                                                 // Show result preview
-                                                let preview: String = final_content
-                                                    .lines()
-                                                    .take(5)
-                                                    .collect::<Vec<_>>()
-                                                    .join("\n");
-                                                if final_is_error {
-                                                    println!("\x1b[31m✗ Error:\x1b[0m {}", preview);
-                                                } else {
-                                                    println!(
-                                                        "\x1b[32m✓\x1b[0m {}",
-                                                        if preview.len() > 200 {
-                                                            format!(
-                                                                "{}...",
-                                                                safe_truncate(&preview, 200)
-                                                            )
-                                                        } else {
-                                                            preview
-                                                        }
-                                                    );
-                                                }
+                                                cli::display::tool_result::display_tool_result(
+                                                    &tool_call.function.name,
+                                                    &final_content,
+                                                    final_is_error,
+                                                );
 
                                                 // Build Gemini functionResponse
                                                 let response_content = if final_is_error {
@@ -2062,26 +2077,11 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
                                                 );
 
                                                 // Show result preview
-                                                let preview: String = final_content
-                                                    .lines()
-                                                    .take(5)
-                                                    .collect::<Vec<_>>()
-                                                    .join("\n");
-                                                if final_is_error {
-                                                    println!("\x1b[31m✗ Error:\x1b[0m {}", preview);
-                                                } else {
-                                                    println!(
-                                                        "\x1b[32m✓\x1b[0m {}",
-                                                        if preview.len() > 200 {
-                                                            format!(
-                                                                "{}...",
-                                                                safe_truncate(&preview, 200)
-                                                            )
-                                                        } else {
-                                                            preview
-                                                        }
-                                                    );
-                                                }
+                                                cli::display::tool_result::display_tool_result(
+                                                    &tool_call.function.name,
+                                                    &final_content,
+                                                    final_is_error,
+                                                );
 
                                                 // Store tool result with error flag
                                                 let result_content = if final_is_error {
@@ -2817,23 +2817,11 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
                                         }
 
                                         // Show result preview
-                                        let preview: String = final_content
-                                            .lines()
-                                            .take(5)
-                                            .collect::<Vec<_>>()
-                                            .join("\n");
-                                        if final_is_error {
-                                            println!("\x1b[31m✗ Error:\x1b[0m {}", preview);
-                                        } else {
-                                            println!(
-                                                "\x1b[32m✓\x1b[0m {}",
-                                                if preview.len() > 200 {
-                                                    format!("{}...", safe_truncate(&preview, 200))
-                                                } else {
-                                                    preview
-                                                }
-                                            );
-                                        }
+                                        cli::display::tool_result::display_tool_result(
+                                            &tool_call.function.name,
+                                            &final_content,
+                                            final_is_error,
+                                        );
 
                                         // Add tool result with error flag
                                         let result_content = if final_is_error {

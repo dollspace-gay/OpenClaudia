@@ -92,11 +92,18 @@ pub(crate) fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool)
             // Record diff stats
             crate::guardrails::record_file_modification(path, lines_added, lines_removed);
 
+            // Build diff data for color rendering in the CLI
+            let diff_json = serde_json::json!({
+                "path": path,
+                "old": old_string,
+                "new": new_string,
+            });
             let mut result = format!(
-                "Successfully edited '{}'. Replaced {} chars with {} chars.",
+                "Successfully edited '{}'. Replaced {} chars with {} chars.\n@@DIFF_START@@\n{}\n@@DIFF_END@@",
                 path,
                 old_string.len(),
-                new_string.len()
+                new_string.len(),
+                diff_json,
             );
             if let Some(warning) = crate::guardrails::check_diff_thresholds() {
                 result.push_str(&format!("\n\nWarning: {}", warning.message));
