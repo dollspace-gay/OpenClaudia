@@ -2,11 +2,12 @@
   "uuid": "e83f93fe-5243-4c61-9c9c-4640691e2e6d",
   "display_id": null,
   "title": "Add skills system loading from .openclaudia/skills/",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-03-31T21:52:09.356821757Z",
-  "updated_at": "2026-03-31T21:52:09.497110358Z",
+  "updated_at": "2026-03-31T22:19:09.919135469Z",
+  "closed_at": "2026-03-31T22:19:09.919135469Z",
   "labels": [
     "feature"
   ]
