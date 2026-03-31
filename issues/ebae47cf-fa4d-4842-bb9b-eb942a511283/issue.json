@@ -1,0 +1,10 @@
+{
+  "uuid": "ebae47cf-fa4d-4842-bb9b-eb942a511283",
+  "display_id": null,
+  "title": "Ensure all tools use Anthropic-native format for Claude compatibility",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-03-31T21:10:19.960352686Z",
+  "updated_at": "2026-03-31T21:10:19.960352686Z"
+}
