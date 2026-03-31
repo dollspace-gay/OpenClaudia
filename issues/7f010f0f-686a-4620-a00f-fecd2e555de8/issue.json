@@ -1,0 +1,10 @@
+{
+  "uuid": "7f010f0f-686a-4620-a00f-fecd2e555de8",
+  "display_id": null,
+  "title": "Add auto-compact triggers at 85%/95% context window",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-03-31T21:52:08.781938936Z",
+  "updated_at": "2026-03-31T21:52:08.781938936Z"
+}
