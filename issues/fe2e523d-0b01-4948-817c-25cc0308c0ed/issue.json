@@ -2,9 +2,10 @@
   "uuid": "fe2e523d-0b01-4948-817c-25cc0308c0ed",
   "display_id": 5,
   "title": "Restructure: extract providers/ module directory (1 adapter per file)",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-03-31T14:59:35.366228578Z",
-  "updated_at": "2026-03-31T14:59:35.366228578Z"
+  "updated_at": "2026-03-31T16:33:56.478321708Z",
+  "closed_at": "2026-03-31T16:33:56.478321708Z"
 }
