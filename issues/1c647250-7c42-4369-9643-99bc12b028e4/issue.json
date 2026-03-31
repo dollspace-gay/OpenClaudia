@@ -1,0 +1,10 @@
+{
+  "uuid": "1c647250-7c42-4369-9643-99bc12b028e4",
+  "display_id": null,
+  "title": "Restructure: extract hooks/ and session/ module directories",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-03-31T15:00:22.897393284Z",
+  "updated_at": "2026-03-31T15:00:22.897393284Z"
+}
