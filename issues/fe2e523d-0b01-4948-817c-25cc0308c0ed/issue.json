@@ -1,6 +1,6 @@
 {
   "uuid": "fe2e523d-0b01-4948-817c-25cc0308c0ed",
-  "display_id": null,
+  "display_id": 5,
   "title": "Restructure: extract providers/ module directory (1 adapter per file)",
   "status": "open",
   "priority": "high",
