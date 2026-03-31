@@ -1,0 +1,78 @@
+use serde_json::Value;
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+
+/// Write content to a file
+pub(crate) fn execute_write_file(args: &HashMap<String, Value>) -> (String, bool) {
+    let path = match args.get("path").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return ("Missing 'path' argument".to_string(), true),
+    };
+
+    // Reject path traversal attempts (relative paths with ..)
+    let p = Path::new(path);
+    if !p.is_absolute() {
+        return (
+            format!("Path must be absolute, got relative path: '{}'", path),
+            true,
+        );
+    }
+
+    // Resolve symlinks to prevent symlink-based path traversal
+    let canonical = match std::fs::canonicalize(p) {
+        Ok(canon) => canon,
+        Err(_) => {
+            // File doesn't exist yet (new file) - canonicalize the parent
+            if let Some(parent) = p.parent() {
+                match std::fs::canonicalize(parent) {
+                    Ok(canon_parent) => canon_parent.join(p.file_name().unwrap_or_default()),
+                    Err(_) => std::path::PathBuf::from(path), // Parent doesn't exist either
+                }
+            } else {
+                std::path::PathBuf::from(path)
+            }
+        }
+    };
+    let path = canonical.to_string_lossy().to_string();
+    let path = path.as_str();
+
+    let content = match args.get("content").and_then(|v| v.as_str()) {
+        Some(c) => c,
+        None => return ("Missing 'content' argument".to_string(), true),
+    };
+
+    // Blast radius check
+    if let Err(msg) = crate::guardrails::check_file_access(path) {
+        return (msg, true);
+    }
+
+    // Read existing content for diff tracking
+    let old_lines = fs::read_to_string(path)
+        .map(|c| c.lines().count() as u32)
+        .unwrap_or(0);
+    let new_lines = content.lines().count() as u32;
+
+    // Create parent directories if needed
+    if let Some(parent) = Path::new(path).parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                return (format!("Failed to create directories: {}", e), true);
+            }
+        }
+    }
+
+    match fs::write(path, content) {
+        Ok(()) => {
+            // Record diff stats
+            crate::guardrails::record_file_modification(path, new_lines, old_lines);
+
+            let mut result = format!("Successfully wrote {} bytes to '{}'", content.len(), path);
+            if let Some(warning) = crate::guardrails::check_diff_thresholds() {
+                result.push_str(&format!("\n\nWarning: {}", warning.message));
+            }
+            (result, false)
+        }
+        Err(e) => (format!("Failed to write file '{}': {}", path, e), true),
+    }
+}

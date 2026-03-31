@@ -11,19 +11,27 @@
 //! - 0: Success (allow)
 //! - 2: Block the action
 
+pub mod claude_compat;
+pub mod merge;
+
+// Re-export everything public from submodules
+pub use claude_compat::{
+    load_claude_code_hooks, load_claude_code_hooks_layered, load_claude_settings,
+    ClaudeCodeHook, ClaudeCodeHookEntry, ClaudeCodeSettings, LayeredSettings,
+};
+pub use merge::merge_hooks_config;
+
 use crate::config::{Hook, HookEntry, HooksConfig};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+use std::process::Stdio;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
@@ -111,329 +119,6 @@ impl HookEvent {
             _ => None,
         }
     }
-}
-
-// ============================================================================
-// Claude Code Compatibility Layer
-// ============================================================================
-
-/// Claude Code settings.json structure
-#[derive(Debug, Deserialize, Default)]
-pub struct ClaudeCodeSettings {
-    #[serde(default)]
-    pub hooks: HashMap<String, Vec<ClaudeCodeHookEntry>>,
-}
-
-/// Claude Code hook entry format
-#[derive(Debug, Deserialize)]
-pub struct ClaudeCodeHookEntry {
-    #[serde(default)]
-    pub matcher: Option<String>,
-    #[serde(default)]
-    pub hooks: Vec<ClaudeCodeHook>,
-}
-
-/// Claude Code hook definition
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type")]
-pub enum ClaudeCodeHook {
-    #[serde(rename = "command")]
-    Command {
-        command: String,
-        #[serde(default = "default_claude_timeout")]
-        timeout: Option<u64>,
-    },
-}
-
-fn default_claude_timeout() -> Option<u64> {
-    Some(60)
-}
-
-/// Load hooks from Claude Code's .claude/settings.json
-///
-/// Looks for settings.json in:
-/// 1. .claude/settings.json (project-level)
-/// 2. ~/.claude/settings.json (user-level, lower priority)
-///
-/// Returns merged HooksConfig with Claude Code hooks converted to OpenClaudia format
-pub fn load_claude_code_hooks() -> HooksConfig {
-    let mut config = HooksConfig::default();
-
-    // Check project-level first
-    let project_settings = Path::new(".claude/settings.json");
-    if project_settings.exists() {
-        if let Some(settings) = load_claude_settings_file(project_settings) {
-            merge_claude_hooks(&mut config, &settings);
-            info!(path = ?project_settings, "Loaded Claude Code hooks from project");
-        }
-    }
-
-    // Then check user-level (only if no project-level)
-    if config.is_empty() {
-        if let Some(home) = dirs::home_dir() {
-            let user_settings = home.join(".claude/settings.json");
-            if user_settings.exists() {
-                if let Some(settings) = load_claude_settings_file(&user_settings) {
-                    merge_claude_hooks(&mut config, &settings);
-                    info!(path = ?user_settings, "Loaded Claude Code hooks from user directory");
-                }
-            }
-        }
-    }
-
-    config
-}
-
-// ============================================================================
-// Settings File Layering
-// ============================================================================
-
-/// Result of loading layered Claude settings
-pub struct LayeredSettings {
-    /// The merged settings value
-    pub settings: Value,
-    /// Allowed tools extracted from merged settings
-    pub allowed_tools: Vec<String>,
-    /// Path to managed (enterprise) settings if loaded
-    pub managed_settings_path: Option<PathBuf>,
-}
-
-/// Load Claude settings from all layers, merging them in order.
-///
-/// Load order (later overrides earlier):
-/// 1. `~/.claude/settings.json` (user global)
-/// 2. `.claude/settings.json` (project, committed)
-/// 3. `.claude/settings.local.json` (project, gitignored)
-/// 4. System-level managed settings (enterprise)
-///
-/// Deep merge: arrays concatenate, objects merge recursively,
-/// scalars from later files override.
-pub fn load_claude_settings() -> LayeredSettings {
-    let mut settings = Value::Object(Default::default());
-    let mut managed_path: Option<PathBuf> = None;
-
-    // 1. User global settings
-    if let Some(home) = dirs::home_dir() {
-        let user_settings = home.join(".claude/settings.json");
-        if user_settings.exists() {
-            merge_settings_file(&mut settings, &user_settings);
-            debug!(path = ?user_settings, "Loaded user-global Claude settings");
-        }
-    }
-
-    // 2. Project settings (committed)
-    let project_settings = Path::new(".claude/settings.json");
-    if project_settings.exists() {
-        merge_settings_file(&mut settings, project_settings);
-        debug!(path = ?project_settings, "Loaded project Claude settings");
-    }
-
-    // 3. Project local settings (gitignored)
-    let local_settings = Path::new(".claude/settings.local.json");
-    if local_settings.exists() {
-        merge_settings_file(&mut settings, local_settings);
-        debug!(path = ?local_settings, "Loaded project-local Claude settings");
-    }
-
-    // 4. System-level managed settings (enterprise)
-    #[cfg(target_os = "linux")]
-    {
-        let managed = Path::new("/etc/openclaudia/managed-settings.json");
-        if managed.exists() {
-            warn!(
-                path = ?managed,
-                "Loading enterprise managed settings - these override all user and project settings"
-            );
-            merge_settings_file(&mut settings, managed);
-            managed_path = Some(managed.to_path_buf());
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let managed = Path::new("/Library/Application Support/openclaudia/managed-settings.json");
-        if managed.exists() {
-            warn!(
-                path = ?managed,
-                "Loading enterprise managed settings - these override all user and project settings"
-            );
-            merge_settings_file(&mut settings, managed);
-            managed_path = Some(managed.to_path_buf());
-        }
-    }
-
-    // Extract allowedTools from merged settings
-    let allowed_tools: Vec<String> = settings
-        .get("allowedTools")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    if !allowed_tools.is_empty() {
-        info!(
-            count = allowed_tools.len(),
-            "Extracted allowedTools from settings"
-        );
-    }
-
-    LayeredSettings {
-        settings,
-        allowed_tools,
-        managed_settings_path: managed_path,
-    }
-}
-
-/// Merge a settings file into the accumulator using deep merge semantics.
-///
-/// - Objects merge recursively
-/// - Arrays concatenate
-/// - Scalars from the new file override
-fn merge_settings_file(target: &mut Value, path: &Path) {
-    match fs::read_to_string(path) {
-        Ok(content) => match serde_json::from_str::<Value>(&content) {
-            Ok(new_settings) => {
-                deep_merge(target, &new_settings);
-            }
-            Err(e) => {
-                warn!(path = ?path, error = %e, "Failed to parse settings file");
-            }
-        },
-        Err(e) => {
-            debug!(path = ?path, error = %e, "Could not read settings file");
-        }
-    }
-}
-
-/// Deep merge two JSON values.
-///
-/// - Objects: recursively merge keys
-/// - Arrays: concatenate
-/// - Scalars: `source` overrides `target`
-fn deep_merge(target: &mut Value, source: &Value) {
-    match (target, source) {
-        (Value::Object(target_map), Value::Object(source_map)) => {
-            for (key, source_val) in source_map {
-                let entry = target_map.entry(key.clone()).or_insert(Value::Null);
-                deep_merge(entry, source_val);
-            }
-        }
-        (Value::Array(target_arr), Value::Array(source_arr)) => {
-            target_arr.extend(source_arr.iter().cloned());
-        }
-        (target, source) => {
-            *target = source.clone();
-        }
-    }
-}
-
-/// Load hooks from all layered settings files.
-///
-/// Uses the new 4-layer settings loading instead of the old 2-layer approach.
-/// Returns merged HooksConfig with Claude Code hooks converted to OpenClaudia format.
-pub fn load_claude_code_hooks_layered() -> (HooksConfig, LayeredSettings) {
-    let layered = load_claude_settings();
-    let mut config = HooksConfig::default();
-
-    // Parse hooks from the merged settings
-    if let Some(hooks_obj) = layered.settings.get("hooks") {
-        if let Ok(settings) =
-            serde_json::from_value::<ClaudeCodeSettings>(json!({ "hooks": hooks_obj }))
-        {
-            merge_claude_hooks(&mut config, &settings);
-            info!("Loaded hooks from layered Claude settings");
-        }
-    }
-
-    (config, layered)
-}
-
-/// Load and parse a Claude Code settings.json file
-fn load_claude_settings_file(path: &Path) -> Option<ClaudeCodeSettings> {
-    match fs::read_to_string(path) {
-        Ok(content) => match serde_json::from_str::<ClaudeCodeSettings>(&content) {
-            Ok(settings) => Some(settings),
-            Err(e) => {
-                warn!(path = ?path, error = %e, "Failed to parse Claude Code settings");
-                None
-            }
-        },
-        Err(e) => {
-            debug!(path = ?path, error = %e, "Could not read Claude Code settings");
-            None
-        }
-    }
-}
-
-/// Merge Claude Code hooks into OpenClaudia HooksConfig
-fn merge_claude_hooks(config: &mut HooksConfig, settings: &ClaudeCodeSettings) {
-    for (event_name, entries) in &settings.hooks {
-        let Some(event) = HookEvent::from_claude_code_name(event_name) else {
-            warn!(event = %event_name, "Unknown Claude Code hook event, skipping");
-            continue;
-        };
-
-        // Convert Claude Code entries to OpenClaudia format
-        let converted_entries: Vec<HookEntry> = entries
-            .iter()
-            .map(|entry| {
-                let hooks: Vec<Hook> = entry
-                    .hooks
-                    .iter()
-                    .map(|h| match h {
-                        ClaudeCodeHook::Command { command, timeout } => Hook::Command {
-                            command: command.clone(),
-                            timeout: timeout.unwrap_or(60),
-                        },
-                    })
-                    .collect();
-
-                HookEntry {
-                    matcher: entry.matcher.clone().filter(|m| !m.is_empty()),
-                    hooks,
-                }
-            })
-            .collect();
-
-        // Append to the appropriate event list
-        match event {
-            HookEvent::SessionStart => config.session_start.extend(converted_entries),
-            HookEvent::SessionEnd => config.session_end.extend(converted_entries),
-            HookEvent::PreToolUse => config.pre_tool_use.extend(converted_entries),
-            HookEvent::PostToolUse => config.post_tool_use.extend(converted_entries),
-            HookEvent::UserPromptSubmit => config.user_prompt_submit.extend(converted_entries),
-            HookEvent::Stop => config.stop.extend(converted_entries),
-            // Other events not yet supported in HooksConfig
-            _ => {
-                debug!(event = ?event, "Event not yet supported in config, skipping");
-            }
-        }
-    }
-}
-
-/// Merge two HooksConfig structs, with `other` taking precedence
-pub fn merge_hooks_config(base: HooksConfig, other: HooksConfig) -> HooksConfig {
-    let mut merged = base;
-
-    merged.session_start.extend(other.session_start);
-    merged.session_end.extend(other.session_end);
-    merged.pre_tool_use.extend(other.pre_tool_use);
-    merged.post_tool_use.extend(other.post_tool_use);
-    merged.user_prompt_submit.extend(other.user_prompt_submit);
-    merged.stop.extend(other.stop);
-    merged
-        .pre_adversary_review
-        .extend(other.pre_adversary_review);
-    merged
-        .post_adversary_review
-        .extend(other.post_adversary_review);
-    merged.vdd_conflict.extend(other.vdd_conflict);
-    merged.vdd_converged.extend(other.vdd_converged);
-
-    merged
 }
 
 impl HooksConfig {
@@ -961,6 +646,8 @@ impl HookEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::HooksConfig;
+    use merge::merge_claude_hooks;
 
     #[test]
     fn test_hook_event_config_keys() {
