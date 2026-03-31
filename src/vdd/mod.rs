@@ -11,11 +11,21 @@
 //!
 //! Based on the VDD methodology: <https://github.com/dollspace-gay/Tesseract-Vault>
 
-use chrono::{DateTime, Utc};
+pub mod confabulation;
+pub mod finding;
+pub mod parsing;
+pub mod review;
+pub mod static_analysis;
+
+// Re-exports for public API
+pub use confabulation::ConfabulationTracker;
+pub use finding::{Finding, FindingStatus, Severity};
+pub use review::{AdversaryReview, VddIteration, VddSession};
+pub use static_analysis::StaticAnalysisResult;
+
+use chrono::Utc;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::process::Stdio;
 use std::time::Duration;
 use thiserror::Error;
 use tracing::{debug, info, warn};
@@ -25,6 +35,14 @@ use crate::config::{AppConfig, VddConfig, VddMode};
 use crate::providers::get_adapter;
 use crate::proxy::{ChatCompletionRequest, ChatMessage, MessageContent};
 use crate::session::TokenUsage;
+
+use confabulation::{is_common_false_positive, string_similarity};
+use parsing::{
+    extract_json_from_response, extract_response_text, extract_token_usage, parse_severity,
+    try_parse_relaxed,
+};
+use review::AdversaryResponse;
+use static_analysis::{run_chainlink_create, run_shell_command};
 
 // ==========================================================================
 // Constants
@@ -92,223 +110,6 @@ pub enum VddError {
 
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
-}
-
-// ==========================================================================
-// Core Types
-// ==========================================================================
-
-/// Severity classification for adversary findings
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum Severity {
-    Critical,
-    High,
-    Medium,
-    Low,
-    Info,
-}
-
-impl std::fmt::Display for Severity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Severity::Critical => write!(f, "CRITICAL"),
-            Severity::High => write!(f, "HIGH"),
-            Severity::Medium => write!(f, "MEDIUM"),
-            Severity::Low => write!(f, "LOW"),
-            Severity::Info => write!(f, "INFO"),
-        }
-    }
-}
-
-/// Whether a finding is genuine or a false positive
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum FindingStatus {
-    Genuine,
-    FalsePositive,
-    Disputed,
-}
-
-/// A single finding from the adversary's review
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Finding {
-    pub id: String,
-    pub severity: Severity,
-    pub cwe: Option<String>,
-    pub description: String,
-    pub file_path: Option<String>,
-    pub line_range: Option<(usize, usize)>,
-    pub status: FindingStatus,
-    pub adversary_reasoning: String,
-    pub iteration: u32,
-}
-
-/// Raw finding from adversary JSON before triage
-#[derive(Debug, Deserialize)]
-struct RawFinding {
-    severity: Option<String>,
-    cwe: Option<String>,
-    description: Option<String>,
-    file: Option<String>,
-    lines: Option<Vec<usize>>,
-    reasoning: Option<String>,
-}
-
-/// Parsed adversary response
-#[derive(Debug, Deserialize)]
-struct AdversaryResponse {
-    findings: Option<Vec<RawFinding>>,
-    assessment: Option<String>,
-}
-
-/// Result of a single adversary review iteration
-#[derive(Debug, Clone, Serialize)]
-pub struct AdversaryReview {
-    pub iteration: u32,
-    pub findings: Vec<Finding>,
-    pub raw_response: String,
-    pub tokens_used: TokenUsage,
-    pub timestamp: DateTime<Utc>,
-}
-
-/// Result of running a static analysis command
-#[derive(Debug, Clone, Serialize)]
-pub struct StaticAnalysisResult {
-    pub command: String,
-    pub exit_code: i32,
-    pub stdout: String,
-    pub stderr: String,
-    pub passed: bool,
-}
-
-/// A complete adversarial loop iteration (builder response + analysis + adversary review)
-#[derive(Debug, Clone, Serialize)]
-pub struct VddIteration {
-    pub number: u32,
-    pub builder_response: String,
-    pub static_analysis: Vec<StaticAnalysisResult>,
-    pub adversary_review: AdversaryReview,
-    pub genuine_count: u32,
-    pub false_positive_count: u32,
-}
-
-/// Full VDD session tracking across all iterations
-#[derive(Debug, Clone, Serialize)]
-pub struct VddSession {
-    pub id: String,
-    pub mode: VddMode,
-    pub iterations: Vec<VddIteration>,
-    pub total_findings: u32,
-    pub total_genuine: u32,
-    pub total_false_positives: u32,
-    pub false_positive_rate: f32,
-    pub converged: bool,
-    pub termination_reason: Option<String>,
-    pub builder_tokens: TokenUsage,
-    pub adversary_tokens: TokenUsage,
-    pub started_at: DateTime<Utc>,
-    pub ended_at: Option<DateTime<Utc>>,
-}
-
-impl VddSession {
-    fn new(mode: VddMode) -> Self {
-        Self {
-            id: Uuid::new_v4().to_string(),
-            mode,
-            iterations: Vec::new(),
-            total_findings: 0,
-            total_genuine: 0,
-            total_false_positives: 0,
-            false_positive_rate: 0.0,
-            converged: false,
-            termination_reason: None,
-            builder_tokens: TokenUsage::default(),
-            adversary_tokens: TokenUsage::default(),
-            started_at: Utc::now(),
-            ended_at: None,
-        }
-    }
-
-    fn record_iteration(&mut self, iteration: VddIteration) {
-        self.total_findings += iteration.genuine_count + iteration.false_positive_count;
-        self.total_genuine += iteration.genuine_count;
-        self.total_false_positives += iteration.false_positive_count;
-        self.false_positive_rate = if self.total_findings > 0 {
-            self.total_false_positives as f32 / self.total_findings as f32
-        } else {
-            0.0
-        };
-        self.adversary_tokens
-            .accumulate(&iteration.adversary_review.tokens_used);
-        self.iterations.push(iteration);
-    }
-
-    fn finalize(&mut self, converged: bool, reason: &str) {
-        self.converged = converged;
-        self.termination_reason = Some(reason.to_string());
-        self.ended_at = Some(Utc::now());
-    }
-}
-
-// ==========================================================================
-// Confabulation Tracker
-// ==========================================================================
-
-/// Tracks false positive rates across iterations to detect when the adversary
-/// starts hallucinating problems (confabulation threshold).
-#[derive(Debug, Clone)]
-pub struct ConfabulationTracker {
-    /// FP rate per iteration
-    pub history: Vec<f32>,
-    /// Threshold above which we consider the adversary is confabulating
-    pub threshold: f32,
-    /// Minimum iterations before checking threshold
-    pub min_iterations: u32,
-}
-
-impl ConfabulationTracker {
-    pub fn new(threshold: f32, min_iterations: u32) -> Self {
-        Self {
-            history: Vec::new(),
-            threshold,
-            min_iterations,
-        }
-    }
-
-    /// Record an iteration's finding counts
-    pub fn record_iteration(&mut self, genuine: u32, false_positives: u32) {
-        let total = genuine + false_positives;
-        let rate = if total > 0 {
-            false_positives as f32 / total as f32
-        } else {
-            // No findings at all = consider it a clean pass (FP rate 1.0 for convergence)
-            1.0
-        };
-        self.history.push(rate);
-    }
-
-    /// Current cumulative false positive rate
-    pub fn current_rate(&self) -> f32 {
-        if self.history.is_empty() {
-            return 0.0;
-        }
-        let total: f32 = self.history.iter().sum();
-        total / self.history.len() as f32
-    }
-
-    /// Most recent iteration's false positive rate
-    pub fn latest_rate(&self) -> f32 {
-        self.history.last().copied().unwrap_or(0.0)
-    }
-
-    /// Should the loop terminate? Checks both minimum iterations and threshold.
-    pub fn should_terminate(&self) -> bool {
-        if (self.history.len() as u32) < self.min_iterations {
-            return false;
-        }
-        self.latest_rate() >= self.threshold
-    }
 }
 
 // ==========================================================================
@@ -1209,104 +1010,6 @@ async fn forward_request(
     req.send().await
 }
 
-/// Extract the text content from a chat completion response.
-/// Supports OpenAI, Anthropic, and Google/Gemini formats.
-fn extract_response_text(response: &Value) -> String {
-    // OpenAI format: choices[0].message.content
-    if let Some(content) = response
-        .get("choices")
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-    {
-        return content.to_string();
-    }
-
-    // Anthropic format: content[0].text
-    if let Some(content) = response
-        .get("content")
-        .and_then(|c| c.as_array())
-        .and_then(|arr| {
-            arr.iter()
-                .find(|item| item.get("type").and_then(|t| t.as_str()) == Some("text"))
-        })
-        .and_then(|item| item.get("text"))
-        .and_then(|t| t.as_str())
-    {
-        return content.to_string();
-    }
-
-    // Google/Gemini format: candidates[0].content.parts[0].text
-    if let Some(content) = response
-        .get("candidates")
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("content"))
-        .and_then(|c| c.get("parts"))
-        .and_then(|p| p.get(0))
-        .and_then(|p| p.get("text"))
-        .and_then(|t| t.as_str())
-    {
-        return content.to_string();
-    }
-
-    // Log what we actually received for debugging
-    debug!(
-        "VDD: Unknown response format, dumping structure: {:?}",
-        response.as_object().map(|o| o.keys().collect::<Vec<_>>())
-    );
-
-    String::new()
-}
-
-/// Extract token usage from a provider response.
-fn extract_token_usage(response: &Value) -> TokenUsage {
-    // OpenAI/Anthropic format: usage.prompt_tokens / usage.completion_tokens
-    if let Some(usage) = response.get("usage") {
-        return TokenUsage {
-            input_tokens: usage
-                .get("prompt_tokens")
-                .or_else(|| usage.get("input_tokens"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
-            output_tokens: usage
-                .get("completion_tokens")
-                .or_else(|| usage.get("output_tokens"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
-            cache_read_tokens: usage
-                .get("cache_read_input_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
-            cache_write_tokens: usage
-                .get("cache_creation_input_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
-        };
-    }
-
-    // Google/Gemini format: usageMetadata.promptTokenCount / candidatesTokenCount
-    if let Some(usage) = response.get("usageMetadata") {
-        return TokenUsage {
-            input_tokens: usage
-                .get("promptTokenCount")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
-            output_tokens: usage
-                .get("candidatesTokenCount")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
-            cache_read_tokens: usage
-                .get("cachedContentTokenCount")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
-            cache_write_tokens: 0,
-        };
-    }
-
-    TokenUsage::default()
-}
-
 /// Extract the user's task/request from the original conversation.
 fn extract_user_task(request: &ChatCompletionRequest) -> String {
     // Find the last user message (the actual task)
@@ -1322,158 +1025,6 @@ fn extract_user_task(request: &ChatCompletionRequest) -> String {
         }
     }
     "No task description available".to_string()
-}
-
-/// Try to extract JSON from a response that may contain markdown code blocks.
-fn extract_json_from_response(text: &str) -> Option<String> {
-    // Look for ```json ... ``` blocks
-    if let Some(start) = text.find("```json") {
-        let json_start = start + 7;
-        if let Some(end) = text[json_start..].find("```") {
-            return Some(text[json_start..json_start + end].trim().to_string());
-        }
-    }
-
-    // Look for ``` ... ``` blocks
-    if let Some(start) = text.find("```") {
-        let json_start = start + 3;
-        // Skip optional language identifier on the same line
-        let line_end = text[json_start..].find('\n').unwrap_or(0);
-        let actual_start = json_start + line_end;
-        if let Some(end) = text[actual_start..].find("```") {
-            return Some(text[actual_start..actual_start + end].trim().to_string());
-        }
-    }
-
-    // Try to find raw JSON object starting with {"findings"
-    if let Some(start) = text.find(r#"{"findings""#) {
-        // Find the matching closing brace
-        let mut depth = 0;
-        let mut end_pos = start;
-        for (i, c) in text[start..].char_indices() {
-            match c {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end_pos = start + i;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        if end_pos > start {
-            return Some(text[start..=end_pos].to_string());
-        }
-    }
-
-    // Try to find raw JSON object (any)
-    if let Some(start) = text.find('{') {
-        if let Some(end) = text.rfind('}') {
-            if end > start {
-                return Some(text[start..=end].to_string());
-            }
-        }
-    }
-
-    None
-}
-
-/// Try to construct a valid AdversaryResponse from partial/malformed JSON
-fn try_parse_relaxed(text: &str) -> Option<AdversaryResponse> {
-    // Check for "NO_FINDINGS" or "no findings" anywhere in response
-    let lower = text.to_lowercase();
-    if lower.contains("no_findings")
-        || lower.contains("no findings")
-        || lower.contains("no issues")
-        || lower.contains("no vulnerabilities")
-        || lower.contains("code looks correct")
-        || lower.contains("looks good")
-    {
-        return Some(AdversaryResponse {
-            findings: Some(vec![]),
-            assessment: Some("NO_FINDINGS".to_string()),
-        });
-    }
-
-    None
-}
-
-/// Parse a severity string into the Severity enum.
-fn parse_severity(s: &str) -> Severity {
-    match s.to_uppercase().as_str() {
-        "CRITICAL" => Severity::Critical,
-        "HIGH" => Severity::High,
-        "MEDIUM" | "MED" => Severity::Medium,
-        "LOW" => Severity::Low,
-        _ => Severity::Info,
-    }
-}
-
-/// Simple string similarity based on shared word overlap (Jaccard-like).
-fn string_similarity(a: &str, b: &str) -> f32 {
-    let words_a: std::collections::HashSet<&str> = a.split_whitespace().collect();
-    let words_b: std::collections::HashSet<&str> = b.split_whitespace().collect();
-
-    if words_a.is_empty() && words_b.is_empty() {
-        return 1.0;
-    }
-
-    let intersection = words_a.intersection(&words_b).count();
-    let union = words_a.union(&words_b).count();
-
-    if union == 0 {
-        return 0.0;
-    }
-
-    intersection as f32 / union as f32
-}
-
-/// Detect common false positive patterns in adversary findings.
-fn is_common_false_positive(description: &str, reasoning: &str) -> bool {
-    let combined = format!("{} {}", description, reasoning);
-
-    let false_positive_patterns = [
-        // Standard Rust patterns the adversary may flag incorrectly
-        "unwrap() on mutex",
-        "poisoned mutex",
-        "hardcoded password in test",
-        "hardcoded key in test",
-        "hardcoded secret in test",
-        "deprecated api",
-        // Standard library usage that's actually correct
-        "silent fallback on mlock",
-        "graceful degradation",
-        // Protocol-mandated choices
-        "hmac-sha1 in yubikey",
-        "yubikey hardware uses",
-        // Admin-configured values
-        "ssrf via.*endpoint",
-        "admin-configured.*trusted",
-    ];
-
-    for pattern in &false_positive_patterns {
-        if combined.contains(pattern) {
-            return true;
-        }
-    }
-
-    // Check for regex patterns
-    let regex_patterns = [
-        r"test\s+(code|file|module)\s+(requires|needs|uses)\s+deterministic",
-        r"admin[\-\s]configured\s+(endpoint|url|path)",
-    ];
-
-    for pattern in &regex_patterns {
-        if let Ok(re) = regex::Regex::new(pattern) {
-            if re.is_match(&combined) {
-                return true;
-            }
-        }
-    }
-
-    false
 }
 
 /// Truncate output to a maximum length with an indicator.
@@ -1546,99 +1097,6 @@ fn format_findings_for_injection(
     output
 }
 
-/// Run a shell command with timeout, returning structured result.
-async fn run_shell_command(command: &str, timeout: Duration) -> StaticAnalysisResult {
-    let shell = if cfg!(windows) { "cmd" } else { "sh" };
-    let flag = if cfg!(windows) { "/C" } else { "-c" };
-
-    let result = tokio::time::timeout(
-        timeout,
-        tokio::process::Command::new(shell)
-            .arg(flag)
-            .arg(command)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output(),
-    )
-    .await;
-
-    match result {
-        Ok(Ok(output)) => {
-            let exit_code = output.status.code().unwrap_or(-1);
-            StaticAnalysisResult {
-                command: command.to_string(),
-                exit_code,
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                passed: exit_code == 0,
-            }
-        }
-        Ok(Err(e)) => StaticAnalysisResult {
-            command: command.to_string(),
-            exit_code: -1,
-            stdout: String::new(),
-            stderr: format!("Command failed to execute: {}", e),
-            passed: false,
-        },
-        Err(_) => StaticAnalysisResult {
-            command: command.to_string(),
-            exit_code: -1,
-            stdout: String::new(),
-            stderr: format!("Command timed out after {}s", timeout.as_secs()),
-            passed: false,
-        },
-    }
-}
-
-/// Run `chainlink create` and `chainlink label` to create an issue.
-async fn run_chainlink_create(title: &str, label: &str, comment: &str) -> Result<String, VddError> {
-    let shell = if cfg!(windows) { "cmd" } else { "sh" };
-    let flag = if cfg!(windows) { "/C" } else { "-c" };
-
-    // Create the issue
-    let create_output = tokio::process::Command::new(shell)
-        .arg(flag)
-        .arg(format!(
-            "chainlink create \"{}\" -p high",
-            title.replace('"', "\\\"")
-        ))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| VddError::ChainlinkError(format!("Failed to run chainlink: {}", e)))?;
-
-    let create_text = String::from_utf8_lossy(&create_output.stdout);
-
-    // Extract issue ID from output like "Created issue #123"
-    let issue_id = create_text
-        .split('#')
-        .nth(1)
-        .and_then(|s| s.split_whitespace().next())
-        .unwrap_or("unknown")
-        .to_string();
-
-    // Label it
-    let _ = tokio::process::Command::new(shell)
-        .arg(flag)
-        .arg(format!("chainlink label {} {}", issue_id, label))
-        .output()
-        .await;
-
-    // Add comment with details
-    let _ = tokio::process::Command::new(shell)
-        .arg(flag)
-        .arg(format!(
-            "chainlink comment {} \"{}\"",
-            issue_id,
-            comment.replace('"', "\\\"").replace('\n', " ")
-        ))
-        .output()
-        .await;
-
-    Ok(issue_id)
-}
-
 // ==========================================================================
 // Tests
 // ==========================================================================
@@ -1646,198 +1104,7 @@ async fn run_chainlink_create(title: &str, label: &str, comment: &str) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_confabulation_tracker_below_min_iterations() {
-        let mut tracker = ConfabulationTracker::new(0.75, 2);
-        tracker.record_iteration(0, 5); // 100% FP but only 1 iteration
-        assert!(!tracker.should_terminate());
-    }
-
-    #[test]
-    fn test_confabulation_tracker_terminates() {
-        let mut tracker = ConfabulationTracker::new(0.75, 2);
-        tracker.record_iteration(2, 3); // 60% FP
-        tracker.record_iteration(1, 5); // 83% FP — above threshold, past min
-        assert!(tracker.should_terminate());
-    }
-
-    #[test]
-    fn test_confabulation_tracker_does_not_terminate_below_threshold() {
-        let mut tracker = ConfabulationTracker::new(0.75, 2);
-        tracker.record_iteration(3, 2); // 40% FP
-        tracker.record_iteration(2, 2); // 50% FP
-        assert!(!tracker.should_terminate());
-    }
-
-    #[test]
-    fn test_confabulation_tracker_no_findings_terminates() {
-        let mut tracker = ConfabulationTracker::new(0.75, 2);
-        tracker.record_iteration(1, 0); // some genuine first
-        tracker.record_iteration(0, 0); // no findings = 1.0 FP rate
-        assert!(tracker.should_terminate());
-    }
-
-    #[test]
-    fn test_confabulation_tracker_current_rate() {
-        let mut tracker = ConfabulationTracker::new(0.75, 1);
-        tracker.record_iteration(2, 8); // 80%
-        tracker.record_iteration(1, 4); // 80%
-        assert!((tracker.current_rate() - 0.8).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_confabulation_tracker_empty() {
-        let tracker = ConfabulationTracker::new(0.75, 2);
-        assert_eq!(tracker.current_rate(), 0.0);
-        assert_eq!(tracker.latest_rate(), 0.0);
-        assert!(!tracker.should_terminate());
-    }
-
-    #[test]
-    fn test_parse_severity() {
-        assert_eq!(parse_severity("CRITICAL"), Severity::Critical);
-        assert_eq!(parse_severity("critical"), Severity::Critical);
-        assert_eq!(parse_severity("HIGH"), Severity::High);
-        assert_eq!(parse_severity("MEDIUM"), Severity::Medium);
-        assert_eq!(parse_severity("MED"), Severity::Medium);
-        assert_eq!(parse_severity("LOW"), Severity::Low);
-        assert_eq!(parse_severity("INFO"), Severity::Info);
-        assert_eq!(parse_severity("unknown"), Severity::Info);
-    }
-
-    #[test]
-    fn test_string_similarity_identical() {
-        assert!((string_similarity("hello world", "hello world") - 1.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_string_similarity_disjoint() {
-        assert!((string_similarity("hello world", "foo bar")).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_string_similarity_partial() {
-        let sim = string_similarity(
-            "sql injection in query builder",
-            "sql injection in db module",
-        );
-        assert!(sim > 0.3 && sim < 0.8);
-    }
-
-    #[test]
-    fn test_string_similarity_empty() {
-        assert!((string_similarity("", "") - 1.0).abs() < 0.01);
-        assert!((string_similarity("hello", "")).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_extract_json_from_code_block() {
-        let text = r#"Here is my analysis:
-```json
-{"findings": [], "assessment": "NO_FINDINGS"}
-```
-"#;
-        let json = extract_json_from_response(text).unwrap();
-        let parsed: Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["assessment"], "NO_FINDINGS");
-    }
-
-    #[test]
-    fn test_extract_json_from_raw() {
-        let text = r#"Some preamble text {"findings": [{"severity": "HIGH"}], "assessment": "FINDINGS_PRESENT"} trailing text"#;
-        let json = extract_json_from_response(text).unwrap();
-        let parsed: Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["assessment"], "FINDINGS_PRESENT");
-    }
-
-    #[test]
-    fn test_extract_response_text_openai_format() {
-        let response = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": "Hello from the model"
-                }
-            }]
-        });
-        assert_eq!(extract_response_text(&response), "Hello from the model");
-    }
-
-    #[test]
-    fn test_extract_response_text_anthropic_format() {
-        let response = serde_json::json!({
-            "content": [{
-                "type": "text",
-                "text": "Hello from Anthropic"
-            }]
-        });
-        assert_eq!(extract_response_text(&response), "Hello from Anthropic");
-    }
-
-    #[test]
-    fn test_extract_response_text_empty() {
-        let response = serde_json::json!({});
-        assert_eq!(extract_response_text(&response), "");
-    }
-
-    #[test]
-    fn test_extract_response_text_google_format() {
-        let response = serde_json::json!({
-            "candidates": [{
-                "content": {
-                    "parts": [{
-                        "text": "Hello from Gemini"
-                    }]
-                }
-            }]
-        });
-        assert_eq!(extract_response_text(&response), "Hello from Gemini");
-    }
-
-    #[test]
-    fn test_extract_token_usage_google_format() {
-        let response = serde_json::json!({
-            "usageMetadata": {
-                "promptTokenCount": 150,
-                "candidatesTokenCount": 80,
-                "cachedContentTokenCount": 25
-            }
-        });
-        let usage = extract_token_usage(&response);
-        assert_eq!(usage.input_tokens, 150);
-        assert_eq!(usage.output_tokens, 80);
-        assert_eq!(usage.cache_read_tokens, 25);
-    }
-
-    #[test]
-    fn test_extract_token_usage_openai() {
-        let response = serde_json::json!({
-            "usage": {
-                "prompt_tokens": 100,
-                "completion_tokens": 50
-            }
-        });
-        let usage = extract_token_usage(&response);
-        assert_eq!(usage.input_tokens, 100);
-        assert_eq!(usage.output_tokens, 50);
-    }
-
-    #[test]
-    fn test_extract_token_usage_anthropic() {
-        let response = serde_json::json!({
-            "usage": {
-                "input_tokens": 200,
-                "output_tokens": 75,
-                "cache_read_input_tokens": 50,
-                "cache_creation_input_tokens": 10
-            }
-        });
-        let usage = extract_token_usage(&response);
-        assert_eq!(usage.input_tokens, 200);
-        assert_eq!(usage.output_tokens, 75);
-        assert_eq!(usage.cache_read_tokens, 50);
-        assert_eq!(usage.cache_write_tokens, 10);
-    }
+    use crate::config::VddTracking;
 
     #[test]
     fn test_truncate_output_short() {
@@ -1849,22 +1116,6 @@ mod tests {
         let result = truncate_output("hello world this is long", 10);
         assert!(result.starts_with("hello worl"));
         assert!(result.contains("truncated"));
-    }
-
-    #[test]
-    fn test_is_common_false_positive() {
-        assert!(is_common_false_positive(
-            "mutex unwrap() on poisoned mutex could panic",
-            "the code uses unwrap() on mutex"
-        ));
-        assert!(is_common_false_positive(
-            "hardcoded password in test file",
-            "test code has password = 'test123'"
-        ));
-        assert!(!is_common_false_positive(
-            "sql injection in user input handler",
-            "string concatenation used for query"
-        ));
     }
 
     #[test]
@@ -1912,68 +1163,7 @@ mod tests {
     }
 
     #[test]
-    fn test_vdd_session_record_iteration() {
-        let mut session = VddSession::new(VddMode::Blocking);
-        let iteration = VddIteration {
-            number: 1,
-            builder_response: "code here".to_string(),
-            static_analysis: Vec::new(),
-            adversary_review: AdversaryReview {
-                iteration: 1,
-                findings: Vec::new(),
-                raw_response: "{}".to_string(),
-                tokens_used: TokenUsage {
-                    input_tokens: 100,
-                    output_tokens: 50,
-                    ..Default::default()
-                },
-                timestamp: Utc::now(),
-            },
-            genuine_count: 2,
-            false_positive_count: 3,
-        };
-
-        session.record_iteration(iteration);
-        assert_eq!(session.total_findings, 5);
-        assert_eq!(session.total_genuine, 2);
-        assert_eq!(session.total_false_positives, 3);
-        assert!((session.false_positive_rate - 0.6).abs() < 0.01);
-        assert_eq!(session.adversary_tokens.input_tokens, 100);
-    }
-
-    #[test]
-    fn test_vdd_session_finalize() {
-        let mut session = VddSession::new(VddMode::Advisory);
-        session.finalize(true, "Confabulation threshold reached");
-        assert!(session.converged);
-        assert_eq!(
-            session.termination_reason,
-            Some("Confabulation threshold reached".to_string())
-        );
-        assert!(session.ended_at.is_some());
-    }
-
-    #[test]
-    fn test_severity_ordering() {
-        assert!(Severity::Critical < Severity::High);
-        assert!(Severity::High < Severity::Medium);
-        assert!(Severity::Medium < Severity::Low);
-        assert!(Severity::Low < Severity::Info);
-    }
-
-    #[test]
-    fn test_severity_display() {
-        assert_eq!(format!("{}", Severity::Critical), "CRITICAL");
-        assert_eq!(format!("{}", Severity::High), "HIGH");
-        assert_eq!(format!("{}", Severity::Medium), "MEDIUM");
-        assert_eq!(format!("{}", Severity::Low), "LOW");
-        assert_eq!(format!("{}", Severity::Info), "INFO");
-    }
-
-    #[test]
     fn test_parse_findings_valid_json() {
-        use crate::config::{VddConfig, VddTracking};
-
         let config = VddConfig {
             enabled: true,
             tracking: VddTracking {
@@ -2012,7 +1202,7 @@ mod tests {
     fn test_parse_findings_no_findings() {
         let config = VddConfig {
             enabled: true,
-            tracking: crate::config::VddTracking {
+            tracking: VddTracking {
                 log_adversary_responses: false,
                 ..Default::default()
             },
