@@ -1,6 +1,6 @@
 {
   "uuid": "b0ac9d41-3bff-45e5-b29f-e0cb29d0ef27",
-  "display_id": null,
+  "display_id": 22,
   "title": "Add color diff rendering for edit_file tool",
   "status": "closed",
   "priority": "high",

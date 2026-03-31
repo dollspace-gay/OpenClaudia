@@ -1,6 +1,6 @@
 {
   "uuid": "dcfeb3e1-6d66-47ed-89d2-10f75228c280",
-  "display_id": null,
+  "display_id": 21,
   "title": "Add syntax highlighting to code blocks via syntect",
   "status": "closed",
   "priority": "high",

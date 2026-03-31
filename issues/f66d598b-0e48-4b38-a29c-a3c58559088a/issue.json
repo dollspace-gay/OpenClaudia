@@ -1,6 +1,6 @@
 {
   "uuid": "f66d598b-0e48-4b38-a29c-a3c58559088a",
-  "display_id": null,
+  "display_id": 34,
   "title": "Add worktree isolation for agents (EnterWorktree/ExitWorktree)",
   "status": "closed",
   "priority": "high",

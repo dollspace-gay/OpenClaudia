@@ -1,6 +1,6 @@
 {
   "uuid": "2581f3bc-ea28-4e65-8818-7bfdb50b7ad6",
-  "display_id": null,
+  "display_id": 25,
   "title": "Add syntect syntax highlighting for fenced code blocks in TUI markdown renderer",
   "status": "open",
   "priority": "medium",

@@ -1,6 +1,6 @@
 {
   "uuid": "1c647250-7c42-4369-9643-99bc12b028e4",
-  "display_id": null,
+  "display_id": 17,
   "title": "Restructure: extract hooks/ and session/ module directories",
   "status": "closed",
   "priority": "high",

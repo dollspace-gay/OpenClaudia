@@ -1,6 +1,6 @@
 {
   "uuid": "9c24d8db-aa09-4ef4-b1da-3ef1f6e8dd0c",
-  "display_id": null,
+  "display_id": 36,
   "title": "Wire vim mode into rustyline input loop",
   "status": "closed",
   "priority": "medium",

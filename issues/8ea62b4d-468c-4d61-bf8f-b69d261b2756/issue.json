@@ -1,6 +1,6 @@
 {
   "uuid": "8ea62b4d-468c-4d61-bf8f-b69d261b2756",
-  "display_id": null,
+  "display_id": 26,
   "title": "Add color diff rendering for edit_file tool and centralized tool result display",
   "status": "open",
   "priority": "high",

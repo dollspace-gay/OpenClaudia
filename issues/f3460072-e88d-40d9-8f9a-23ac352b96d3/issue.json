@@ -1,6 +1,6 @@
 {
   "uuid": "f3460072-e88d-40d9-8f9a-23ac352b96d3",
-  "display_id": null,
+  "display_id": 19,
   "title": "Extract flat src/config.rs into src/config/ module directory",
   "status": "closed",
   "priority": "medium",

@@ -1,6 +1,6 @@
 {
   "uuid": "db556d7f-56ec-4c8f-80ba-e080f7f5b113",
-  "display_id": null,
+  "display_id": 28,
   "title": "Add structured StreamEvent enum for streaming refactor",
   "status": "closed",
   "priority": "high",

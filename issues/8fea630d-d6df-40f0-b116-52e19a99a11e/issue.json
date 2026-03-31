@@ -1,6 +1,6 @@
 {
   "uuid": "8fea630d-d6df-40f0-b116-52e19a99a11e",
-  "display_id": null,
+  "display_id": 18,
   "title": "Restructure: extract cli/ from main.rs",
   "status": "closed",
   "priority": "high",

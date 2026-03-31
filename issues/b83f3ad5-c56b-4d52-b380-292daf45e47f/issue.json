@@ -1,6 +1,6 @@
 {
   "uuid": "b83f3ad5-c56b-4d52-b380-292daf45e47f",
-  "display_id": null,
+  "display_id": 16,
   "title": "Restructure: extract plugins/ module directory",
   "status": "closed",
   "priority": "high",

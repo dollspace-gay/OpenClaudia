@@ -1,6 +1,6 @@
 {
   "uuid": "f6ab0244-b828-4bc4-9696-38cc05230a64",
-  "display_id": null,
+  "display_id": 37,
   "title": "Implement Claude Code credential reader for direct Anthropic API auth",
   "status": "closed",
   "priority": "high",

@@ -1,6 +1,6 @@
 {
   "uuid": "cd07353b-731c-49a5-aff7-38701dec65e8",
-  "display_id": null,
+  "display_id": 20,
   "title": "Fix config.yaml detection fails on modified configs (GH #11)",
   "status": "closed",
   "priority": "high",

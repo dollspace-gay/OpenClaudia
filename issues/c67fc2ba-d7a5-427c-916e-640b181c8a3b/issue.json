@@ -1,6 +1,6 @@
 {
   "uuid": "c67fc2ba-d7a5-427c-916e-640b181c8a3b",
-  "display_id": null,
+  "display_id": 27,
   "title": "Add --resume and --session-id CLI flags for session resume",
   "status": "open",
   "priority": "medium",

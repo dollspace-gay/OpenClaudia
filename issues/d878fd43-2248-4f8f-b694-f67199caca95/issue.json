@@ -1,6 +1,6 @@
 {
   "uuid": "d878fd43-2248-4f8f-b694-f67199caca95",
-  "display_id": null,
+  "display_id": 31,
   "title": "Add LSP integration tool (goToDefinition, findReferences, hover)",
   "status": "closed",
   "priority": "high",

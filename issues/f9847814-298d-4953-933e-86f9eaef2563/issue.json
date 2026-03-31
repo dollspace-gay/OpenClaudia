@@ -1,6 +1,6 @@
 {
   "uuid": "f9847814-298d-4953-933e-86f9eaef2563",
-  "display_id": null,
+  "display_id": 32,
   "title": "Add coordinator mode for multi-agent orchestration",
   "status": "closed",
   "priority": "high",

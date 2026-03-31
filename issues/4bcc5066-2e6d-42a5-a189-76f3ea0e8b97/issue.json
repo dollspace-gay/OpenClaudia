@@ -1,6 +1,6 @@
 {
   "uuid": "4bcc5066-2e6d-42a5-a189-76f3ea0e8b97",
-  "display_id": null,
+  "display_id": 24,
   "title": "Add --resume and --session-id CLI flags",
   "status": "closed",
   "priority": "medium",
