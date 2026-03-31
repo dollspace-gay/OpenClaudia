@@ -1022,7 +1022,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                 // Build request - proxy mode omits tool definitions because Claude Code
                 // OAuth credentials reject requests containing `tools` in the body.
                 // Tools are handled via XML-based interception (ToolInterceptor) instead.
-                let request_body = if using_proxy {
+                let mut request_body = if using_proxy {
                     // Extract system message to top-level (Claude API requirement)
                     let system_msg = chat_session
                         .messages
@@ -1133,11 +1133,15 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                         "tools": tools::get_all_tool_definitions(true)
                     })
                 };
+
+                // Inject Claude Code system prompt for OAuth model access
+                if claude_code_token.is_some() {
+                    openclaudia::claude_credentials::inject_system_prompt(&mut request_body);
+                }
+
                 // Build headers based on auth mode
-                // Get endpoint - Claude Code OAuth goes direct, proxy mode uses local proxy
+                // Get endpoint - Claude Code OAuth goes direct to Anthropic API
                 let endpoint = if claude_code_token.is_some() {
-                    // Direct to Anthropic API with OAuth bearer token
-                    // Uses ?beta=true query param (required by Anthropic SDK for OAuth)
                     openclaudia::claude_credentials::get_oauth_endpoint(&model)
                 } else if using_proxy {
                     // Use the stored proxy_url for the endpoint
@@ -2251,6 +2255,9 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                             if let Some(sys) = system_msg {
                                                 followup_req["system"] = serde_json::json!(sys);
                                             }
+                                            if claude_code_token.is_some() {
+                                                openclaudia::claude_credentials::inject_system_prompt(&mut followup_req);
+                                            }
 
                                             let mut req =
                                                 client.post(&endpoint).json(&followup_req);
@@ -2490,7 +2497,6 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                 .map(String::from);
 
                                             // Proxy mode: omit tools from follow-up requests
-                                            // (OAuth credentials reject tools in body)
                                             let mut followup_req = serde_json::json!({
                                                 "model": model,
                                                 "messages": anthropic_messages,
@@ -2499,6 +2505,9 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                             });
                                             if let Some(sys) = system_msg {
                                                 followup_req["system"] = serde_json::json!(sys);
+                                            }
+                                            if claude_code_token.is_some() {
+                                                openclaudia::claude_credentials::inject_system_prompt(&mut followup_req);
                                             }
 
                                             let mut req =

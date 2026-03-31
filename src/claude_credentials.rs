@@ -215,24 +215,48 @@ pub fn get_oauth_headers(access_token: &str) -> Vec<(String, String)> {
         ("Authorization".to_string(), format!("Bearer {}", access_token)),
         ("anthropic-version".to_string(), "2023-06-01".to_string()),
         ("content-type".to_string(), "application/json".to_string()),
-        // Beta headers required for OAuth subscribers
+        // Beta headers matching what Claude Code sends (required for OAuth model access)
         ("anthropic-beta".to_string(), format!(
             "{},{},{}",
-            OAUTH_BETA_HEADER,
             CLAUDE_CODE_BETA_HEADER,
+            OAUTH_BETA_HEADER,
             INTERLEAVED_THINKING_BETA,
         )),
     ]
 }
 
 /// Get the API endpoint for OAuth-authenticated requests.
-///
-/// The Anthropic SDK's beta.messages.create sends to `/v1/messages?beta=true`,
-/// which is required for OAuth subscriber tokens.
-pub fn get_oauth_endpoint(model: &str) -> String {
-    format!(
-        "https://api.anthropic.com/v1/messages?beta=true"
-    )
+pub fn get_oauth_endpoint(_model: &str) -> String {
+    "https://api.anthropic.com/v1/messages".to_string()
+}
+
+/// The system prompt prefix that must be present for OAuth tokens to access
+/// premium models (Sonnet, Opus). The Anthropic API validates this string.
+pub const CLAUDE_CODE_SYSTEM_PROMPT: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
+
+/// Inject the Claude Code system prompt into a request body.
+/// This must be the first element in the system array for OAuth model access.
+pub fn inject_system_prompt(request: &mut serde_json::Value) {
+    let claude_code_obj = serde_json::json!({
+        "type": "text",
+        "text": CLAUDE_CODE_SYSTEM_PROMPT,
+    });
+
+    match request.get_mut("system") {
+        Some(serde_json::Value::Array(arr)) => {
+            arr.insert(0, claude_code_obj);
+        }
+        Some(serde_json::Value::String(existing)) => {
+            let existing_obj = serde_json::json!({
+                "type": "text",
+                "text": existing.clone(),
+            });
+            request["system"] = serde_json::json!([claude_code_obj, existing_obj]);
+        }
+        _ => {
+            request["system"] = serde_json::json!([claude_code_obj]);
+        }
+    }
 }
 
 #[cfg(test)]
