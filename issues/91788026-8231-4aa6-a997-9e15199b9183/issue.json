@@ -6,5 +6,8 @@
   "priority": "high",
   "created_by": "anon-46e2de59",
   "created_at": "2026-03-31T15:07:03.793552564Z",
-  "updated_at": "2026-03-31T15:07:03.793552564Z"
+  "updated_at": "2026-03-31T15:07:05.637041816Z",
+  "labels": [
+    "refactor"
+  ]
 }
