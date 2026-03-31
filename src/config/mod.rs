@@ -20,7 +20,10 @@ pub use guardrails::{
     QualityCheck, QualityGatesConfig, RunAfter,
 };
 pub use hooks::{Hook, HookEntry, HooksConfig};
-pub use keybindings::{KeyAction, KeybindingsConfig};
+pub use keybindings::{
+    parse_chord, ChordResolveResult, KeyAction, KeyContext, KeybindingResolver,
+    KeybindingsConfig, ParsedKeystroke,
+};
 pub use permissions::PermissionsConfig;
 pub use provider::{ProviderConfig, ThinkingConfig};
 pub use proxy::ProxyConfig;

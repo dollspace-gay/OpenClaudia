@@ -55,6 +55,10 @@ struct Cli {
     #[arg(long)]
     session_id: Option<String>,
 
+    /// Run in coordinator mode (multi-agent orchestration)
+    #[arg(long)]
+    coordinator: bool,
+
     /// Enable verbose logging
     #[arg(short, long, global = true)]
     verbose: bool,
@@ -147,7 +151,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
-        None => cmd_chat(cli.model, cli.resume, cli.session_id).await,
+        None => cmd_chat(cli.model, cli.resume, cli.session_id, cli.coordinator).await,
         Some(Commands::Init { force }) => cli::commands::init::cmd_init(force),
         Some(Commands::Auth { status, logout }) => {
             cli::commands::auth::cmd_auth(status, logout).await
@@ -170,7 +174,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Interactive chat mode (default command)
-async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Option<String>) -> anyhow::Result<()> {
+async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Option<String>, coordinator: bool) -> anyhow::Result<()> {
     use indicatif::{ProgressBar, ProgressStyle};
     use openclaudia::hooks::{
         load_claude_code_hooks, merge_hooks_config, HookEngine, HookEvent, HookInput,
@@ -860,6 +864,15 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                     None, // Custom instructions could come from config in future
                     memory_db.as_ref(),
                 );
+
+                // Inject coordinator prompt if --coordinator flag is set
+                if coordinator {
+                    system_prompt = format!(
+                        "{}\n\n{}",
+                        openclaudia::subagent::AgentType::Coordinator.system_prompt(),
+                        system_prompt
+                    );
+                }
 
                 // Inject file-specific knowledge for recently-touched files
                 if let Some(ref db) = memory_db {

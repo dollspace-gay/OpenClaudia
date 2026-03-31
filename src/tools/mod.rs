@@ -19,6 +19,7 @@ mod bash;
 mod chainlink;
 mod file;
 pub mod file_index;
+pub mod lsp;
 mod plan_mode;
 mod task;
 mod todo;
@@ -638,6 +639,36 @@ pub fn get_tool_definitions() -> Value {
                     "required": ["server", "uri"]
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "lsp",
+                "description": "Perform code intelligence operations via Language Server Protocol. Communicates with external language servers (rust-analyzer, typescript-language-server, pylsp, gopls, clangd, etc.) to provide goToDefinition, findReferences, hover, and documentSymbols. Automatically detects the appropriate language server based on file extension. Line numbers are 1-indexed.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["goToDefinition", "findReferences", "hover", "documentSymbols"],
+                            "description": "The LSP operation to perform"
+                        },
+                        "file_path": {
+                            "type": "string",
+                            "description": "Absolute path to the source file"
+                        },
+                        "line": {
+                            "type": "integer",
+                            "description": "1-indexed line number of the symbol (required for goToDefinition, findReferences, hover)"
+                        },
+                        "character": {
+                            "type": "integer",
+                            "description": "0-indexed character offset within the line (required for goToDefinition, findReferences, hover)"
+                        }
+                    },
+                    "required": ["action", "file_path"]
+                }
+            }
         }
     ])
 }
@@ -672,6 +703,9 @@ pub fn execute_tool_with_memory(tool_call: &ToolCall, _memory_db: Option<&Memory
         "web_fetch" => web::execute_web_fetch(&args),
         "web_search" => web::execute_web_search(&args),
         "web_browser" => web::execute_web_browser(&args),
+
+        // LSP tools
+        "lsp" => lsp::execute_lsp(&args),
 
         // Todo tools (fallback for chainlink)
         "todo_write" => todo::execute_todo_write(&args),

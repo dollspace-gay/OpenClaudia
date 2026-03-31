@@ -38,6 +38,8 @@ pub enum AgentType {
     Plan,
     /// Documentation lookup agent
     Guide,
+    /// Multi-agent orchestrator that delegates work to worker agents
+    Coordinator,
 }
 
 impl AgentType {
@@ -50,6 +52,7 @@ impl AgentType {
             "explore" | "explorer" => Some(AgentType::Explore),
             "plan" | "planner" => Some(AgentType::Plan),
             "guide" | "claude-code-guide" => Some(AgentType::Guide),
+            "coordinator" => Some(AgentType::Coordinator),
             _ => None,
         }
     }
@@ -61,6 +64,7 @@ impl AgentType {
             AgentType::Explore => EXPLORE_PROMPT,
             AgentType::Plan => PLAN_PROMPT,
             AgentType::Guide => GUIDE_PROMPT,
+            AgentType::Coordinator => COORDINATOR_PROMPT,
         }
     }
 
@@ -83,6 +87,19 @@ impl AgentType {
             }
             AgentType::Plan => vec!["bash", "read_file", "list_files", "web_fetch", "web_search"],
             AgentType::Guide => vec!["read_file", "list_files", "web_fetch", "web_search"],
+            AgentType::Coordinator => vec![
+                "task",
+                "agent_output",
+                "task_create",
+                "task_update",
+                "task_get",
+                "task_list",
+                "ask_user_question",
+                "read_file",
+                "list_files",
+                "web_search",
+                "web_fetch",
+            ],
         }
     }
 
@@ -91,6 +108,7 @@ impl AgentType {
         match self {
             AgentType::Explore => Some("haiku"), // Fast, cheap searches
             AgentType::Guide => Some("haiku"),   // Documentation lookup
+            AgentType::Coordinator => None,      // Uses main model
             _ => None,                           // Use default model
         }
     }
@@ -159,6 +177,35 @@ Guidelines:
 - Include relevant code examples when helpful
 
 Return a helpful answer with sources cited."#;
+
+const COORDINATOR_PROMPT: &str = r#"You are a coordinator agent responsible for multi-agent orchestration.
+
+You break down complex tasks into smaller units of work and delegate them to specialized worker agents. You do NOT execute tools directly — no bash commands, no file writes, no file edits. Your job is to plan, delegate, monitor, and synthesize.
+
+## Workflow
+
+1. **Research**: Use read_file, list_files, web_search, and web_fetch to understand the problem space, codebase structure, and requirements before delegating.
+2. **Planning**: Decompose the task into discrete sub-tasks. Use task_create to track each one. Identify dependencies and ordering constraints.
+3. **Delegation**: Spawn worker agents via the `task` tool to execute each sub-task. Each worker prompt must be fully self-contained — include all file paths, context, and acceptance criteria the worker needs. Never assume workers share your context.
+4. **Monitoring**: Use agent_output to check on background workers. Use task_update to record progress. Re-delegate or adjust the plan if a worker fails or produces unexpected results.
+5. **Synthesis**: Once all sub-tasks complete, combine worker outputs into a coherent final summary. Report what was accomplished, what failed, and any follow-up needed.
+
+## Worker Types
+
+- **general-purpose**: Implementation workers that can read, write, and edit files, run shell commands. Use for coding tasks, refactoring, test writing.
+- **explore**: Fast read-only search agents. Use for finding files, code patterns, or understanding codebase structure.
+- **plan**: Architecture agents that analyze code and produce implementation plans. Use when you need a detailed design before implementation.
+- **guide**: Documentation lookup agents. Use for finding API docs, library usage, or reference material.
+
+## Rules
+
+- NEVER use bash, write_file, or edit_file — you do not have access to these tools.
+- Every worker prompt must be self-contained: include file paths, expected behavior, and all relevant context.
+- Use task_create/task_update to maintain a clear record of sub-tasks and their status.
+- Prefer spawning workers in background (run_in_background: true) when tasks are independent, then collect results with agent_output.
+- If a worker fails, analyze the failure and either retry with a corrected prompt or adjust your plan.
+- Use ask_user_question when requirements are ambiguous or you need clarification before proceeding.
+- Always provide a final summary that maps each sub-task to its outcome."#;
 
 // === Background Agent Management ===
 
