@@ -2,11 +2,12 @@
   "uuid": "f66d598b-0e48-4b38-a29c-a3c58559088a",
   "display_id": null,
   "title": "Add worktree isolation for agents (EnterWorktree/ExitWorktree)",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-03-31T19:54:16.046902784Z",
-  "updated_at": "2026-03-31T19:54:16.193251628Z",
+  "updated_at": "2026-03-31T20:03:28.582903194Z",
+  "closed_at": "2026-03-31T20:03:28.582903194Z",
   "labels": [
     "feature"
   ]
