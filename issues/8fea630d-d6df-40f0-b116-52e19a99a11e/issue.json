@@ -2,11 +2,12 @@
   "uuid": "8fea630d-d6df-40f0-b116-52e19a99a11e",
   "display_id": null,
   "title": "Restructure: extract cli/ from main.rs",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-03-31T15:00:23.286949902Z",
-  "updated_at": "2026-03-31T15:00:23.494368840Z",
+  "updated_at": "2026-03-31T16:33:58.927282508Z",
+  "closed_at": "2026-03-31T16:33:58.927282508Z",
   "labels": [
     "refactor"
   ]
