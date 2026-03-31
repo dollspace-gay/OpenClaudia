@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Claude Code's OAuth client ID (public, hardcoded in Claude Code source)
 const CLAUDE_CODE_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";

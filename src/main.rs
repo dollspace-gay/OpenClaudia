@@ -5,7 +5,7 @@
 mod cli;
 
 use openclaudia::{
-    config, guardrails, memory, oauth, plugins, prompt, providers, proxy,
+    config, guardrails, memory, plugins, prompt, providers, proxy,
     proxy::normalize_base_url,
     session, tool_intercept,
     tools::{self, safe_truncate},
@@ -17,7 +17,6 @@ use std::fs;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 // Re-import extracted types and functions used heavily in cmd_chat
-use cli::commands::auth::start_builtin_oauth_flow;
 use cli::display::tips::get_random_tip;
 use cli::repl::input::expand_file_references;
 use cli::repl::keybindings::{display_keybindings, execute_key_action, key_event_to_string};
@@ -231,11 +230,8 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
     };
 
     // Authentication priority for Anthropic:
-    // 1. Claude Code credentials (~/.claude/.credentials.json) — zero-config if user has Claude Code
+    // 1. Claude Code credentials (~/.claude/.credentials.json) — zero-config
     // 2. API key from config/env
-    // 3. Built-in OAuth proxy (fallback)
-    let mut oauth_session: Option<crate::oauth::OAuthSession> = None;
-    let mut proxy_url: Option<String> = None;
     let mut claude_code_token: Option<String> = None;
 
     let api_key = if config.proxy.target == "anthropic" && provider.api_key.is_none() {
@@ -252,58 +248,15 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                     "claude-code-oauth".to_string()
                 }
                 Err(e) => {
-                    eprintln!("[warn] Claude Code credentials found but unusable: {}", e);
-                    eprintln!("[warn] Falling back to OAuth proxy...");
-                    // Fall through to proxy flow
-                    match start_builtin_oauth_flow(&config).await {
-                        Some(result) => {
-                            eprintln!("✓ Connected via OpenClaudia proxy");
-                            proxy_url = Some(result.proxy_url);
-                            let proxy_session = crate::oauth::OAuthSession {
-                                id: result.session_id,
-                                credentials: crate::oauth::OAuthCredentials {
-                                    access_token: String::new(),
-                                    refresh_token: None,
-                                    expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
-                                },
-                                api_key: None,
-                                auth_mode: crate::oauth::AuthMode::ProxyMode,
-                                granted_scopes: vec![],
-                                created_at: chrono::Utc::now(),
-                                user_id: None,
-                            };
-                            oauth_session = Some(proxy_session);
-                            "proxy-session".to_string()
-                        }
-                        None => return Ok(()),
-                    }
+                    eprintln!("Error: Claude Code credentials unusable: {}", e);
+                    eprintln!("Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY.");
+                    return Ok(());
                 }
             }
         } else {
-            // No Claude Code credentials — use built-in OAuth proxy
-            eprintln!("[debug] No API key or Claude Code credentials — starting OAuth proxy...");
-            match start_builtin_oauth_flow(&config).await {
-                Some(result) => {
-                    eprintln!("✓ Connected via OpenClaudia proxy");
-                    proxy_url = Some(result.proxy_url);
-                    let proxy_session = crate::oauth::OAuthSession {
-                        id: result.session_id,
-                        credentials: crate::oauth::OAuthCredentials {
-                            access_token: String::new(),
-                            refresh_token: None,
-                            expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
-                        },
-                        api_key: None,
-                        auth_mode: crate::oauth::AuthMode::ProxyMode,
-                        granted_scopes: vec![],
-                        created_at: chrono::Utc::now(),
-                        user_id: None,
-                    };
-                    oauth_session = Some(proxy_session);
-                    "proxy-session".to_string()
-                }
-                None => return Ok(()),
-            }
+            eprintln!("No API key configured for Anthropic.");
+            eprintln!("Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY.");
+            return Ok(());
         }
     } else if let Some(k) = &provider.api_key {
         // API key configured - use it directly
@@ -1013,41 +966,8 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                     );
                 }
 
-                // Check if we're using our built-in proxy mode (must check before building request)
-                let using_proxy = oauth_session
-                    .as_ref()
-                    .map(|s| s.auth_mode == crate::oauth::AuthMode::ProxyMode)
-                    .unwrap_or(false);
-
-                // Build request - proxy mode omits tool definitions because Claude Code
-                // OAuth credentials reject requests containing `tools` in the body.
-                // Tools are handled via XML-based interception (ToolInterceptor) instead.
-                let mut request_body = if using_proxy {
-                    // Extract system message to top-level (Claude API requirement)
-                    let system_msg = chat_session
-                        .messages
-                        .iter()
-                        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
-                        .and_then(|m| m.get("content").and_then(|c| c.as_str()))
-                        .map(String::from);
-
-                    // Convert messages to Anthropic format (handles tool_calls and tool results)
-                    let anthropic_messages = convert_messages_to_anthropic(&chat_session.messages);
-
-                    let mut req = serde_json::json!({
-                        "model": model,
-                        "messages": anthropic_messages,
-                        "max_tokens": 4096,
-                        "stream": true
-                    });
-
-                    // Add system as top-level parameter if present
-                    if let Some(sys) = system_msg {
-                        req["system"] = serde_json::json!(sys);
-                    }
-
-                    req
-                } else if config.proxy.target == "anthropic" {
+                // Build request body based on provider target.
+                let mut request_body = if config.proxy.target == "anthropic" {
                     // Anthropic direct API mode - need proper Anthropic format
                     // Extract system message to top-level (Anthropic API requirement)
                     let system_msg = chat_session
@@ -1143,17 +1063,6 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                 // Get endpoint - Claude Code OAuth goes direct to Anthropic API
                 let endpoint = if claude_code_token.is_some() {
                     openclaudia::claude_credentials::get_oauth_endpoint(&model)
-                } else if using_proxy {
-                    // Use the stored proxy_url for the endpoint
-                    if let Some(ref url) = proxy_url {
-                        format!("{}/v1/messages", url)
-                    } else {
-                        format!(
-                            "{}{}",
-                            normalize_base_url(&provider.base_url),
-                            adapter.chat_endpoint(&model)
-                        )
-                    }
                 } else {
                     format!(
                         "{}{}",
@@ -1164,23 +1073,6 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                 let headers: Vec<(String, String)> = if let Some(ref token) = claude_code_token {
                     // Claude Code OAuth: Bearer token directly to Anthropic API
                     openclaudia::claude_credentials::get_oauth_headers(token)
-                } else if using_proxy {
-                    // Proxy mode: send Cookie header with session ID so proxy uses stored OAuth
-                    if let Some(ref session) = oauth_session {
-                        vec![
-                            ("anthropic-version".to_string(), "2023-06-01".to_string()),
-                            ("content-type".to_string(), "application/json".to_string()),
-                            (
-                                "Cookie".to_string(),
-                                format!("anthropic_session={}", session.id),
-                            ),
-                        ]
-                    } else {
-                        vec![
-                            ("anthropic-version".to_string(), "2023-06-01".to_string()),
-                            ("content-type".to_string(), "application/json".to_string()),
-                        ]
-                    }
                 } else {
                     adapter.get_headers(&api_key)
                 };
@@ -1988,11 +1880,11 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                     full_content.push_str("\n\n[Response interrupted by user]");
                                 }
 
-                                // PROXY MODE TOOL INTERCEPTION
+                                // TOOL INTERCEPTION
                                 // When tools are included in the API request, the model returns
                                 // structured tool_use content blocks. If that fails, fall back to
                                 // XML-style tool interception from text output.
-                                if using_proxy && !cancelled {
+                                if config.proxy.target == "anthropic" && !cancelled {
                                     let mut handled_structured = false;
 
                                     // STRUCTURED TOOL_USE PATH
@@ -2963,44 +2855,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                     println!("\n\x1b[90mContinuing with tool results...\x1b[0m\n");
 
                                     // Build new request with tool results
-                                    // Use minimal format for proxy, native Anthropic for direct, OpenAI for others
-                                    let request_body = if using_proxy {
-                                        // Extract system message to top-level
-                                        let system_msg = chat_session
-                                            .messages
-                                            .iter()
-                                            .find(|m| {
-                                                m.get("role").and_then(|r| r.as_str())
-                                                    == Some("system")
-                                            })
-                                            .and_then(|m| m.get("content").and_then(|c| c.as_str()))
-                                            .map(String::from);
-
-                                        // Convert messages to Anthropic format (handles tool_calls and tool results)
-                                        // Proxy mode still talks to Anthropic API, so needs proper format
-                                        let anthropic_messages =
-                                            convert_messages_to_anthropic(&chat_session.messages);
-
-                                        // Proxy mode (OAuth) — include tool definitions
-                                        let openai_tools = tools::get_all_tool_definitions(true);
-                                        let anthropic_tools = convert_tools_to_anthropic(
-                                            openai_tools.as_array().unwrap_or(&vec![]),
-                                        );
-
-                                        let mut req = serde_json::json!({
-                                            "model": model,
-                                            "messages": anthropic_messages,
-                                            "max_tokens": 4096,
-                                            "stream": true,
-                                            "tools": anthropic_tools
-                                        });
-
-                                        if let Some(sys) = system_msg {
-                                            req["system"] = serde_json::json!(sys);
-                                        }
-
-                                        req
-                                    } else if config.proxy.target == "anthropic" {
+                                    let request_body = if config.proxy.target == "anthropic" {
                                         // Anthropic direct API - convert messages to Anthropic format
                                         let system_msg = chat_session
                                             .messages
@@ -3177,8 +3032,8 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                     chat_session.messages.pop();
                                 }
 
-                                // VDD: Run adversarial review if enabled (non-proxy path)
-                                if !using_proxy && !cancelled {
+                                // VDD: Run adversarial review if enabled
+                                if !cancelled {
                                     if let Some(ref engine) = vdd_engine {
                                         let vdd_content = &current_content;
                                         if !vdd_content.trim().is_empty() {
