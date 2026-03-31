@@ -1,0 +1,10 @@
+{
+  "uuid": "e90c390e-dae5-4b5e-b73d-9cd4ecfd78cb",
+  "display_id": 9,
+  "title": "Add --resume and --session-id CLI flags for session resume",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "anon-4067d79d",
+  "created_at": "2026-03-31T16:59:35.555449372Z",
+  "updated_at": "2026-03-31T16:59:35.555449372Z"
+}
