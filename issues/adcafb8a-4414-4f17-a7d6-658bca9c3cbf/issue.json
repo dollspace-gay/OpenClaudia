@@ -2,11 +2,12 @@
   "uuid": "adcafb8a-4414-4f17-a7d6-658bca9c3cbf",
   "display_id": null,
   "title": "Restructure: extract vdd/ module directory",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-03-31T15:00:21.940452061Z",
-  "updated_at": "2026-03-31T15:00:22.054655786Z",
+  "updated_at": "2026-03-31T16:33:58.032309926Z",
+  "closed_at": "2026-03-31T16:33:58.032309926Z",
   "labels": [
     "refactor"
   ]
