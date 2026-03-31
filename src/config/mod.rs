@@ -82,6 +82,20 @@ pub struct AppConfig {
 // This would allow `openclaudia config schema` to output the JSON schema
 // for editor integration and config validation.
 
+/// Check whether any config file exists (project or home directory).
+pub fn config_file_exists() -> bool {
+    let project_config = PathBuf::from(".openclaudia/config.yaml");
+    if project_config.exists() {
+        return true;
+    }
+    if let Some(home) = dirs::home_dir() {
+        if home.join(".openclaudia/config.yaml").exists() {
+            return true;
+        }
+    }
+    false
+}
+
 /// Load configuration from all sources
 pub fn load_config() -> Result<AppConfig, ConfigError> {
     let mut builder = Config::builder();

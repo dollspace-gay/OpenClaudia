@@ -177,8 +177,13 @@ async fn cmd_chat(model_override: Option<String>) -> anyhow::Result<()> {
 
     let config = match config::load_config() {
         Ok(c) => c,
-        Err(_) => {
-            eprintln!("No configuration found. Run 'openclaudia init' first.");
+        Err(e) => {
+            if config::config_file_exists() {
+                eprintln!("Failed to parse configuration: {}", e);
+                eprintln!("Check your .openclaudia/config.yaml for syntax errors.");
+            } else {
+                eprintln!("No configuration found. Run 'openclaudia init' first.");
+            }
             return Ok(());
         }
     };

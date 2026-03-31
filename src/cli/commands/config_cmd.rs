@@ -27,8 +27,13 @@ pub fn cmd_config() -> anyhow::Result<()> {
             println!("  Persist path: {:?}", config.session.persist_path);
         }
         Err(e) => {
-            error!("Failed to load configuration: {}", e);
-            info!("Run 'openclaudia init' to create a configuration file.");
+            if config::config_file_exists() {
+                error!("Failed to parse configuration: {}", e);
+                info!("Check your .openclaudia/config.yaml for syntax errors.");
+            } else {
+                error!("No configuration found.");
+                info!("Run 'openclaudia init' to create a configuration file.");
+            }
         }
     }
     Ok(())

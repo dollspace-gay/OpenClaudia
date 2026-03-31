@@ -13,7 +13,18 @@ pub async fn cmd_loop(
     port: Option<u16>,
     target: Option<String>,
 ) -> anyhow::Result<()> {
-    let mut config = config::load_config()?;
+    let mut config = match config::load_config() {
+        Ok(c) => c,
+        Err(e) => {
+            if config::config_file_exists() {
+                error!("Failed to parse configuration: {}", e);
+                eprintln!("Check your .openclaudia/config.yaml for syntax errors.");
+            } else {
+                error!("No configuration found. Run 'openclaudia init' first.");
+            }
+            return Ok(());
+        }
+    };
 
     if let Some(p) = port {
         config.proxy.port = p;

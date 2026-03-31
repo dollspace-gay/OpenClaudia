@@ -45,7 +45,11 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
         }
         Err(e) => {
             println!("FAILED: {}", e);
-            println!("\nRun 'openclaudia init' to create a configuration file.");
+            if config::config_file_exists() {
+                println!("\nConfig file exists but has errors. Check your .openclaudia/config.yaml for syntax errors.");
+            } else {
+                println!("\nRun 'openclaudia init' to create a configuration file.");
+            }
         }
     }
 
