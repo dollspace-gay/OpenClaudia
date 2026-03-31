@@ -1,0 +1,10 @@
+{
+  "uuid": "130a6fc3-6ee9-459a-be78-938fc0dd7b40",
+  "display_id": null,
+  "title": "Better TUI: message boundaries, scroll hints, progress bars",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-03-31T22:20:54.813565901Z",
+  "updated_at": "2026-03-31T22:20:54.813565901Z"
+}
