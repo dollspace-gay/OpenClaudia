@@ -2,11 +2,12 @@
   "uuid": "0570f229-1d34-4f10-a667-b8e932183c3c",
   "display_id": null,
   "title": "Restructure: extract config/ module directory",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-03-31T15:00:15.395609370Z",
-  "updated_at": "2026-03-31T15:00:15.591877702Z",
+  "updated_at": "2026-03-31T16:33:57.513475349Z",
+  "closed_at": "2026-03-31T16:33:57.513475349Z",
   "labels": [
     "refactor"
   ]
