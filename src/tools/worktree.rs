@@ -1,0 +1,367 @@
+//! Git worktree isolation for agent operations.
+//!
+//! Provides tools to create and manage isolated git worktrees
+//! so agents can work on branches without affecting the main working tree.
+
+use serde_json::Value;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// State of an active worktree
+#[derive(Debug, Clone)]
+pub struct WorktreeState {
+    pub path: PathBuf,
+    pub branch: String,
+    pub original_cwd: PathBuf,
+}
+
+/// Create a new git worktree for isolated agent work.
+pub fn execute_enter_worktree(args: &HashMap<String, Value>) -> (String, bool) {
+    let branch = args
+        .get("branch")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    if branch.is_empty() {
+        return ("Error: branch name is required".to_string(), true);
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    // Check if we're in a git repo
+    let git_check = Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .output();
+
+    match git_check {
+        Ok(output) if output.status.success() => {}
+        _ => return ("Error: not inside a git repository".to_string(), true),
+    }
+
+    // Get git root
+    let git_root = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| PathBuf::from(s.trim()))
+        .unwrap_or_else(|| cwd.clone());
+
+    let worktree_dir = git_root.join(".worktrees").join(&branch);
+
+    // Create the worktree
+    let base_branch = get_current_branch().unwrap_or_else(|| "HEAD".to_string());
+
+    // Try to create a new branch, or use existing
+    let result = Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "-b",
+            &branch,
+            worktree_dir.to_str().unwrap_or(""),
+            &base_branch,
+        ])
+        .output();
+
+    match result {
+        Ok(output) if output.status.success() => {
+            // Change to the worktree directory
+            if std::env::set_current_dir(&worktree_dir).is_err() {
+                return (
+                    format!(
+                        "Created worktree but failed to change directory to {}",
+                        worktree_dir.display()
+                    ),
+                    true,
+                );
+            }
+            (
+                format!(
+                    "Entered worktree at {} on branch '{}' (based on '{}')\nOriginal directory: {}",
+                    worktree_dir.display(),
+                    branch,
+                    base_branch,
+                    cwd.display()
+                ),
+                false,
+            )
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // Branch might already exist -- try without -b
+            if stderr.contains("already exists") {
+                let retry = Command::new("git")
+                    .args([
+                        "worktree",
+                        "add",
+                        worktree_dir.to_str().unwrap_or(""),
+                        &branch,
+                    ])
+                    .output();
+                match retry {
+                    Ok(o) if o.status.success() => {
+                        let _ = std::env::set_current_dir(&worktree_dir);
+                        (
+                            format!(
+                                "Entered existing worktree at {} on branch '{}'",
+                                worktree_dir.display(),
+                                branch
+                            ),
+                            false,
+                        )
+                    }
+                    _ => (
+                        format!("Failed to create worktree: {}", stderr.trim()),
+                        true,
+                    ),
+                }
+            } else {
+                (
+                    format!("Failed to create worktree: {}", stderr.trim()),
+                    true,
+                )
+            }
+        }
+        Err(e) => (format!("Failed to run git: {}", e), true),
+    }
+}
+
+/// Exit a worktree and return to the original directory.
+pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    let apply_changes = args
+        .get("apply_changes")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    // Check if we're in a worktree
+    let wt_check = Command::new("git")
+        .args(["rev-parse", "--git-common-dir"])
+        .output();
+
+    let common_dir = match wt_check {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        }
+        _ => return ("Error: not in a git worktree".to_string(), true),
+    };
+
+    let git_dir = Command::new("git")
+        .args(["rev-parse", "--git-dir"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+
+    // If git-dir equals git-common-dir, we're in the main worktree, not an isolated one
+    if git_dir == common_dir || git_dir == ".git" {
+        return (
+            "Not in an isolated worktree. Use this tool only inside a worktree created by enter_worktree.".to_string(),
+            true,
+        );
+    }
+
+    let current_branch = get_current_branch().unwrap_or_default();
+
+    // Find the main worktree path
+    let main_path = Path::new(&common_dir)
+        .parent()
+        .unwrap_or(Path::new("."));
+
+    if apply_changes {
+        // Commit any uncommitted changes
+        let _ = Command::new("git").args(["add", "-A"]).output();
+        let commit = Command::new("git")
+            .args([
+                "commit",
+                "-m",
+                &format!("Worktree changes from branch '{}'", current_branch),
+            ])
+            .output();
+
+        let committed = commit.map(|o| o.status.success()).unwrap_or(false);
+
+        // Switch to main worktree
+        let _ = std::env::set_current_dir(main_path);
+
+        // Merge the branch
+        if committed {
+            let merge = Command::new("git")
+                .args(["merge", &current_branch, "--no-edit"])
+                .output();
+
+            let merge_result = match merge {
+                Ok(o) if o.status.success() => {
+                    format!("Merged branch '{}' into main worktree.", current_branch)
+                }
+                Ok(o) => format!(
+                    "Merge had conflicts: {}",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ),
+                Err(e) => format!("Merge failed: {}", e),
+            };
+
+            // Clean up worktree
+            let _ = Command::new("git")
+                .args([
+                    "worktree",
+                    "remove",
+                    cwd.to_str().unwrap_or(""),
+                    "--force",
+                ])
+                .output();
+
+            (
+                format!(
+                    "Exited worktree. {}\nReturned to: {}",
+                    merge_result,
+                    main_path.display()
+                ),
+                false,
+            )
+        } else {
+            let _ = Command::new("git")
+                .args([
+                    "worktree",
+                    "remove",
+                    cwd.to_str().unwrap_or(""),
+                    "--force",
+                ])
+                .output();
+            (
+                format!(
+                    "No changes to commit. Removed worktree.\nReturned to: {}",
+                    main_path.display()
+                ),
+                false,
+            )
+        }
+    } else {
+        // Discard and return
+        let _ = std::env::set_current_dir(main_path);
+        let _ = Command::new("git")
+            .args([
+                "worktree",
+                "remove",
+                cwd.to_str().unwrap_or(""),
+                "--force",
+            ])
+            .output();
+        (
+            format!(
+                "Discarded worktree on branch '{}'. Returned to: {}",
+                current_branch,
+                main_path.display()
+            ),
+            false,
+        )
+    }
+}
+
+/// List active worktrees
+pub fn execute_list_worktrees() -> (String, bool) {
+    let output = Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            let mut worktrees = Vec::new();
+            let mut current: HashMap<String, String> = HashMap::new();
+
+            for line in stdout.lines() {
+                if line.is_empty() {
+                    if !current.is_empty() {
+                        let path = current.get("worktree").cloned().unwrap_or_default();
+                        let branch = current
+                            .get("branch")
+                            .cloned()
+                            .unwrap_or_else(|| "detached".to_string());
+                        let branch = branch
+                            .strip_prefix("refs/heads/")
+                            .unwrap_or(&branch)
+                            .to_string();
+                        worktrees.push(format!("  {} ({})", path, branch));
+                        current.clear();
+                    }
+                } else if let Some((key, value)) = line.split_once(' ') {
+                    current.insert(key.to_string(), value.to_string());
+                } else {
+                    current.insert(line.to_string(), String::new());
+                }
+            }
+            if !current.is_empty() {
+                let path = current.get("worktree").cloned().unwrap_or_default();
+                let branch = current
+                    .get("branch")
+                    .cloned()
+                    .unwrap_or_else(|| "detached".to_string());
+                let branch = branch
+                    .strip_prefix("refs/heads/")
+                    .unwrap_or(&branch)
+                    .to_string();
+                worktrees.push(format!("  {} ({})", path, branch));
+            }
+
+            if worktrees.is_empty() {
+                ("No active worktrees.".to_string(), false)
+            } else {
+                (
+                    format!("Active worktrees:\n{}", worktrees.join("\n")),
+                    false,
+                )
+            }
+        }
+        Ok(o) => (
+            format!(
+                "git worktree list failed: {}",
+                String::from_utf8_lossy(&o.stderr)
+            ),
+            true,
+        ),
+        Err(e) => (format!("Failed to run git: {}", e), true),
+    }
+}
+
+fn get_current_branch() -> Option<String> {
+    Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_current_branch() {
+        // Should work in the test environment (we're in a git repo)
+        let branch = get_current_branch();
+        assert!(branch.is_some());
+    }
+
+    #[test]
+    fn test_enter_worktree_requires_branch() {
+        let args = HashMap::new();
+        let (msg, is_err) = execute_enter_worktree(&args);
+        assert!(is_err);
+        assert!(msg.contains("branch name is required"));
+    }
+
+    #[test]
+    fn test_list_worktrees() {
+        let (msg, is_err) = execute_list_worktrees();
+        // Should work in any git repo
+        assert!(!is_err);
+        assert!(msg.contains("worktree") || msg.contains("Active"));
+    }
+}

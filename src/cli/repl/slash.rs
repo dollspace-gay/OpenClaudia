@@ -83,6 +83,8 @@ pub enum SlashCommandResult {
     Plugin(PluginAction),
     /// Theme was changed to the given name
     ThemeChanged(String),
+    /// Toggle vim mode (visual indicator in prompt)
+    ToggleVim,
     /// Show help message (already printed)
     Handled,
 }
@@ -128,6 +130,7 @@ pub fn handle_slash_command(
             println!("  /theme           - List available color themes");
             println!("  /theme <name>    - Switch to a color theme");
             println!("  /mode            - Toggle between Build and Plan modes");
+            println!("  /vim             - Toggle vim mode (show mode indicator in prompt)");
             println!("  /keybindings     - Show configured keyboard shortcuts");
             println!("  /rename <title>  - Rename the current session");
             println!("  /version         - Show version and system information");
@@ -320,6 +323,7 @@ pub fn handle_slash_command(
             }
         }
         "mode" => Some(SlashCommandResult::ToggleMode),
+        "vim" => Some(SlashCommandResult::ToggleVim),
         "keybindings" | "keys" | "bindings" => Some(SlashCommandResult::Keybindings),
         "rename" | "title" => {
             if args.is_empty() {

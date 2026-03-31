@@ -17,6 +17,7 @@ mod accumulator;
 mod ask_user;
 mod bash;
 mod chainlink;
+mod cron;
 mod file;
 pub mod file_index;
 pub mod lsp;
@@ -24,6 +25,7 @@ mod plan_mode;
 mod task;
 mod todo;
 mod web;
+pub mod worktree;
 
 // Re-exports
 pub use accumulator::{
@@ -669,6 +671,116 @@ pub fn get_tool_definitions() -> Value {
                     "required": ["action", "file_path"]
                 }
             }
+        },
+        // ====================================================================
+        // Git Worktree Isolation Tools
+        // ====================================================================
+        {
+            "type": "function",
+            "function": {
+                "name": "enter_worktree",
+                "description": "Create an isolated git worktree and switch into it. This creates a new branch based on the current HEAD and a separate working directory under .worktrees/ so the agent can make changes without affecting the main working tree.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "branch": {
+                            "type": "string",
+                            "description": "The branch name to create for the worktree (e.g., 'agent/fix-bug-123')"
+                        }
+                    },
+                    "required": ["branch"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "exit_worktree",
+                "description": "Exit the current git worktree and return to the main working tree. Optionally commit and merge changes back, or discard them.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "apply_changes": {
+                            "type": "boolean",
+                            "description": "If true, commit any uncommitted changes and merge the worktree branch into the main branch. If false (default), discard the worktree."
+                        }
+                    },
+                    "required": []
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_worktrees",
+                "description": "List all active git worktrees in the current repository, showing their paths and branches.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+        },
+        // ====================================================================
+        // Cron Scheduling Tools
+        // ====================================================================
+        {
+            "type": "function",
+            "function": {
+                "name": "cron_create",
+                "description": "Create a recurring scheduled task with a cron expression. Schedules are stored in .openclaudia/schedules.json and executed by loop mode or an external scheduler.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Unique name for the schedule (e.g., 'daily-cleanup')"
+                        },
+                        "schedule": {
+                            "type": "string",
+                            "description": "Standard 5-field cron expression: minute hour day month weekday (e.g., '0 9 * * 1-5' for weekdays at 9am)"
+                        },
+                        "prompt": {
+                            "type": "string",
+                            "description": "The prompt or command to execute on each trigger"
+                        }
+                    },
+                    "required": ["name", "schedule", "prompt"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "cron_delete",
+                "description": "Delete a scheduled task by its ID or name.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The schedule ID (8-character hex string)"
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "The schedule name (alternative to ID)"
+                        }
+                    },
+                    "required": []
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "cron_list",
+                "description": "List all scheduled tasks with their status, cron expressions, and run history.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
         }
     ])
 }
@@ -713,6 +825,16 @@ pub fn execute_tool_with_memory(tool_call: &ToolCall, _memory_db: Option<&Memory
 
         // User interaction tools
         "ask_user_question" => ask_user::execute_ask_user_question(&args),
+
+        // Worktree tools
+        "enter_worktree" => worktree::execute_enter_worktree(&args),
+        "exit_worktree" => worktree::execute_exit_worktree(&args),
+        "list_worktrees" => worktree::execute_list_worktrees(),
+
+        // Cron scheduling tools
+        "cron_create" => cron::execute_cron_create(&args),
+        "cron_delete" => cron::execute_cron_delete(&args),
+        "cron_list" => cron::execute_cron_list(&args),
 
         // Plan mode tools
         "enter_plan_mode" => plan_mode::execute_enter_plan_mode(),

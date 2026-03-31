@@ -32,6 +32,7 @@ use cli::repl::slash::{
     handle_activity_command, handle_memory_command, handle_plugin_action, handle_slash_command,
     SlashCommandResult,
 };
+use cli::repl::vim::{VimMode, VimState};
 use cli::repl::{
     get_history_path, list_chat_sessions, load_chat_session, save_chat_session, ChatSession,
 };
@@ -369,6 +370,10 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
     // Load saved theme (or default)
     let mut active_theme = tui::Theme::load();
 
+    // Vim mode state (toggled via /vim)
+    let mut vim_enabled = false;
+    let mut vim_state = VimState::new();
+
     // Initialize audit logger for this session
     let mut audit_logger = openclaudia::session::AuditLogger::new(&chat_session.id);
 
@@ -436,7 +441,16 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
         let mode_str = chat_session.mode.display().to_lowercase();
         let _ = tui::render_input_prompt(&mode_str);
 
-        let readline = rl.readline("> ");
+        let prompt = if vim_enabled {
+            let mode_indicator = match vim_state.mode {
+                VimMode::Normal => "[N] ",
+                VimMode::Insert => "[I] ",
+            };
+            format!("{}> ", mode_indicator)
+        } else {
+            "> ".to_string()
+        };
+        let readline = rl.readline(&prompt);
 
         match readline {
             Ok(line) => {
@@ -708,6 +722,16 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                         SlashCommandResult::ThemeChanged(name) => {
                             if let Some(theme) = tui::Theme::from_name(&name) {
                                 active_theme = theme;
+                            }
+                            continue;
+                        }
+                        SlashCommandResult::ToggleVim => {
+                            vim_enabled = !vim_enabled;
+                            if vim_enabled {
+                                vim_state = VimState::new();
+                                println!("\nVim mode enabled. Prompt shows [N]/[I] indicator.\n");
+                            } else {
+                                println!("\nVim mode disabled.\n");
                             }
                             continue;
                         }
