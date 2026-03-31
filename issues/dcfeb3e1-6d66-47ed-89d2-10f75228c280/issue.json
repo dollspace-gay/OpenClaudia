@@ -2,11 +2,12 @@
   "uuid": "dcfeb3e1-6d66-47ed-89d2-10f75228c280",
   "display_id": null,
   "title": "Add syntax highlighting to code blocks via syntect",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-03-31T16:54:44.328832598Z",
-  "updated_at": "2026-03-31T16:54:44.402464029Z",
+  "updated_at": "2026-03-31T17:15:53.216264529Z",
+  "closed_at": "2026-03-31T17:15:53.216264529Z",
   "labels": [
     "feature"
   ]
