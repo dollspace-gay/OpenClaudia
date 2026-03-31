@@ -18,6 +18,7 @@ pub mod hooks;
 pub mod mcp;
 pub mod memory;
 pub mod oauth;
+pub mod output_style;
 pub mod permissions;
 pub mod plugins;
 pub mod prompt;

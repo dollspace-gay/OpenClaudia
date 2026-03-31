@@ -773,6 +773,99 @@ pub fn clear_screen() -> io::Result<()> {
     Ok(())
 }
 
+// ─── TUI Polish: Visual Helpers ─────────────────────────────────────────────
+
+/// Print a visual separator between conversation turns.
+pub fn print_turn_separator() {
+    let width = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
+    let mut out = stdout();
+    let _ = out.execute(SetForegroundColor(CtColor::Rgb { r: 60, g: 60, b: 60 }));
+    let _ = out.execute(Print("─".repeat(width.min(120))));
+    let _ = out.execute(Print("\n"));
+    let _ = out.execute(ResetColor);
+}
+
+/// Print a role header with icon and color.
+pub fn print_role_header(role: &str) {
+    let (icon, color) = match role {
+        "assistant" | "Assistant" => ("●", CtColor::Rgb { r: 147, g: 112, b: 219 }),
+        "user" | "User" => ("›", CtColor::Rgb { r: 100, g: 180, b: 255 }),
+        "tool" | "Tool" => ("⚙", CtColor::Rgb { r: 218, g: 165, b: 32 }),
+        _ => ("·", CtColor::Rgb { r: 128, g: 128, b: 128 }),
+    };
+    let mut out = stdout();
+    let _ = out.execute(SetForegroundColor(color));
+    let _ = out.execute(SetAttribute(Attribute::Bold));
+    let _ = out.execute(Print(format!("{} {}", icon, role)));
+    let _ = out.execute(SetAttribute(Attribute::Reset));
+    let _ = out.execute(ResetColor);
+    let _ = out.execute(Print("\n"));
+}
+
+/// Print a tool execution start indicator.
+pub fn print_tool_start(tool_name: &str, description: &str) {
+    let mut out = stdout();
+    let _ = out.execute(SetForegroundColor(CtColor::Cyan));
+    let _ = out.execute(Print(format!("\n⚡ {} ", tool_name)));
+    let _ = out.execute(SetForegroundColor(CtColor::DarkGrey));
+    let _ = out.execute(Print(format!("— {}", description)));
+    let _ = out.execute(ResetColor);
+    let _ = out.execute(Print("\n"));
+}
+
+/// Print tool completion status with duration.
+pub fn print_tool_done(tool_name: &str, success: bool, duration_ms: u64) {
+    let mut out = stdout();
+    if success {
+        let _ = out.execute(SetForegroundColor(CtColor::Green));
+        let _ = out.execute(Print(format!("  ✓ {} ", tool_name)));
+    } else {
+        let _ = out.execute(SetForegroundColor(CtColor::Red));
+        let _ = out.execute(Print(format!("  ✗ {} ", tool_name)));
+    }
+    if duration_ms > 0 {
+        let _ = out.execute(SetForegroundColor(CtColor::DarkGrey));
+        let _ = out.execute(Print(format!("({}ms)", duration_ms)));
+    }
+    let _ = out.execute(ResetColor);
+    let _ = out.execute(Print("\n"));
+}
+
+/// Print a context usage bar (green/yellow/red).
+pub fn print_context_usage(used_tokens: usize, max_tokens: usize) {
+    if max_tokens == 0 { return; }
+    let pct = (used_tokens as f32 / max_tokens as f32 * 100.0).min(100.0);
+    let bar_width = 20;
+    let filled = (pct / 100.0 * bar_width as f32) as usize;
+    let empty = bar_width - filled;
+    let color = if pct >= 90.0 { CtColor::Red } else if pct >= 75.0 { CtColor::Yellow } else { CtColor::Green };
+
+    let mut out = stdout();
+    let _ = out.execute(SetForegroundColor(CtColor::DarkGrey));
+    let _ = out.execute(Print("  Context: ["));
+    let _ = out.execute(SetForegroundColor(color));
+    let _ = out.execute(Print("█".repeat(filled)));
+    let _ = out.execute(SetForegroundColor(CtColor::DarkGrey));
+    let _ = out.execute(Print("░".repeat(empty)));
+    let _ = out.execute(Print(format!("] {:.0}%", pct)));
+    let _ = out.execute(ResetColor);
+    let _ = out.execute(Print("\n"));
+}
+
+/// Print a clean welcome banner.
+pub fn print_welcome_banner(version: &str, provider: &str, model: &str, auth_method: &str) {
+    let mut out = stdout();
+    let _ = out.execute(SetForegroundColor(CtColor::Rgb { r: 147, g: 112, b: 219 }));
+    let _ = out.execute(SetAttribute(Attribute::Bold));
+    let _ = out.execute(Print(format!("  OpenClaudia v{}", version)));
+    let _ = out.execute(SetAttribute(Attribute::Reset));
+    let _ = out.execute(ResetColor);
+    let _ = out.execute(Print("\n"));
+    let _ = out.execute(SetForegroundColor(CtColor::DarkGrey));
+    let _ = out.execute(Print(format!("  {} · {} · {}\n\n", provider, model, auth_method)));
+    let _ = out.execute(ResetColor);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
