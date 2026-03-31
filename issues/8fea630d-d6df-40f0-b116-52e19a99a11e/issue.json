@@ -6,5 +6,8 @@
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-03-31T15:00:23.286949902Z",
-  "updated_at": "2026-03-31T15:00:23.286949902Z"
+  "updated_at": "2026-03-31T15:00:23.494368840Z",
+  "labels": [
+    "refactor"
+  ]
 }
