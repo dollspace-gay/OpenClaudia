@@ -2,11 +2,12 @@
   "uuid": "91788026-8231-4aa6-a997-9e15199b9183",
   "display_id": 7,
   "title": "Restructure: extract vdd.rs into vdd/ module directory",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "anon-46e2de59",
   "created_at": "2026-03-31T15:07:03.793552564Z",
-  "updated_at": "2026-03-31T15:07:05.637041816Z",
+  "updated_at": "2026-03-31T16:33:57.019254169Z",
+  "closed_at": "2026-03-31T16:33:57.019254169Z",
   "labels": [
     "refactor"
   ]
