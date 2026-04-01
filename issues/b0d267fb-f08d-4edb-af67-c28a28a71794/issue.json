@@ -1,0 +1,10 @@
+{
+  "uuid": "b0d267fb-f08d-4edb-af67-c28a28a71794",
+  "display_id": null,
+  "title": "N-30: Background shell UUID truncated to 8 chars",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:52.746451697Z",
+  "updated_at": "2026-04-01T03:39:52.746451697Z"
+}
