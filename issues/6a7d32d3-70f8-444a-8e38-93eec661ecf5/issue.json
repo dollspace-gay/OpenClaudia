@@ -1,0 +1,10 @@
+{
+  "uuid": "6a7d32d3-70f8-444a-8e38-93eec661ecf5",
+  "display_id": null,
+  "title": "W-3: Gemini error responses produce blank output",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:00.176125519Z",
+  "updated_at": "2026-04-01T03:39:00.176125519Z"
+}
