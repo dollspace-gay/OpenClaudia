@@ -1,0 +1,10 @@
+{
+  "uuid": "a189dc10-7b17-4112-9792-b993fe65c983",
+  "display_id": null,
+  "title": "C-11: Unsafe unwrap in session undo",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:38:45.210759478Z",
+  "updated_at": "2026-04-01T03:38:45.210759478Z"
+}
