@@ -1,0 +1,10 @@
+{
+  "uuid": "1ede2198-1849-43a4-96d7-1ec62172ff10",
+  "display_id": null,
+  "title": "C-20: VDD provider URL not validated",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:38:49.693822510Z",
+  "updated_at": "2026-04-01T03:38:49.693822510Z"
+}
