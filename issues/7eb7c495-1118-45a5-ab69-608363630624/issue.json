@@ -6,5 +6,8 @@
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-01T18:27:23.636225381Z",
-  "updated_at": "2026-04-01T18:27:23.636225381Z"
+  "updated_at": "2026-04-01T18:27:25.497876502Z",
+  "labels": [
+    "enhancement"
+  ]
 }
