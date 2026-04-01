@@ -1,0 +1,10 @@
+{
+  "uuid": "5ab41d6d-bd5d-407f-b9d2-8a5208b56d68",
+  "display_id": null,
+  "title": "Add /config set command for runtime config changes",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T00:39:45.679527115Z",
+  "updated_at": "2026-04-01T00:39:45.679527115Z"
+}
