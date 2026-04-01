@@ -1,0 +1,10 @@
+{
+  "uuid": "0dd7d1e2-4820-4773-b7f1-27f294c6c9db",
+  "display_id": null,
+  "title": "N-18: VDD confabulation CWE case-sensitive",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:44.898505195Z",
+  "updated_at": "2026-04-01T03:39:44.898505195Z"
+}
