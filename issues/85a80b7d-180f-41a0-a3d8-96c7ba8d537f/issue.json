@@ -2,11 +2,12 @@
   "uuid": "85a80b7d-180f-41a0-a3d8-96c7ba8d537f",
   "display_id": 71,
   "title": "C-10: Session directory creation failure silently ignored",
-  "status": "open",
+  "status": "closed",
   "priority": "critical",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:38:44.752973884Z",
-  "updated_at": "2026-04-01T03:38:44.825523175Z",
+  "updated_at": "2026-04-01T22:11:25.113936538Z",
+  "closed_at": "2026-04-01T22:11:25.113936538Z",
   "labels": [
     "qa"
   ]
