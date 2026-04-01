@@ -1,0 +1,10 @@
+{
+  "uuid": "70167062-d131-4c99-b7aa-be0927d1077b",
+  "issue_uuid": "1ede2198-1849-43a4-96d7-1ec62172ff10",
+  "author": "lOrm",
+  "content": "Verified fixed: URL validation with reqwest::Url::parse in vdd/mod.rs:1012-1015",
+  "created_at": "2026-04-01T22:11:51.248177735Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZQAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASgAAACEA5XQAYB5cN3SKBH+ryT0ZbPljo+n7VEsQSYhojCKg40UAAAAhANibmKJP7AQoc2V3Q6n4s7mep+Okrzuq28EMRwn24Cq3"
+}
