@@ -175,6 +175,7 @@ impl VimState {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn process_idle(&mut self, key: &str) -> VimAction {
         match key {
             // Mode switching
@@ -182,17 +183,13 @@ impl VimState {
                 self.mode = VimMode::Insert;
                 VimAction::EnterInsert
             }
-            "a" => {
+            "a" | "A" => {
                 self.mode = VimMode::Insert;
                 VimAction::EnterInsertAppend
             }
             "I" => {
                 self.mode = VimMode::Insert;
                 VimAction::EnterInsertLineStart
-            }
-            "A" => {
-                self.mode = VimMode::Insert;
-                VimAction::EnterInsertAppend
             }
             "o" => {
                 self.mode = VimMode::Insert;
@@ -410,11 +407,8 @@ impl VimState {
         if let Some(ch) = key.chars().next() {
             self.last_find = Some((find_type, ch));
             // The actual cursor movement would be handled by the editor
-            // For now, return a motion action
-            VimAction::None // Actual find motion TBD when wired to buffer
-        } else {
-            VimAction::None
         }
+        VimAction::None // Actual find motion TBD when wired to buffer
     }
 
     fn process_replace(&mut self, _key: &str, _count: u32) -> VimAction {

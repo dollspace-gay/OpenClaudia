@@ -1,6 +1,7 @@
 use super::{get_data_dir, ChatSession};
 use openclaudia::memory;
 use openclaudia::tools::safe_truncate;
+use std::fmt::Write;
 use std::fs;
 
 /// Estimate tokens in a chat session (rough: ~4 chars per token)
@@ -79,13 +80,14 @@ pub fn export_chat_session(session: &ChatSession) {
     let path = exports_dir.join(&filename);
 
     let mut content = String::new();
-    content.push_str(&format!("# {}\n\n", session.title));
-    content.push_str(&format!(
-        "**Date:** {}  \n",
+    let _ = writeln!(content, "# {}\n", session.title);
+    let _ = writeln!(
+        content,
+        "**Date:** {}  ",
         session.created_at.format("%Y-%m-%d %H:%M UTC")
-    ));
-    content.push_str(&format!("**Model:** {}  \n", session.model));
-    content.push_str(&format!("**Provider:** {}  \n\n", session.provider));
+    );
+    let _ = writeln!(content, "**Model:** {}  ", session.model);
+    let _ = writeln!(content, "**Provider:** {}  \n", session.provider);
     content.push_str("---\n\n");
 
     for msg in &session.messages {
@@ -107,7 +109,7 @@ pub fn export_chat_session(session: &ChatSession) {
                 content.push_str("\n\n");
             }
             _ => {
-                content.push_str(&format!("## {role}\n\n"));
+                let _ = writeln!(content, "## {role}\n");
                 content.push_str(msg_content);
                 content.push_str("\n\n");
             }
@@ -125,9 +127,8 @@ pub fn save_session_to_short_term_memory(
     session: &ChatSession,
     memory_db: Option<&memory::MemoryDb>,
 ) {
-    let db = match memory_db {
-        Some(db) => db,
-        None => return,
+    let Some(db) = memory_db else {
+        return;
     };
 
     let mut summary_parts = Vec::new();

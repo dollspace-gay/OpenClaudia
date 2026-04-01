@@ -41,21 +41,21 @@ pub enum AgentMode {
 }
 
 impl AgentMode {
-    pub const fn toggle(&self) -> Self {
+    pub const fn toggle(self) -> Self {
         match self {
             Self::Build => Self::Plan,
             Self::Plan => Self::Build,
         }
     }
 
-    pub const fn display(&self) -> &'static str {
+    pub const fn display(self) -> &'static str {
         match self {
             Self::Build => "Build",
             Self::Plan => "Plan",
         }
     }
 
-    pub const fn description(&self) -> &'static str {
+    pub const fn description(self) -> &'static str {
         match self {
             Self::Build => "Full access - can make changes",
             Self::Plan => "Read-only - suggestions only",

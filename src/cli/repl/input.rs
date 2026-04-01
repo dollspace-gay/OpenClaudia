@@ -2,6 +2,7 @@ use std::fs;
 
 /// Display structured questions to the user and collect answers.
 /// Returns a JSON string mapping question text to selected answer(s).
+#[allow(clippy::too_many_lines)]
 pub fn handle_user_questions(questions: &[serde_json::Value]) -> String {
     use std::io::{self, Write};
 

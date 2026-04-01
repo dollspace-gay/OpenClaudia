@@ -2,6 +2,27 @@
 //!
 //! Provides Claude Code-like capabilities for any AI agent.
 
+// Binary crate: large CLI handler functions are inherently long and splitting
+// them hurts readability. Allow these pedantic lints for the binary entry point.
+#![allow(
+    clippy::too_many_lines,
+    clippy::option_if_let_else,
+    clippy::or_fun_call,
+    clippy::manual_let_else,
+    clippy::match_same_arms,
+    clippy::items_after_statements,
+    clippy::used_underscore_binding,
+    clippy::trivially_copy_pass_by_ref,
+    clippy::similar_names,
+    clippy::cast_precision_loss,
+    clippy::map_unwrap_or,
+    clippy::literal_string_with_formatting_args,
+    clippy::default_trait_access,
+    clippy::assigning_clones,
+    clippy::collection_is_never_read,
+    clippy::format_push_string
+)]
+
 mod cli;
 
 use openclaudia::{
@@ -38,6 +59,7 @@ use cli::repl::{
 #[derive(Parser)]
 #[command(name = "openclaudia")]
 #[command(author, version, about = "Open-source universal agent harness")]
+#[allow(clippy::struct_excessive_bools)] // CLI flags are naturally boolean
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -818,7 +840,7 @@ async fn cmd_chat(
                             continue;
                         }
                         SlashCommandResult::Rename(new_title) => {
-                            chat_session.title = new_title.clone();
+                            chat_session.title.clone_from(&new_title);
                             chat_session.touch();
                             if let Err(e) = save_chat_session(&chat_session) {
                                 tracing::warn!("Failed to save session: {}", e);
@@ -1268,7 +1290,7 @@ async fn cmd_chat(
                 let spinner = ProgressBar::new_spinner();
                 spinner.set_style(
                     ProgressStyle::default_spinner()
-                        .template("{spinner:.cyan} {msg}")
+                        .template("{spinner:.cyan} {msg}") // ProgressStyle template, not format!
                         .unwrap_or_else(|_| ProgressStyle::default_spinner()),
                 );
                 spinner.set_message("Connecting...");
@@ -2527,9 +2549,8 @@ async fn cmd_chat(
                                                     .collect::<Vec<_>>()
                                                     .join(",");
                                                 let sig = format!("{}:{}", tool.name, params_str);
-                                                if !executed_tool_signatures.contains(&sig) {
+                                                if executed_tool_signatures.insert(sig) {
                                                     all_duplicates = false;
-                                                    executed_tool_signatures.insert(sig);
                                                 }
                                             }
 

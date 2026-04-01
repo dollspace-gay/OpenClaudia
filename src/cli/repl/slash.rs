@@ -1064,7 +1064,7 @@ session:
                 .join(" ");
             let tokens = openclaudia::compaction::estimate_tokens(&msg_text);
             // Rough pricing: Sonnet ~$3/M input, $15/M output; assume 50/50 split
-            let est_cost = tokens as f64 * 0.000009;
+            let est_cost = tokens as f64 * 0.000_009;
             println!("\nSession cost estimate:");
             println!("  Tokens used: ~{tokens}");
             println!("  Estimated cost: ${est_cost:.4}");
@@ -1578,7 +1578,12 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
                             eprintln!("Failed to load plugin from path: {e}\n");
                         }
                     }
-                } else if p.contains('/') || p.ends_with(".git") || p.starts_with("http") {
+                } else if p.contains('/')
+                    || std::path::Path::new(p)
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("git"))
+                    || p.starts_with("http")
+                {
                     println!("\nCloning plugin from '{p}'...");
                     match plugin_manager.install_from_git(p, None) {
                         Ok(name) => {
@@ -1738,7 +1743,12 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
                             ),
                             Err(e) => eprintln!("\nFailed to add marketplace: {e}\n"),
                         }
-                    } else if t.contains('/') || t.ends_with(".git") || t.starts_with("http") {
+                    } else if t.contains('/')
+                        || std::path::Path::new(t)
+                            .extension()
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("git"))
+                        || t.starts_with("http")
+                    {
                         println!("\nCloning marketplace from '{t}'...");
                         match plugin_manager.add_marketplace_from_git(t, None) {
                             Ok(manifest) => println!(
