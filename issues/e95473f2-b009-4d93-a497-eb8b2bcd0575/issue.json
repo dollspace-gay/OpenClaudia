@@ -1,0 +1,10 @@
+{
+  "uuid": "e95473f2-b009-4d93-a497-eb8b2bcd0575",
+  "display_id": 175,
+  "title": "State management overhaul: richer SessionState with Store<T> pattern, field-level change detection, listener deduplication, AppState tree for UI",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T18:13:57.538587920Z",
+  "updated_at": "2026-04-01T18:13:57.538587920Z"
+}
