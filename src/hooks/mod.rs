@@ -495,11 +495,16 @@ impl HookEngine {
     /// Check if an action should be blocked based on hook result
     pub fn check_blocked(result: &HookResult) -> Result<(), HookError> {
         if !result.allowed {
-            let reason = result
+            let reasons: Vec<String> = result
                 .outputs
-                .first()
-                .and_then(|o| o.reason.clone())
-                .unwrap_or_else(|| "Action blocked by hook".to_string());
+                .iter()
+                .filter_map(|o| o.reason.clone())
+                .collect();
+            let reason = if reasons.is_empty() {
+                "Action blocked by hook".to_string()
+            } else {
+                reasons.join("; ")
+            };
             Err(HookError::Blocked(reason))
         } else {
             Ok(())

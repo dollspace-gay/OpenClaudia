@@ -284,7 +284,7 @@ fn read_lsp_response(
     reader: &mut BufReader<impl std::io::Read>,
     expected_id: u32,
 ) -> Result<Value, String> {
-    loop {
+    for _attempt in 0..100 {
         // Read headers
         let mut content_length: usize = 0;
         loop {
@@ -323,6 +323,7 @@ fn read_lsp_response(
         // Otherwise it's a notification (no id) or a response to a different request;
         // skip it and read the next message.
     }
+    Err(format!("LSP server did not respond to request {} after 100 messages", expected_id))
 }
 
 fn find_project_root(file_path: &Path) -> String {

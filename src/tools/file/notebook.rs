@@ -72,6 +72,18 @@ pub(crate) fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, b
     }
 
     // Blast radius check
+    // Resolve symlinks to prevent path traversal
+    let notebook_path = match std::fs::canonicalize(notebook_path) {
+        Ok(canon) => canon.to_string_lossy().to_string(),
+        Err(_) => {
+            return (
+                format!("Cannot resolve notebook path '{}'", notebook_path),
+                true,
+            );
+        }
+    };
+    let notebook_path = notebook_path.as_str();
+
     if let Err(msg) = crate::guardrails::check_file_access(notebook_path) {
         return (msg, true);
     }
