@@ -1,0 +1,10 @@
+{
+  "uuid": "63bb4578-bd45-4bc6-9fd9-f24fdaf0a11c",
+  "display_id": 171,
+  "title": "Advanced keybinding system: 17 contexts, 60+ actions, chord support (e.g. Ctrl+K+Ctrl+C), configurable per-context bindings",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T18:13:32.527199059Z",
+  "updated_at": "2026-04-01T18:13:32.527199059Z"
+}
