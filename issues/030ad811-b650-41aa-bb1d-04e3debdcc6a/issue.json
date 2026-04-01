@@ -1,0 +1,10 @@
+{
+  "uuid": "030ad811-b650-41aa-bb1d-04e3debdcc6a",
+  "display_id": null,
+  "title": "W-47: Config environment variable loading race",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:25.986530281Z",
+  "updated_at": "2026-04-01T03:39:25.986530281Z"
+}
