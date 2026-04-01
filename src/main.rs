@@ -946,7 +946,8 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                             .and_then(|o| o.reason.clone())
                             .unwrap_or_else(|| "Request blocked by hook".to_string());
                         eprintln!("\nBlocked: {}\n", reason);
-                        // Remove the blocked message
+                        // Save before removing the blocked message (prevent data loss)
+                        let _ = save_chat_session(&chat_session);
                         chat_session.messages.pop();
                         continue;
                     }
@@ -1798,6 +1799,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                     Err(e) => {
                                         eprintln!("\nFailed to parse Gemini response: {}", e);
                                         eprintln!("Raw body: {}", &body[..body.len().min(500)]);
+                                        let _ = save_chat_session(&chat_session);
                                         chat_session.messages.pop(); // Remove failed user message
                                     }
                                 }
@@ -3251,7 +3253,8 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                 } else if current_content.is_empty()
                                     && !tool_accumulator.has_tool_calls()
                                 {
-                                    // No content and no tool calls - remove the failed user message
+                                    // No content and no tool calls - save then remove
+                                    let _ = save_chat_session(&chat_session);
                                     chat_session.messages.pop();
                                 }
 
@@ -3375,14 +3378,15 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                             } else {
                                 eprintln!("\nError {}: {}\n", status, body);
                             }
-                            // Remove the failed user message
+                            // Save before removing the failed user message
+                            let _ = save_chat_session(&chat_session);
                             chat_session.messages.pop();
                         }
                     }
                     Err(e) => {
                         spinner.finish_and_clear();
                         eprintln!("\nRequest failed: {}\n", e);
-                        // Remove the failed user message
+                        let _ = save_chat_session(&chat_session);
                         chat_session.messages.pop();
                     }
                 }
