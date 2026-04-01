@@ -1,0 +1,10 @@
+{
+  "uuid": "2b0e0f6a-a000-4a6e-acac-1b754d65bbc2",
+  "issue_uuid": "4982ed1b-8abe-4593-8690-d21f65ba603f",
+  "author": "lOrm",
+  "content": "Verified fixed: avoids double-serialization in providers/anthropic.rs:210-227",
+  "created_at": "2026-04-01T22:12:00.647975339Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAYwAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASAAAACApZQLGUkYeiN/uO8P1qcil9vv+r9CfZG+haKWvFgF9twAAACBY700ey9J/wLplYoCXi3S0sdrpOSwaHCKU/XDKFgvfbg=="
+}
