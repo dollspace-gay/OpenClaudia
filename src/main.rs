@@ -66,6 +66,10 @@ struct Cli {
     /// WARNING: Only use in CI/automation. Disables safety prompts for write/destructive tools.
     #[arg(long)]
     dangerously_skip_permissions: bool,
+
+    /// Launch full-screen interactive TUI (experimental)
+    #[arg(long)]
+    tui_mode: bool,
 }
 
 #[derive(Subcommand)]
@@ -155,6 +159,25 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
+        None if cli.tui_mode => {
+            // Full-screen interactive TUI mode
+            let config = match config::load_config() {
+                Ok(c) => c,
+                Err(e) => {
+                    if config::config_file_exists() {
+                        eprintln!("Failed to parse configuration: {}", e);
+                    } else {
+                        eprintln!("No configuration found. Run 'openclaudia init' first.");
+                    }
+                    return Ok(());
+                }
+            };
+            let model = cli.model
+                .or_else(|| config.active_provider().and_then(|p| p.model.clone()))
+                .unwrap_or_else(|| "claude-sonnet-4-6".to_string());
+            let mut app = tui::app::App::new(&model, &config.proxy.target);
+            app.run().map_err(|e| anyhow::anyhow!("TUI error: {}", e))
+        }
         None => cmd_chat(cli.model, cli.resume, cli.session_id, cli.coordinator, cli.dangerously_skip_permissions).await,
         Some(Commands::Init { force }) => cli::commands::init::cmd_init(force),
         Some(Commands::Auth { status, logout }) => {

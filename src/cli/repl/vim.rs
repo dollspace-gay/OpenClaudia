@@ -451,6 +451,59 @@ impl VimState {
     }
 }
 
+/// Get a description of the current vim state for the prompt.
+pub fn status_description(state: &VimState) -> String {
+    let mode_str = match &state.mode {
+        VimMode::Insert => "INSERT",
+        VimMode::Normal => "NORMAL",
+    };
+    let pending = match &state.command {
+        CommandState::Idle => String::new(),
+        CommandState::Count { digits } => format!(" {}", digits),
+        CommandState::Operator { op, count } => {
+            let c = match op { Operator::Delete => 'd', Operator::Change => 'c', Operator::Yank => 'y' };
+            format!(" {}{}", count, c)
+        }
+        CommandState::Find { find_type, count } => {
+            let c = match find_type { FindType::Forward => 'f', FindType::ForwardTill => 't', FindType::Backward => 'F', FindType::BackwardTill => 'T' };
+            format!(" {}{}", count, c)
+        }
+        CommandState::Replace { count } => format!(" {}r", count),
+    };
+    format!("-- {} --{}", mode_str, pending)
+}
+
+/// Describe a VimAction for display purposes.
+pub fn describe_action(action: &VimAction) -> &'static str {
+    match action {
+        VimAction::None => "none",
+        VimAction::EnterInsert => "enter insert",
+        VimAction::EnterInsertAppend => "append",
+        VimAction::EnterInsertLineStart => "insert at start",
+        VimAction::OpenLineBelow => "open below",
+        VimAction::OpenLineAbove => "open above",
+        VimAction::EnterNormal => "enter normal",
+        VimAction::MoveCursor(m) => match m {
+            CursorMove::Left(_) => "left", CursorMove::Right(_) => "right",
+            CursorMove::WordForward(_) => "word forward", CursorMove::WordBackward(_) => "word backward",
+            CursorMove::WordEnd(_) => "word end", CursorMove::LineStart => "line start",
+            CursorMove::LineEnd => "line end", CursorMove::FirstNonBlank => "first non-blank",
+        },
+        VimAction::Delete(r) | VimAction::Change(r) | VimAction::Yank(r) => match r {
+            TextRange::Motion(_) => "motion", TextRange::Line => "line",
+            TextRange::InnerWord => "inner word", TextRange::AWord => "a word",
+        },
+        VimAction::DeleteChar => "delete char",
+        VimAction::DeleteToEnd => "delete to end",
+        VimAction::ChangeToEnd => "change to end",
+        VimAction::YankLine => "yank line",
+        VimAction::PasteAfter => "paste after",
+        VimAction::PasteBefore => "paste before",
+        VimAction::Undo => "undo",
+        VimAction::Submit => "submit",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

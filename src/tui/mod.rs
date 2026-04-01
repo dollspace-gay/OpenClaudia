@@ -3,6 +3,13 @@
 //! Provides a rich terminal user interface similar to Claude Code,
 //! with two-column layout, tips panel, styled text, markdown rendering,
 //! status bar, and theme management.
+//!
+//! The interactive full-screen TUI is in the `app` submodule, launched via `--tui`.
+
+pub mod app;
+pub mod events;
+pub mod input;
+pub mod messages;
 
 use crossterm::{
     cursor,
