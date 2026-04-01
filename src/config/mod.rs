@@ -174,7 +174,14 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
         builder = builder.set_override("providers.qwen.api_key", key)?;
     }
 
-    builder.build()?.try_deserialize()
+    let mut config: AppConfig = builder.build()?.try_deserialize()?;
+
+    // Filter out empty API key strings (treat "" as None)
+    for provider in config.providers.values_mut() {
+        provider.api_key = provider.api_key.take().filter(|k| !k.trim().is_empty());
+    }
+
+    Ok(config)
 }
 
 /// Get the active provider configuration

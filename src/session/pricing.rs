@@ -70,6 +70,11 @@ pub fn get_pricing(model: &str) -> Option<ModelPricing> {
             input_per_million: 2.5,
             output_per_million: 10.0,
         }),
+        // gpt-4-turbo before generic gpt-4 (more specific first)
+        _ if m.contains("gpt-4-turbo") || m.contains("gpt-4.1") => Some(ModelPricing {
+            input_per_million: 10.0,
+            output_per_million: 30.0,
+        }),
         _ if m.contains("gpt-4") => Some(ModelPricing {
             input_per_million: 30.0,
             output_per_million: 60.0,

@@ -115,14 +115,13 @@ impl ChatSession {
     /// Undo the last user+assistant message pair
     pub fn undo(&mut self) -> bool {
         if self.messages.len() >= 2 {
-            let assistant = self.messages.pop().unwrap();
-            let user = self.messages.pop().unwrap();
-            self.undo_stack.push((user, assistant));
-            self.touch();
-            true
-        } else {
-            false
+            if let (Some(assistant), Some(user)) = (self.messages.pop(), self.messages.pop()) {
+                self.undo_stack.push((user, assistant));
+                self.touch();
+                return true;
+            }
         }
+        false
     }
 
     /// Redo the last undone message pair
