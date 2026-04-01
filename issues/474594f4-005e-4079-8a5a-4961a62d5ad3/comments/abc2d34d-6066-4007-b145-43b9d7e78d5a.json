@@ -1,0 +1,10 @@
+{
+  "uuid": "abc2d34d-6066-4007-b145-43b9d7e78d5a",
+  "issue_uuid": "474594f4-005e-4079-8a5a-4961a62d5ad3",
+  "author": "lOrm",
+  "content": "Verified fixed: filters empty strings with .trim().is_empty() in config/mod.rs:184-187",
+  "created_at": "2026-04-01T22:11:30.157046280Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZAAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASQAAACBJwMW/XsEOwFfZ3JbpJpZK2aN78G6Ts1upTgUn6T5HLgAAACEAlaxUOYBS5/6nsdQHtxndPgtZPgqU1PilbCMZfMm5wsE="
+}
