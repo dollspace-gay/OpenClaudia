@@ -1,0 +1,10 @@
+{
+  "uuid": "894bcca0-3b14-4c64-87b2-474ae263a16b",
+  "issue_uuid": "658ac86e-7936-4139-a349-8f870a33b46a",
+  "author": "lOrm",
+  "content": "Verified fixed: gpt-4-turbo pattern before gpt-4 catch-all in session/pricing.rs:83-92",
+  "created_at": "2026-04-01T22:11:36.239242030Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZQAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASgAAACEApJO4I+AtnYsFi/hsuRDG/625Zn8upduVyjHFSfr/KQMAAAAhAJ2HSIoyzqff0l5gKfgWuhZ4VJCRt3mNofQag7a4dRrY"
+}
