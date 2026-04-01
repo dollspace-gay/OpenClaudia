@@ -840,7 +840,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                         .edit_mode(EditMode::Vi)
                                         .build(),
                                 )
-                                .unwrap_or_else(|_| DefaultEditor::new().unwrap());
+                                .unwrap_or_else(|_| DefaultEditor::new().expect("Failed to initialize terminal editor"));
                                 let _ = rl.load_history(&history_path);
                                 vim_state = VimState::new();
                                 eprintln!("Vim mode enabled (rustyline Vi mode)");
@@ -851,7 +851,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                         .edit_mode(EditMode::Emacs)
                                         .build(),
                                 )
-                                .unwrap_or_else(|_| DefaultEditor::new().unwrap());
+                                .unwrap_or_else(|_| DefaultEditor::new().expect("Failed to initialize terminal editor"));
                                 let _ = rl.load_history(&history_path);
                                 eprintln!("Vim mode disabled (Emacs mode)");
                             }
