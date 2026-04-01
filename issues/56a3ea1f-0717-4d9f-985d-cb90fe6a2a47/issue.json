@@ -2,11 +2,12 @@
   "uuid": "56a3ea1f-0717-4d9f-985d-cb90fe6a2a47",
   "display_id": null,
   "title": "Full ratatui interactive TUI replacing rustyline REPL",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-01T01:42:16.141525801Z",
-  "updated_at": "2026-04-01T01:42:18.889472208Z",
+  "updated_at": "2026-04-01T02:08:26.981058810Z",
+  "closed_at": "2026-04-01T02:08:26.981058810Z",
   "labels": [
     "feature"
   ]
