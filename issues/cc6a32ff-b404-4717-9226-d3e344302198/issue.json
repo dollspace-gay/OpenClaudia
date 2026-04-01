@@ -1,0 +1,10 @@
+{
+  "uuid": "cc6a32ff-b404-4717-9226-d3e344302198",
+  "display_id": null,
+  "title": "W-9: Guardrails max_files uses 0 for \"unlimited\"",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:03.619416237Z",
+  "updated_at": "2026-04-01T03:39:03.619416237Z"
+}
