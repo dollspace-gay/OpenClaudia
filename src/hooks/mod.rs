@@ -211,6 +211,9 @@ pub struct HookOutput {
     pub system_message: Option<String>,
     /// Modified prompt (for UserPromptSubmit)
     pub prompt: Option<String>,
+    /// Additional context from hook (plain text output or hookSpecificOutput.additionalContext)
+    #[serde(rename = "additionalContext")]
+    pub additional_context: Option<String>,
     /// Additional data from the hook
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
@@ -461,14 +464,32 @@ impl HookEngine {
         }
     }
 
-    /// Parse hook output and handle errors
+    /// Parse hook output — matches Claude Code behavior:
+    /// - Empty output → default
+    /// - Starts with '{' → try JSON parse, fall back to plain text on failure
+    /// - Anything else → treat as plain text (additionalContext / system-reminder)
     fn parse_hook_output(stdout: &str) -> Result<HookOutput, HookError> {
-        if stdout.trim().is_empty() {
+        let trimmed = stdout.trim();
+        if trimmed.is_empty() {
             return Ok(HookOutput::default());
         }
 
-        serde_json::from_str(stdout)
-            .map_err(|e| HookError::ParseError(format!("Failed to parse hook output: {}", e)))
+        // Only try JSON parse if it looks like JSON (starts with '{')
+        if trimmed.starts_with('{') {
+            match serde_json::from_str(trimmed) {
+                Ok(output) => return Ok(output),
+                Err(_) => {
+                    // Invalid JSON that starts with { — treat as plain text
+                    debug!("Hook output starts with '{{' but is not valid JSON, treating as plain text");
+                }
+            }
+        }
+
+        // Plain text output — wrap as additionalContext (like Claude Code does)
+        Ok(HookOutput {
+            additional_context: Some(trimmed.to_string()),
+            ..Default::default()
+        })
     }
 
     /// Check if an action should be blocked based on hook result
@@ -590,7 +611,7 @@ impl HookEngine {
                 let hook_output = match Self::parse_hook_output(&stdout) {
                     Ok(output) => output,
                     Err(e) => {
-                        warn!(error = %e, stdout = %stdout, "Failed to parse hook output");
+                        debug!(error = %e, "Hook output is not JSON (treating as plain text)");
                         HookOutput::default()
                     }
                 };
@@ -1214,10 +1235,17 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_hook_output_invalid_json() {
-        let result = HookEngine::parse_hook_output("not valid json {");
-        assert!(result.is_err());
-        assert!(matches!(result, Err(HookError::ParseError(_))));
+    fn test_parse_hook_output_plain_text() {
+        // Plain text (not starting with '{') is treated as additionalContext, not an error
+        let result = HookEngine::parse_hook_output("not valid json {").unwrap();
+        assert_eq!(result.additional_context, Some("not valid json {".to_string()));
+    }
+
+    #[test]
+    fn test_parse_hook_output_invalid_json_starting_with_brace() {
+        // Starts with '{' but invalid JSON — still treated as plain text
+        let result = HookEngine::parse_hook_output("{not valid}").unwrap();
+        assert_eq!(result.additional_context, Some("{not valid}".to_string()));
     }
 
     // ========================================================================

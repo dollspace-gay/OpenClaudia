@@ -953,6 +953,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
 
                     // Inject hook context into messages if any
                     for output in &hook_result.outputs {
+                        // JSON hooks: systemMessage field
                         if let Some(sys_msg) = &output.system_message {
                             chat_session.messages.insert(
                                 0,
@@ -961,6 +962,13 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                     "content": sys_msg
                                 }),
                             );
+                        }
+                        // Plain text hooks: additionalContext (wrapped in system-reminder like Claude Code)
+                        if let Some(ctx) = &output.additional_context {
+                            chat_session.messages.push(serde_json::json!({
+                                "role": "system",
+                                "content": format!("<system-reminder>\n{}\n</system-reminder>", ctx)
+                            }));
                         }
                     }
                 }
