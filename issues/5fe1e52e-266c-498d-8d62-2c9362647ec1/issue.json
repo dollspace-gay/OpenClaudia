@@ -1,0 +1,10 @@
+{
+  "uuid": "5fe1e52e-266c-498d-8d62-2c9362647ec1",
+  "display_id": null,
+  "title": "W-2: No retry on transient network errors",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:38:59.657966977Z",
+  "updated_at": "2026-04-01T03:38:59.657966977Z"
+}
