@@ -982,8 +982,8 @@ pub fn render_input_prompt(_mode: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Render the bottom status bar with separator line above it.
-/// Shows "? for shortcuts" on left, effort/mode on right, framed by a line.
+/// Render the bottom status bar below the separator.
+/// Shows "? for shortcuts" on left, effort level on right.
 ///
 /// # Errors
 ///
@@ -993,26 +993,8 @@ pub fn render_bottom_bar(effort: &str, _mode: &str) -> io::Result<()> {
     let (cols, _) = terminal::size().unwrap_or((80, 24));
 
     let left = "? for shortcuts";
-    let right = format!(
-        "\u{25CF} {} \u{00B7} /effort",
-        effort
-    );
+    let right = format!("\u{25CF} {} \u{00B7} /effort", effort);
 
-    // Bottom separator line
-    stdout.execute(SetForegroundColor(CtColor::Rgb {
-        r: 128,
-        g: 128,
-        b: 128,
-    }))?;
-    writeln!(stdout, "{}", "\u{2500}".repeat(cols as usize))?;
-    // Status text
-    stdout.execute(SetForegroundColor(CtColor::Rgb {
-        r: 128,
-        g: 128,
-        b: 128,
-    }))?;
-
-    // Calculate padding between left and right
     let total_content = left.len() + right.len();
     let padding = if cols as usize > total_content {
         " ".repeat(cols as usize - total_content)
@@ -1020,7 +1002,12 @@ pub fn render_bottom_bar(effort: &str, _mode: &str) -> io::Result<()> {
         " ".to_string()
     };
 
-    write!(stdout, "{left}{padding}{right}")?;
+    stdout.execute(SetForegroundColor(CtColor::Rgb {
+        r: 128,
+        g: 128,
+        b: 128,
+    }))?;
+    writeln!(stdout, "{left}{padding}{right}")?;
     stdout.execute(ResetColor)?;
     stdout.flush()?;
     Ok(())

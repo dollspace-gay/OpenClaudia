@@ -88,6 +88,8 @@ pub enum SlashCommandResult {
     Skill(String),
     /// Set effort level for the session (low/medium/high)
     SetEffort(String),
+    /// Cycle effort level: low → medium → high → low
+    CycleEffort,
     /// Show help message (already printed)
     Handled,
 }
@@ -460,7 +462,7 @@ session:
                     );
                     Some(SlashCommandResult::SetEffort("low".to_string()))
                 }
-                "medium" | "med" | "m" | "" => {
+                "medium" | "med" | "m" => {
                     println!("\n\u{2713} Effort set to \x1b[36mmedium\x1b[0m (balanced)\n");
                     Some(SlashCommandResult::SetEffort("medium".to_string()))
                 }
@@ -468,11 +470,16 @@ session:
                     println!("\n\u{2713} Effort set to \x1b[32mhigh\x1b[0m (thorough, slower)\n");
                     Some(SlashCommandResult::SetEffort("high".to_string()))
                 }
+                "" => {
+                    // No args: cycle low → medium → high → low
+                    Some(SlashCommandResult::CycleEffort)
+                }
                 _ => {
                     println!("\nUsage: /effort [low|medium|high]");
                     println!("  low    - Quick answers, minimal thinking");
                     println!("  medium - Balanced (default)");
-                    println!("  high   - Thorough, more thinking time\n");
+                    println!("  high   - Thorough, more thinking time");
+                    println!("  (no argument cycles through levels)\n");
                     Some(SlashCommandResult::Handled)
                 }
             }

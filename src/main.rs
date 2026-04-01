@@ -622,9 +622,10 @@ async fn cmd_chat(
     };
 
     loop {
-        // Render input area frame: top line, then prompt goes here, then bottom line + status
+        // Render separator, status bar, then prompt appears on next line
         let mode_str = chat_session.mode.display().to_lowercase();
         let _ = tui::render_input_prompt(&mode_str);
+        let _ = tui::render_bottom_bar(&effort_level, &mode_str);
 
         let prompt = if vim_enabled {
             // Show pending command in prompt (e.g., "d…" while waiting for motion)
@@ -646,9 +647,6 @@ async fn cmd_chat(
 
         match readline {
             Ok(line) => {
-                // Render bottom separator + status bar after input submitted
-                let _ = tui::render_bottom_bar(&effort_level, &mode_str);
-
                 let mut input = line.trim().to_string();
                 let mut editor_message_added = false;
 
@@ -899,6 +897,20 @@ async fn cmd_chat(
                         }
                         SlashCommandResult::SetEffort(level) => {
                             effort_level = level;
+                            continue;
+                        }
+                        SlashCommandResult::CycleEffort => {
+                            effort_level = match effort_level.as_str() {
+                                "low" => "medium".to_string(),
+                                "medium" => "high".to_string(),
+                                _ => "low".to_string(),
+                            };
+                            let label = match effort_level.as_str() {
+                                "low" => "\x1b[33mlow\x1b[0m (faster, less thorough)",
+                                "high" => "\x1b[32mhigh\x1b[0m (thorough, slower)",
+                                _ => "\x1b[36mmedium\x1b[0m (balanced)",
+                            };
+                            println!("\n\u{2713} Effort set to {label}\n");
                             continue;
                         }
                         SlashCommandResult::Handled => {
