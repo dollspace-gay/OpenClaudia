@@ -1,0 +1,10 @@
+{
+  "uuid": "bc01e815-3483-4365-992f-194e41ec67d5",
+  "display_id": null,
+  "title": "C-3: Data loss on failed API responses",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:38:41.180069430Z",
+  "updated_at": "2026-04-01T03:38:41.180069430Z"
+}
