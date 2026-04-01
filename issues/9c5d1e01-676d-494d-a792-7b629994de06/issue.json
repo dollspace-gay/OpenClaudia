@@ -1,0 +1,10 @@
+{
+  "uuid": "9c5d1e01-676d-494d-a792-7b629994de06",
+  "display_id": null,
+  "title": "N-25: Vim process_find/process_replace incomplete (returns None)",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:49.474755774Z",
+  "updated_at": "2026-04-01T03:39:49.474755774Z"
+}
