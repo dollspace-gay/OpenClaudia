@@ -1,0 +1,10 @@
+{
+  "uuid": "b492e957-dbb9-452f-99ae-fe7ee4b2be46",
+  "display_id": null,
+  "title": "C-4: OAuth token refresh race condition (TOCTOU)",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:38:41.707723577Z",
+  "updated_at": "2026-04-01T03:38:41.707723577Z"
+}
