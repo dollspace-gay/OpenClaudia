@@ -1,0 +1,10 @@
+{
+  "uuid": "eef0395e-9c3b-4f33-8be2-09a13ff54730",
+  "display_id": null,
+  "title": "N-14: Ollama tool call ID uses loop index",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:42.235964694Z",
+  "updated_at": "2026-04-01T03:39:42.235964694Z"
+}
