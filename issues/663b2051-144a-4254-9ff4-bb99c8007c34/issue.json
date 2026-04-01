@@ -1,0 +1,10 @@
+{
+  "uuid": "663b2051-144a-4254-9ff4-bb99c8007c34",
+  "display_id": null,
+  "title": "W-40: VDD adversary provider/key not validated at startup",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:21.700126729Z",
+  "updated_at": "2026-04-01T03:39:21.700126729Z"
+}
