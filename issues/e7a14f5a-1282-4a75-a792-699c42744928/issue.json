@@ -1,0 +1,10 @@
+{
+  "uuid": "e7a14f5a-1282-4a75-a792-699c42744928",
+  "display_id": null,
+  "title": "N-13: ModelInfo uses i64 for timestamp instead of proper type",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:41.599982774Z",
+  "updated_at": "2026-04-01T03:39:41.599982774Z"
+}
