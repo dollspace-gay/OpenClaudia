@@ -1,0 +1,10 @@
+{
+  "uuid": "588eade6-3433-4e57-83e4-50304fc73a46",
+  "display_id": null,
+  "title": "W-33: PDF page count determination silently fails",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:17.629017286Z",
+  "updated_at": "2026-04-01T03:39:17.629017286Z"
+}
