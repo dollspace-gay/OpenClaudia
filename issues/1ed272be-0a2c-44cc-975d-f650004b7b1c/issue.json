@@ -1,0 +1,10 @@
+{
+  "uuid": "1ed272be-0a2c-44cc-975d-f650004b7b1c",
+  "display_id": null,
+  "title": "W-28: Plan file path traversal via session ID",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:14.449086188Z",
+  "updated_at": "2026-04-01T03:39:14.449086188Z"
+}
