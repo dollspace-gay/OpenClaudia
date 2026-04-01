@@ -1,0 +1,10 @@
+{
+  "uuid": "0fcc0911-8074-4271-9e8c-10aeb29ddfbb",
+  "display_id": null,
+  "title": "W-4: Background shell limit checked after spawn",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:00.683954894Z",
+  "updated_at": "2026-04-01T03:39:00.683954894Z"
+}
