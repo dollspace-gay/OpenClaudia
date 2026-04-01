@@ -2,11 +2,12 @@
   "uuid": "b4268c9e-91ed-4542-a102-7ecdf96f4483",
   "display_id": null,
   "title": "Wire TUI visual helpers into main REPL loop",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-01T00:39:32.836317035Z",
-  "updated_at": "2026-04-01T00:39:35.333010381Z",
+  "updated_at": "2026-04-01T00:49:26.368666538Z",
+  "closed_at": "2026-04-01T00:49:26.368666538Z",
   "labels": [
     "feature"
   ]
