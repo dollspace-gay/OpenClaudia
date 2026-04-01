@@ -11,7 +11,7 @@ pub struct PermissionsConfig {
     pub enabled: bool,
     /// Glob patterns that are pre-allowed without prompting.
     /// Patterns are matched against the tool's primary argument
-    /// (command string for Bash, file_path for Edit/Write).
+    /// (command string for Bash, `file_path` for Edit/Write).
     #[serde(default)]
     pub default_allow: Vec<String>,
 }

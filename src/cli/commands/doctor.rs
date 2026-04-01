@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tracing::info;
 
+#[allow(clippy::too_many_lines)]
 /// Check configuration and connectivity
 pub async fn cmd_doctor() -> anyhow::Result<()> {
     println!("OpenClaudia Doctor\n");
@@ -21,14 +22,14 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
             println!("OK");
 
             for (name, provider) in &config.providers {
-                print!("  {} API key... ", name);
+                print!("  {name} API key... ");
                 if provider.api_key.is_some() {
                     println!("configured");
                 } else {
                     println!("NOT SET");
                 }
                 if let Some(model) = &provider.model {
-                    println!("    Default model: {}", model);
+                    println!("    Default model: {model}");
                 }
             }
 
@@ -37,14 +38,14 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
                 let client = reqwest::Client::new();
                 match client.get(&provider.base_url).send().await {
                     Ok(_) => println!("OK"),
-                    Err(e) => println!("FAILED: {}", e),
+                    Err(e) => println!("FAILED: {e}"),
                 }
             } else {
                 println!("SKIPPED (no provider configured)");
             }
         }
         Err(e) => {
-            println!("FAILED: {}", e);
+            println!("FAILED: {e}");
             if config::config_file_exists() {
                 println!("\nConfig file exists but has errors. Check your .openclaudia/config.yaml for syntax errors.");
             } else {
@@ -106,8 +107,8 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
                 for cmd in &resolved_cmds {
                     let desc = cmd.description.as_deref().unwrap_or("(no description)");
                     let extras = [
-                        cmd.argument_hint.as_ref().map(|h| format!("args: {}", h)),
-                        cmd.model.as_ref().map(|m| format!("model: {}", m)),
+                        cmd.argument_hint.as_ref().map(|h| format!("args: {h}")),
+                        cmd.model.as_ref().map(|m| format!("model: {m}")),
                         cmd.allowed_tools
                             .as_ref()
                             .map(|t| format!("tools: {}", t.len())),
@@ -153,7 +154,7 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
     } else if !errors.is_empty() {
         println!("ERRORS");
         for err in errors {
-            println!("  Error: {}", err);
+            println!("  Error: {err}");
         }
     } else {
         println!("none found");
@@ -177,17 +178,14 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
     );
 
     if let Some((name, supports_list_changed)) = mcp_manager.get_server_info("test-server") {
-        println!(
-            "  Server: {} (list_changed: {})",
-            name, supports_list_changed
-        );
+        println!("  Server: {name} (list_changed: {supports_list_changed})");
     }
 
     match mcp_manager
         .call_tool("test_tool", serde_json::json!({}))
         .await
     {
-        Ok(result) => println!("  Tool result: {}", result),
+        Ok(result) => println!("  Tool result: {result}"),
         Err(e) => info!("  Expected error (no server): {}", e),
     }
 
@@ -195,7 +193,7 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
         .call_tool_with_timeout("test_tool", serde_json::json!({}), Duration::from_secs(1))
         .await
     {
-        Ok(result) => println!("  Timeout tool result: {}", result),
+        Ok(result) => println!("  Timeout tool result: {result}"),
         Err(e) => info!("  Expected timeout error: {}", e),
     }
 
@@ -210,7 +208,9 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
     }
 
     let sessions = session_manager.list_sessions();
-    if !sessions.is_empty() {
+    if sessions.is_empty() {
+        println!("  No previous sessions");
+    } else {
         println!("  Previous sessions: {}", sessions.len());
         for session in sessions.iter().take(3) {
             println!(
@@ -222,8 +222,6 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
             println!("  Note: Consider running cleanup (>10 sessions stored)");
             session_manager.cleanup_old_sessions(10);
         }
-    } else {
-        println!("  No previous sessions");
     }
 
     let session = session_manager.start_initializer();

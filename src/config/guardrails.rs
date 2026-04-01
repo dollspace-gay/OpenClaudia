@@ -18,7 +18,7 @@ pub struct GuardrailsConfig {
 }
 
 /// Guardrail enforcement mode
-#[derive(Debug, Default, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum GuardrailMode {
     /// Block operations that violate the guardrail
@@ -38,7 +38,7 @@ impl fmt::Display for GuardrailMode {
 }
 
 /// Action to take when a guardrail threshold is exceeded
-#[derive(Debug, Default, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GuardrailAction {
     /// Log a warning
@@ -61,7 +61,7 @@ impl fmt::Display for GuardrailAction {
 }
 
 /// When to run quality gate checks
-#[derive(Debug, Default, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RunAfter {
     /// After every file edit
@@ -132,11 +132,11 @@ pub struct DiffMonitorConfig {
     pub action: GuardrailAction,
 }
 
-fn default_max_lines() -> u32 {
+const fn default_max_lines() -> u32 {
     500
 }
 
-fn default_max_files() -> u32 {
+const fn default_max_files() -> u32 {
     10
 }
 
@@ -171,7 +171,7 @@ pub struct QualityGatesConfig {
     pub timeout_seconds: u64,
 }
 
-fn default_quality_timeout() -> u64 {
+const fn default_quality_timeout() -> u64 {
     120
 }
 

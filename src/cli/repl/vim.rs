@@ -4,7 +4,7 @@
 //! and text objects following the pattern from Claude Code's design doc.
 
 /// Current vim mode
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VimMode {
     /// Insert mode — characters go directly into the buffer
     Insert,
@@ -13,7 +13,7 @@ pub enum VimMode {
 }
 
 /// State for normal mode command parsing
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandState {
     /// Waiting for first key
     Idle,
@@ -27,14 +27,14 @@ pub enum CommandState {
     Replace { count: u32 },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Operator {
     Delete, // d
     Change, // c
     Yank,   // y
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FindType {
     Forward,      // f
     ForwardTill,  // t
@@ -43,7 +43,7 @@ pub enum FindType {
 }
 
 /// Action to perform on the text buffer
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VimAction {
     /// No action (key consumed but no effect)
     None,
@@ -86,7 +86,7 @@ pub enum VimAction {
 }
 
 /// How to move the cursor
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CursorMove {
     Left(u32),
     Right(u32),
@@ -99,7 +99,7 @@ pub enum CursorMove {
 }
 
 /// A range of text to operate on
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextRange {
     Motion(CursorMove),
     Line,
@@ -307,9 +307,7 @@ impl VimState {
         if key.len() == 1 && key.chars().next().is_some_and(|c| c.is_ascii_digit()) {
             let mut new_digits = digits.to_string();
             new_digits.push_str(key);
-            self.command = CommandState::Count {
-                digits: new_digits,
-            };
+            self.command = CommandState::Count { digits: new_digits };
             return VimAction::None;
         }
 
@@ -425,12 +423,12 @@ impl VimState {
     }
 
     /// Whether we're currently in the middle of a multi-key command
-    pub fn is_pending(&self) -> bool {
+    pub const fn is_pending(&self) -> bool {
         !matches!(self.command, CommandState::Idle)
     }
 
     /// Get a display string for the current pending command
-    pub fn pending_display(&self) -> &str {
+    pub const fn pending_display(&self) -> &str {
         match &self.command {
             CommandState::Idle => "",
             CommandState::Count { .. } => "\u{2026}",
@@ -459,22 +457,31 @@ pub fn status_description(state: &VimState) -> String {
     };
     let pending = match &state.command {
         CommandState::Idle => String::new(),
-        CommandState::Count { digits } => format!(" {}", digits),
+        CommandState::Count { digits } => format!(" {digits}"),
         CommandState::Operator { op, count } => {
-            let c = match op { Operator::Delete => 'd', Operator::Change => 'c', Operator::Yank => 'y' };
-            format!(" {}{}", count, c)
+            let c = match op {
+                Operator::Delete => 'd',
+                Operator::Change => 'c',
+                Operator::Yank => 'y',
+            };
+            format!(" {count}{c}")
         }
         CommandState::Find { find_type, count } => {
-            let c = match find_type { FindType::Forward => 'f', FindType::ForwardTill => 't', FindType::Backward => 'F', FindType::BackwardTill => 'T' };
-            format!(" {}{}", count, c)
+            let c = match find_type {
+                FindType::Forward => 'f',
+                FindType::ForwardTill => 't',
+                FindType::Backward => 'F',
+                FindType::BackwardTill => 'T',
+            };
+            format!(" {count}{c}")
         }
-        CommandState::Replace { count } => format!(" {}r", count),
+        CommandState::Replace { count } => format!(" {count}r"),
     };
-    format!("-- {} --{}", mode_str, pending)
+    format!("-- {mode_str} --{pending}")
 }
 
-/// Describe a VimAction for display purposes.
-pub fn describe_action(action: &VimAction) -> &'static str {
+/// Describe a `VimAction` for display purposes.
+pub const fn describe_action(action: &VimAction) -> &'static str {
     match action {
         VimAction::None => "none",
         VimAction::EnterInsert => "enter insert",
@@ -484,14 +491,20 @@ pub fn describe_action(action: &VimAction) -> &'static str {
         VimAction::OpenLineAbove => "open above",
         VimAction::EnterNormal => "enter normal",
         VimAction::MoveCursor(m) => match m {
-            CursorMove::Left(_) => "left", CursorMove::Right(_) => "right",
-            CursorMove::WordForward(_) => "word forward", CursorMove::WordBackward(_) => "word backward",
-            CursorMove::WordEnd(_) => "word end", CursorMove::LineStart => "line start",
-            CursorMove::LineEnd => "line end", CursorMove::FirstNonBlank => "first non-blank",
+            CursorMove::Left(_) => "left",
+            CursorMove::Right(_) => "right",
+            CursorMove::WordForward(_) => "word forward",
+            CursorMove::WordBackward(_) => "word backward",
+            CursorMove::WordEnd(_) => "word end",
+            CursorMove::LineStart => "line start",
+            CursorMove::LineEnd => "line end",
+            CursorMove::FirstNonBlank => "first non-blank",
         },
         VimAction::Delete(r) | VimAction::Change(r) | VimAction::Yank(r) => match r {
-            TextRange::Motion(_) => "motion", TextRange::Line => "line",
-            TextRange::InnerWord => "inner word", TextRange::AWord => "a word",
+            TextRange::Motion(_) => "motion",
+            TextRange::Line => "line",
+            TextRange::InnerWord => "inner word",
+            TextRange::AWord => "a word",
         },
         VimAction::DeleteChar => "delete char",
         VimAction::DeleteToEnd => "delete to end",

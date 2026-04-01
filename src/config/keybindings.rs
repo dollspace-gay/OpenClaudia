@@ -44,7 +44,7 @@ pub enum KeyAction {
 #[derive(Debug, Deserialize, Clone)]
 pub struct KeybindingsConfig {
     /// Map of key combination strings to action names
-    /// Example: { "ctrl-x n": "new_session", "f2": "models", "tab": "none" }
+    /// Example: { "ctrl-x n": "`new_session`", "f2": "models", "tab": "none" }
     #[serde(flatten)]
     pub bindings: HashMap<String, KeyAction>,
 }
@@ -76,16 +76,19 @@ impl KeybindingsConfig {
     /// searching the bindings map. Default bindings are also stored in
     /// lowercase, so user-supplied keys like `"Ctrl-X N"` will match
     /// `"ctrl-x n"` correctly.
+    #[must_use]
     pub fn get_action(&self, key: &str) -> Option<&KeyAction> {
         self.bindings.get(&key.to_lowercase())
     }
 
     /// Check if a key is bound (returns None for disabled or unbound keys)
+    #[must_use]
     pub fn is_bound(&self, key: &str) -> bool {
         matches!(self.get_action(key), Some(action) if *action != KeyAction::None)
     }
 
     /// Get all bindings for a specific action
+    #[must_use]
     pub fn get_keys_for_action(&self, action: &KeyAction) -> Vec<&String> {
         self.bindings
             .iter()
@@ -96,6 +99,7 @@ impl KeybindingsConfig {
 
     /// Get the action for a key, with default fallback
     /// Returns the configured action or the default action for that key
+    #[must_use]
     pub fn get_action_or_default(&self, key: &str) -> KeyAction {
         self.get_action(key).cloned().unwrap_or(KeyAction::None)
     }
@@ -128,6 +132,7 @@ impl ParsedKeystroke {
     /// - `"f2"` -> key="f2"
     /// - `"a"` -> key="a"
     /// - `"shift-tab"` -> shift=true, key="tab"
+    #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
         let s = s.trim().to_lowercase();
         if s.is_empty() {
@@ -173,6 +178,7 @@ impl ParsedKeystroke {
     }
 
     /// Human-readable representation, e.g. `"ctrl-x"` or `"alt-shift-n"`.
+    #[must_use]
     pub fn display(&self) -> String {
         let mut parts = Vec::new();
         if self.ctrl {
@@ -193,6 +199,7 @@ impl ParsedKeystroke {
 ///
 /// For example `"ctrl-x n"` produces two `ParsedKeystroke` values, while
 /// `"f2"` produces one.
+#[must_use]
 pub fn parse_chord(s: &str) -> Option<Vec<ParsedKeystroke>> {
     let parts: Vec<&str> = s.split_whitespace().collect();
     if parts.is_empty() {
@@ -248,6 +255,7 @@ impl KeybindingResolver {
     /// Build a resolver from a `KeybindingsConfig`.
     ///
     /// Bindings whose key string cannot be parsed are silently skipped.
+    #[must_use]
     pub fn from_config(config: &KeybindingsConfig) -> Self {
         let mut bindings = Vec::new();
         for (key_str, action) in &config.bindings {
@@ -285,11 +293,7 @@ impl KeybindingResolver {
             }
 
             // Check whether the pending buffer matches the beginning of this chord.
-            let prefix_matches = self
-                .pending
-                .iter()
-                .zip(chord.iter())
-                .all(|(a, b)| a == b);
+            let prefix_matches = self.pending.iter().zip(chord.iter()).all(|(a, b)| a == b);
 
             if !prefix_matches {
                 continue;
@@ -320,16 +324,18 @@ impl KeybindingResolver {
     }
 
     /// Whether the resolver is waiting for more keystrokes to complete a chord.
-    pub fn is_pending(&self) -> bool {
+    #[must_use]
+    pub const fn is_pending(&self) -> bool {
         !self.pending.is_empty()
     }
 
     /// Human-readable representation of the pending keystrokes so far (e.g.
     /// for status-bar display).
+    #[must_use]
     pub fn pending_display(&self) -> String {
         self.pending
             .iter()
-            .map(|k| k.display())
+            .map(ParsedKeystroke::display)
             .collect::<Vec<_>>()
             .join(" ")
     }

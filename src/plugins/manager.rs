@@ -1,15 +1,13 @@
 //! Plugin manager for discovery, loading, and lifecycle management.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 use super::git::{copy_dir_recursive, git_clone, git_pull};
 use super::install::{InstallScope, InstalledPlugins, PluginInstallEntry};
-use super::marketplace::{
-    MarketplaceManifest, MarketplacePlugin, PluginSource, PluginSourceDef,
-};
+use super::marketplace::{MarketplaceManifest, MarketplacePlugin, PluginSource, PluginSourceDef};
 use super::{Plugin, PluginCommand, PluginError, PluginHook, PluginMcpServer};
 
 /// Manages plugin discovery, loading, and lifecycle
@@ -24,6 +22,7 @@ pub struct PluginManager {
 
 impl PluginManager {
     /// Create a new plugin manager with default search paths
+    #[must_use]
     pub fn new() -> Self {
         let mut search_paths = Vec::new();
 
@@ -45,6 +44,7 @@ impl PluginManager {
     }
 
     /// Create a plugin manager with custom search paths
+    #[must_use]
     pub fn with_paths(paths: Vec<PathBuf>) -> Self {
         Self {
             plugins: HashMap::new(),
@@ -53,7 +53,7 @@ impl PluginManager {
         }
     }
 
-    /// Discover and load all plugins from search paths and installed_plugins.json
+    /// Discover and load all plugins from search paths and `installed_plugins.json`
     pub fn discover(&mut self) -> Vec<PluginError> {
         let mut errors = Vec::new();
 
@@ -116,7 +116,7 @@ impl PluginManager {
                 }
                 match Plugin::load(&install_path) {
                     Ok(mut plugin) => {
-                        plugin.id = plugin_id.clone();
+                        plugin.id.clone_from(plugin_id);
                         if let Some(marketplace) = plugin_id.split('@').nth(1) {
                             plugin.source = marketplace.to_string();
                         }
@@ -140,6 +140,7 @@ impl PluginManager {
     }
 
     /// Get a plugin by name
+    #[must_use]
     pub fn get(&self, name: &str) -> Option<&Plugin> {
         self.plugins.get(name)
     }
@@ -150,11 +151,13 @@ impl PluginManager {
     }
 
     /// Get the number of loaded plugins
+    #[must_use]
     pub fn count(&self) -> usize {
         self.plugins.len()
     }
 
     /// Get all hooks from all enabled plugins
+    #[must_use]
     pub fn all_hooks(&self) -> Vec<(&Plugin, PluginHook)> {
         self.plugins
             .values()
@@ -169,6 +172,7 @@ impl PluginManager {
     }
 
     /// Get hooks for a specific event
+    #[must_use]
     pub fn hooks_for_event(&self, event: &str) -> Vec<(&Plugin, PluginHook)> {
         self.all_hooks()
             .into_iter()
@@ -177,6 +181,7 @@ impl PluginManager {
     }
 
     /// Get all commands from all enabled plugins
+    #[must_use]
     pub fn all_commands(&self) -> Vec<(&Plugin, PluginCommand)> {
         self.plugins
             .values()
@@ -191,6 +196,7 @@ impl PluginManager {
     }
 
     /// Get all MCP servers from all enabled plugins
+    #[must_use]
     pub fn all_mcp_servers(&self) -> Vec<(&Plugin, PluginMcpServer)> {
         self.plugins
             .values()
@@ -205,16 +211,21 @@ impl PluginManager {
     }
 
     /// Get the installation tracker
-    pub fn installed(&self) -> &InstalledPlugins {
+    #[must_use]
+    pub const fn installed(&self) -> &InstalledPlugins {
         &self.installed
     }
 
     /// Get mutable installation tracker
-    pub fn installed_mut(&mut self) -> &mut InstalledPlugins {
+    pub const fn installed_mut(&mut self) -> &mut InstalledPlugins {
         &mut self.installed
     }
 
     /// Enable a plugin
+    ///
+    /// # Errors
+    ///
+    /// Returns `PluginError::NotFound` if no plugin with the given name is loaded.
     pub fn enable(&mut self, name: &str) -> Result<(), PluginError> {
         if let Some(plugin) = self.plugins.get_mut(name) {
             plugin.enabled = true;
@@ -225,6 +236,10 @@ impl PluginManager {
     }
 
     /// Disable a plugin
+    ///
+    /// # Errors
+    ///
+    /// Returns `PluginError::NotFound` if no plugin with the given name is loaded.
     pub fn disable(&mut self, name: &str) -> Result<(), PluginError> {
         if let Some(plugin) = self.plugins.get_mut(name) {
             plugin.enabled = false;
@@ -250,6 +265,7 @@ impl PluginManager {
     }
 
     /// List installed marketplaces
+    #[must_use]
     pub fn list_marketplaces(&self) -> Vec<(String, MarketplaceManifest)> {
         let dir = Self::marketplaces_dir();
         let mut marketplaces = Vec::new();
@@ -284,6 +300,11 @@ impl PluginManager {
     }
 
     /// Add a marketplace from a local directory path
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the directory has no marketplace manifest, IO fails,
+    /// or the marketplace already exists.
     pub fn add_marketplace_from_directory(
         &self,
         source_path: &Path,
@@ -319,6 +340,9 @@ impl PluginManager {
     }
 
     /// Add a marketplace from a git repository URL
+    ///
+    /// # Errors
+    /// Returns an error if the git clone fails or the manifest cannot be parsed.
     pub fn add_marketplace_from_git(
         &self,
         url: &str,
@@ -339,8 +363,7 @@ impl PluginManager {
         let clone_dest = dest.join(&name);
         if clone_dest.exists() {
             return Err(PluginError::InvalidManifest(format!(
-                "Marketplace '{}' already exists. Remove it first.",
-                name
+                "Marketplace '{name}' already exists. Remove it first."
             )));
         }
 
@@ -371,12 +394,14 @@ impl PluginManager {
     }
 
     /// Remove a marketplace by name
+    ///
+    /// # Errors
+    /// Returns an error if the marketplace is not found or cannot be removed.
     pub fn remove_marketplace(&self, name: &str) -> Result<(), PluginError> {
         let dir = Self::marketplaces_dir().join(name);
         if !dir.exists() {
             return Err(PluginError::NotFound(format!(
-                "Marketplace '{}' not found",
-                name
+                "Marketplace '{name}' not found"
             )));
         }
         fs::remove_dir_all(&dir).map_err(|e| PluginError::IoError(e.to_string()))?;
@@ -385,12 +410,14 @@ impl PluginManager {
     }
 
     /// Update a marketplace (git pull or re-copy)
+    ///
+    /// # Errors
+    /// Returns an error if the marketplace is not found or the update fails.
     pub fn update_marketplace(&self, name: &str) -> Result<MarketplaceManifest, PluginError> {
         let dir = Self::marketplaces_dir().join(name);
         if !dir.exists() {
             return Err(PluginError::NotFound(format!(
-                "Marketplace '{}' not found",
-                name
+                "Marketplace '{name}' not found"
             )));
         }
 
@@ -424,6 +451,10 @@ impl PluginManager {
     }
 
     /// Install a plugin from a marketplace
+    ///
+    /// # Errors
+    /// Returns an error if the plugin is not found in the marketplace or installation fails.
+    #[allow(clippy::too_many_lines)] // Complex installer, splitting would reduce readability
     pub fn install_from_marketplace(
         &mut self,
         plugin_name: &str,
@@ -435,7 +466,7 @@ impl PluginManager {
             .iter()
             .find(|(n, _)| n == marketplace_name)
             .ok_or_else(|| {
-                PluginError::NotFound(format!("Marketplace '{}' not found", marketplace_name))
+                PluginError::NotFound(format!("Marketplace '{marketplace_name}' not found"))
             })?;
 
         // Find the plugin in the marketplace
@@ -445,16 +476,14 @@ impl PluginManager {
             .find(|p| p.name == plugin_name)
             .ok_or_else(|| {
                 PluginError::NotFound(format!(
-                    "Plugin '{}' not found in marketplace '{}'",
-                    plugin_name, marketplace_name
+                    "Plugin '{plugin_name}' not found in marketplace '{marketplace_name}'"
                 ))
             })?;
 
         // Determine install path — validate plugin name to prevent path traversal
         if plugin_name.contains("..") || plugin_name.contains('/') || plugin_name.contains('\\') {
             return Err(PluginError::InvalidManifest(format!(
-                "Plugin name '{}' contains invalid path characters",
-                plugin_name
+                "Plugin name '{plugin_name}' contains invalid path characters"
             )));
         }
         let plugins_dir = PathBuf::from(".openclaudia/plugins");
@@ -512,7 +541,7 @@ impl PluginManager {
                         git_clone(url, &dest, git_ref.as_deref())?;
                     }
                     PluginSourceDef::GitHub { repo, git_ref } => {
-                        let resolved_url = format!("https://github.com/{}.git", repo);
+                        let resolved_url = format!("https://github.com/{repo}.git");
                         fs::create_dir_all(&plugins_dir)
                             .map_err(|e| PluginError::IoError(e.to_string()))?;
                         git_clone(&resolved_url, &dest, git_ref.as_deref())?;
@@ -525,7 +554,7 @@ impl PluginManager {
                     }
                 }
                 // Track and return (dest already populated by git clone)
-                let plugin_id = format!("{}@{}", plugin_name, marketplace_name);
+                let plugin_id = format!("{plugin_name}@{marketplace_name}");
                 let mut installed = InstalledPlugins::load();
                 installed.upsert(
                     &plugin_id,
@@ -558,7 +587,7 @@ impl PluginManager {
         copy_dir_recursive(&source_path, &dest).map_err(|e| PluginError::IoError(e.to_string()))?;
 
         // Track installation
-        let plugin_id = format!("{}@{}", plugin_name, marketplace_name);
+        let plugin_id = format!("{plugin_name}@{marketplace_name}");
         let mut installed = InstalledPlugins::load();
         installed.upsert(
             &plugin_id,
@@ -589,6 +618,9 @@ impl PluginManager {
     }
 
     /// Install a plugin directly from a git repository
+    ///
+    /// # Errors
+    /// Returns an error if the git clone fails or the plugin manifest is invalid.
     pub fn install_from_git(
         &mut self,
         url: &str,
@@ -635,7 +667,7 @@ impl PluginManager {
                                 .to_string(),
                         ),
                         install_path: dest.to_string_lossy().to_string(),
-                        version: plugin.manifest.version.clone(),
+                        version: plugin.manifest.version,
                         installed_at: Some(chrono::Utc::now().to_rfc3339()),
                         last_updated: None,
                         git_commit_sha: None,
@@ -657,6 +689,7 @@ impl PluginManager {
     }
 
     /// List plugins available from all installed marketplaces
+    #[must_use]
     pub fn list_available_plugins(&self) -> Vec<(String, MarketplacePlugin)> {
         let mut available = Vec::new();
         for (marketplace_name, manifest) in self.list_marketplaces() {

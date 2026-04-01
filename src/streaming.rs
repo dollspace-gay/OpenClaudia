@@ -1,7 +1,7 @@
 //! Structured streaming events for provider-agnostic response handling.
 //!
 //! This module provides a unified [`StreamEvent`] enum that standardizes
-//! streaming output across all providers (Anthropic, OpenAI, Gemini).
+//! streaming output across all providers (Anthropic, `OpenAI`, Gemini).
 //! Each provider's SSE format is parsed into the same event types,
 //! enabling provider-agnostic downstream handling.
 
@@ -53,7 +53,7 @@ pub enum StreamEvent {
 }
 
 /// Why the stream stopped
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum StopReason {
     /// Model finished naturally
     EndTurn,
@@ -145,9 +145,7 @@ impl StreamParser {
                             }
                         }
                         "input_json_delta" => {
-                            if let Some(json) =
-                                delta.get("partial_json").and_then(|t| t.as_str())
-                            {
+                            if let Some(json) = delta.get("partial_json").and_then(|t| t.as_str()) {
                                 events.push(StreamEvent::ToolUseInputDelta {
                                     partial_json: json.to_string(),
                                 });
@@ -156,9 +154,6 @@ impl StreamParser {
                         _ => {}
                     }
                 }
-            }
-            "content_block_stop" => {
-                // Could emit ThinkingComplete here if we tracked state
             }
             "message_delta" => {
                 if let Some(delta) = data.get("delta") {
@@ -176,18 +171,18 @@ impl StreamParser {
                     events.push(StreamEvent::Usage(TokenUsage {
                         input_tokens: usage
                             .get("input_tokens")
-                            .and_then(|v| v.as_u64())
+                            .and_then(serde_json::Value::as_u64)
                             .unwrap_or(0),
                         output_tokens: usage
                             .get("output_tokens")
-                            .and_then(|v| v.as_u64())
+                            .and_then(serde_json::Value::as_u64)
                             .unwrap_or(0),
                         cache_creation_tokens: usage
                             .get("cache_creation_input_tokens")
-                            .and_then(|v| v.as_u64()),
+                            .and_then(serde_json::Value::as_u64),
                         cache_read_tokens: usage
                             .get("cache_read_input_tokens")
-                            .and_then(|v| v.as_u64()),
+                            .and_then(serde_json::Value::as_u64),
                     }));
                 }
             }
@@ -196,10 +191,11 @@ impl StreamParser {
         events
     }
 
-    /// Parse an OpenAI SSE chunk into [`StreamEvent`]s.
+    /// Parse an `OpenAI` SSE chunk into [`StreamEvent`]s.
     ///
-    /// `data` is the parsed JSON from an OpenAI streaming `data:` line
+    /// `data` is the parsed JSON from an `OpenAI` streaming `data:` line
     /// (the `choices[].delta` format used by chat completions).
+    #[must_use]
     pub fn parse_openai(data: &serde_json::Value) -> Vec<StreamEvent> {
         let mut events = Vec::new();
         if let Some(choices) = data.get("choices").and_then(|c| c.as_array()) {
@@ -214,8 +210,7 @@ impl StreamParser {
                         }
                     }
                     // Reasoning/thinking content (o1, o3)
-                    if let Some(reasoning) =
-                        delta.get("reasoning_content").and_then(|c| c.as_str())
+                    if let Some(reasoning) = delta.get("reasoning_content").and_then(|c| c.as_str())
                     {
                         if !reasoning.is_empty() {
                             events.push(StreamEvent::ThinkingDelta {
@@ -224,14 +219,10 @@ impl StreamParser {
                         }
                     }
                     // Tool calls
-                    if let Some(tool_calls) =
-                        delta.get("tool_calls").and_then(|t| t.as_array())
-                    {
+                    if let Some(tool_calls) = delta.get("tool_calls").and_then(|t| t.as_array()) {
                         for tc in tool_calls {
                             if let Some(function) = tc.get("function") {
-                                if let Some(name) =
-                                    function.get("name").and_then(|n| n.as_str())
-                                {
+                                if let Some(name) = function.get("name").and_then(|n| n.as_str()) {
                                     let id = tc
                                         .get("id")
                                         .and_then(|i| i.as_str())
@@ -273,11 +264,11 @@ impl StreamParser {
             events.push(StreamEvent::Usage(TokenUsage {
                 input_tokens: usage
                     .get("prompt_tokens")
-                    .and_then(|v| v.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                     .unwrap_or(0),
                 output_tokens: usage
                     .get("completion_tokens")
-                    .and_then(|v| v.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                     .unwrap_or(0),
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
@@ -290,6 +281,7 @@ impl StreamParser {
     ///
     /// `data` is the parsed JSON from a Gemini streaming response
     /// (the `candidates[].content.parts[]` format).
+    #[must_use]
     pub fn parse_gemini(data: &serde_json::Value) -> Vec<StreamEvent> {
         let mut events = Vec::new();
         if let Some(candidates) = data.get("candidates").and_then(|c| c.as_array()) {
@@ -310,11 +302,10 @@ impl StreamParser {
                                     .and_then(|n| n.as_str())
                                     .unwrap_or("")
                                     .to_string();
-                                let args = fc
-                                    .get("args")
-                                    .cloned()
-                                    .unwrap_or(serde_json::Value::Object(Default::default()));
-                                let id = format!("gemini_{}", name);
+                                let args = fc.get("args").cloned().unwrap_or_else(|| {
+                                    serde_json::Value::Object(serde_json::Map::default())
+                                });
+                                let id = format!("gemini_{name}");
                                 events.push(StreamEvent::ToolUseStart {
                                     id: id.clone(),
                                     name: name.clone(),
@@ -326,9 +317,7 @@ impl StreamParser {
                                 });
                             }
                             // Gemini thinking (Gemini 2.5 Flash/Pro)
-                            if let Some(thought) =
-                                part.get("thought").and_then(|t| t.as_str())
-                            {
+                            if let Some(thought) = part.get("thought").and_then(|t| t.as_str()) {
                                 events.push(StreamEvent::ThinkingDelta {
                                     text: thought.to_string(),
                                 });
@@ -353,11 +342,11 @@ impl StreamParser {
             events.push(StreamEvent::Usage(TokenUsage {
                 input_tokens: usage
                     .get("promptTokenCount")
-                    .and_then(|v| v.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                     .unwrap_or(0),
                 output_tokens: usage
                     .get("candidatesTokenCount")
-                    .and_then(|v| v.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                     .unwrap_or(0),
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
@@ -451,9 +440,12 @@ mod tests {
             "usage": {"input_tokens": 100, "output_tokens": 50}
         });
         let events = StreamParser::parse_anthropic("message_delta", &data);
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, StreamEvent::Done { stop_reason: StopReason::EndTurn })));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn
+            }
+        )));
         assert!(events.iter().any(|e| matches!(e, StreamEvent::Usage(_))));
     }
 
@@ -593,9 +585,12 @@ mod tests {
             "choices": [{"delta": {}, "finish_reason": "stop"}]
         });
         let events = StreamParser::parse_openai(&data);
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, StreamEvent::Done { stop_reason: StopReason::EndTurn })));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn
+            }
+        )));
     }
 
     #[test]
@@ -604,9 +599,12 @@ mod tests {
             "choices": [{"delta": {}, "finish_reason": "tool_calls"}]
         });
         let events = StreamParser::parse_openai(&data);
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, StreamEvent::Done { stop_reason: StopReason::ToolUse })));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            StreamEvent::Done {
+                stop_reason: StopReason::ToolUse
+            }
+        )));
     }
 
     #[test]
@@ -615,9 +613,12 @@ mod tests {
             "choices": [{"delta": {}, "finish_reason": "length"}]
         });
         let events = StreamParser::parse_openai(&data);
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, StreamEvent::Done { stop_reason: StopReason::MaxTokens })));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            StreamEvent::Done {
+                stop_reason: StopReason::MaxTokens
+            }
+        )));
     }
 
     #[test]
@@ -626,9 +627,12 @@ mod tests {
             "choices": [{"delta": {}, "finish_reason": "content_filter"}]
         });
         let events = StreamParser::parse_openai(&data);
-        assert!(events.iter().any(
-            |e| matches!(e, StreamEvent::Done { stop_reason: StopReason::ContentFilter })
-        ));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            StreamEvent::Done {
+                stop_reason: StopReason::ContentFilter
+            }
+        )));
     }
 
     #[test]
@@ -728,9 +732,12 @@ mod tests {
             "candidates": [{"finishReason": "STOP"}]
         });
         let events = StreamParser::parse_gemini(&data);
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, StreamEvent::Done { stop_reason: StopReason::EndTurn })));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn
+            }
+        )));
     }
 
     #[test]
@@ -739,9 +746,12 @@ mod tests {
             "candidates": [{"finishReason": "SAFETY"}]
         });
         let events = StreamParser::parse_gemini(&data);
-        assert!(events.iter().any(
-            |e| matches!(e, StreamEvent::Done { stop_reason: StopReason::ContentFilter })
-        ));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            StreamEvent::Done {
+                stop_reason: StopReason::ContentFilter
+            }
+        )));
     }
 
     #[test]
@@ -804,10 +814,7 @@ mod tests {
             StopReason::Other("custom".into()),
             StopReason::Other("custom".into())
         );
-        assert_ne!(
-            StopReason::Other("a".into()),
-            StopReason::Other("b".into())
-        );
+        assert_ne!(StopReason::Other("a".into()), StopReason::Other("b".into()));
     }
 
     #[test]

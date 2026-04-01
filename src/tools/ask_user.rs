@@ -3,12 +3,11 @@ use std::collections::HashMap;
 
 use super::USER_QUESTION_MARKER;
 
-/// Execute the ask_user_question tool.
+/// Execute the `ask_user_question` tool.
 /// Returns a special JSON result that signals the main loop to collect user input.
-pub(crate) fn execute_ask_user_question(args: &HashMap<String, Value>) -> (String, bool) {
-    let questions = match args.get("questions").and_then(|v| v.as_array()) {
-        Some(q) => q,
-        None => return ("Missing 'questions' argument".to_string(), true),
+pub fn execute_ask_user_question(args: &HashMap<String, Value>) -> (String, bool) {
+    let Some(questions) = args.get("questions").and_then(|v| v.as_array()) else {
+        return ("Missing 'questions' argument".to_string(), true);
     };
 
     if questions.is_empty() || questions.len() > 4 {
@@ -22,21 +21,21 @@ pub(crate) fn execute_ask_user_question(args: &HashMap<String, Value>) -> (Strin
         let options = q.get("options").and_then(|v| v.as_array());
 
         if question_text.is_none() {
-            return (format!("Question {} missing 'question' field", i), true);
+            return (format!("Question {i} missing 'question' field"), true);
         }
         if header.is_none() {
-            return (format!("Question {} missing 'header' field", i), true);
+            return (format!("Question {i} missing 'header' field"), true);
         }
         if let Some(h) = header {
             if h.len() > 12 {
                 return (
-                    format!("Question {} header '{}' exceeds 12 character limit", i, h),
+                    format!("Question {i} header '{h}' exceeds 12 character limit"),
                     true,
                 );
             }
         }
         match options {
-            None => return (format!("Question {} missing 'options' field", i), true),
+            None => return (format!("Question {i} missing 'options' field"), true),
             Some(opts) => {
                 if opts.len() < 2 || opts.len() > 4 {
                     return (
@@ -46,11 +45,11 @@ pub(crate) fn execute_ask_user_question(args: &HashMap<String, Value>) -> (Strin
                 }
                 for (j, opt) in opts.iter().enumerate() {
                     if opt.get("label").and_then(|v| v.as_str()).is_none() {
-                        return (format!("Question {} option {} missing 'label'", i, j), true);
+                        return (format!("Question {i} option {j} missing 'label'"), true);
                     }
                     if opt.get("description").and_then(|v| v.as_str()).is_none() {
                         return (
-                            format!("Question {} option {} missing 'description'", i, j),
+                            format!("Question {i} option {j} missing 'description'"),
                             true,
                         );
                     }

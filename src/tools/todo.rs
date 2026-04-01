@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::sync::Mutex;
 
 /// Todo item for task tracking
@@ -17,15 +18,13 @@ static TODO_LIST: std::sync::LazyLock<Mutex<Vec<TodoItem>>> =
     std::sync::LazyLock::new(|| Mutex::new(Vec::new()));
 
 /// Write/update the todo list
-pub(crate) fn execute_todo_write(args: &HashMap<String, Value>) -> (String, bool) {
-    let todos_value = match args.get("todos") {
-        Some(v) => v,
-        None => return ("Missing 'todos' argument".to_string(), true),
+pub fn execute_todo_write(args: &HashMap<String, Value>) -> (String, bool) {
+    let Some(todos_value) = args.get("todos") else {
+        return ("Missing 'todos' argument".to_string(), true);
     };
 
-    let todos_array = match todos_value.as_array() {
-        Some(arr) => arr,
-        None => return ("'todos' must be an array".to_string(), true),
+    let Some(todos_array) = todos_value.as_array() else {
+        return ("'todos' must be an array".to_string(), true);
     };
 
     let mut new_todos: Vec<TodoItem> = Vec::new();
@@ -35,12 +34,12 @@ pub(crate) fn execute_todo_write(args: &HashMap<String, Value>) -> (String, bool
         let content = match item.get("content").and_then(|v| v.as_str()) {
             Some(c) if c.len() > 2000 => {
                 return (
-                    format!("Todo {} content exceeds maximum length of 2000 characters", i),
+                    format!("Todo {i} content exceeds maximum length of 2000 characters"),
                     true,
                 );
             }
             Some(c) => c.to_string(),
-            None => return (format!("Todo {} missing 'content' field", i), true),
+            None => return (format!("Todo {i} missing 'content' field"), true),
         };
 
         let status = match item.get("status").and_then(|v| v.as_str()) {
@@ -48,8 +47,7 @@ pub(crate) fn execute_todo_write(args: &HashMap<String, Value>) -> (String, bool
                 if !["pending", "in_progress", "completed"].contains(&s) {
                     return (
                         format!(
-                            "Todo {} has invalid status '{}'. Must be: pending, in_progress, completed",
-                            i, s
+                            "Todo {i} has invalid status '{s}'. Must be: pending, in_progress, completed"
                         ),
                         true,
                     );
@@ -59,12 +57,12 @@ pub(crate) fn execute_todo_write(args: &HashMap<String, Value>) -> (String, bool
                 }
                 s.to_string()
             }
-            None => return (format!("Todo {} missing 'status' field", i), true),
+            None => return (format!("Todo {i} missing 'status' field"), true),
         };
 
         let active_form = match item.get("activeForm").and_then(|v| v.as_str()) {
             Some(a) => a.to_string(),
-            None => return (format!("Todo {} missing 'activeForm' field", i), true),
+            None => return (format!("Todo {i} missing 'activeForm' field"), true),
         };
 
         new_todos.push(TodoItem {
@@ -77,8 +75,7 @@ pub(crate) fn execute_todo_write(args: &HashMap<String, Value>) -> (String, bool
     // Warn if more than one task is in_progress
     let warning = if in_progress_count > 1 {
         format!(
-            "\nWarning: {} tasks marked as in_progress. Best practice is to have only one.",
-            in_progress_count
+            "\nWarning: {in_progress_count} tasks marked as in_progress. Best practice is to have only one."
         )
     } else {
         String::new()
@@ -87,9 +84,9 @@ pub(crate) fn execute_todo_write(args: &HashMap<String, Value>) -> (String, bool
     // Update the global todo list
     match TODO_LIST.lock() {
         Ok(mut list) => {
-            *list = new_todos.clone();
+            list.clone_from(&new_todos);
         }
-        Err(e) => return (format!("Failed to update todo list: {}", e), true),
+        Err(e) => return (format!("Failed to update todo list: {e}"), true),
     }
 
     // Format output
@@ -111,17 +108,17 @@ pub(crate) fn execute_todo_write(args: &HashMap<String, Value>) -> (String, bool
 
     // Show current in-progress task if any
     if let Some(current) = new_todos.iter().find(|t| t.status == "in_progress") {
-        output.push_str(&format!("\n\nCurrently: {}", current.active_form));
+        let _ = write!(output, "\n\nCurrently: {}", current.active_form);
     }
 
     (output, false)
 }
 
 /// Read the current todo list
-pub(crate) fn execute_todo_read() -> (String, bool) {
+pub fn execute_todo_read() -> (String, bool) {
     let todos = match TODO_LIST.lock() {
         Ok(list) => list.clone(),
-        Err(e) => return (format!("Failed to read todo list: {}", e), true),
+        Err(e) => return (format!("Failed to read todo list: {e}"), true),
     };
 
     if todos.is_empty() {
@@ -136,7 +133,7 @@ pub(crate) fn execute_todo_read() -> (String, bool) {
             "pending" => "[ ]",
             _ => "[?]",
         };
-        output.push_str(&format!("{}. {} {}\n", i + 1, status_icon, todo.content));
+        let _ = writeln!(output, "{}. {} {}", i + 1, status_icon, todo.content);
     }
 
     // Summary
@@ -144,10 +141,10 @@ pub(crate) fn execute_todo_read() -> (String, bool) {
     let in_progress = todos.iter().filter(|t| t.status == "in_progress").count();
     let pending = todos.iter().filter(|t| t.status == "pending").count();
 
-    output.push_str(&format!(
-        "\n({} completed, {} in progress, {} pending)",
-        completed, in_progress, pending
-    ));
+    let _ = write!(
+        output,
+        "\n({completed} completed, {in_progress} in progress, {pending} pending)"
+    );
 
     (output, false)
 }

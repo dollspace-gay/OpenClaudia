@@ -1,4 +1,4 @@
-//! HTTP Proxy Server - The core of OpenClaudia.
+//! HTTP Proxy Server - The core of `OpenClaudia`.
 //!
 //! Accepts OpenAI-compatible requests and forwards them to the configured provider
 //! after running hooks and injecting context.
@@ -36,6 +36,7 @@ use crate::vdd::{VddEngine, VddResult};
 
 /// Normalize base URL by stripping trailing slash and /v1 suffix.
 /// This prevents double /v1/v1 when endpoint paths include /v1 prefix.
+#[must_use]
 pub fn normalize_base_url(base_url: &str) -> String {
     base_url
         .trim_end_matches('/')
@@ -86,12 +87,12 @@ pub enum ProxyError {
 impl IntoResponse for ProxyError {
     fn into_response(self) -> Response {
         let (status, message) = match &self {
-            ProxyError::ProviderNotConfigured(_) => (StatusCode::BAD_REQUEST, self.to_string()),
-            ProxyError::NoApiKey(_) => (StatusCode::UNAUTHORIZED, self.to_string()),
-            ProxyError::RequestError(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
-            ProxyError::InvalidBody(_) => (StatusCode::BAD_REQUEST, self.to_string()),
-            ProxyError::JsonError(_) => (StatusCode::BAD_REQUEST, self.to_string()),
-            ProxyError::HookBlocked(_) => (StatusCode::FORBIDDEN, self.to_string()),
+            Self::NoApiKey(_) => (StatusCode::UNAUTHORIZED, self.to_string()),
+            Self::RequestError(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
+            Self::HookBlocked(_) => (StatusCode::FORBIDDEN, self.to_string()),
+            Self::ProviderNotConfigured(_) | Self::InvalidBody(_) | Self::JsonError(_) => {
+                (StatusCode::BAD_REQUEST, self.to_string())
+            }
         };
 
         let body = serde_json::json!({
@@ -194,10 +195,11 @@ async fn health_check() -> impl IntoResponse {
 /// Session stats endpoint - returns token usage and turn metrics
 async fn session_stats(State(state): State<ProxyState>) -> impl IntoResponse {
     let sm = state.session_manager.read().await;
-    match sm.get_session() {
-        Some(session) => {
+    Json(sm.get_session().map_or_else(
+        || serde_json::json!({ "error": "No active session" }),
+        |session| {
             let last_turn = session.turn_metrics.last();
-            Json(serde_json::json!({
+            serde_json::json!({
                 "session_id": session.id,
                 "mode": session.mode,
                 "request_count": session.request_count,
@@ -222,12 +224,9 @@ async fn session_stats(State(state): State<ProxyState>) -> impl IntoResponse {
                         "cache_write_tokens": u.cache_write_tokens,
                     })),
                 })),
-            }))
-        }
-        None => Json(serde_json::json!({
-            "error": "No active session"
-        })),
-    }
+            })
+        },
+    ))
 }
 
 /// Device flow page - HTML UI for OAuth authentication
@@ -295,7 +294,7 @@ async fn auth_device_submit(
     let token_response = client
         .exchange_code(&code, &pkce)
         .await
-        .map_err(|e| ProxyError::InvalidBody(format!("Token exchange failed: {}", e)))?;
+        .map_err(|e| ProxyError::InvalidBody(format!("Token exchange failed: {e}")))?;
 
     // Create session
     let mut session = OAuthSession::from_token_response(token_response);
@@ -336,7 +335,7 @@ async fn auth_status(State(state): State<ProxyState>, headers: HeaderMap) -> imp
                 let cookie = cookie.trim();
                 cookie
                     .strip_prefix("anthropic_session=")
-                    .map(|s| s.to_string())
+                    .map(std::string::ToString::to_string)
             })
         })
         .and_then(|session_id| state.oauth_store.get_session(&session_id));
@@ -370,7 +369,7 @@ async fn list_models(State(_state): State<ProxyState>) -> impl IntoResponse {
     }))
 }
 
-/// Run PreToolUse hooks for tool calls in the response
+/// Run `PreToolUse` hooks for tool calls in the response
 async fn run_pre_tool_use_hooks(
     hook_engine: &HookEngine,
     session_id: Option<&str>,
@@ -437,7 +436,8 @@ fn extract_extensions_from_messages(messages: &[ChatMessage]) -> Vec<String> {
     extensions.into_iter().collect()
 }
 
-/// Proxy chat completions (OpenAI format)
+/// Proxy chat completions (`OpenAI` format)
+#[allow(clippy::too_many_lines)]
 async fn proxy_chat_completions(
     State(state): State<ProxyState>,
     headers: HeaderMap,
@@ -512,23 +512,23 @@ async fn proxy_chat_completions(
     // Inject rules based on file extensions mentioned in messages
     let extensions = extract_extensions_from_messages(&request.messages);
     if !extensions.is_empty() {
-        let rules_content = state
-            .rules_engine
-            .get_combined_rules(&extensions.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+        let rules_content = state.rules_engine.get_combined_rules(
+            &extensions
+                .iter()
+                .map(std::string::String::as_str)
+                .collect::<Vec<_>>(),
+        );
         if !rules_content.is_empty() {
             ContextInjector::inject_system_prefix(&mut request, &rules_content);
         }
     }
 
     // Add MCP tools to request if available
-    {
-        let mcp = state.mcp_manager.read().await;
-        let mcp_tools = mcp.tools_as_openai_functions();
-        if !mcp_tools.is_empty() {
-            let mut tools = request.tools.unwrap_or_default();
-            tools.extend(mcp_tools);
-            request.tools = Some(tools);
-        }
+    let mcp_tools = state.mcp_manager.read().await.tools_as_openai_functions();
+    if !mcp_tools.is_empty() {
+        let mut tools = request.tools.unwrap_or_default();
+        tools.extend(mcp_tools);
+        request.tools = Some(tools);
     }
 
     // Add plugin commands as available context
@@ -602,8 +602,7 @@ async fn proxy_chat_completions(
                             _ => "PreToolUse hook blocked".to_string(),
                         };
                         return Err(ProxyError::HookBlocked(format!(
-                            "Tool '{}' blocked: {}",
-                            name, reason
+                            "Tool '{name}' blocked: {reason}"
                         )));
                     }
                 }
@@ -630,7 +629,7 @@ async fn proxy_chat_completions(
                 .turn_metrics
                 .last()
                 .and_then(|tm| tm.actual_usage.as_ref())
-                .map(|u| u.input_tokens as usize)
+                .map(|u| usize::try_from(u.input_tokens).unwrap_or(usize::MAX))
         })
     };
 
@@ -647,7 +646,7 @@ async fn proxy_chat_completions(
     match compaction_result {
         Ok(result) => {
             if result.compacted {
-                let summary_len = result.summary.as_ref().map(|s| s.len()).unwrap_or(0);
+                let summary_len = result.summary.as_ref().map_or(0, std::string::String::len);
                 info!(
                     original = result.original_tokens,
                     new = result.new_tokens,
@@ -694,16 +693,12 @@ async fn proxy_chat_completions(
             .map(crate::compaction::estimate_message_tokens)
             .sum();
 
-        let tool_def_tokens: usize = request
-            .tools
-            .as_ref()
-            .map(|tools| {
-                tools
-                    .iter()
-                    .map(|t| crate::compaction::estimate_tokens(&t.to_string()))
-                    .sum()
-            })
-            .unwrap_or(0);
+        let tool_def_tokens: usize = request.tools.as_ref().map_or(0, |tools| {
+            tools
+                .iter()
+                .map(|t| crate::compaction::estimate_tokens(&t.to_string()))
+                .sum()
+        });
 
         let injected_context_tokens = system_prompt_tokens + tool_def_tokens;
 
@@ -718,6 +713,14 @@ async fn proxy_chat_completions(
                     tool_def_tokens,
                 );
                 let context_window = crate::compaction::get_context_window(&request.model);
+                // Compute utilization percentage via integer-safe path
+                let utilization_pct_x10 = if context_window > 0 {
+                    estimated_input * 1000 / context_window
+                } else {
+                    0
+                };
+                #[allow(clippy::cast_possible_truncation)]
+                let usage_pct_f64 = f64::from(utilization_pct_x10 as u32) / 10.0;
 
                 if state.config.session.token_tracking.log_usage {
                     info!(
@@ -726,18 +729,18 @@ async fn proxy_chat_completions(
                         system_prompt = system_prompt_tokens,
                         tool_defs = tool_def_tokens,
                         context_window = context_window,
-                        utilization_pct = format!(
-                            "{:.1}%",
-                            (estimated_input as f64 / context_window as f64) * 100.0
-                        ),
+                        utilization_pct = format!("{usage_pct_f64:.1}%"),
                         "Turn token estimate"
                     );
                 }
 
                 // Warn if approaching context limit
                 let warn_threshold = state.config.session.token_tracking.warn_threshold;
-                let usage_pct = (estimated_input as f64 / context_window as f64) * 100.0;
-                if estimated_input as f32 > context_window as f32 * warn_threshold {
+                // Use integer threshold to avoid usize→f32 precision loss
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let threshold_tokens =
+                    (f64::from(context_window as u32) * f64::from(warn_threshold)) as usize;
+                if estimated_input > threshold_tokens {
                     warn!(
                         estimated = estimated_input,
                         threshold = format!("{:.0}%", warn_threshold * 100.0),
@@ -749,7 +752,7 @@ async fn proxy_chat_completions(
                         .hook_engine
                         .fire_notification(
                             "token_warning",
-                            serde_json::json!({ "usage_pct": usage_pct }),
+                            serde_json::json!({ "usage_pct": usage_pct_f64 }),
                         )
                         .await;
                 }
@@ -878,7 +881,12 @@ async fn proxy_chat_completions(
     }
 }
 
-/// Handle MCP tool calls from the model response
+/// Handle MCP tool calls from the model response.
+///
+/// # Errors
+///
+/// Returns `ProxyError::InvalidBody` if the MCP server is not connected or
+/// the tool call fails.
 pub async fn handle_mcp_tool_call(
     mcp_manager: &Arc<RwLock<McpManager>>,
     tool_name: &str,
@@ -892,8 +900,7 @@ pub async fn handle_mcp_tool_call(
         let server_name = parts[1];
         if !mcp.is_connected(server_name) {
             return Err(ProxyError::InvalidBody(format!(
-                "MCP server '{}' is not connected",
-                server_name
+                "MCP server '{server_name}' is not connected"
             )));
         }
     }
@@ -902,13 +909,12 @@ pub async fn handle_mcp_tool_call(
     match mcp.call_tool(tool_name, arguments).await {
         Ok(result) => Ok(result),
         Err(e) => Err(ProxyError::InvalidBody(format!(
-            "MCP tool call failed: {}",
-            e
+            "MCP tool call failed: {e}"
         ))),
     }
 }
 
-/// Fire a tool_error notification when a tool execution fails.
+/// Fire a `tool_error` notification when a tool execution fails.
 /// This should be called by any code path that executes tools and gets an error.
 pub async fn fire_tool_error_notification(
     hook_engine: &HookEngine,
@@ -934,7 +940,7 @@ pub async fn shutdown_mcp(mcp_manager: &Arc<RwLock<McpManager>>) {
     }
 }
 
-/// Proxy completions (legacy OpenAI format)
+/// Proxy completions (legacy `OpenAI` format)
 async fn proxy_completions(
     State(state): State<ProxyState>,
     headers: HeaderMap,
@@ -994,7 +1000,7 @@ async fn proxy_anthropic_messages(
                 let cookie = cookie.trim();
                 cookie
                     .strip_prefix("anthropic_session=")
-                    .map(|s| s.to_string())
+                    .map(std::string::ToString::to_string)
             })
         })
         .and_then(|session_id| {
@@ -1104,7 +1110,7 @@ async fn proxy_passthrough(
     let mut req_builder = state.client.request(request.method().clone(), &url);
 
     // Copy relevant headers
-    for (key, value) in headers.iter() {
+    for (key, value) in &headers {
         if key != header::HOST && key != header::CONTENT_LENGTH {
             if let Ok(v) = value.to_str() {
                 req_builder = req_builder.header(key.as_str(), v);
@@ -1120,6 +1126,7 @@ async fn proxy_passthrough(
 }
 
 /// Determine which provider to use based on model name
+#[must_use]
 pub fn determine_provider(model: &str, config: &AppConfig) -> String {
     let model_lower = model.to_lowercase();
     if model_lower.starts_with("claude") || model_lower.starts_with("anthropic") {
@@ -1151,7 +1158,7 @@ pub fn determine_provider(model: &str, config: &AppConfig) -> String {
 }
 
 /// Recursively strip `ttl` from any `cache_control` objects in a JSON value.
-/// Anthropic's API rejects TTL in cache_control when using OAuth credentials.
+/// Anthropic's API rejects TTL in `cache_control` when using OAuth credentials.
 fn strip_cache_control_ttl(value: &mut Value) {
     match value {
         Value::Object(map) => {
@@ -1177,13 +1184,13 @@ fn extract_api_key(headers: &HeaderMap) -> Option<String> {
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .or_else(|| {
             // Also check x-api-key header (Anthropic style)
             headers
                 .get("x-api-key")
                 .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
         })
 }
 
@@ -1216,43 +1223,50 @@ async fn convert_response_with_usage(
 }
 
 /// Extract token usage from a provider's JSON response
-/// Handles OpenAI format (usage.prompt_tokens/completion_tokens)
-/// and Anthropic format (usage.input_tokens/output_tokens)
+/// Handles `OpenAI` format (`usage.prompt_tokens/completion_tokens`)
+/// and Anthropic format (`usage.input_tokens/output_tokens`)
 fn extract_usage_from_response(response: &Value) -> TokenUsage {
-    let usage = match response.get("usage") {
-        Some(u) => u,
-        None => return TokenUsage::default(),
+    let Some(usage) = response.get("usage") else {
+        return TokenUsage::default();
     };
 
     // OpenAI format
     let input_tokens = usage
         .get("prompt_tokens")
-        .and_then(|v| v.as_u64())
+        .and_then(serde_json::Value::as_u64)
         // Anthropic format
-        .or_else(|| usage.get("input_tokens").and_then(|v| v.as_u64()))
+        .or_else(|| {
+            usage
+                .get("input_tokens")
+                .and_then(serde_json::Value::as_u64)
+        })
         .unwrap_or(0);
 
     let output_tokens = usage
         .get("completion_tokens")
-        .and_then(|v| v.as_u64())
-        .or_else(|| usage.get("output_tokens").and_then(|v| v.as_u64()))
+        .and_then(serde_json::Value::as_u64)
+        .or_else(|| {
+            usage
+                .get("output_tokens")
+                .and_then(serde_json::Value::as_u64)
+        })
         .unwrap_or(0);
 
     let cache_read_tokens = usage
         .get("cache_read_input_tokens")
-        .and_then(|v| v.as_u64())
+        .and_then(serde_json::Value::as_u64)
         // OpenAI format uses prompt_tokens_details.cached_tokens
         .or_else(|| {
             usage
                 .get("prompt_tokens_details")
                 .and_then(|d| d.get("cached_tokens"))
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
         })
         .unwrap_or(0);
 
     let cache_write_tokens = usage
         .get("cache_creation_input_tokens")
-        .and_then(|v| v.as_u64())
+        .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
 
     TokenUsage {
@@ -1266,17 +1280,18 @@ fn extract_usage_from_response(response: &Value) -> TokenUsage {
 /// Extract token usage from an SSE data line (JSON).
 ///
 /// For Anthropic: look for `message_delta` with `usage` in the top-level.
-/// For OpenAI: look for the final chunk with a `usage` field (when
+/// For `OpenAI`: look for the final chunk with a `usage` field (when
 /// `stream_options.include_usage` is set).
 ///
 /// Returns `Some(TokenUsage)` if usage was found, `None` otherwise.
+#[must_use]
 pub fn extract_usage_from_sse_event(json: &Value) -> Option<TokenUsage> {
     // Anthropic: message_delta event carries cumulative usage at the top level
     if json.get("type").and_then(|t| t.as_str()) == Some("message_delta") {
         if let Some(usage) = json.get("usage") {
             let output_tokens = usage
                 .get("output_tokens")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
             // message_delta usually only has output_tokens; input is on message_start
             if output_tokens > 0 {
@@ -1295,15 +1310,15 @@ pub fn extract_usage_from_sse_event(json: &Value) -> Option<TokenUsage> {
         if let Some(usage) = json.get("message").and_then(|m| m.get("usage")) {
             let input_tokens = usage
                 .get("input_tokens")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
             let cache_read = usage
                 .get("cache_read_input_tokens")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
             let cache_write = usage
                 .get("cache_creation_input_tokens")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
             if input_tokens > 0 || cache_read > 0 || cache_write > 0 {
                 return Some(TokenUsage {
@@ -1334,7 +1349,7 @@ pub fn extract_usage_from_sse_event(json: &Value) -> Option<TokenUsage> {
 pub const SSE_STREAM_TIMEOUT_SECS: u64 = 30;
 
 /// Forward request to upstream provider
-async fn forward_to_provider<T: Serialize>(
+async fn forward_to_provider<T: Serialize + Sync>(
     client: &Client,
     provider: &ProviderConfig,
     api_key: &str,
@@ -1353,7 +1368,7 @@ async fn forward_to_provider<T: Serialize>(
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01");
     } else {
-        req = req.header(header::AUTHORIZATION, format!("Bearer {}", api_key));
+        req = req.header(header::AUTHORIZATION, format!("Bearer {api_key}"));
     }
 
     // Add any custom headers from config
@@ -1376,13 +1391,13 @@ fn set_auth_header(
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01");
     } else {
-        req = req.header(header::AUTHORIZATION, format!("Bearer {}", api_key));
+        req = req.header(header::AUTHORIZATION, format!("Bearer {api_key}"));
     }
     req
 }
 
 /// Forward request to upstream provider with raw Value body and custom headers.
-/// Returns the raw reqwest::Response for inspection before conversion.
+/// Returns the raw `reqwest::Response` for inspection before conversion.
 async fn forward_to_provider_raw_reqwest(
     client: &Client,
     provider: &ProviderConfig,
@@ -1428,10 +1443,8 @@ async fn convert_response(response: reqwest::Response) -> Result<Response, Proxy
     Ok(builder.body(Body::from(body)).unwrap())
 }
 
-/// Start the proxy server
-pub async fn start_server(config: AppConfig) -> anyhow::Result<()> {
-    let addr = format!("{}:{}", config.proxy.host, config.proxy.port);
-
+/// Build a `ProxyState` from the given config, initializing all subsystems.
+async fn build_proxy_state(config: AppConfig) -> anyhow::Result<ProxyState> {
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(300))
         .build()?;
@@ -1461,44 +1474,7 @@ pub async fn start_server(config: AppConfig) -> anyhow::Result<()> {
 
     // Initialize MCP manager and connect to configured servers
     let mcp_manager = Arc::new(RwLock::new(McpManager::new()));
-    {
-        let mut mcp = mcp_manager.write().await;
-        for (plugin, server) in plugin_manager.all_mcp_servers() {
-            match server.transport.as_str() {
-                "stdio" => {
-                    if let Some(command) = &server.command {
-                        let args: Vec<&str> = server.args.iter().map(|s| s.as_str()).collect();
-                        match mcp.connect_stdio(&server.name, command, &args).await {
-                            Ok(()) => {
-                                info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (stdio)")
-                            }
-                            Err(e) => {
-                                warn!(server = %server.name, error = %e, "MCP connect failed")
-                            }
-                        }
-                    }
-                }
-                "http" => {
-                    if let Some(url) = &server.url {
-                        match mcp.connect_http(&server.name, url).await {
-                            Ok(()) => {
-                                info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (http)")
-                            }
-                            Err(e) => {
-                                warn!(server = %server.name, error = %e, "MCP connect failed")
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    warn!(server = %server.name, transport = %server.transport, "Unknown MCP transport")
-                }
-            }
-        }
-        if mcp.server_count() > 0 {
-            info!(connected = mcp.server_count(), "MCP servers initialized");
-        }
-    }
+    connect_mcp_servers(&mcp_manager, &plugin_manager).await;
 
     // Initialize OAuth store for Claude Max authentication
     let oauth_store = Arc::new(OAuthStore::new());
@@ -1506,7 +1482,7 @@ pub async fn start_server(config: AppConfig) -> anyhow::Result<()> {
     // Initialize VDD engine if enabled
     let vdd_engine = if config.vdd.enabled {
         if let Err(e) = config.vdd.validate(&config.proxy.target) {
-            anyhow::bail!("VDD configuration error: {}", e);
+            anyhow::bail!("VDD configuration error: {e}");
         }
         info!(
             mode = %config.vdd.mode,
@@ -1525,7 +1501,7 @@ pub async fn start_server(config: AppConfig) -> anyhow::Result<()> {
         None
     };
 
-    let state = ProxyState {
+    Ok(ProxyState {
         config: Arc::new(config),
         client,
         hook_engine,
@@ -1536,14 +1512,63 @@ pub async fn start_server(config: AppConfig) -> anyhow::Result<()> {
         mcp_manager,
         oauth_store,
         vdd_engine,
-    };
+    })
+}
 
-    // Fire SessionStart hook and inject session context
-    let (session_id, session_context) = {
+/// Connect to all MCP servers discovered through plugins.
+async fn connect_mcp_servers(
+    mcp_manager: &Arc<RwLock<McpManager>>,
+    plugin_manager: &Arc<PluginManager>,
+) {
+    let mut mcp = mcp_manager.write().await;
+    for (plugin, server) in plugin_manager.all_mcp_servers() {
+        match server.transport.as_str() {
+            "stdio" => {
+                if let Some(command) = &server.command {
+                    let args: Vec<&str> = server
+                        .args
+                        .iter()
+                        .map(std::string::String::as_str)
+                        .collect();
+                    match mcp.connect_stdio(&server.name, command, &args).await {
+                        Ok(()) => {
+                            info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (stdio)");
+                        }
+                        Err(e) => {
+                            warn!(server = %server.name, error = %e, "MCP connect failed");
+                        }
+                    }
+                }
+            }
+            "http" => {
+                if let Some(url) = &server.url {
+                    match mcp.connect_http(&server.name, url).await {
+                        Ok(()) => {
+                            info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (http)");
+                        }
+                        Err(e) => {
+                            warn!(server = %server.name, error = %e, "MCP connect failed");
+                        }
+                    }
+                }
+            }
+            _ => {
+                warn!(server = %server.name, transport = %server.transport, "Unknown MCP transport");
+            }
+        }
+    }
+    if mcp.server_count() > 0 {
+        info!(connected = mcp.server_count(), "MCP servers initialized");
+    }
+}
+
+/// Fire the `SessionStart` hook and return the session ID.
+async fn fire_session_start(state: &ProxyState) -> String {
+    let session_id = {
         let mut sm = state.session_manager.write().await;
-        let session = sm.get_or_create_session();
-        let context = get_session_context(session);
-        (session.id.clone(), context)
+        let id = sm.get_or_create_session().id.clone();
+        drop(sm);
+        id
     };
 
     let start_input = HookInput::new(HookEvent::SessionStart).with_session_id(&session_id);
@@ -1552,13 +1577,24 @@ pub async fn start_server(config: AppConfig) -> anyhow::Result<()> {
         .run(HookEvent::SessionStart, &start_input)
         .await;
 
-    // Log session context and hook results
     info!(
         session_id = %session_id,
-        context_len = session_context.len(),
         hooks_allowed = start_result.allowed,
         "Session started"
     );
+
+    session_id
+}
+
+/// Start the proxy server.
+///
+/// # Errors
+///
+/// Returns an error if binding the TCP listener or serving fails.
+pub async fn start_server(config: AppConfig) -> anyhow::Result<()> {
+    let addr = format!("{}:{}", config.proxy.host, config.proxy.port);
+    let state = build_proxy_state(config).await?;
+    fire_session_start(&state).await;
 
     let app = create_router(state);
 
@@ -1570,7 +1606,13 @@ pub async fn start_server(config: AppConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Start the proxy server with graceful shutdown support
+/// Start the proxy server with graceful shutdown support.
+///
+/// # Errors
+///
+/// Returns an error if binding the TCP listener, serving, or VDD
+/// configuration validation fails.
+#[allow(clippy::too_many_lines)]
 pub async fn start_server_with_shutdown(
     config: AppConfig,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
@@ -1612,13 +1654,17 @@ pub async fn start_server_with_shutdown(
             match server.transport.as_str() {
                 "stdio" => {
                     if let Some(command) = &server.command {
-                        let args: Vec<&str> = server.args.iter().map(|s| s.as_str()).collect();
+                        let args: Vec<&str> = server
+                            .args
+                            .iter()
+                            .map(std::string::String::as_str)
+                            .collect();
                         match mcp.connect_stdio(&server.name, command, &args).await {
                             Ok(()) => {
-                                info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (stdio)")
+                                info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (stdio)");
                             }
                             Err(e) => {
-                                warn!(server = %server.name, error = %e, "MCP connect failed")
+                                warn!(server = %server.name, error = %e, "MCP connect failed");
                             }
                         }
                     }
@@ -1627,16 +1673,16 @@ pub async fn start_server_with_shutdown(
                     if let Some(url) = &server.url {
                         match mcp.connect_http(&server.name, url).await {
                             Ok(()) => {
-                                info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (http)")
+                                info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (http)");
                             }
                             Err(e) => {
-                                warn!(server = %server.name, error = %e, "MCP connect failed")
+                                warn!(server = %server.name, error = %e, "MCP connect failed");
                             }
                         }
                     }
                 }
                 _ => {
-                    warn!(server = %server.name, transport = %server.transport, "Unknown MCP transport")
+                    warn!(server = %server.name, transport = %server.transport, "Unknown MCP transport");
                 }
             }
         }
@@ -1651,7 +1697,7 @@ pub async fn start_server_with_shutdown(
     // Initialize VDD engine if enabled
     let vdd_engine = if config.vdd.enabled {
         if let Err(e) = config.vdd.validate(&config.proxy.target) {
-            anyhow::bail!("VDD configuration error: {}", e);
+            anyhow::bail!("VDD configuration error: {e}");
         }
         info!(
             mode = %config.vdd.mode,
@@ -1686,8 +1732,9 @@ pub async fn start_server_with_shutdown(
     // Fire SessionStart hook
     let session_id = {
         let mut sm = state.session_manager.write().await;
-        let session = sm.get_or_create_session();
-        session.id.clone()
+        let id = sm.get_or_create_session().id.clone();
+        drop(sm);
+        id
     };
 
     let start_input = HookInput::new(HookEvent::SessionStart).with_session_id(&session_id);

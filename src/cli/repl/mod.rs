@@ -12,7 +12,7 @@ use openclaudia::tools::safe_truncate;
 use std::fs;
 use std::path::PathBuf;
 
-/// Get the data directory for OpenClaudia
+/// Get the data directory for `OpenClaudia`
 pub fn get_data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -30,7 +30,7 @@ pub fn get_sessions_dir() -> PathBuf {
 }
 
 /// Agent operating mode
-#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentMode {
     /// Full access mode - can make changes
@@ -41,24 +41,24 @@ pub enum AgentMode {
 }
 
 impl AgentMode {
-    pub fn toggle(&self) -> Self {
+    pub const fn toggle(&self) -> Self {
         match self {
-            AgentMode::Build => AgentMode::Plan,
-            AgentMode::Plan => AgentMode::Build,
+            Self::Build => Self::Plan,
+            Self::Plan => Self::Build,
         }
     }
 
-    pub fn display(&self) -> &'static str {
+    pub const fn display(&self) -> &'static str {
         match self {
-            AgentMode::Build => "Build",
-            AgentMode::Plan => "Plan",
+            Self::Build => "Build",
+            Self::Plan => "Plan",
         }
     }
 
-    pub fn description(&self) -> &'static str {
+    pub const fn description(&self) -> &'static str {
         match self {
-            AgentMode::Build => "Full access - can make changes",
-            AgentMode::Plan => "Read-only - suggestions only",
+            Self::Build => "Full access - can make changes",
+            Self::Plan => "Read-only - suggestions only",
         }
     }
 }
@@ -176,7 +176,7 @@ pub fn save_chat_session(session: &ChatSession) -> anyhow::Result<()> {
 
 /// Load a chat session by ID
 pub fn load_chat_session(id: &str) -> Option<ChatSession> {
-    let path = get_sessions_dir().join(format!("{}.json", id));
+    let path = get_sessions_dir().join(format!("{id}.json"));
     if path.exists() {
         let json = fs::read_to_string(&path).ok()?;
         serde_json::from_str(&json).ok()
@@ -193,7 +193,7 @@ pub fn list_chat_sessions() -> Vec<ChatSession> {
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map(|e| e == "json").unwrap_or(false) {
+            if path.extension().is_some_and(|e| e == "json") {
                 if let Ok(json) = fs::read_to_string(&path) {
                     if let Ok(session) = serde_json::from_str::<ChatSession>(&json) {
                         sessions.push(session);

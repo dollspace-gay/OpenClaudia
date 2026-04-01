@@ -8,7 +8,7 @@
 //! - `agents/` directory for agent definitions
 //! - `skills/` directory for skill definitions
 //!
-//! Also supports legacy OpenClaudia `manifest.json` format for backward compatibility.
+//! Also supports legacy `OpenClaudia` `manifest.json` format for backward compatibility.
 //!
 //! Plugin ID format: `plugin-name@marketplace-name`
 //!
@@ -75,7 +75,7 @@ pub enum PluginError {
 
 /// A resolved hook from a plugin, ready for the hook engine
 pub struct PluginHook {
-    /// Hook event type (PreToolUse, PostToolUse, SessionStart, etc.)
+    /// Hook event type (`PreToolUse`, `PostToolUse`, `SessionStart`, etc.)
     pub event: String,
     /// Matcher pattern for the hook
     pub matcher: Option<String>,
@@ -132,7 +132,6 @@ where
     use serde::Deserialize;
     let value: Option<serde_yaml::Value> = Option::deserialize(deserializer)?;
     match value {
-        None => Ok(None),
         Some(serde_yaml::Value::Sequence(seq)) => {
             let tools: Vec<String> = seq
                 .into_iter()
@@ -145,10 +144,14 @@ where
         }
         Some(serde_yaml::Value::String(s)) => {
             // Comma-separated: "Bash(git add:*), Bash(git status:*)"
-            let tools: Vec<String> = s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+            let tools: Vec<String> = s
+                .split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect();
             Ok(if tools.is_empty() { None } else { Some(tools) })
         }
-        _ => Ok(None),
+        None | Some(_) => Ok(None),
     }
 }
 
@@ -166,33 +169,36 @@ fn parse_command_front_matter(content: &str) -> CommandFrontMatter {
 
     // Find the closing ---
     let after_first = &trimmed[3..].trim_start_matches(['\r', '\n']);
-    if let Some(end_pos) = after_first.find("\n---") {
-        let yaml_block = &after_first[..end_pos];
-        let body_start = end_pos + 4; // skip \n---
-        let body = after_first[body_start..]
-            .trim_start_matches(['\r', '\n'])
-            .to_string();
-
-        match serde_yaml::from_str::<CommandFrontMatter>(yaml_block) {
-            Ok(mut fm) => {
-                fm.body = body;
-                fm
+    after_first.find("\n---").map_or_else(
+        || {
+            // No closing ---, treat entire content as body
+            CommandFrontMatter {
+                body: content.to_string(),
+                ..Default::default()
             }
-            Err(e) => {
-                warn!("Failed to parse command front matter as YAML: {}", e);
-                CommandFrontMatter {
-                    body: content.to_string(),
-                    ..Default::default()
+        },
+        |end_pos| {
+            let yaml_block = &after_first[..end_pos];
+            let body_start = end_pos + 4; // skip \n---
+            let body = after_first[body_start..]
+                .trim_start_matches(['\r', '\n'])
+                .to_string();
+
+            match serde_yaml::from_str::<CommandFrontMatter>(yaml_block) {
+                Ok(mut fm) => {
+                    fm.body = body;
+                    fm
+                }
+                Err(e) => {
+                    warn!("Failed to parse command front matter as YAML: {}", e);
+                    CommandFrontMatter {
+                        body: content.to_string(),
+                        ..Default::default()
+                    }
                 }
             }
-        }
-    } else {
-        // No closing ---, treat entire content as body
-        CommandFrontMatter {
-            body: content.to_string(),
-            ..Default::default()
-        }
-    }
+        },
+    )
 }
 
 /// A resolved MCP server from a plugin
@@ -244,6 +250,9 @@ pub struct Plugin {
 
 impl Plugin {
     /// Load a plugin from a directory using Claude Code format (.claude-plugin/plugin.json)
+    ///
+    /// # Errors
+    /// Returns an error if plugin loading fails.
     pub fn load(path: &Path) -> Result<Self, PluginError> {
         // Try Claude Code format first: .claude-plugin/plugin.json
         let cc_manifest_path = path.join(".claude-plugin").join("plugin.json");
@@ -299,7 +308,7 @@ impl Plugin {
         Ok(plugin)
     }
 
-    /// Load a legacy OpenClaudia manifest.json and convert to PluginManifest
+    /// Load a legacy `OpenClaudia` manifest.json and convert to `PluginManifest`
     fn load_legacy_manifest(path: &Path) -> Result<PluginManifest, PluginError> {
         let content = fs::read_to_string(path).map_err(|e| PluginError::IoError(e.to_string()))?;
         let legacy: serde_json::Value = serde_json::from_str(&content)
@@ -310,7 +319,7 @@ impl Plugin {
         let description = legacy["description"].as_str().map(String::from);
 
         // Convert legacy MCP servers to new format
-        let mcp_servers = if let Some(servers) = legacy["mcp_servers"].as_array() {
+        let mcp_servers = legacy["mcp_servers"].as_array().and_then(|servers| {
             let mut map = HashMap::new();
             for server in servers {
                 let server_name = server["name"].as_str().unwrap_or("unknown").to_string();
@@ -338,9 +347,7 @@ impl Plugin {
             } else {
                 Some(McpServersSpec::Map(map))
             }
-        } else {
-            None
-        };
+        });
 
         Ok(PluginManifest {
             name,
@@ -482,7 +489,7 @@ impl Plugin {
                                     match Self::load_hooks_file(&resolved) {
                                         Ok(def) => self.hook_definitions.push(def),
                                         Err(e) => {
-                                            warn!(error = %e, "Failed to load hooks from {}", p)
+                                            warn!(error = %e, "Failed to load hooks from {}", p);
                                         }
                                     }
                                 }
@@ -499,11 +506,6 @@ impl Plugin {
 
     /// Load a hooks JSON file
     fn load_hooks_file(path: &Path) -> Result<HooksDefinition, PluginError> {
-        let content = fs::read_to_string(path).map_err(|e| PluginError::IoError(e.to_string()))?;
-        // Try parsing as HooksDefinition directly, or as a wrapper with "hooks" key
-        if let Ok(def) = serde_json::from_str::<HooksDefinition>(&content) {
-            return Ok(def);
-        }
         // Try wrapper format: { "description": "...", "hooks": { ... } }
         #[derive(Deserialize)]
         struct HooksWrapper {
@@ -511,8 +513,14 @@ impl Plugin {
             description: Option<String>,
             hooks: HooksDefinition,
         }
+
+        let content = fs::read_to_string(path).map_err(|e| PluginError::IoError(e.to_string()))?;
+        // Try parsing as HooksDefinition directly, or as a wrapper with "hooks" key
+        if let Ok(def) = serde_json::from_str::<HooksDefinition>(&content) {
+            return Ok(def);
+        }
         let wrapper: HooksWrapper = serde_json::from_str(&content)
-            .map_err(|e| PluginError::InvalidManifest(format!("Invalid hooks file: {}", e)))?;
+            .map_err(|e| PluginError::InvalidManifest(format!("Invalid hooks file: {e}")))?;
         let mut def = wrapper.hooks;
         if def.description.is_none() {
             def.description = wrapper.description;
@@ -652,16 +660,19 @@ impl Plugin {
     }
 
     /// Get the plugin name
+    #[must_use]
     pub fn name(&self) -> &str {
         &self.manifest.name
     }
 
     /// Get the plugin root path
+    #[must_use]
     pub fn root(&self) -> &Path {
         &self.path
     }
 
     /// Get environment variables to set when running plugin scripts
+    #[must_use]
     pub fn env_vars(&self) -> HashMap<String, String> {
         let mut vars = HashMap::new();
         vars.insert(
@@ -680,11 +691,13 @@ impl Plugin {
     }
 
     /// Resolve a path relative to the plugin root
+    #[must_use]
     pub fn resolve_path(&self, relative: &str) -> PathBuf {
         self.path.join(relative)
     }
 
     /// Get all resolved hooks as flat list
+    #[must_use]
     pub fn resolved_hooks(&self) -> Vec<PluginHook> {
         let mut hooks = Vec::new();
         for def in &self.hook_definitions {
@@ -753,6 +766,7 @@ impl Plugin {
     }
 
     /// Get all resolved commands
+    #[must_use]
     pub fn resolved_commands(&self) -> Vec<PluginCommand> {
         let mut commands = Vec::new();
 
@@ -815,6 +829,7 @@ impl Plugin {
     }
 
     /// Get all resolved MCP servers
+    #[must_use]
     pub fn resolved_mcp_servers(&self) -> Vec<PluginMcpServer> {
         self.mcp_configs
             .iter()

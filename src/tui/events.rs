@@ -19,7 +19,11 @@ pub enum AppEvent {
     /// Tool execution started
     ToolStart { name: String, description: String },
     /// Tool execution completed
-    ToolDone { name: String, success: bool, content: String },
+    ToolDone {
+        name: String,
+        success: bool,
+        content: String,
+    },
     /// API response completed
     ResponseDone,
     /// API error
@@ -33,26 +37,25 @@ pub struct EventHandler {
 }
 
 impl EventHandler {
+    #[must_use]
     pub fn new(tick_rate: Duration) -> Self {
         let (tx, rx) = mpsc::channel();
         let event_tx = tx.clone();
 
-        std::thread::spawn(move || {
-            loop {
-                if event::poll(tick_rate).unwrap_or(false) {
-                    if let Ok(evt) = event::read() {
-                        let should_break = match evt {
-                            CEvent::Key(key) => event_tx.send(AppEvent::Key(key)).is_err(),
-                            CEvent::Resize(w, h) => event_tx.send(AppEvent::Resize(w, h)).is_err(),
-                            _ => false,
-                        };
-                        if should_break {
-                            break;
-                        }
+        std::thread::spawn(move || loop {
+            if event::poll(tick_rate).unwrap_or(false) {
+                if let Ok(evt) = event::read() {
+                    let should_break = match evt {
+                        CEvent::Key(key) => event_tx.send(AppEvent::Key(key)).is_err(),
+                        CEvent::Resize(w, h) => event_tx.send(AppEvent::Resize(w, h)).is_err(),
+                        _ => false,
+                    };
+                    if should_break {
+                        break;
                     }
-                } else if event_tx.send(AppEvent::Tick).is_err() {
-                    break;
                 }
+            } else if event_tx.send(AppEvent::Tick).is_err() {
+                break;
             }
         });
 
@@ -60,11 +63,16 @@ impl EventHandler {
     }
 
     /// Get a sender for pushing async events (streaming, tool results) into the loop.
+    #[must_use]
     pub fn sender(&self) -> mpsc::Sender<AppEvent> {
         self.tx.clone()
     }
 
     /// Block until next event.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the event channel is disconnected.
     pub fn next(&self) -> Result<AppEvent, mpsc::RecvError> {
         self.rx.recv()
     }

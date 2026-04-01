@@ -16,8 +16,8 @@ pub mod merge;
 
 // Re-export everything public from submodules
 pub use claude_compat::{
-    load_claude_code_hooks, load_claude_code_hooks_layered, load_claude_settings,
-    ClaudeCodeHook, ClaudeCodeHookEntry, ClaudeCodeSettings, LayeredSettings,
+    load_claude_code_hooks, load_claude_code_hooks_layered, load_claude_settings, ClaudeCodeHook,
+    ClaudeCodeHookEntry, ClaudeCodeSettings, LayeredSettings,
 };
 pub use merge::merge_hooks_config;
 
@@ -26,16 +26,16 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
-use std::process::Stdio;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
-/// All hook event types supported by OpenClaudia
+/// All hook event types supported by `OpenClaudia`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HookEvent {
@@ -75,47 +75,49 @@ pub enum HookEvent {
 
 impl HookEvent {
     /// Get the config field name for this event
-    pub fn config_key(&self) -> &'static str {
+    #[must_use]
+    pub const fn config_key(&self) -> &'static str {
         match self {
-            HookEvent::SessionStart => "session_start",
-            HookEvent::SessionEnd => "session_end",
-            HookEvent::PreToolUse => "pre_tool_use",
-            HookEvent::PostToolUse => "post_tool_use",
-            HookEvent::PostToolUseFailure => "post_tool_use_failure",
-            HookEvent::UserPromptSubmit => "user_prompt_submit",
-            HookEvent::Stop => "stop",
-            HookEvent::SubagentStart => "subagent_start",
-            HookEvent::SubagentStop => "subagent_stop",
-            HookEvent::PreCompact => "pre_compact",
-            HookEvent::PermissionRequest => "permission_request",
-            HookEvent::Notification => "notification",
-            HookEvent::PreAdversaryReview => "pre_adversary_review",
-            HookEvent::PostAdversaryReview => "post_adversary_review",
-            HookEvent::VddConflict => "vdd_conflict",
-            HookEvent::VddConverged => "vdd_converged",
+            Self::SessionStart => "session_start",
+            Self::SessionEnd => "session_end",
+            Self::PreToolUse => "pre_tool_use",
+            Self::PostToolUse => "post_tool_use",
+            Self::PostToolUseFailure => "post_tool_use_failure",
+            Self::UserPromptSubmit => "user_prompt_submit",
+            Self::Stop => "stop",
+            Self::SubagentStart => "subagent_start",
+            Self::SubagentStop => "subagent_stop",
+            Self::PreCompact => "pre_compact",
+            Self::PermissionRequest => "permission_request",
+            Self::Notification => "notification",
+            Self::PreAdversaryReview => "pre_adversary_review",
+            Self::PostAdversaryReview => "post_adversary_review",
+            Self::VddConflict => "vdd_conflict",
+            Self::VddConverged => "vdd_converged",
         }
     }
 
-    /// Parse from Claude Code's PascalCase event name
+    /// Parse from Claude Code's `PascalCase` event name
+    #[must_use]
     pub fn from_claude_code_name(name: &str) -> Option<Self> {
         match name {
-            "PreToolUse" => Some(HookEvent::PreToolUse),
-            "PostToolUse" => Some(HookEvent::PostToolUse),
-            "PostToolUseFailure" => Some(HookEvent::PostToolUseFailure),
-            "UserPromptSubmit" => Some(HookEvent::UserPromptSubmit),
-            "Stop" => Some(HookEvent::Stop),
-            "SubagentStart" => Some(HookEvent::SubagentStart),
-            "SubagentStop" => Some(HookEvent::SubagentStop),
-            "PreCompact" => Some(HookEvent::PreCompact),
-            "Notification" => Some(HookEvent::Notification),
+            "PreToolUse" => Some(Self::PreToolUse),
+            "PostToolUse" => Some(Self::PostToolUse),
+            "PostToolUseFailure" => Some(Self::PostToolUseFailure),
+            "UserPromptSubmit" => Some(Self::UserPromptSubmit),
+            "Stop" => Some(Self::Stop),
+            "SubagentStart" => Some(Self::SubagentStart),
+            "SubagentStop" => Some(Self::SubagentStop),
+            "PreCompact" => Some(Self::PreCompact),
+            "Notification" => Some(Self::Notification),
             // Claude Code doesn't have these but we support them
-            "SessionStart" => Some(HookEvent::SessionStart),
-            "SessionEnd" => Some(HookEvent::SessionEnd),
-            "PermissionRequest" => Some(HookEvent::PermissionRequest),
-            "PreAdversaryReview" => Some(HookEvent::PreAdversaryReview),
-            "PostAdversaryReview" => Some(HookEvent::PostAdversaryReview),
-            "VddConflict" => Some(HookEvent::VddConflict),
-            "VddConverged" => Some(HookEvent::VddConverged),
+            "SessionStart" => Some(Self::SessionStart),
+            "SessionEnd" => Some(Self::SessionEnd),
+            "PermissionRequest" => Some(Self::PermissionRequest),
+            "PreAdversaryReview" => Some(Self::PreAdversaryReview),
+            "PostAdversaryReview" => Some(Self::PostAdversaryReview),
+            "VddConflict" => Some(Self::VddConflict),
+            "VddConverged" => Some(Self::VddConverged),
             _ => None,
         }
     }
@@ -123,7 +125,8 @@ impl HookEvent {
 
 impl HooksConfig {
     /// Check if the hooks config is empty (no hooks defined)
-    pub fn is_empty(&self) -> bool {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
         self.session_start.is_empty()
             && self.session_end.is_empty()
             && self.pre_tool_use.is_empty()
@@ -153,7 +156,7 @@ pub struct HookInput {
     /// Tool input for tool-related events
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_input: Option<Value>,
-    /// User prompt for UserPromptSubmit event
+    /// User prompt for `UserPromptSubmit` event
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
     /// Additional context data
@@ -162,6 +165,7 @@ pub struct HookInput {
 }
 
 impl HookInput {
+    #[must_use]
     pub fn new(event: HookEvent) -> Self {
         Self {
             event,
@@ -176,22 +180,26 @@ impl HookInput {
         }
     }
 
+    #[must_use]
     pub fn with_session_id(mut self, id: impl Into<String>) -> Self {
         self.session_id = Some(id.into());
         self
     }
 
+    #[must_use]
     pub fn with_tool(mut self, name: impl Into<String>, input: Value) -> Self {
         self.tool_name = Some(name.into());
         self.tool_input = Some(input);
         self
     }
 
+    #[must_use]
     pub fn with_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.prompt = Some(prompt.into());
         self
     }
 
+    #[must_use]
     pub fn with_extra(mut self, key: impl Into<String>, value: Value) -> Self {
         self.extra.insert(key.into(), value);
         self
@@ -209,7 +217,7 @@ pub struct HookOutput {
     /// System message to inject
     #[serde(rename = "systemMessage")]
     pub system_message: Option<String>,
-    /// Modified prompt (for UserPromptSubmit)
+    /// Modified prompt (for `UserPromptSubmit`)
     pub prompt: Option<String>,
     /// Additional context from hook (plain text output or hookSpecificOutput.additionalContext)
     #[serde(rename = "additionalContext")]
@@ -231,7 +239,8 @@ pub struct HookResult {
 }
 
 impl HookResult {
-    pub fn allowed() -> Self {
+    #[must_use]
+    pub const fn allowed() -> Self {
         Self {
             allowed: true,
             outputs: vec![],
@@ -252,6 +261,7 @@ impl HookResult {
     }
 
     /// Get all system messages from hook outputs
+    #[must_use]
     pub fn system_messages(&self) -> Vec<&str> {
         self.outputs
             .iter()
@@ -260,6 +270,7 @@ impl HookResult {
     }
 
     /// Get modified prompt if any hook provided one
+    #[must_use]
     pub fn modified_prompt(&self) -> Option<&str> {
         self.outputs.iter().find_map(|o| o.prompt.as_deref())
     }
@@ -307,6 +318,7 @@ pub struct HookEngine {
 }
 
 impl HookEngine {
+    #[must_use]
     pub fn new(config: HooksConfig) -> Self {
         Self {
             config,
@@ -315,6 +327,7 @@ impl HookEngine {
     }
 
     /// Set a callback for executing model hooks through a provider adapter
+    #[must_use]
     pub fn with_model_callback(mut self, callback: ModelHookCallback) -> Self {
         self.model_hook_callback = Some(Arc::new(callback));
         self
@@ -328,12 +341,12 @@ impl HookEngine {
             return HookResult::allowed();
         }
 
-        let matcher_context = self.get_matcher_context(input);
+        let matcher_context = Self::get_matcher_context(input);
 
         // Filter entries by matcher
         let matching_entries: Vec<&HookEntry> = entries
             .iter()
-            .filter(|entry| self.matches_entry(entry, &matcher_context))
+            .filter(|entry| Self::matches_entry(entry, &matcher_context))
             .collect();
 
         if matching_entries.is_empty() {
@@ -351,9 +364,9 @@ impl HookEngine {
         for entry in &matching_entries {
             for hook in &entry.hooks {
                 let timeout_secs = match hook {
-                    Hook::Command { timeout, .. } => *timeout,
-                    Hook::Prompt { timeout, .. } => *timeout,
-                    Hook::Model { timeout, .. } => *timeout,
+                    Hook::Command { timeout, .. }
+                    | Hook::Prompt { timeout, .. }
+                    | Hook::Model { timeout, .. } => *timeout,
                 };
                 hooks_to_run.push((hook, timeout_secs));
             }
@@ -425,7 +438,7 @@ impl HookEngine {
     }
 
     /// Get the string to match against for this input
-    fn get_matcher_context(&self, input: &HookInput) -> String {
+    fn get_matcher_context(input: &HookInput) -> String {
         // For tool events, match against tool name
         if let Some(tool_name) = &input.tool_name {
             return tool_name.clone();
@@ -438,21 +451,20 @@ impl HookEngine {
     }
 
     /// Check if a hook entry matches the current context
-    fn matches_entry(&self, entry: &HookEntry, context: &str) -> bool {
-        match &entry.matcher {
-            None => true, // No matcher means always match
-            Some(pattern) => match self.validate_and_match(pattern, context) {
+    fn matches_entry(entry: &HookEntry, context: &str) -> bool {
+        entry.matcher.as_ref().is_none_or(|pattern| {
+            match Self::validate_and_match(pattern, context) {
                 Ok(matched) => matched,
                 Err(e) => {
                     warn!(pattern = %pattern, error = %e, "Matcher validation failed");
                     false
                 }
-            },
-        }
+            }
+        })
     }
 
     /// Validate regex pattern and check for match
-    fn validate_and_match(&self, pattern: &str, context: &str) -> Result<bool, HookError> {
+    fn validate_and_match(pattern: &str, context: &str) -> Result<bool, HookError> {
         // Check for invalid patterns
         if pattern.is_empty() {
             return Err(HookError::InvalidMatcher("Empty pattern".to_string()));
@@ -467,17 +479,17 @@ impl HookEngine {
     /// Parse hook output — matches Claude Code behavior:
     /// - Empty output → default
     /// - Starts with '{' → try JSON parse, fall back to plain text on failure
-    /// - Anything else → treat as plain text (additionalContext / system-reminder)
-    fn parse_hook_output(stdout: &str) -> Result<HookOutput, HookError> {
+    /// - Anything else → treat as plain text (`additionalContext` / system-reminder)
+    fn parse_hook_output(stdout: &str) -> HookOutput {
         let trimmed = stdout.trim();
         if trimmed.is_empty() {
-            return Ok(HookOutput::default());
+            return HookOutput::default();
         }
 
         // Only try JSON parse if it looks like JSON (starts with '{')
         if trimmed.starts_with('{') {
             match serde_json::from_str(trimmed) {
-                Ok(output) => return Ok(output),
+                Ok(output) => return output,
                 Err(_) => {
                     // Invalid JSON that starts with { — treat as plain text
                     debug!("Hook output starts with '{{' but is not valid JSON, treating as plain text");
@@ -486,15 +498,21 @@ impl HookEngine {
         }
 
         // Plain text output — wrap as additionalContext (like Claude Code does)
-        Ok(HookOutput {
+        HookOutput {
             additional_context: Some(trimmed.to_string()),
             ..Default::default()
-        })
+        }
     }
 
-    /// Check if an action should be blocked based on hook result
+    /// Check if an action should be blocked based on hook result.
+    ///
+    /// # Errors
+    ///
+    /// Returns `HookError::Blocked` if the hook result indicates the action is denied.
     pub fn check_blocked(result: &HookResult) -> Result<(), HookError> {
-        if !result.allowed {
+        if result.allowed {
+            Ok(())
+        } else {
             let reasons: Vec<String> = result
                 .outputs
                 .iter()
@@ -506,12 +524,14 @@ impl HookEngine {
                 reasons.join("; ")
             };
             Err(HookError::Blocked(reason))
-        } else {
-            Ok(())
         }
     }
 
-    /// Fire a notification event with type and data
+    /// Fire a notification event with type and data.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the constructed JSON object is not a map (should never happen).
     pub async fn fire_notification(&self, notification_type: &str, data: Value) -> Vec<HookResult> {
         let extra = json!({
             "notification_type": notification_type,
@@ -615,13 +635,7 @@ impl HookEngine {
                 }
 
                 // Parse JSON output if present
-                let hook_output = match Self::parse_hook_output(&stdout) {
-                    Ok(output) => output,
-                    Err(e) => {
-                        debug!(error = %e, "Hook output is not JSON (treating as plain text)");
-                        HookOutput::default()
-                    }
-                };
+                let hook_output = Self::parse_hook_output(&stdout);
 
                 Ok((hook_output, exit_code))
             }
@@ -665,7 +679,7 @@ impl HookEngine {
                 },
                 0,
             )),
-            Ok(Err(e)) => Err(HookError::CommandFailed(format!("Model hook error: {}", e))),
+            Ok(Err(e)) => Err(HookError::CommandFailed(format!("Model hook error: {e}"))),
             Err(_) => Err(HookError::Timeout(timeout_secs)),
         }
     }
@@ -1074,12 +1088,12 @@ mod tests {
         let engine = HookEngine::new(HooksConfig::default());
 
         // Valid pattern match
-        let result = engine.validate_and_match("Write|Edit", "Write");
+        let result = HookEngine::validate_and_match("Write|Edit", "Write");
         assert!(result.is_ok());
         assert!(result.unwrap());
 
         // Valid pattern no match
-        let result = engine.validate_and_match("Write|Edit", "Read");
+        let result = HookEngine::validate_and_match("Write|Edit", "Read");
         assert!(result.is_ok());
         assert!(!result.unwrap());
     }
@@ -1089,7 +1103,7 @@ mod tests {
         let engine = HookEngine::new(HooksConfig::default());
 
         // Invalid regex pattern
-        let result = engine.validate_and_match("(unclosed", "test");
+        let result = HookEngine::validate_and_match("(unclosed", "test");
         assert!(result.is_err());
         assert!(matches!(result, Err(HookError::InvalidMatcher(_))));
     }
@@ -1099,7 +1113,7 @@ mod tests {
         let engine = HookEngine::new(HooksConfig::default());
 
         // Empty pattern is invalid
-        let result = engine.validate_and_match("", "test");
+        let result = HookEngine::validate_and_match("", "test");
         assert!(result.is_err());
     }
 
@@ -1108,21 +1122,21 @@ mod tests {
         let engine = HookEngine::new(HooksConfig::default());
 
         // Case sensitive by default
-        let result = engine.validate_and_match("Write", "write");
+        let result = HookEngine::validate_and_match("Write", "write");
         assert!(result.is_ok());
         assert!(!result.unwrap()); // Should not match (case sensitive)
 
         // Dot matches any char
-        let result = engine.validate_and_match(".*file.*", "read_file_content");
+        let result = HookEngine::validate_and_match(".*file.*", "read_file_content");
         assert!(result.is_ok());
         assert!(result.unwrap());
 
         // Character class
-        let result = engine.validate_and_match("^(read|write)_.*", "read_file");
+        let result = HookEngine::validate_and_match("^(read|write)_.*", "read_file");
         assert!(result.is_ok());
         assert!(result.unwrap());
 
-        let result = engine.validate_and_match("^(read|write)_.*", "delete_file");
+        let result = HookEngine::validate_and_match("^(read|write)_.*", "delete_file");
         assert!(result.is_ok());
         assert!(!result.unwrap());
     }
@@ -1221,37 +1235,36 @@ mod tests {
 
     #[test]
     fn test_parse_hook_output_empty() {
-        let result = HookEngine::parse_hook_output("");
-        assert!(result.is_ok());
-        let output = result.unwrap();
+        let output = HookEngine::parse_hook_output("");
         assert!(output.decision.is_none());
     }
 
     #[test]
     fn test_parse_hook_output_whitespace() {
-        let result = HookEngine::parse_hook_output("   \n\t  ");
-        assert!(result.is_ok());
+        let output = HookEngine::parse_hook_output("   \n\t  ");
+        assert!(output.decision.is_none());
     }
 
     #[test]
     fn test_parse_hook_output_valid_json() {
-        let result = HookEngine::parse_hook_output(r#"{"decision": "allow"}"#);
-        assert!(result.is_ok());
-        let output = result.unwrap();
+        let output = HookEngine::parse_hook_output(r#"{"decision": "allow"}"#);
         assert_eq!(output.decision, Some("allow".to_string()));
     }
 
     #[test]
     fn test_parse_hook_output_plain_text() {
         // Plain text (not starting with '{') is treated as additionalContext, not an error
-        let result = HookEngine::parse_hook_output("not valid json {").unwrap();
-        assert_eq!(result.additional_context, Some("not valid json {".to_string()));
+        let result = HookEngine::parse_hook_output("not valid json {");
+        assert_eq!(
+            result.additional_context,
+            Some("not valid json {".to_string())
+        );
     }
 
     #[test]
     fn test_parse_hook_output_invalid_json_starting_with_brace() {
         // Starts with '{' but invalid JSON — still treated as plain text
-        let result = HookEngine::parse_hook_output("{not valid}").unwrap();
+        let result = HookEngine::parse_hook_output("{not valid}");
         assert_eq!(result.additional_context, Some("{not valid}".to_string()));
     }
 

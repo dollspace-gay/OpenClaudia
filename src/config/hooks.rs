@@ -65,11 +65,11 @@ pub enum Hook {
     },
 }
 
-fn default_timeout() -> u64 {
+const fn default_timeout() -> u64 {
     60
 }
 
-fn default_prompt_timeout() -> u64 {
+const fn default_prompt_timeout() -> u64 {
     30
 }
 

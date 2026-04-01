@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 
 /// List files in a directory
-pub(crate) fn execute_list_files(args: &HashMap<String, Value>) -> (String, bool) {
+pub fn execute_list_files(args: &HashMap<String, Value>) -> (String, bool) {
     let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
 
     match fs::read_dir(path) {
@@ -15,11 +15,11 @@ pub(crate) fn execute_list_files(args: &HashMap<String, Value>) -> (String, bool
                     .file_type()
                     .map(|ft| if ft.is_dir() { "/" } else { "" })
                     .unwrap_or("");
-                items.push(format!("{}{}", name, file_type));
+                items.push(format!("{name}{file_type}"));
             }
             items.sort();
             (items.join("\n"), false)
         }
-        Err(e) => (format!("Failed to list directory '{}': {}", path, e), true),
+        Err(e) => (format!("Failed to list directory '{path}': {e}"), true),
     }
 }

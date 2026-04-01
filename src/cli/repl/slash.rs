@@ -225,7 +225,7 @@ pub fn handle_slash_command(
                         session.model,
                         msg_count,
                     );
-                    println!("     \x1b[90mid: {}\x1b[0m", id_prefix);
+                    println!("     \x1b[90mid: {id_prefix}\x1b[0m");
                 }
                 if sessions.len() > 10 {
                     println!("  ... and {} more", sessions.len() - 10);
@@ -240,20 +240,16 @@ pub fn handle_slash_command(
                 if let Some(session) = sessions.first() {
                     println!("\nContinuing: {}\n", session.title);
                     return Some(SlashCommandResult::LoadSession(session.id.clone()));
-                } else {
-                    println!("\nNo sessions to continue.\n");
                 }
+                println!("\nNo sessions to continue.\n");
             } else if let Ok(num) = args.parse::<usize>() {
                 let sessions = list_chat_sessions();
                 if num > 0 && num <= sessions.len() {
                     let session = &sessions[num - 1];
                     println!("\nContinuing: {}\n", session.title);
                     return Some(SlashCommandResult::LoadSession(session.id.clone()));
-                } else {
-                    println!(
-                        "\nInvalid session number. Use /sessions to see available sessions.\n"
-                    );
                 }
+                println!("\nInvalid session number. Use /sessions to see available sessions.\n");
             } else {
                 println!("\nUsage: /continue <number>\n");
             }
@@ -282,21 +278,21 @@ pub fn handle_slash_command(
         "model" | "models" => {
             if args.is_empty() && cmd == "model" {
                 // Show current model
-                println!("\nCurrent model: \x1b[36m{}\x1b[0m", current_model);
-                println!("Provider: {}", provider);
+                println!("\nCurrent model: \x1b[36m{current_model}\x1b[0m");
+                println!("Provider: {provider}");
                 println!("Use /model list to see available models, /model <name> to switch.\n");
                 Some(SlashCommandResult::Handled)
             } else if args.is_empty() && cmd == "models" || args == "list" {
                 // List available models (static list)
                 let models = get_available_models(provider);
-                println!("\nAvailable models for \x1b[36m{}\x1b[0m:\n", provider);
+                println!("\nAvailable models for \x1b[36m{provider}\x1b[0m:\n");
                 for m in &models {
                     let marker = if *m == current_model {
                         " \x1b[32m← current\x1b[0m"
                     } else {
                         ""
                     };
-                    println!("  \x1b[36m{}\x1b[0m{}", m, marker);
+                    println!("  \x1b[36m{m}\x1b[0m{marker}");
                 }
 
                 // Try dynamic model listing for OpenAI-compatible providers
@@ -304,9 +300,12 @@ pub fn handle_slash_command(
                     if let Some(provider_config) = config.get_provider(provider) {
                         let adapter = openclaudia::providers::get_adapter(provider);
                         if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                            if let Some(dynamic) = handle.block_on(
-                                super::models::fetch_dynamic_models(provider_config, adapter.as_ref())
-                            ) {
+                            if let Some(dynamic) =
+                                handle.block_on(super::models::fetch_dynamic_models(
+                                    provider_config,
+                                    adapter.as_ref(),
+                                ))
+                            {
                                 println!("\n  Dynamic models (from API):");
                                 for m in &dynamic {
                                     let marker = if m == current_model {
@@ -314,7 +313,7 @@ pub fn handle_slash_command(
                                     } else {
                                         ""
                                     };
-                                    println!("    \x1b[36m{}\x1b[0m{}", m, marker);
+                                    println!("    \x1b[36m{m}\x1b[0m{marker}");
                                 }
                             }
                         }
@@ -328,7 +327,7 @@ pub fn handle_slash_command(
                 let new_model = args.trim().to_string();
                 let available = get_available_models(provider);
                 if available.contains(&new_model.as_str()) || !available.is_empty() {
-                    println!("\nSwitching to model: \x1b[36m{}\x1b[0m\n", new_model);
+                    println!("\nSwitching to model: \x1b[36m{new_model}\x1b[0m\n");
                     Some(SlashCommandResult::SwitchModel(new_model))
                 } else {
                     Some(SlashCommandResult::Handled)
@@ -356,9 +355,9 @@ pub fn handle_slash_command(
                     match arboard::Clipboard::new() {
                         Ok(mut clipboard) => match clipboard.set_text(content) {
                             Ok(()) => println!("\nCopied {} chars to clipboard.\n", content.len()),
-                            Err(e) => eprintln!("\nFailed to copy to clipboard: {}\n", e),
+                            Err(e) => eprintln!("\nFailed to copy to clipboard: {e}\n"),
                         },
-                        Err(e) => eprintln!("\nClipboard not available: {}\n", e),
+                        Err(e) => eprintln!("\nClipboard not available: {e}\n"),
                     }
                 } else {
                     println!("\nNo content to copy.\n");
@@ -427,7 +426,7 @@ session:
                         println!("\u{2713} Created .openclaudia/skills/");
                         println!("\nEdit .openclaudia/config.yaml to configure providers and API keys.\n");
                     }
-                    Err(e) => println!("\n\u{2717} Failed to create config: {}\n", e),
+                    Err(e) => println!("\n\u{2717} Failed to create config: {e}\n"),
                 }
             }
             // Also run existing project rules initialization
@@ -456,7 +455,9 @@ session:
             let level = args.trim().to_lowercase();
             match level.as_str() {
                 "low" | "l" => {
-                    println!("\n\u{2713} Effort set to \x1b[33mlow\x1b[0m (faster, less thorough)\n");
+                    println!(
+                        "\n\u{2713} Effort set to \x1b[33mlow\x1b[0m (faster, less thorough)\n"
+                    );
                     Some(SlashCommandResult::SetEffort("low".to_string()))
                 }
                 "medium" | "med" | "m" | "" => {
@@ -509,10 +510,7 @@ session:
                 .output()
             {
                 Ok(o) if o.status.success() => {
-                    println!(
-                        "\u{2713} {}",
-                        String::from_utf8_lossy(&o.stdout).trim()
-                    )
+                    println!("\u{2713} {}", String::from_utf8_lossy(&o.stdout).trim());
                 }
                 _ => println!("\u{2717} not found"),
             }
@@ -529,7 +527,7 @@ session:
             print!("  Config... ");
             match openclaudia::config::load_config() {
                 Ok(_) => println!("\u{2713} loaded"),
-                Err(e) => println!("\u{2717} {}", e),
+                Err(e) => println!("\u{2717} {e}"),
             }
 
             // Check MCP servers
@@ -543,12 +541,12 @@ session:
                             .and_then(|v| {
                                 v.get("mcpServers")
                                     .and_then(|s| s.as_object())
-                                    .map(|o| o.len())
+                                    .map(serde_json::Map::len)
                             })
                             .unwrap_or(0);
-                        println!("\u{2713} {} server(s)", count);
+                        println!("\u{2713} {count} server(s)");
                     }
-                    Err(e) => println!("\u{2717} {}", e),
+                    Err(e) => println!("\u{2717} {e}"),
                 }
             } else {
                 println!("\u{00b7} not configured");
@@ -604,13 +602,10 @@ session:
                             if cfg.vdd.enabled { "on" } else { "off" },
                             cfg.vdd.mode
                         );
-                        println!(
-                            "  Session timeout: {} min",
-                            cfg.session.timeout_minutes
-                        );
+                        println!("  Session timeout: {} min", cfg.session.timeout_minutes);
                         println!();
                     }
-                    Err(e) => println!("\nFailed to load config: {}\n", e),
+                    Err(e) => println!("\nFailed to load config: {e}\n"),
                 },
                 "path" => {
                     println!("\nConfig locations:");
@@ -632,8 +627,8 @@ session:
         }
         "debug" => {
             println!("\n=== Debug Information ===\n");
-            println!("Provider:     {}", provider);
-            println!("Model:        {}", current_model);
+            println!("Provider:     {provider}");
+            println!("Model:        {current_model}");
             println!("Messages:     {}", messages.len());
             println!();
             println!("Configuration Paths:");
@@ -671,7 +666,7 @@ session:
                 } else {
                     "not set"
                 };
-                println!("  {}: {}", var, status);
+                println!("  {var}: {status}");
             }
             println!();
             Some(SlashCommandResult::Handled)
@@ -792,10 +787,7 @@ session:
                 }
                 "reload" => PluginAction::Reload,
                 _ => {
-                    println!(
-                        "\nUnknown plugin subcommand: {}. Use /plugin help.\n",
-                        subcmd
-                    );
+                    println!("\nUnknown plugin subcommand: {subcmd}. Use /plugin help.\n");
                     return Some(SlashCommandResult::Handled);
                 }
             };
@@ -818,10 +810,7 @@ session:
                 } else {
                     println!("\n=== Available Skills ({}) ===\n", all_skills.len());
                     for skill in &all_skills {
-                        println!(
-                            "  \x1b[36m{}\x1b[0m - {}",
-                            skill.name, skill.description
-                        );
+                        println!("  \x1b[36m{}\x1b[0m - {}", skill.name, skill.description);
                         println!("    \x1b[90m{}\x1b[0m", skill.path.display());
                     }
                     println!("\nUse /skill <name> to invoke a skill.\n");
@@ -829,37 +818,42 @@ session:
                 Some(SlashCommandResult::Handled)
             } else {
                 let skill_name = args.trim();
-                match skills::get_skill(skill_name) {
-                    Some(skill) => {
-                        println!(
-                            "\n\x1b[36mInvoking skill: {}\x1b[0m\n",
-                            skill.name
-                        );
-                        Some(SlashCommandResult::Skill(skill.prompt))
-                    }
-                    None => {
-                        eprintln!(
-                            "\nSkill '{}' not found. Use /skill to list available skills.\n",
-                            skill_name
-                        );
-                        Some(SlashCommandResult::Handled)
-                    }
+                if let Some(skill) = skills::get_skill(skill_name) {
+                    println!("\n\x1b[36mInvoking skill: {}\x1b[0m\n", skill.name);
+                    Some(SlashCommandResult::Skill(skill.prompt))
+                } else {
+                    eprintln!(
+                        "\nSkill '{skill_name}' not found. Use /skill to list available skills.\n"
+                    );
+                    Some(SlashCommandResult::Handled)
                 }
             }
         }
         "commit" => {
             use std::process::Command;
             // Check if in a git repo
-            if !Command::new("git").args(["rev-parse", "--is-inside-work-tree"]).output()
-                .map(|o| o.status.success()).unwrap_or(false) {
+            if !Command::new("git")
+                .args(["rev-parse", "--is-inside-work-tree"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
                 println!("\nNot inside a git repository.\n");
                 return Some(SlashCommandResult::Handled);
             }
 
-            let staged = Command::new("git").args(["diff", "--cached", "--stat"]).output();
+            let staged = Command::new("git")
+                .args(["diff", "--cached", "--stat"])
+                .output();
             let unstaged = Command::new("git").args(["diff", "--stat"]).output();
-            let has_staged = staged.as_ref().map(|o| !o.stdout.is_empty()).unwrap_or(false);
-            let has_unstaged = unstaged.as_ref().map(|o| !o.stdout.is_empty()).unwrap_or(false);
+            let has_staged = staged
+                .as_ref()
+                .map(|o| !o.stdout.is_empty())
+                .unwrap_or(false);
+            let has_unstaged = unstaged
+                .as_ref()
+                .map(|o| !o.stdout.is_empty())
+                .unwrap_or(false);
 
             if !has_staged && !has_unstaged {
                 println!("\nNo changes to commit.\n");
@@ -868,7 +862,9 @@ session:
 
             if !has_staged {
                 println!("\nUnstaged changes:");
-                if let Ok(ref o) = unstaged { println!("{}", String::from_utf8_lossy(&o.stdout)); }
+                if let Ok(ref o) = unstaged {
+                    println!("{}", String::from_utf8_lossy(&o.stdout));
+                }
                 print!("Stage all changes? [y/n] ");
                 use std::io::Write;
                 std::io::stdout().flush().ok();
@@ -883,8 +879,11 @@ session:
                 }
             }
 
-            let files = Command::new("git").args(["diff", "--cached", "--name-only"]).output()
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+            let files = Command::new("git")
+                .args(["diff", "--cached", "--name-only"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                .unwrap_or_default();
             let file_list: Vec<&str> = files.trim().lines().collect();
             let msg = if file_list.len() == 1 {
                 format!("Update {}", file_list[0])
@@ -893,7 +892,7 @@ session:
             };
 
             println!("\nFiles: {}", files.trim());
-            print!("\nCommit message: \x1b[36m{}\x1b[0m\n[y/e(dit)/n] ", msg);
+            print!("\nCommit message: \x1b[36m{msg}\x1b[0m\n[y/e(dit)/n] ");
             use std::io::Write;
             std::io::stdout().flush().ok();
             let mut input = String::new();
@@ -901,9 +900,11 @@ session:
             match input.trim().to_lowercase().as_str() {
                 "y" | "yes" | "" => {
                     match Command::new("git").args(["commit", "-m", &msg]).output() {
-                        Ok(o) if o.status.success() => println!("\n✓ {}", String::from_utf8_lossy(&o.stdout).trim()),
+                        Ok(o) if o.status.success() => {
+                            println!("\n✓ {}", String::from_utf8_lossy(&o.stdout).trim());
+                        }
                         Ok(o) => println!("\n✗ {}", String::from_utf8_lossy(&o.stderr).trim()),
-                        Err(e) => println!("\n✗ {}", e),
+                        Err(e) => println!("\n✗ {e}"),
                     }
                 }
                 "e" | "edit" => {
@@ -912,10 +913,15 @@ session:
                     let mut custom = String::new();
                     std::io::stdin().read_line(&mut custom).ok();
                     if !custom.trim().is_empty() {
-                        match Command::new("git").args(["commit", "-m", custom.trim()]).output() {
-                            Ok(o) if o.status.success() => println!("\n✓ {}", String::from_utf8_lossy(&o.stdout).trim()),
+                        match Command::new("git")
+                            .args(["commit", "-m", custom.trim()])
+                            .output()
+                        {
+                            Ok(o) if o.status.success() => {
+                                println!("\n✓ {}", String::from_utf8_lossy(&o.stdout).trim());
+                            }
                             Ok(o) => println!("\n✗ {}", String::from_utf8_lossy(&o.stderr).trim()),
-                            Err(e) => println!("\n✗ {}", e),
+                            Err(e) => println!("\n✗ {e}"),
                         }
                     }
                 }
@@ -925,24 +931,39 @@ session:
         }
         "commit-push-pr" => {
             use std::process::Command;
-            if !Command::new("git").args(["rev-parse", "--is-inside-work-tree"]).output()
-                .map(|o| o.status.success()).unwrap_or(false) {
+            if !Command::new("git")
+                .args(["rev-parse", "--is-inside-work-tree"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
                 println!("\nNot inside a git repository.\n");
                 return Some(SlashCommandResult::Handled);
             }
 
             // Commit first (reuse commit logic inline)
-            let staged = Command::new("git").args(["diff", "--cached", "--stat"]).output();
+            let staged = Command::new("git")
+                .args(["diff", "--cached", "--stat"])
+                .output();
             let unstaged = Command::new("git").args(["diff", "--stat"]).output();
-            let has_staged = staged.as_ref().map(|o| !o.stdout.is_empty()).unwrap_or(false);
-            let has_unstaged = unstaged.as_ref().map(|o| !o.stdout.is_empty()).unwrap_or(false);
+            let has_staged = staged
+                .as_ref()
+                .map(|o| !o.stdout.is_empty())
+                .unwrap_or(false);
+            let has_unstaged = unstaged
+                .as_ref()
+                .map(|o| !o.stdout.is_empty())
+                .unwrap_or(false);
 
             if has_staged || has_unstaged {
                 if !has_staged {
                     let _ = Command::new("git").args(["add", "-A"]).output();
                 }
-                let files = Command::new("git").args(["diff", "--cached", "--name-only"]).output()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+                let files = Command::new("git")
+                    .args(["diff", "--cached", "--name-only"])
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                    .unwrap_or_default();
                 let file_list: Vec<&str> = files.trim().lines().collect();
                 let msg = if file_list.len() == 1 {
                     format!("Update {}", file_list[0])
@@ -950,17 +971,29 @@ session:
                     format!("Update {} files", file_list.len())
                 };
                 match Command::new("git").args(["commit", "-m", &msg]).output() {
-                    Ok(o) if o.status.success() => println!("✓ Committed: {}", msg),
-                    Ok(o) => { println!("✗ Commit failed: {}", String::from_utf8_lossy(&o.stderr).trim()); return Some(SlashCommandResult::Handled); }
-                    Err(e) => { println!("✗ {}", e); return Some(SlashCommandResult::Handled); }
+                    Ok(o) if o.status.success() => println!("✓ Committed: {msg}"),
+                    Ok(o) => {
+                        println!(
+                            "✗ Commit failed: {}",
+                            String::from_utf8_lossy(&o.stderr).trim()
+                        );
+                        return Some(SlashCommandResult::Handled);
+                    }
+                    Err(e) => {
+                        println!("✗ {e}");
+                        return Some(SlashCommandResult::Handled);
+                    }
                 }
             }
 
             // Push
-            let branch = Command::new("git").args(["rev-parse", "--abbrev-ref", "HEAD"]).output()
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+            let branch = Command::new("git")
+                .args(["rev-parse", "--abbrev-ref", "HEAD"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default();
             if branch == "main" || branch == "master" {
-                println!("\n⚠ You're on '{}'. Push anyway? [y/n] ", branch);
+                println!("\n⚠ You're on '{branch}'. Push anyway? [y/n] ");
                 use std::io::Write;
                 std::io::stdout().flush().ok();
                 let mut input = String::new();
@@ -970,18 +1003,44 @@ session:
                     return Some(SlashCommandResult::Handled);
                 }
             }
-            match Command::new("git").args(["push", "-u", "origin", &branch]).output() {
-                Ok(o) if o.status.success() => println!("✓ Pushed to origin/{}", branch),
-                Ok(o) => { println!("✗ Push failed: {}", String::from_utf8_lossy(&o.stderr).trim()); return Some(SlashCommandResult::Handled); }
-                Err(e) => { println!("✗ {}", e); return Some(SlashCommandResult::Handled); }
+            match Command::new("git")
+                .args(["push", "-u", "origin", &branch])
+                .output()
+            {
+                Ok(o) if o.status.success() => println!("✓ Pushed to origin/{branch}"),
+                Ok(o) => {
+                    println!(
+                        "✗ Push failed: {}",
+                        String::from_utf8_lossy(&o.stderr).trim()
+                    );
+                    return Some(SlashCommandResult::Handled);
+                }
+                Err(e) => {
+                    println!("✗ {e}");
+                    return Some(SlashCommandResult::Handled);
+                }
             }
 
             // Create PR if gh is available
-            if Command::new("which").arg("gh").output().map(|o| o.status.success()).unwrap_or(false) {
-                let last_msg = Command::new("git").args(["log", "-1", "--format=%s"]).output()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or(branch.clone());
-                match Command::new("gh").args(["pr", "create", "--title", &last_msg, "--body", ""]).output() {
-                    Ok(o) if o.status.success() => println!("✓ PR created: {}", String::from_utf8_lossy(&o.stdout).trim()),
+            if Command::new("which")
+                .arg("gh")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
+                let last_msg = Command::new("git")
+                    .args(["log", "-1", "--format=%s"])
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or(branch);
+                match Command::new("gh")
+                    .args(["pr", "create", "--title", &last_msg, "--body", ""])
+                    .output()
+                {
+                    Ok(o) if o.status.success() => println!(
+                        "✓ PR created: {}",
+                        String::from_utf8_lossy(&o.stdout).trim()
+                    ),
                     Ok(o) => {
                         let err = String::from_utf8_lossy(&o.stderr);
                         if err.contains("already exists") {
@@ -990,7 +1049,7 @@ session:
                             println!("✗ PR creation failed: {}", err.trim());
                         }
                     }
-                    Err(e) => println!("✗ {}", e),
+                    Err(e) => println!("✗ {e}"),
                 }
             } else {
                 println!("(gh CLI not found — install it to auto-create PRs)");
@@ -998,35 +1057,54 @@ session:
             Some(SlashCommandResult::Handled)
         }
         "cost" => {
-            let msg_text: String = messages.iter()
+            let msg_text: String = messages
+                .iter()
                 .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
-                .collect::<Vec<_>>().join(" ");
+                .collect::<Vec<_>>()
+                .join(" ");
             let tokens = openclaudia::compaction::estimate_tokens(&msg_text);
             // Rough pricing: Sonnet ~$3/M input, $15/M output; assume 50/50 split
             let est_cost = tokens as f64 * 0.000009;
             println!("\nSession cost estimate:");
-            println!("  Tokens used: ~{}", tokens);
-            println!("  Estimated cost: ${:.4}", est_cost);
+            println!("  Tokens used: ~{tokens}");
+            println!("  Estimated cost: ${est_cost:.4}");
             println!("  (Approximate — actual cost depends on model and input/output ratio)\n");
             Some(SlashCommandResult::Handled)
         }
         "context" => {
             let msg_count = messages.len();
-            let ctx_text: String = messages.iter()
+            let ctx_text: String = messages
+                .iter()
                 .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
-                .collect::<Vec<_>>().join(" ");
+                .collect::<Vec<_>>()
+                .join(" ");
             let tokens = openclaudia::compaction::estimate_tokens(&ctx_text);
-            let user_msgs = messages.iter().filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("user")).count();
-            let asst_msgs = messages.iter().filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant")).count();
-            let tool_msgs = messages.iter().filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("tool")).count();
-            let sys_msgs = messages.iter().filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("system")).count();
+            let user_msgs = messages
+                .iter()
+                .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+                .count();
+            let asst_msgs = messages
+                .iter()
+                .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
+                .count();
+            let tool_msgs = messages
+                .iter()
+                .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("tool"))
+                .count();
+            let sys_msgs = messages
+                .iter()
+                .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+                .count();
             let max_tokens = openclaudia::compaction::get_context_window(current_model);
-            let pct = if max_tokens > 0 { tokens as f32 / max_tokens as f32 * 100.0 } else { 0.0 };
+            let pct = if max_tokens > 0 {
+                tokens as f32 / max_tokens as f32 * 100.0
+            } else {
+                0.0
+            };
 
             println!("\nContext window:");
-            println!("  Messages: {} total (user: {}, assistant: {}, tool: {}, system: {})",
-                msg_count, user_msgs, asst_msgs, tool_msgs, sys_msgs);
-            println!("  Tokens: ~{} / {} ({:.1}%)", tokens, max_tokens, pct);
+            println!("  Messages: {msg_count} total (user: {user_msgs}, assistant: {asst_msgs}, tool: {tool_msgs}, system: {sys_msgs})");
+            println!("  Tokens: ~{tokens} / {max_tokens} ({pct:.1}%)");
             if pct >= 85.0 {
                 println!("  \x1b[33m⚠ Nearing limit — use /compact\x1b[0m");
             }
@@ -1037,11 +1115,17 @@ session:
             if openclaudia::claude_credentials::has_claude_code_credentials() {
                 println!("\n✓ Authenticated via Claude Code credentials.");
                 println!("  File: ~/.claude/.credentials.json");
-                if let Ok(creds) = tokio::runtime::Handle::current().block_on(
-                    openclaudia::claude_credentials::load_credentials()
-                ) {
-                    println!("  Type: {}", creds.subscription_type.as_deref().unwrap_or("unknown"));
-                    println!("  Tier: {}", creds.rate_limit_tier.as_deref().unwrap_or("default"));
+                if let Ok(creds) = tokio::runtime::Handle::current()
+                    .block_on(openclaudia::claude_credentials::load_credentials())
+                {
+                    println!(
+                        "  Type: {}",
+                        creds.subscription_type.as_deref().unwrap_or("unknown")
+                    );
+                    println!(
+                        "  Tier: {}",
+                        creds.rate_limit_tier.as_deref().unwrap_or("default")
+                    );
                 }
             } else {
                 println!("\n✗ Not authenticated via Claude Code.");
@@ -1072,10 +1156,7 @@ session:
                     }));
                 }
             }
-            eprintln!(
-                "Unknown command: /{}. Type /help for available commands.\n",
-                cmd
-            );
+            eprintln!("Unknown command: /{cmd}. Type /help for available commands.\n");
             Some(SlashCommandResult::Handled)
         }
     }
@@ -1083,12 +1164,11 @@ session:
 
 /// Handle /memory command for viewing auto-learned knowledge
 pub fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
-    let db = match memory_db {
-        Some(db) => db,
-        None => {
-            println!("\n\x1b[33mMemory database not available.\x1b[0m\n");
-            return;
-        }
+    let db = if let Some(db) = memory_db {
+        db
+    } else {
+        println!("\n\x1b[33mMemory database not available.\x1b[0m\n");
+        return;
     };
 
     let parts: Vec<&str> = args.splitn(2, ' ').collect();
@@ -1107,7 +1187,7 @@ pub fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
                 println!("  Database path:        {}", db.path().display());
                 println!();
             }
-            Err(e) => eprintln!("\nFailed to get auto-learn stats: {}\n", e),
+            Err(e) => eprintln!("\nFailed to get auto-learn stats: {e}\n"),
         },
         "patterns" => {
             match db.get_patterns_for_file(if subargs.is_empty() { "*" } else { subargs }) {
@@ -1125,15 +1205,18 @@ pub fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
                         println!();
                     }
                 }
-                Err(e) => eprintln!("\nFailed to get patterns: {}\n", e),
+                Err(e) => eprintln!("\nFailed to get patterns: {e}\n"),
             }
         }
         "errors" => {
-            if !subargs.is_empty() {
+            if subargs.is_empty() {
+                println!("\nUsage: /memory errors <file_path>");
+                println!("Example: /memory errors src/main.rs\n");
+            } else {
                 match db.get_error_patterns_for_file(subargs) {
                     Ok(errors) => {
                         if errors.is_empty() {
-                            println!("\nNo error patterns for '{}'.\n", subargs);
+                            println!("\nNo error patterns for '{subargs}'.\n");
                         } else {
                             println!(
                                 "\n=== Error Patterns for '{}' ({}) ===\n",
@@ -1146,18 +1229,15 @@ pub fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
                                     e.error_signature, e.occurrences
                                 );
                                 if let Some(ref res) = e.resolution {
-                                    print!(" \x1b[32m-> {}\x1b[0m", res);
+                                    print!(" \x1b[32m-> {res}\x1b[0m");
                                 }
                                 println!();
                             }
                             println!();
                         }
                     }
-                    Err(e) => eprintln!("\nFailed to get error patterns: {}\n", e),
+                    Err(e) => eprintln!("\nFailed to get error patterns: {e}\n"),
                 }
-            } else {
-                println!("\nUsage: /memory errors <file_path>");
-                println!("Example: /memory errors src/main.rs\n");
             }
         }
         "prefs" | "preferences" => match db.get_all_preferences() {
@@ -1175,27 +1255,27 @@ pub fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
                     println!();
                 }
             }
-            Err(e) => eprintln!("\nFailed to get preferences: {}\n", e),
+            Err(e) => eprintln!("\nFailed to get preferences: {e}\n"),
         },
         "files" | "relationships" => {
-            if !subargs.is_empty() {
+            if subargs.is_empty() {
+                println!("\nUsage: /memory files <file_path>");
+                println!("Example: /memory files src/main.rs\n");
+            } else {
                 match db.get_related_files(subargs) {
                     Ok(related) => {
                         if related.is_empty() {
-                            println!("\nNo file relationships for '{}'.\n", subargs);
+                            println!("\nNo file relationships for '{subargs}'.\n");
                         } else {
-                            println!("\n=== Files Co-Edited with '{}' ===\n", subargs);
+                            println!("\n=== Files Co-Edited with '{subargs}' ===\n");
                             for (file, count) in &related {
-                                println!("  {} ({}x)", file, count);
+                                println!("  {file} ({count}x)");
                             }
                             println!();
                         }
                     }
-                    Err(e) => eprintln!("\nFailed to get file relationships: {}\n", e),
+                    Err(e) => eprintln!("\nFailed to get file relationships: {e}\n"),
                 }
-            } else {
-                println!("\nUsage: /memory files <file_path>");
-                println!("Example: /memory files src/main.rs\n");
             }
         }
         "reset" => {
@@ -1204,7 +1284,7 @@ pub fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
                     Ok(()) => {
                         println!("\n\x1b[32mAll learned data reset.\x1b[0m\n");
                     }
-                    Err(e) => eprintln!("\nFailed to reset memory: {}\n", e),
+                    Err(e) => eprintln!("\nFailed to reset memory: {e}\n"),
                 }
             } else {
                 println!("\n\x1b[31mWarning: This will delete ALL learned data!\x1b[0m");
@@ -1213,7 +1293,7 @@ pub fn handle_memory_command(args: &str, memory_db: Option<&memory::MemoryDb>) {
             }
         }
         _ => {
-            println!("\nUnknown memory subcommand: {}", subcmd);
+            println!("\nUnknown memory subcommand: {subcmd}");
             println!("Available: patterns, errors, prefs, files, reset\n");
         }
     }
@@ -1225,12 +1305,13 @@ pub fn handle_activity_command(
     current_session_id: &str,
     memory_db: Option<&memory::MemoryDb>,
 ) {
-    let db = match memory_db {
-        Some(db) => db,
-        None => {
-            println!("\n\x1b[33mActivity tracking not available (memory database failed to open).\x1b[0m\n");
-            return;
-        }
+    let db = if let Some(db) = memory_db {
+        db
+    } else {
+        println!(
+            "\n\x1b[33mActivity tracking not available (memory database failed to open).\x1b[0m\n"
+        );
+        return;
     };
 
     let parts: Vec<&str> = args.splitn(2, ' ').collect();
@@ -1247,7 +1328,7 @@ pub fn handle_activity_command(
                         "\n=== Current Session Activities ({}) ===",
                         activities.len()
                     );
-                    println!("Session: {}\n", current_session_id);
+                    println!("Session: {current_session_id}\n");
                     for activity in activities.iter().take(20) {
                         let icon = match activity.activity_type.as_str() {
                             "file_read" => "R",
@@ -1263,7 +1344,7 @@ pub fn handle_activity_command(
                         let details_str = if details.is_empty() {
                             String::new()
                         } else {
-                            format!(" ({})", details)
+                            format!(" ({details})")
                         };
                         println!(
                             "  \x1b[90m[{}]\x1b[0m {} \x1b[36m{}\x1b[0m {}{}",
@@ -1285,7 +1366,7 @@ pub fn handle_activity_command(
                     println!();
                 }
             }
-            Err(e) => eprintln!("\nFailed to get activities: {}\n", e),
+            Err(e) => eprintln!("\nFailed to get activities: {e}\n"),
         },
         "sessions" | "recent" => {
             let limit = subargs.parse().unwrap_or(5);
@@ -1310,7 +1391,7 @@ pub fn handle_activity_command(
                             } else {
                                 session.summary.clone()
                             };
-                            println!("     Summary: {}", summary_preview);
+                            println!("     Summary: {summary_preview}");
 
                             if !session.files_modified.is_empty() {
                                 println!("     Files: {}", session.files_modified.join(", "));
@@ -1322,7 +1403,7 @@ pub fn handle_activity_command(
                         }
                     }
                 }
-                Err(e) => eprintln!("\nFailed to get recent sessions: {}\n", e),
+                Err(e) => eprintln!("\nFailed to get recent sessions: {e}\n"),
             }
         }
         "files" => match db.get_session_files_modified(current_session_id) {
@@ -1332,12 +1413,12 @@ pub fn handle_activity_command(
                 } else {
                     println!("\n=== Files Modified This Session ({}) ===\n", files.len());
                     for file in &files {
-                        println!("  {}", file);
+                        println!("  {file}");
                     }
                     println!();
                 }
             }
-            Err(e) => eprintln!("\nFailed to get modified files: {}\n", e),
+            Err(e) => eprintln!("\nFailed to get modified files: {e}\n"),
         },
         "issues" => match db.get_session_issues(current_session_id) {
             Ok(issues) => {
@@ -1346,12 +1427,12 @@ pub fn handle_activity_command(
                 } else {
                     println!("\n=== Issues Worked This Session ({}) ===\n", issues.len());
                     for issue in &issues {
-                        println!("  {}", issue);
+                        println!("  {issue}");
                     }
                     println!();
                 }
             }
-            Err(e) => eprintln!("\nFailed to get issues: {}\n", e),
+            Err(e) => eprintln!("\nFailed to get issues: {e}\n"),
         },
         "help" => {
             println!("\nActivity Commands:");
@@ -1362,7 +1443,7 @@ pub fn handle_activity_command(
             println!();
         }
         _ => {
-            println!("\nUnknown activity subcommand: {}", subcmd);
+            println!("\nUnknown activity subcommand: {subcmd}");
             println!("Available: current, sessions, files, issues, help\n");
         }
     }
@@ -1388,20 +1469,20 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
                     let version = plugin.manifest.version.as_deref().unwrap_or("0.0.0");
                     println!("  {} v{} [{}]", plugin.name(), version, status);
                     if let Some(desc) = &plugin.manifest.description {
-                        println!("    {}", desc);
+                        println!("    {desc}");
                     }
                     let cmd_count = plugin.command_paths.len() + plugin.command_metadata.len();
                     let hook_count = plugin.hook_definitions.len();
                     let mcp_count = plugin.mcp_configs.len();
                     let mut components = Vec::new();
                     if cmd_count > 0 {
-                        components.push(format!("{} command(s)", cmd_count));
+                        components.push(format!("{cmd_count} command(s)"));
                     }
                     if hook_count > 0 {
-                        components.push(format!("{} hook def(s)", hook_count));
+                        components.push(format!("{hook_count} hook def(s)"));
                     }
                     if mcp_count > 0 {
-                        components.push(format!("{} MCP server(s)", mcp_count));
+                        components.push(format!("{mcp_count} MCP server(s)"));
                     }
                     if !components.is_empty() {
                         println!("    Components: {}", components.join(", "));
@@ -1450,14 +1531,14 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
             marketplace,
         } => match (&plugin, &marketplace) {
             (Some(p), Some(m)) => {
-                println!("\nInstalling plugin '{}' from marketplace '{}'...", p, m);
+                println!("\nInstalling plugin '{p}' from marketplace '{m}'...");
                 match plugin_manager.install_from_marketplace(p, m) {
-                    Ok(id) => println!("Installed '{}'. Restart to apply changes.\n", id),
-                    Err(e) => eprintln!("Failed to install: {}\n", e),
+                    Ok(id) => println!("Installed '{id}'. Restart to apply changes.\n"),
+                    Err(e) => eprintln!("Failed to install: {e}\n"),
                 }
             }
             (Some(p), None) => {
-                println!("\nInstalling plugin '{}'...", p);
+                println!("\nInstalling plugin '{p}'...");
                 let path = std::path::Path::new(p.as_str());
                 if path.exists() && path.is_dir() {
                     match plugins::Plugin::load(path) {
@@ -1466,7 +1547,7 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
                             let plugins_dir = std::path::PathBuf::from(".openclaudia/plugins");
                             let dest = plugins_dir.join(&name);
                             if let Err(e) = plugins::copy_dir_recursive(path, &dest) {
-                                eprintln!("Failed to install plugin: {}\n", e);
+                                eprintln!("Failed to install plugin: {e}\n");
                                 return;
                             }
                             let mut installed = plugins::InstalledPlugins::load();
@@ -1481,7 +1562,7 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
                                             .to_string(),
                                     ),
                                     install_path: dest.to_string_lossy().to_string(),
-                                    version: loaded.manifest.version.clone(),
+                                    version: loaded.manifest.version,
                                     installed_at: Some(chrono::Utc::now().to_rfc3339()),
                                     last_updated: None,
                                     git_commit_sha: None,
@@ -1491,22 +1572,22 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
                                 tracing::warn!("Failed to save install tracking: {}", e);
                             }
                             let _ = plugin_manager.reload();
-                            println!("Installed plugin '{}'. Restart to apply changes.\n", name);
+                            println!("Installed plugin '{name}'. Restart to apply changes.\n");
                         }
                         Err(e) => {
-                            eprintln!("Failed to load plugin from path: {}\n", e);
+                            eprintln!("Failed to load plugin from path: {e}\n");
                         }
                     }
                 } else if p.contains('/') || p.ends_with(".git") || p.starts_with("http") {
-                    println!("\nCloning plugin from '{}'...", p);
+                    println!("\nCloning plugin from '{p}'...");
                     match plugin_manager.install_from_git(p, None) {
                         Ok(name) => {
-                            println!("Installed plugin '{}'. Restart to apply changes.\n", name);
+                            println!("Installed plugin '{name}'. Restart to apply changes.\n");
                         }
-                        Err(e) => eprintln!("Failed to install: {}\n", e),
+                        Err(e) => eprintln!("Failed to install: {e}\n"),
                     }
                 } else {
-                    eprintln!("\nPlugin '{}' not found as a local path.", p);
+                    eprintln!("\nPlugin '{p}' not found as a local path.");
                     println!("Try: /plugin install <git-url> or /plugin install <plugin>@<marketplace>\n");
                 }
             }
@@ -1558,28 +1639,22 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
                 let plugin_dir = plugins_dir.join(&plugin);
                 if plugin_dir.exists() {
                     if let Err(e) = fs::remove_dir_all(&plugin_dir) {
-                        eprintln!("Warning: Could not remove plugin directory: {}", e);
+                        eprintln!("Warning: Could not remove plugin directory: {e}");
                     }
                 }
                 let _ = plugin_manager.reload();
-                println!(
-                    "\nUninstalled plugin '{}'. Restart to apply changes.\n",
-                    plugin
-                );
+                println!("\nUninstalled plugin '{plugin}'. Restart to apply changes.\n");
             } else {
-                eprintln!("\nPlugin '{}' not found in install tracking.\n", plugin);
+                eprintln!("\nPlugin '{plugin}' not found in install tracking.\n");
             }
         }
         PluginAction::Enable { plugin } => match plugin_manager.enable(&plugin) {
-            Ok(()) => println!("\nEnabled plugin '{}'. Restart to apply changes.\n", plugin),
-            Err(e) => eprintln!("\nFailed to enable plugin: {}\n", e),
+            Ok(()) => println!("\nEnabled plugin '{plugin}'. Restart to apply changes.\n"),
+            Err(e) => eprintln!("\nFailed to enable plugin: {e}\n"),
         },
         PluginAction::Disable { plugin } => match plugin_manager.disable(&plugin) {
-            Ok(()) => println!(
-                "\nDisabled plugin '{}'. Restart to apply changes.\n",
-                plugin
-            ),
-            Err(e) => eprintln!("\nFailed to disable plugin: {}\n", e),
+            Ok(()) => println!("\nDisabled plugin '{plugin}'. Restart to apply changes.\n"),
+            Err(e) => eprintln!("\nFailed to disable plugin: {e}\n"),
         },
         PluginAction::Validate { path } => {
             let target = path.unwrap_or_else(|| ".".to_string());
@@ -1595,7 +1670,7 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
                             plugin.manifest.version.as_deref().unwrap_or("not set")
                         );
                         if let Some(desc) = &plugin.manifest.description {
-                            println!("  Description: {}", desc);
+                            println!("  Description: {desc}");
                         }
                         let cmds = plugin.resolved_commands();
                         let hooks = plugin.resolved_hooks();
@@ -1607,7 +1682,7 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
                     }
                     Err(e) => {
                         println!("\n=== Plugin Validation: FAILED ===\n");
-                        println!("  Error: {}\n", e);
+                        println!("  Error: {e}\n");
                     }
                 }
             } else if target_path.is_file() {
@@ -1637,11 +1712,11 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
                     }
                     Err(e) => {
                         println!("\n=== Manifest Validation: FAILED ===\n");
-                        println!("  Could not read file: {}\n", e);
+                        println!("  Could not read file: {e}\n");
                     }
                 }
             } else {
-                println!("\nPath not found: {}\n", target);
+                println!("\nPath not found: {target}\n");
                 println!("Usage: /plugin validate <path>");
                 println!(
                     "  /plugin validate .                          - Validate current directory"
@@ -1661,30 +1736,30 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
                                 manifest.name,
                                 manifest.plugins.len()
                             ),
-                            Err(e) => eprintln!("\nFailed to add marketplace: {}\n", e),
+                            Err(e) => eprintln!("\nFailed to add marketplace: {e}\n"),
                         }
                     } else if t.contains('/') || t.ends_with(".git") || t.starts_with("http") {
-                        println!("\nCloning marketplace from '{}'...", t);
+                        println!("\nCloning marketplace from '{t}'...");
                         match plugin_manager.add_marketplace_from_git(t, None) {
                             Ok(manifest) => println!(
                                 "Added marketplace '{}' ({} plugins).\n",
                                 manifest.name,
                                 manifest.plugins.len()
                             ),
-                            Err(e) => eprintln!("Failed to add marketplace: {}\n", e),
+                            Err(e) => eprintln!("Failed to add marketplace: {e}\n"),
                         }
                     } else {
-                        eprintln!("\nCould not resolve '{}' as a path or URL.\n", t);
+                        eprintln!("\nCould not resolve '{t}' as a path or URL.\n");
                     }
                 } else {
                     println!("\nUsage: /plugin marketplace add <path-or-url>\n");
                 }
             }
-            Some("remove") | Some("rm") => {
+            Some("remove" | "rm") => {
                 if let Some(t) = &target {
                     match plugin_manager.remove_marketplace(t) {
-                        Ok(()) => println!("\nRemoved marketplace '{}'.\n", t),
-                        Err(e) => eprintln!("\nFailed to remove marketplace: {}\n", e),
+                        Ok(()) => println!("\nRemoved marketplace '{t}'.\n"),
+                        Err(e) => eprintln!("\nFailed to remove marketplace: {e}\n"),
                     }
                 } else {
                     println!("\nUsage: /plugin marketplace remove <name>\n");
@@ -1701,16 +1776,16 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
                             manifest.name,
                             manifest.plugins.len()
                         ),
-                        Err(e) => eprintln!("\nFailed to update '{}': {}\n", t, e),
+                        Err(e) => eprintln!("\nFailed to update '{t}': {e}\n"),
                     }
                 } else {
                     println!("\nUpdating {} marketplace(s)...", marketplaces.len());
                     for (name, _) in &marketplaces {
                         match plugin_manager.update_marketplace(name) {
                             Ok(m) => {
-                                println!("  {} - updated ({} plugins)", name, m.plugins.len())
+                                println!("  {} - updated ({} plugins)", name, m.plugins.len());
                             }
-                            Err(e) => eprintln!("  {} - failed: {}", name, e),
+                            Err(e) => eprintln!("  {name} - failed: {e}"),
                         }
                     }
                     println!();
@@ -1748,7 +1823,7 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
             let errors = plugin_manager.reload();
             println!("\nReloaded plugins: {} loaded", plugin_manager.count());
             for err in &errors {
-                eprintln!("  Error: {}", err);
+                eprintln!("  Error: {err}");
             }
             println!();
         }
@@ -1759,15 +1834,12 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
             if let Some(plugin) = plugin_manager.get(&plugin_name) {
                 let commands = plugin.resolved_commands();
                 if let Some(cmd) = commands.iter().find(|c| c.name == command_name) {
-                    println!("\n--- /{}: {} ---\n", plugin_name, command_name);
+                    println!("\n--- /{plugin_name}: {command_name} ---\n");
                     println!("{}", cmd.content);
                     println!();
                 } else {
                     let available: Vec<_> = commands.iter().map(|c| c.name.clone()).collect();
-                    eprintln!(
-                        "\nCommand '{}' not found in plugin '{}'.",
-                        command_name, plugin_name
-                    );
+                    eprintln!("\nCommand '{command_name}' not found in plugin '{plugin_name}'.");
                     if available.is_empty() {
                         eprintln!("This plugin has no commands.\n");
                     } else {
@@ -1776,8 +1848,7 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
                 }
             } else {
                 eprintln!(
-                    "\nPlugin '{}' not found. Use /plugin to see installed plugins.\n",
-                    plugin_name
+                    "\nPlugin '{plugin_name}' not found. Use /plugin to see installed plugins.\n"
                 );
             }
         }

@@ -59,7 +59,7 @@ pub(crate) async fn run_shell_command(command: &str, timeout: Duration) -> Stati
             command: command.to_string(),
             exit_code: -1,
             stdout: String::new(),
-            stderr: format!("Command failed to execute: {}", e),
+            stderr: format!("Command failed to execute: {e}"),
             passed: false,
         },
         Err(_) => StaticAnalysisResult {
@@ -96,7 +96,7 @@ pub(crate) async fn run_chainlink_create(
         .stderr(Stdio::piped())
         .output()
         .await
-        .map_err(|e| VddError::ChainlinkError(format!("Failed to run chainlink: {}", e)))?;
+        .map_err(|e| VddError::ChainlinkError(format!("Failed to run chainlink: {e}")))?;
 
     let create_text = String::from_utf8_lossy(&create_output.stdout);
 
@@ -111,7 +111,7 @@ pub(crate) async fn run_chainlink_create(
     // Label it
     let _ = tokio::process::Command::new(shell)
         .arg(flag)
-        .arg(format!("chainlink label {} {}", issue_id, label))
+        .arg(format!("chainlink label {issue_id} {label}"))
         .output()
         .await;
 

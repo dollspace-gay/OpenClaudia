@@ -21,8 +21,8 @@ pub use guardrails::{
 };
 pub use hooks::{Hook, HookEntry, HooksConfig};
 pub use keybindings::{
-    parse_chord, ChordResolveResult, KeyAction, KeyContext, KeybindingResolver,
-    KeybindingsConfig, ParsedKeystroke,
+    parse_chord, ChordResolveResult, KeyAction, KeyContext, KeybindingResolver, KeybindingsConfig,
+    ParsedKeystroke,
 };
 pub use permissions::PermissionsConfig;
 pub use provider::{ProviderConfig, ThinkingConfig};
@@ -38,7 +38,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Shared default function used by multiple submodules.
-pub(crate) fn default_true() -> bool {
+pub(crate) const fn default_true() -> bool {
     true
 }
 
@@ -86,6 +86,7 @@ pub struct AppConfig {
 // for editor integration and config validation.
 
 /// Check whether any config file exists (project or home directory).
+#[must_use]
 pub fn config_file_exists() -> bool {
     let project_config = PathBuf::from(".openclaudia/config.yaml");
     if project_config.exists() {
@@ -99,7 +100,11 @@ pub fn config_file_exists() -> bool {
     false
 }
 
-/// Load configuration from all sources
+/// Load configuration from all sources.
+///
+/// # Errors
+///
+/// Returns an error if configuration files cannot be read or parsed.
 pub fn load_config() -> Result<AppConfig, ConfigError> {
     let mut builder = Config::builder();
 
@@ -191,10 +196,12 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
 
 /// Get the active provider configuration
 impl AppConfig {
+    #[must_use]
     pub fn active_provider(&self) -> Option<&ProviderConfig> {
         self.providers.get(&self.proxy.target)
     }
 
+    #[must_use]
     pub fn get_provider(&self, name: &str) -> Option<&ProviderConfig> {
         self.providers.get(name)
     }

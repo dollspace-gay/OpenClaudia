@@ -13,11 +13,12 @@ use super::{ProviderAdapter, ProviderError};
 pub struct GoogleAdapter;
 
 impl GoogleAdapter {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self
     }
 
-    /// Convert OpenAI messages to Gemini format
+    /// Convert `OpenAI` messages to Gemini format
     fn convert_messages(messages: &[ChatMessage]) -> Vec<Value> {
         messages
             .iter()
@@ -34,13 +35,15 @@ impl GoogleAdapter {
                         let converted: Vec<Value> = parts
                             .iter()
                             .map(|p| {
-                                if let Some(text) = &p.text {
-                                    json!({"text": text})
-                                } else if let Some(image) = &p.image_url {
-                                    json!({"inlineData": image})
-                                } else {
-                                    json!({"text": ""})
-                                }
+                                p.text.as_ref().map_or_else(
+                                    || {
+                                        p.image_url.as_ref().map_or_else(
+                                            || json!({"text": ""}),
+                                            |image| json!({"inlineData": image}),
+                                        )
+                                    },
+                                    |text| json!({"text": text}),
+                                )
                             })
                             .collect();
                         Value::Array(converted)
@@ -55,7 +58,7 @@ impl GoogleAdapter {
             .collect()
     }
 
-    /// Convert OpenAI tools to Gemini function declarations
+    /// Convert `OpenAI` tools to Gemini function declarations
     fn convert_tools(tools: &[Value]) -> Value {
         let functions: Vec<Value> = tools
             .iter()
@@ -63,8 +66,8 @@ impl GoogleAdapter {
                 let func = tool.get("function")?;
                 Some(json!({
                     "name": func.get("name")?,
-                    "description": func.get("description").unwrap_or(&json!("")),
-                    "parameters": func.get("parameters").unwrap_or(&json!({}))
+                    "description": func.get("description").cloned().unwrap_or_else(|| json!("")),
+                    "parameters": func.get("parameters").cloned().unwrap_or_else(|| json!({}))
                 }))
             })
             .collect();
@@ -96,7 +99,7 @@ impl Default for GoogleAdapter {
 
 #[async_trait]
 impl ProviderAdapter for GoogleAdapter {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "google"
     }
 
@@ -167,11 +170,10 @@ impl ProviderAdapter for GoogleAdapter {
                 .unwrap_or("Unknown error");
             let code = error
                 .get("code")
-                .and_then(|c| c.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
             return Err(ProviderError::InvalidResponse(format!(
-                "Gemini API error ({}): {}",
-                code, message
+                "Gemini API error ({code}): {message}"
             )));
         }
 
@@ -231,13 +233,11 @@ impl ProviderAdapter for GoogleAdapter {
         let finish_reason = candidate
             .get("finishReason")
             .and_then(|r| r.as_str())
-            .map(|r| match r {
-                "STOP" => "stop",
+            .map_or("stop", |r| match r {
                 "MAX_TOKENS" => "length",
                 "SAFETY" => "content_filter",
                 _ => "stop",
-            })
-            .unwrap_or("stop");
+            });
 
         Ok(json!({
             "id": format!("gemini-{}", uuid::Uuid::new_v4()),
@@ -250,16 +250,16 @@ impl ProviderAdapter for GoogleAdapter {
                 "finish_reason": finish_reason
             }],
             "usage": {
-                "prompt_tokens": response.get("usageMetadata").and_then(|u| u.get("promptTokenCount")).unwrap_or(&json!(0)),
-                "completion_tokens": response.get("usageMetadata").and_then(|u| u.get("candidatesTokenCount")).unwrap_or(&json!(0)),
-                "total_tokens": response.get("usageMetadata").and_then(|u| u.get("totalTokenCount")).unwrap_or(&json!(0))
+                "prompt_tokens": response.get("usageMetadata").and_then(|u| u.get("promptTokenCount")).cloned().unwrap_or_else(|| json!(0)),
+                "completion_tokens": response.get("usageMetadata").and_then(|u| u.get("candidatesTokenCount")).cloned().unwrap_or_else(|| json!(0)),
+                "total_tokens": response.get("usageMetadata").and_then(|u| u.get("totalTokenCount")).cloned().unwrap_or_else(|| json!(0))
             }
         }))
     }
 
     fn chat_endpoint(&self, model: &str) -> String {
         // Gemini uses model name in the URL path
-        format!("/v1beta/models/{}:generateContent", model)
+        format!("/v1beta/models/{model}:generateContent")
     }
 
     fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {

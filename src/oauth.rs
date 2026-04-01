@@ -1,6 +1,6 @@
 //! OAuth 2.0 Device Flow Authentication for Claude Max subscriptions
 //!
-//! Enables OpenClaudia to authenticate using Claude Pro/Max subscriptions
+//! Enables `OpenClaudia` to authenticate using Claude Pro/Max subscriptions
 //! via OAuth 2.0 device authorization flow with PKCE.
 //!
 //! ## Flow Overview
@@ -44,7 +44,7 @@ pub const TOKEN_ENDPOINT: &str = "https://console.anthropic.com/v1/oauth/token";
 pub const API_KEY_ENDPOINT: &str = "https://api.anthropic.com/api/oauth/claude_cli/create_api_key";
 
 /// OAuth scopes required for API access
-/// Must include user:sessions:claude_code to get org:create_api_key permission
+/// Must include `user:sessions:claude_code` to get `org:create_api_key` permission
 pub const OAUTH_SCOPES: &str =
     "org:create_api_key user:profile user:inference user:sessions:claude_code";
 
@@ -65,6 +65,7 @@ pub struct PkceParams {
 
 impl PkceParams {
     /// Generate new PKCE parameters with cryptographically secure randomness
+    #[must_use]
     pub fn generate() -> Self {
         let verifier = generate_random_string(64);
         let challenge = compute_s256_challenge(&verifier);
@@ -78,6 +79,7 @@ impl PkceParams {
     }
 
     /// Build the full authorization URL with all required parameters
+    #[must_use]
     pub fn build_auth_url(&self) -> String {
         let params = [
             ("code", "true"),
@@ -96,7 +98,7 @@ impl PkceParams {
             .collect::<Vec<_>>()
             .join("&");
 
-        format!("{}?{}", OAUTH_AUTHORIZE_URL, query)
+        format!("{OAUTH_AUTHORIZE_URL}?{query}")
     }
 }
 
@@ -130,6 +132,7 @@ pub struct OAuthCredentials {
 
 impl OAuthCredentials {
     /// Check if token is completely expired
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         Utc::now() >= self.expires_at
     }
@@ -167,9 +170,9 @@ pub struct TokenExchangeResponse {
 // ============================================================================
 
 /// Authentication mode for API calls
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AuthMode {
-    /// Use ephemeral API key (x-api-key header) - for org accounts with org:create_api_key
+    /// Use ephemeral API key (x-api-key header) - for org accounts with `org:create_api_key`
     ApiKey,
     /// Use Bearer token directly (Authorization: Bearer) - for personal Max accounts
     BearerToken,
@@ -227,7 +230,7 @@ impl OAuthSession {
             credentials: OAuthCredentials {
                 access_token: response.access_token,
                 refresh_token: response.refresh_token,
-                expires_at: Utc::now() + Duration::seconds(response.expires_in as i64),
+                expires_at: Utc::now() + Duration::seconds(response.expires_in.cast_signed()),
             },
             api_key: None, // Set after calling create_api_key if auth_mode is ApiKey
             auth_mode,
@@ -238,6 +241,7 @@ impl OAuthSession {
     }
 
     /// Check if this session can create API keys
+    #[must_use]
     pub fn can_create_api_key(&self) -> bool {
         self.granted_scopes
             .iter()
@@ -263,6 +267,7 @@ impl Default for OAuthStore {
 
 impl OAuthStore {
     /// Create new OAuth store with optional persistence
+    #[must_use]
     pub fn new() -> Self {
         let persist_path =
             dirs::data_local_dir().map(|d| d.join("openclaudia").join("oauth_sessions.json"));
@@ -287,7 +292,7 @@ impl OAuthStore {
         let mut challenges = self
             .pending_challenges
             .write()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         challenges.insert(state, pkce);
     }
 
@@ -296,7 +301,7 @@ impl OAuthStore {
         let mut challenges = self
             .pending_challenges
             .write()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         challenges.remove(state)
     }
 
@@ -304,7 +309,10 @@ impl OAuthStore {
     pub fn store_session(&self, session: OAuthSession) {
         let id = session.id.clone();
         {
-            let mut sessions = self.sessions.write().unwrap_or_else(|e| e.into_inner());
+            let mut sessions = self
+                .sessions
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             sessions.insert(id.clone(), session);
         }
         self.persist_to_disk();
@@ -313,13 +321,19 @@ impl OAuthStore {
 
     /// Retrieve session by ID
     pub fn get_session(&self, id: &str) -> Option<OAuthSession> {
-        let sessions = self.sessions.read().unwrap_or_else(|e| e.into_inner());
+        let sessions = self
+            .sessions
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         sessions.get(id).cloned()
     }
 
     /// Get any valid (non-expired) session - used when no specific session ID is provided
     pub fn get_any_valid_session(&self) -> Option<OAuthSession> {
-        let sessions = self.sessions.read().unwrap_or_else(|e| e.into_inner());
+        let sessions = self
+            .sessions
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for (id, session) in sessions.iter() {
             let expired = session.credentials.is_expired();
             tracing::debug!(
@@ -342,11 +356,15 @@ impl OAuthStore {
         };
 
         // Reject symlinks to prevent credential theft
-        if path.symlink_metadata()
+        if path
+            .symlink_metadata()
             .map(|m| m.file_type().is_symlink())
             .unwrap_or(false)
         {
-            error!("OAuth session file {} is a symlink — refusing to read for security", path.display());
+            error!(
+                "OAuth session file {} is a symlink — refusing to read for security",
+                path.display()
+            );
             return;
         }
 
@@ -366,9 +384,14 @@ impl OAuthStore {
                         })
                         .collect();
 
-                    let mut sessions = self.sessions.write().unwrap_or_else(|e| e.into_inner());
+                    let mut sessions = self
+                        .sessions
+                        .write()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     *sessions = valid_sessions;
-                    info!("Loaded {} OAuth sessions from disk", sessions.len());
+                    let session_count = sessions.len();
+                    drop(sessions);
+                    info!("Loaded {} OAuth sessions from disk", session_count);
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -393,15 +416,22 @@ impl OAuthStore {
 
         // Reject symlinks before writing tokens
         if path.exists()
-            && path.symlink_metadata()
+            && path
+                .symlink_metadata()
                 .map(|m| m.file_type().is_symlink())
                 .unwrap_or(false)
         {
-            error!("OAuth session file {} is a symlink — refusing to write for security", path.display());
+            error!(
+                "OAuth session file {} is a symlink — refusing to write for security",
+                path.display()
+            );
             return;
         }
 
-        let sessions = self.sessions.read().unwrap_or_else(|e| e.into_inner());
+        let sessions = self
+            .sessions
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match serde_json::to_string_pretty(&*sessions) {
             Ok(json) => {
                 if let Err(e) = fs::write(path, &json) {
@@ -446,6 +476,7 @@ impl Default for OAuthClient {
 }
 
 impl OAuthClient {
+    #[must_use]
     pub fn new() -> Self {
         // Build client with Claude Code User-Agent (critical for OAuth)
         let http = reqwest::Client::builder()
@@ -462,6 +493,9 @@ impl OAuthClient {
     /// NOTE: This performs an immediate token refresh after initial exchange,
     /// which is required for the tokens to work with the API. The initial tokens
     /// from the authorization code exchange may not be valid for API use.
+    ///
+    /// # Errors
+    /// Returns an error if the token exchange HTTP request fails or the response cannot be parsed.
     pub async fn exchange_code(
         &self,
         code: &str,
@@ -512,6 +546,9 @@ impl OAuthClient {
     }
 
     /// Refresh access token using refresh token
+    ///
+    /// # Errors
+    /// Returns an error if the refresh HTTP request fails or the response cannot be parsed.
     pub async fn refresh_token(&self, refresh_token: &str) -> Result<TokenExchangeResponse> {
         let request = TokenExchangeRequest {
             grant_type: "refresh_token".to_string(),
@@ -547,7 +584,7 @@ impl OAuthClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Token exchange failed ({}): {}", status, body);
+            anyhow::bail!("Token exchange failed ({status}): {body}");
         }
 
         let body = response
@@ -582,14 +619,22 @@ impl OAuthClient {
     ///
     /// Claude Code uses this to convert OAuth tokens into API keys for actual
     /// API calls, since the /v1/messages endpoint doesn't support OAuth directly.
+    ///
+    /// # Errors
+    /// Returns an error if the API key creation request fails or the response cannot be parsed.
     pub async fn create_api_key(&self, access_token: &str) -> Result<String> {
+        #[derive(Deserialize)]
+        struct ApiKeyResponse {
+            raw_key: String,
+        }
+
         debug!("Creating API key from OAuth token at {}", API_KEY_ENDPOINT);
 
         // Claude Code sends null body with just Authorization header
         let response = self
             .http
             .post(API_KEY_ENDPOINT)
-            .header("Authorization", format!("Bearer {}", access_token))
+            .header("Authorization", format!("Bearer {access_token}"))
             .send()
             .await
             .context("Failed to send API key creation request")?;
@@ -597,19 +642,13 @@ impl OAuthClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("API key creation failed ({}): {}", status, body);
+            anyhow::bail!("API key creation failed ({status}): {body}");
         }
 
         let body = response
             .text()
             .await
             .context("Failed to read API key response")?;
-
-        // Parse the response to get the raw_key
-        #[derive(Deserialize)]
-        struct ApiKeyResponse {
-            raw_key: String,
-        }
 
         let key_response: ApiKeyResponse =
             serde_json::from_str(&body).context("Failed to parse API key response")?;
@@ -626,14 +665,16 @@ impl OAuthClient {
 /// Parse authorization code from Claude's combined format
 ///
 /// Claude returns the code as: `{authorization_code}#{state}`
+#[must_use]
 pub fn parse_auth_code(input: &str) -> (String, Option<String>) {
-    if let Some(idx) = input.find('#') {
-        let code = input[..idx].to_string();
-        let state = input[idx + 1..].to_string();
-        (code, Some(state))
-    } else {
-        (input.to_string(), None)
-    }
+    input.find('#').map_or_else(
+        || (input.to_string(), None),
+        |idx| {
+            let code = input[..idx].to_string();
+            let state = input[idx + 1..].to_string();
+            (code, Some(state))
+        },
+    )
 }
 
 // ============================================================================

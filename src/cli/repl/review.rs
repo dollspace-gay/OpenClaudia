@@ -26,10 +26,10 @@ pub fn review_git_changes(args: &str) {
                     println!("No changes detected.\n");
                     return;
                 }
-                println!("{}", stdout);
+                println!("{stdout}");
             }
             Err(e) => {
-                eprintln!("Failed to run git status: {}\n", e);
+                eprintln!("Failed to run git status: {e}\n");
                 return;
             }
         }
@@ -46,35 +46,35 @@ pub fn review_git_changes(args: &str) {
                     let lines: Vec<&str> = stdout.lines().collect();
                     if lines.len() > 100 {
                         for line in lines.iter().take(100) {
-                            println!("{}", line);
+                            println!("{line}");
                         }
                         println!(
                             "\n... ({} more lines, use git diff directly for full output)\n",
                             lines.len() - 100
                         );
                     } else {
-                        println!("{}", stdout);
+                        println!("{stdout}");
                     }
                 }
             }
-            Err(e) => eprintln!("Failed to run git diff: {}\n", e),
+            Err(e) => eprintln!("Failed to run git diff: {e}\n"),
         }
     } else {
         let branch = args.trim();
-        println!("=== Comparing against '{}' ===\n", branch);
+        println!("=== Comparing against '{branch}' ===\n");
 
         let branch_check = Command::new("git")
             .args(["rev-parse", "--verify", branch])
             .output();
 
         if branch_check.is_err() || !branch_check.unwrap().status.success() {
-            eprintln!("Branch '{}' not found.\n", branch);
+            eprintln!("Branch '{branch}' not found.\n");
             return;
         }
 
-        println!("Commits ahead of {}:\n", branch);
+        println!("Commits ahead of {branch}:\n");
         let log = Command::new("git")
-            .args(["log", "--oneline", &format!("{}..HEAD", branch)])
+            .args(["log", "--oneline", &format!("{branch}..HEAD")])
             .output();
 
         match log {
@@ -84,12 +84,12 @@ pub fn review_git_changes(args: &str) {
                     println!("  (no commits ahead)\n");
                 } else {
                     for line in stdout.lines() {
-                        println!("  {}", line);
+                        println!("  {line}");
                     }
                     println!();
                 }
             }
-            Err(e) => eprintln!("Failed to run git log: {}\n", e),
+            Err(e) => eprintln!("Failed to run git log: {e}\n"),
         }
 
         println!("Changed files:\n");
@@ -103,10 +103,10 @@ pub fn review_git_changes(args: &str) {
                 if stdout.is_empty() {
                     println!("  (no changes)\n");
                 } else {
-                    println!("{}", stdout);
+                    println!("{stdout}");
                 }
             }
-            Err(e) => eprintln!("Failed to run git diff --stat: {}\n", e),
+            Err(e) => eprintln!("Failed to run git diff --stat: {e}\n"),
         }
     }
 }
@@ -151,7 +151,7 @@ pub fn configure_provider_api_key() {
 
     let (provider_id, provider_name, env_var) = providers[choice - 1];
 
-    println!("\nConfiguring {}...", provider_name);
+    println!("\nConfiguring {provider_name}...");
     println!("You can get an API key from the provider's website.\n");
 
     print!("Enter API key (or press Enter to skip): ");
@@ -165,7 +165,7 @@ pub fn configure_provider_api_key() {
 
     let api_key = api_key.trim();
     if api_key.is_empty() {
-        println!("Skipped. Set {} environment variable instead.\n", env_var);
+        println!("Skipped. Set {env_var} environment variable instead.\n");
         return;
     }
 
@@ -174,7 +174,7 @@ pub fn configure_provider_api_key() {
         .join("openclaudia");
 
     if let Err(e) = fs::create_dir_all(&config_dir) {
-        eprintln!("Failed to create config directory: {}\n", e);
+        eprintln!("Failed to create config directory: {e}\n");
         return;
     }
 
@@ -186,12 +186,10 @@ pub fn configure_provider_api_key() {
         String::new()
     };
 
-    let provider_section = format!(
-        "\n# {} configuration\n{}_api_key: \"{}\"\n",
-        provider_name, provider_id, api_key
-    );
+    let provider_section =
+        format!("\n# {provider_name} configuration\n{provider_id}_api_key: \"{api_key}\"\n");
 
-    let key_pattern = format!("{}_api_key:", provider_id);
+    let key_pattern = format!("{provider_id}_api_key:");
     if config_content.contains(&key_pattern) {
         println!("\nProvider already configured in config file.");
         println!("Edit {} to update.\n", config_path.display());
@@ -203,7 +201,7 @@ pub fn configure_provider_api_key() {
                 println!("\nSaved API key to: {}", config_path.display());
                 println!("Restart the chat to use the new configuration.\n");
             }
-            Err(e) => eprintln!("\nFailed to save config: {}\n", e),
+            Err(e) => eprintln!("\nFailed to save config: {e}\n"),
         }
     }
 }

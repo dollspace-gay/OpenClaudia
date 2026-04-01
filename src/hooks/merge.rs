@@ -2,7 +2,7 @@
 //!
 //! Functions for merging hook configurations from multiple sources,
 //! deep-merging JSON settings files, and converting Claude Code hooks
-//! to OpenClaudia format.
+//! to `OpenClaudia` format.
 
 use crate::config::{Hook, HookEntry, HooksConfig};
 use serde_json::Value;
@@ -13,8 +13,9 @@ use tracing::{debug, warn};
 use super::claude_compat::{ClaudeCodeHook, ClaudeCodeSettings};
 use super::HookEvent;
 
-/// Merge two HooksConfig structs, with `other` taking precedence.
+/// Merge two `HooksConfig` structs, with `other` taking precedence.
 /// Entries from `other` with the same matcher as an entry in `base` replace the base entry.
+#[must_use]
 pub fn merge_hooks_config(base: HooksConfig, other: HooksConfig) -> HooksConfig {
     let mut merged = base;
 
@@ -88,7 +89,7 @@ pub(crate) fn deep_merge(target: &mut Value, source: &Value) {
     }
 }
 
-/// Merge Claude Code hooks into OpenClaudia HooksConfig
+/// Merge Claude Code hooks into `OpenClaudia` `HooksConfig`
 pub(crate) fn merge_claude_hooks(config: &mut HooksConfig, settings: &ClaudeCodeSettings) {
     for (event_name, entries) in &settings.hooks {
         let Some(event) = HookEvent::from_claude_code_name(event_name) else {

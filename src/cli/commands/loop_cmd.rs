@@ -7,6 +7,7 @@ use openclaudia::{
 use tokio::sync::watch;
 use tracing::{error, info};
 
+#[allow(clippy::too_many_lines)]
 /// Run in iteration/loop mode with Stop hooks
 pub async fn cmd_loop(
     max_iterations: u32,
@@ -83,7 +84,7 @@ pub async fn cmd_loop(
 
     let shutdown_tx_clone = shutdown_tx.clone();
     tokio::spawn(async move {
-        if let Ok(()) = tokio::signal::ctrl_c().await {
+        if matches!(tokio::signal::ctrl_c().await, Ok(())) {
             info!("Received Ctrl+C, initiating shutdown...");
             let _ = shutdown_tx_clone.send(true);
         }
@@ -156,8 +157,7 @@ pub async fn cmd_loop(
     }
 
     let handoff = format!(
-        "Loop mode completed after {} iterations.\nSession ended at iteration {}.",
-        iteration, iteration
+        "Loop mode completed after {iteration} iterations.\nSession ended at iteration {iteration}."
     );
     session_manager.end_session(Some(&handoff));
 

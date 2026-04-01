@@ -4,7 +4,7 @@
 //! and uses them directly with the Anthropic Messages API via `Authorization: Bearer`.
 //! Handles automatic token refresh when tokens are expired.
 //!
-//! This enables OpenClaudia users who have Claude Code installed and logged in
+//! This enables `OpenClaudia` users who have Claude Code installed and logged in
 //! to use their existing subscription without an API key or proxy.
 
 use serde::{Deserialize, Serialize};
@@ -66,18 +66,20 @@ fn credentials_path() -> Option<PathBuf> {
 }
 
 /// Check if Claude Code credentials exist
+#[must_use]
 pub fn has_claude_code_credentials() -> bool {
-    credentials_path()
-        .map(|p| p.exists())
-        .unwrap_or(false)
+    credentials_path().is_some_and(|p| p.exists())
 }
 
 /// Load Claude Code credentials, refreshing if expired.
 ///
 /// Returns the access token ready for use as `Authorization: Bearer <token>`.
+///
+/// # Errors
+///
+/// Returns an error if credentials cannot be found, read, parsed, or refreshed.
 pub async fn load_credentials() -> Result<LoadedCredentials, String> {
-    let path = credentials_path()
-        .ok_or("Cannot determine home directory")?;
+    let path = credentials_path().ok_or("Cannot determine home directory")?;
 
     if !path.exists() {
         return Err(format!(
@@ -87,7 +89,8 @@ pub async fn load_credentials() -> Result<LoadedCredentials, String> {
     }
 
     // Reject symlinks to prevent credential theft via symlink attacks
-    if path.symlink_metadata()
+    if path
+        .symlink_metadata()
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false)
     {
@@ -100,15 +103,19 @@ pub async fn load_credentials() -> Result<LoadedCredentials, String> {
     let content = std::fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
 
-    let creds: CredentialsFile = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse credentials: {}", e))?;
+    let creds: CredentialsFile =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse credentials: {e}"))?;
 
-    let oauth = creds.claude_ai_oauth
+    let oauth = creds
+        .claude_ai_oauth
         .ok_or("No claudeAiOauth section in credentials file")?;
 
     // Check if user:inference scope is present
     if !oauth.scopes.iter().any(|s| s == "user:inference") {
-        return Err("Claude Code credentials lack 'user:inference' scope. Re-login with Claude Code.".to_string());
+        return Err(
+            "Claude Code credentials lack 'user:inference' scope. Re-login with Claude Code."
+                .to_string(),
+        );
     }
 
     // Check expiry (with 5 minute buffer)
@@ -136,11 +143,16 @@ pub async fn load_credentials() -> Result<LoadedCredentials, String> {
 ///
 /// Known limitation: this function has no locking mechanism, so concurrent
 /// processes calling `refresh_and_load` simultaneously could race. This is
-/// acceptable for single-process use (OpenClaudia only runs one instance).
+/// acceptable for single-process use (`OpenClaudia` only runs one instance).
 /// Claude Code itself uses a file lock (`~/.claude/.refresh_lock`) for
 /// multi-process safety, but we skip that complexity here.
-async fn refresh_and_load(path: &PathBuf, oauth: &ClaudeAiOauth) -> Result<LoadedCredentials, String> {
-    let refresh_token = oauth.refresh_token.as_deref()
+async fn refresh_and_load(
+    path: &PathBuf,
+    oauth: &ClaudeAiOauth,
+) -> Result<LoadedCredentials, String> {
+    let refresh_token = oauth
+        .refresh_token
+        .as_deref()
         .ok_or("No refresh token available — re-login with Claude Code")?;
 
     let scopes = oauth.scopes.join(" ");
@@ -156,16 +168,18 @@ async fn refresh_and_load(path: &PathBuf, oauth: &ClaudeAiOauth) -> Result<Loade
         }))
         .send()
         .await
-        .map_err(|e| format!("Token refresh request failed: {}", e))?;
+        .map_err(|e| format!("Token refresh request failed: {e}"))?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Token refresh failed ({}): {}", status, body));
+        return Err(format!("Token refresh failed ({status}): {body}"));
     }
 
-    let refresh_response: serde_json::Value = response.json().await
-        .map_err(|e| format!("Failed to parse refresh response: {}", e))?;
+    let refresh_response: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse refresh response: {e}"))?;
 
     let new_access_token = refresh_response["access_token"]
         .as_str()
@@ -177,17 +191,15 @@ async fn refresh_and_load(path: &PathBuf, oauth: &ClaudeAiOauth) -> Result<Loade
         .unwrap_or(refresh_token)
         .to_string();
 
-    let expires_in = refresh_response["expires_in"]
-        .as_i64()
-        .unwrap_or(3600);
+    let expires_in = refresh_response["expires_in"].as_i64().unwrap_or(3600);
 
     let new_expires_at = chrono::Utc::now().timestamp_millis() + (expires_in * 1000);
 
     // Parse scopes from response
-    let new_scopes: Vec<String> = refresh_response["scope"]
-        .as_str()
-        .map(|s| s.split_whitespace().map(String::from).collect())
-        .unwrap_or_else(|| oauth.scopes.clone());
+    let new_scopes: Vec<String> = refresh_response["scope"].as_str().map_or_else(
+        || oauth.scopes.clone(),
+        |s| s.split_whitespace().map(String::from).collect(),
+    );
 
     // Update credentials file
     let updated = CredentialsFile {
@@ -202,10 +214,11 @@ async fn refresh_and_load(path: &PathBuf, oauth: &ClaudeAiOauth) -> Result<Loade
     };
 
     let json = serde_json::to_string_pretty(&updated)
-        .map_err(|e| format!("Failed to serialize updated credentials: {}", e))?;
+        .map_err(|e| format!("Failed to serialize updated credentials: {e}"))?;
 
     // Reject symlinks before writing refreshed tokens
-    if path.symlink_metadata()
+    if path
+        .symlink_metadata()
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false)
     {
@@ -215,8 +228,7 @@ async fn refresh_and_load(path: &PathBuf, oauth: &ClaudeAiOauth) -> Result<Loade
         ));
     }
 
-    std::fs::write(path, json)
-        .map_err(|e| format!("Failed to write updated credentials: {}", e))?;
+    std::fs::write(path, json).map_err(|e| format!("Failed to write updated credentials: {e}"))?;
 
     // Preserve original file permissions (0600)
     #[cfg(unix)]
@@ -238,29 +250,33 @@ async fn refresh_and_load(path: &PathBuf, oauth: &ClaudeAiOauth) -> Result<Loade
 /// Build the HTTP headers for Anthropic API with OAuth Bearer auth.
 ///
 /// These headers replace the `x-api-key` header used with API keys.
+#[must_use]
 pub fn get_oauth_headers(access_token: &str) -> Vec<(String, String)> {
     vec![
-        ("Authorization".to_string(), format!("Bearer {}", access_token)),
+        (
+            "Authorization".to_string(),
+            format!("Bearer {access_token}"),
+        ),
         ("anthropic-version".to_string(), "2023-06-01".to_string()),
         ("content-type".to_string(), "application/json".to_string()),
         // Beta headers matching what Claude Code sends (required for OAuth model access)
-        ("anthropic-beta".to_string(), format!(
-            "{},{},{}",
-            CLAUDE_CODE_BETA_HEADER,
-            OAUTH_BETA_HEADER,
-            INTERLEAVED_THINKING_BETA,
-        )),
+        (
+            "anthropic-beta".to_string(),
+            format!("{CLAUDE_CODE_BETA_HEADER},{OAUTH_BETA_HEADER},{INTERLEAVED_THINKING_BETA}",),
+        ),
     ]
 }
 
 /// Get the API endpoint for OAuth-authenticated requests.
+#[must_use]
 pub fn get_oauth_endpoint(_model: &str) -> String {
     "https://api.anthropic.com/v1/messages".to_string()
 }
 
 /// The system prompt prefix that must be present for OAuth tokens to access
 /// premium models (Sonnet, Opus). The Anthropic API validates this string.
-pub const CLAUDE_CODE_SYSTEM_PROMPT: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
+pub const CLAUDE_CODE_SYSTEM_PROMPT: &str =
+    "You are Claude Code, Anthropic's official CLI for Claude.";
 
 /// Inject the Claude Code system prompt into a request body.
 /// This must be the first element in the system array for OAuth model access.
@@ -331,9 +347,15 @@ mod tests {
     #[test]
     fn test_get_oauth_headers() {
         let headers = get_oauth_headers("test-token-123");
-        assert!(headers.iter().any(|(k, v)| k == "Authorization" && v == "Bearer test-token-123"));
-        assert!(headers.iter().any(|(k, v)| k == "anthropic-beta" && v.contains("oauth-2025-04-20")));
-        assert!(headers.iter().any(|(k, v)| k == "anthropic-version" && v == "2023-06-01"));
+        assert!(headers
+            .iter()
+            .any(|(k, v)| k == "Authorization" && v == "Bearer test-token-123"));
+        assert!(headers
+            .iter()
+            .any(|(k, v)| k == "anthropic-beta" && v.contains("oauth-2025-04-20")));
+        assert!(headers
+            .iter()
+            .any(|(k, v)| k == "anthropic-version" && v == "2023-06-01"));
     }
 
     #[test]

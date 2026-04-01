@@ -37,7 +37,7 @@ pub struct TokenTrackingConfig {
     pub max_output_tokens: u32,
 }
 
-fn default_warn_threshold() -> f32 {
+const fn default_warn_threshold() -> f32 {
     0.75
 }
 
@@ -52,7 +52,7 @@ impl Default for TokenTrackingConfig {
     }
 }
 
-fn default_timeout_minutes() -> u64 {
+const fn default_timeout_minutes() -> u64 {
     30
 }
 

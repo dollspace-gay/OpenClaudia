@@ -21,7 +21,7 @@ pub fn compact_chat_session(session: &mut ChatSession) -> (usize, usize) {
     let msg_count = session.messages.len();
 
     if msg_count <= 6 {
-        println!("\nSession too short to compact ({} messages).\n", msg_count);
+        println!("\nSession too short to compact ({msg_count} messages).\n");
         return (before_tokens, before_tokens);
     }
 
@@ -39,7 +39,7 @@ pub fn compact_chat_session(session: &mut ChatSession) -> (usize, usize) {
             content.to_string()
         };
 
-        summary_parts.push(format!("[{}]: {}", role, preview));
+        summary_parts.push(format!("[{role}]: {preview}"));
     }
 
     let summary = format!(
@@ -71,7 +71,7 @@ pub fn compact_chat_session(session: &mut ChatSession) -> (usize, usize) {
 pub fn export_chat_session(session: &ChatSession) {
     let exports_dir = get_data_dir().join("exports");
     if let Err(e) = fs::create_dir_all(&exports_dir) {
-        eprintln!("\nFailed to create exports directory: {}\n", e);
+        eprintln!("\nFailed to create exports directory: {e}\n");
         return;
     }
 
@@ -107,7 +107,7 @@ pub fn export_chat_session(session: &ChatSession) {
                 content.push_str("\n\n");
             }
             _ => {
-                content.push_str(&format!("## {}\n\n", role));
+                content.push_str(&format!("## {role}\n\n"));
                 content.push_str(msg_content);
                 content.push_str("\n\n");
             }
@@ -116,7 +116,7 @@ pub fn export_chat_session(session: &ChatSession) {
 
     match fs::write(&path, content) {
         Ok(()) => println!("\nExported to: {}\n", path.display()),
-        Err(e) => eprintln!("\nFailed to export: {}\n", e),
+        Err(e) => eprintln!("\nFailed to export: {e}\n"),
     }
 }
 
@@ -162,7 +162,7 @@ pub fn save_session_to_short_term_memory(
         summary_parts.push(format!("User requests: {}", user_requests.join("; ")));
     }
     if !last_assistant_summary.is_empty() {
-        summary_parts.push(format!("Last action: {}", last_assistant_summary));
+        summary_parts.push(format!("Last action: {last_assistant_summary}"));
     }
 
     let summary = summary_parts.join("\n");

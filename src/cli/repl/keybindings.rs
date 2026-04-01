@@ -1,7 +1,7 @@
 use super::slash::SlashCommandResult;
 use openclaudia::config;
 
-/// Convert a crossterm KeyEvent to a keybinding string format
+/// Convert a crossterm `KeyEvent` to a keybinding string format
 /// Examples: "escape", "f2", "ctrl-x", "ctrl-x n" (with leader key state)
 pub fn key_event_to_string(
     event: &crossterm::event::KeyEvent,
@@ -12,7 +12,7 @@ pub fn key_event_to_string(
     let key_str = match event.code {
         KeyCode::Esc => "escape".to_string(),
         KeyCode::Tab => "tab".to_string(),
-        KeyCode::F(n) => format!("f{}", n),
+        KeyCode::F(n) => format!("f{n}"),
         KeyCode::Char(c) => {
             if event.modifiers.contains(KeyModifiers::CONTROL) {
                 format!("ctrl-{}", c.to_lowercase())
@@ -37,7 +37,7 @@ pub fn key_event_to_string(
     };
 
     if leader_active {
-        Some(format!("ctrl-x {}", key_str))
+        Some(format!("ctrl-x {key_str}"))
     } else {
         Some(key_str)
     }
@@ -48,8 +48,8 @@ pub fn execute_key_action(action: &config::KeyAction) -> Option<SlashCommandResu
     use config::KeyAction;
 
     match action {
-        KeyAction::Cancel => None,
-        KeyAction::NewSession => Some(SlashCommandResult::Clear),
+        KeyAction::Cancel | KeyAction::None => None,
+        KeyAction::NewSession | KeyAction::Clear => Some(SlashCommandResult::Clear),
         KeyAction::Exit => Some(SlashCommandResult::Exit),
         KeyAction::Export => Some(SlashCommandResult::Export),
         KeyAction::Compact => Some(SlashCommandResult::Compact),
@@ -77,8 +77,6 @@ pub fn execute_key_action(action: &config::KeyAction) -> Option<SlashCommandResu
             println!("\nUse /help for commands.\n");
             Some(SlashCommandResult::Handled)
         }
-        KeyAction::Clear => Some(SlashCommandResult::Clear),
-        KeyAction::None => None,
     }
 }
 
@@ -115,7 +113,7 @@ pub fn display_keybindings(keybindings: &config::KeybindingsConfig) {
                 .map(|k| k.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
-            println!("  {:20} {}", key_str, description);
+            println!("  {key_str:20} {description}");
         }
     }
 
@@ -123,7 +121,7 @@ pub fn display_keybindings(keybindings: &config::KeybindingsConfig) {
     if !disabled.is_empty() {
         println!("\nDisabled bindings:");
         for key in disabled {
-            println!("  {} (disabled)", key);
+            println!("  {key} (disabled)");
         }
     }
 

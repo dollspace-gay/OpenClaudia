@@ -10,13 +10,14 @@ pub struct AuditLogger {
 impl AuditLogger {
     /// Create a new audit logger for a session. Creates the log directory
     /// and opens a `.jsonl` file for appending.
+    #[must_use]
     pub fn new(session_id: &str) -> Self {
         let dir = PathBuf::from(".openclaudia/logs");
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            eprintln!("[warn] Failed to create audit log directory: {}", e);
+            eprintln!("[warn] Failed to create audit log directory: {e}");
             return Self { file: None };
         }
-        let path = dir.join(format!("{}.jsonl", session_id));
+        let path = dir.join(format!("{session_id}.jsonl"));
         let file = match std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -24,7 +25,7 @@ impl AuditLogger {
         {
             Ok(f) => Some(f),
             Err(e) => {
-                eprintln!("[warn] Failed to open audit log: {}", e);
+                eprintln!("[warn] Failed to open audit log: {e}");
                 None
             }
         };
@@ -41,7 +42,7 @@ impl AuditLogger {
             });
             if let Ok(line) = serde_json::to_string(&entry) {
                 use std::io::Write;
-                writeln!(f, "{}", line).ok();
+                writeln!(f, "{line}").ok();
             }
         }
     }
@@ -61,7 +62,7 @@ mod tests {
         // We just test that creation doesn't panic; actual file writing
         // depends on current directory which is tricky in tests
         let session_id = "test-session-123";
-        let path = log_dir.join(format!("{}.jsonl", session_id));
+        let path = log_dir.join(format!("{session_id}.jsonl"));
         let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)

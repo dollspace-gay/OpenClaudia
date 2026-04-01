@@ -143,8 +143,13 @@ pub struct StdioTransport {
 }
 
 impl StdioTransport {
-    /// Spawn a new MCP server process
-    pub async fn spawn(command: &str, args: &[&str]) -> Result<Self, McpError> {
+    /// Spawn a new MCP server process.
+    ///
+    /// # Errors
+    ///
+    /// Returns `McpError::Transport` if the process cannot be spawned or stdout
+    /// is unavailable.
+    pub fn spawn(command: &str, args: &[&str]) -> Result<Self, McpError> {
         info!(command = %command, args = ?args, "Spawning MCP server");
 
         let mut child = Command::new(command)
@@ -153,7 +158,7 @@ impl StdioTransport {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| McpError::Transport(format!("Failed to spawn process: {}", e)))?;
+            .map_err(|e| McpError::Transport(format!("Failed to spawn process: {e}")))?;
 
         // Take stdout from the child once and wrap in a persistent BufReader
         let stdout = child
@@ -183,7 +188,7 @@ impl McpTransport for StdioTransport {
         };
 
         let request_line = serde_json::to_string(&request)
-            .map_err(|e| McpError::Protocol(format!("Failed to serialize request: {}", e)))?;
+            .map_err(|e| McpError::Protocol(format!("Failed to serialize request: {e}")))?;
 
         debug!(method = %method, id = id, "Sending MCP request");
 
@@ -194,15 +199,15 @@ impl McpTransport for StdioTransport {
             stdin
                 .write_all(request_line.as_bytes())
                 .await
-                .map_err(|e| McpError::Transport(format!("Failed to write to stdin: {}", e)))?;
+                .map_err(|e| McpError::Transport(format!("Failed to write to stdin: {e}")))?;
             stdin
                 .write_all(b"\n")
                 .await
-                .map_err(|e| McpError::Transport(format!("Failed to write newline: {}", e)))?;
+                .map_err(|e| McpError::Transport(format!("Failed to write newline: {e}")))?;
             stdin
                 .flush()
                 .await
-                .map_err(|e| McpError::Transport(format!("Failed to flush stdin: {}", e)))?;
+                .map_err(|e| McpError::Transport(format!("Failed to flush stdin: {e}")))?;
         } else {
             return Err(McpError::Transport("Stdin not available".to_string()));
         }
@@ -211,15 +216,19 @@ impl McpTransport for StdioTransport {
         drop(child);
 
         // Read response from the persistent BufReader
-        let mut reader = self.reader.lock().await;
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .await
-            .map_err(|e| McpError::Transport(format!("Failed to read from stdout: {}", e)))?;
+        let line = {
+            let mut reader = self.reader.lock().await;
+            let mut buf = String::new();
+            reader
+                .read_line(&mut buf)
+                .await
+                .map_err(|e| McpError::Transport(format!("Failed to read from stdout: {e}")))?;
+            drop(reader);
+            buf
+        };
 
         let response: JsonRpcResponse = serde_json::from_str(&line)
-            .map_err(|e| McpError::Protocol(format!("Failed to parse response: {}", e)))?;
+            .map_err(|e| McpError::Protocol(format!("Failed to parse response: {e}")))?;
 
         if response.id != id {
             return Err(McpError::Protocol(format!(
@@ -233,7 +242,7 @@ impl McpTransport for StdioTransport {
             let data_info = error
                 .data
                 .as_ref()
-                .map(|d| format!(" (data: {})", d))
+                .map(|d| format!(" (data: {d})"))
                 .unwrap_or_default();
             return Err(McpError::Protocol(format!(
                 "RPC error {}: {}{}",
@@ -245,11 +254,12 @@ impl McpTransport for StdioTransport {
     }
 
     async fn close(&self) -> Result<(), McpError> {
-        let mut child = self.child.lock().await;
-        child
+        self.child
+            .lock()
+            .await
             .kill()
             .await
-            .map_err(|e| McpError::Transport(format!("Failed to kill process: {}", e)))?;
+            .map_err(|e| McpError::Transport(format!("Failed to kill process: {e}")))?;
         Ok(())
     }
 }
@@ -263,6 +273,7 @@ pub struct HttpTransport {
 
 impl HttpTransport {
     /// Create a new HTTP transport
+    #[must_use]
     pub fn new(base_url: &str) -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -292,7 +303,7 @@ impl McpTransport for HttpTransport {
             .json(&request)
             .send()
             .await
-            .map_err(|e| McpError::Transport(format!("HTTP request failed: {}", e)))?;
+            .map_err(|e| McpError::Transport(format!("HTTP request failed: {e}")))?;
 
         if !response.status().is_success() {
             return Err(McpError::Transport(format!(
@@ -304,7 +315,7 @@ impl McpTransport for HttpTransport {
         let response: JsonRpcResponse = response
             .json()
             .await
-            .map_err(|e| McpError::Protocol(format!("Failed to parse response: {}", e)))?;
+            .map_err(|e| McpError::Protocol(format!("Failed to parse response: {e}")))?;
 
         if let Some(error) = response.error {
             return Err(McpError::Protocol(format!(
@@ -332,7 +343,11 @@ pub struct McpServer {
 }
 
 impl McpServer {
-    /// Create a new MCP server with the given transport
+    /// Create a new MCP server with the given transport.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `McpError` if initialization or tool discovery fails.
     pub async fn new(name: &str, transport: Box<dyn McpTransport>) -> Result<Self, McpError> {
         let mut server = Self {
             name: name.to_string(),
@@ -382,11 +397,7 @@ impl McpServer {
             .ok();
 
         // Log server info with name and version
-        let server_name = self
-            .info
-            .as_ref()
-            .map(|i| i.name.as_str())
-            .unwrap_or("unknown");
+        let server_name = self.info.as_ref().map_or("unknown", |i| i.name.as_str());
         let server_version = self
             .info
             .as_ref()
@@ -411,7 +422,11 @@ impl McpServer {
         Ok(())
     }
 
-    /// Refresh the list of available tools
+    /// Refresh the list of available tools.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `McpError` if the tools/list request fails.
     pub async fn refresh_tools(&mut self) -> Result<(), McpError> {
         let result = self.transport.request("tools/list", None).await?;
 
@@ -426,8 +441,7 @@ impl McpServer {
                 .capabilities
                 .tools
                 .as_ref()
-                .map(|t| t.list_changed)
-                .unwrap_or(false);
+                .is_some_and(|t| t.list_changed);
 
             info!(
                 server = %self.name,
@@ -441,20 +455,26 @@ impl McpServer {
     }
 
     /// Check if the server supports tool list change notifications
+    #[must_use]
     pub fn supports_tool_list_changed(&self) -> bool {
         self.capabilities
             .tools
             .as_ref()
-            .map(|t| t.list_changed)
-            .unwrap_or(false)
+            .is_some_and(|t| t.list_changed)
     }
 
     /// Get the list of available tools
+    #[must_use]
     pub fn tools(&self) -> &[McpTool] {
         &self.tools
     }
 
-    /// Call a tool
+    /// Call a tool.
+    ///
+    /// # Errors
+    ///
+    /// Returns `McpError::ToolNotFound` if the tool is not registered, or a
+    /// transport/protocol error if the request fails.
     pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<Value, McpError> {
         if !self.tools.iter().any(|t| t.name == name) {
             return Err(McpError::ToolNotFound(name.to_string()));
@@ -473,11 +493,16 @@ impl McpServer {
     }
 
     /// Check if the server advertises resource capabilities
-    pub fn has_resources(&self) -> bool {
+    #[must_use]
+    pub const fn has_resources(&self) -> bool {
         self.capabilities.resources.is_some()
     }
 
-    /// List resources available on this server
+    /// List resources available on this server.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `McpError` if the resources/list request fails.
     pub async fn list_resources(&self) -> Result<Vec<McpResource>, McpError> {
         if !self.has_resources() {
             return Ok(Vec::new());
@@ -507,7 +532,11 @@ impl McpServer {
         Ok(resources)
     }
 
-    /// Read a specific resource by URI
+    /// Read a specific resource by URI.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `McpError` if the resources/read request fails.
     pub async fn read_resource(&self, uri: &str) -> Result<String, McpError> {
         let params = json!({ "uri": uri });
 
@@ -542,11 +571,16 @@ impl McpServer {
     }
 
     /// Get server name
+    #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// Close the connection
+    /// Close the connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `McpError` if the transport fails to close.
     pub async fn close(self) -> Result<(), McpError> {
         self.transport.close().await
     }
@@ -559,26 +593,35 @@ pub struct McpManager {
 
 impl McpManager {
     /// Create a new MCP manager
+    #[must_use]
     pub fn new() -> Self {
         Self {
             servers: HashMap::new(),
         }
     }
 
-    /// Connect to an MCP server via stdio
+    /// Connect to an MCP server via stdio.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `McpError` if spawning or initializing the server fails.
     pub async fn connect_stdio(
         &mut self,
         name: &str,
         command: &str,
         args: &[&str],
     ) -> Result<(), McpError> {
-        let transport = StdioTransport::spawn(command, args).await?;
+        let transport = StdioTransport::spawn(command, args)?;
         let server = McpServer::new(name, Box::new(transport)).await?;
         self.servers.insert(name.to_string(), server);
         Ok(())
     }
 
-    /// Connect to an MCP server via HTTP
+    /// Connect to an MCP server via HTTP.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `McpError` if connecting or initializing the server fails.
     pub async fn connect_http(&mut self, name: &str, url: &str) -> Result<(), McpError> {
         let transport = HttpTransport::new(url);
         let server = McpServer::new(name, Box::new(transport)).await?;
@@ -587,6 +630,7 @@ impl McpManager {
     }
 
     /// Get all available tools from all servers
+    #[must_use]
     pub fn all_tools(&self) -> Vec<(&str, &McpTool)> {
         self.servers
             .iter()
@@ -599,10 +643,11 @@ impl McpManager {
             .collect()
     }
 
-    /// Convert MCP tools to OpenAI function format.
+    /// Convert MCP tools to `OpenAI` function format.
     ///
     /// Tool names use `mcp__servername__toolname` with double-underscore
     /// delimiters, allowing server and tool names to contain single underscores.
+    #[must_use]
     pub fn tools_as_openai_functions(&self) -> Vec<Value> {
         self.all_tools()
             .iter()
@@ -612,7 +657,7 @@ impl McpManager {
                     "function": {
                         "name": format!("mcp__{}__{}", server_name, tool.name),
                         "description": tool.description.as_deref().unwrap_or(""),
-                        "parameters": tool.input_schema.clone().unwrap_or(json!({"type": "object", "properties": {}}))
+                        "parameters": tool.input_schema.clone().unwrap_or_else(|| json!({"type": "object", "properties": {}}))
                     }
                 })
             })
@@ -623,13 +668,17 @@ impl McpManager {
     ///
     /// Uses double-underscore (`__`) delimiters so that server and tool names
     /// may themselves contain single underscores.
+    ///
+    /// # Errors
+    ///
+    /// Returns `McpError::ToolNotFound` if the name format is invalid, or
+    /// `McpError::NotConnected` if the server is not registered.
     pub async fn call_tool(&self, full_name: &str, arguments: Value) -> Result<Value, McpError> {
         // Format: mcp__servername__toolname
         let parts: Vec<&str> = full_name.splitn(3, "__").collect();
         if parts.len() != 3 || parts[0] != "mcp" {
             return Err(McpError::ToolNotFound(format!(
-                "Invalid tool name format: {}. Expected mcp__servername__toolname",
-                full_name
+                "Invalid tool name format: {full_name}. Expected mcp__servername__toolname"
             )));
         }
 
@@ -644,23 +693,28 @@ impl McpManager {
         server.call_tool(tool_name, arguments).await
     }
 
-    /// Call a tool with a timeout
+    /// Call a tool with a timeout.
+    ///
+    /// # Errors
+    ///
+    /// Returns `McpError::Timeout` if the call exceeds the duration, or
+    /// propagates any error from `call_tool`.
     pub async fn call_tool_with_timeout(
         &self,
         full_name: &str,
         arguments: Value,
         timeout: Duration,
     ) -> Result<Value, McpError> {
-        match tokio::time::timeout(timeout, self.call_tool(full_name, arguments)).await {
-            Ok(result) => result,
-            Err(_) => {
+        tokio::time::timeout(timeout, self.call_tool(full_name, arguments))
+            .await
+            .unwrap_or_else(|_| {
                 warn!(tool = %full_name, timeout_secs = timeout.as_secs(), "MCP tool call timed out");
                 Err(McpError::Timeout)
-            }
-        }
+            })
     }
 
     /// Get information about a connected server
+    #[must_use]
     pub fn get_server_info(&self, name: &str) -> Option<(&str, bool)> {
         self.servers.get(name).map(|s| {
             let server_name = s.name();
@@ -669,7 +723,11 @@ impl McpManager {
         })
     }
 
-    /// List resources across all servers, or from a specific server
+    /// List resources across all servers, or from a specific server.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a named server is not connected or the request fails.
     pub async fn list_resources(
         &self,
         server_name: Option<&str>,
@@ -703,7 +761,11 @@ impl McpManager {
         Ok(all_resources)
     }
 
-    /// Read a specific resource from a named server
+    /// Read a specific resource from a named server.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the server is not connected or the read fails.
     pub async fn read_resource(&self, server_name: &str, uri: &str) -> anyhow::Result<String> {
         let server = self
             .servers
@@ -713,7 +775,11 @@ impl McpManager {
         Ok(content)
     }
 
-    /// Disconnect from a server
+    /// Disconnect from a server.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `McpError` if the server's transport fails to close.
     pub async fn disconnect(&mut self, name: &str) -> Result<(), McpError> {
         if let Some(server) = self.servers.remove(name) {
             server.close().await?;
@@ -721,7 +787,11 @@ impl McpManager {
         Ok(())
     }
 
-    /// Disconnect from all servers
+    /// Disconnect from all servers.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first `McpError` encountered while closing servers.
     pub async fn disconnect_all(&mut self) -> Result<(), McpError> {
         let names: Vec<String> = self.servers.keys().cloned().collect();
         for name in names {
@@ -731,11 +801,13 @@ impl McpManager {
     }
 
     /// Get the number of connected servers
+    #[must_use]
     pub fn server_count(&self) -> usize {
         self.servers.len()
     }
 
     /// Check if a server is connected
+    #[must_use]
     pub fn is_connected(&self, name: &str) -> bool {
         self.servers.contains_key(name)
     }

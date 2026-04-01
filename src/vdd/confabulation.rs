@@ -23,7 +23,8 @@ pub struct ConfabulationTracker {
 }
 
 impl ConfabulationTracker {
-    pub fn new(threshold: f32, min_iterations: u32) -> Self {
+    #[must_use]
+    pub const fn new(threshold: f32, min_iterations: u32) -> Self {
         Self {
             history: Vec::new(),
             threshold,
@@ -32,6 +33,7 @@ impl ConfabulationTracker {
     }
 
     /// Record an iteration's finding counts
+    #[allow(clippy::cast_precision_loss)] // FP rates are small enough that f32 is fine
     pub fn record_iteration(&mut self, genuine: u32, false_positives: u32) {
         let total = genuine + false_positives;
         let rate = if total > 0 {
@@ -44,21 +46,27 @@ impl ConfabulationTracker {
     }
 
     /// Current cumulative false positive rate
+    #[must_use]
     pub fn current_rate(&self) -> f32 {
         if self.history.is_empty() {
             return 0.0;
         }
         let total: f32 = self.history.iter().sum();
-        total / self.history.len() as f32
+        #[allow(clippy::cast_precision_loss)] // history len is always small
+        let len = self.history.len() as f32;
+        total / len
     }
 
     /// Most recent iteration's false positive rate
+    #[must_use]
     pub fn latest_rate(&self) -> f32 {
         self.history.last().copied().unwrap_or(0.0)
     }
 
     /// Should the loop terminate? Checks both minimum iterations and threshold.
+    #[must_use]
     pub fn should_terminate(&self) -> bool {
+        #[allow(clippy::cast_possible_truncation)] // history len won't exceed u32::MAX
         if (self.history.len() as u32) < self.min_iterations {
             return false;
         }
@@ -72,7 +80,7 @@ impl ConfabulationTracker {
 
 /// Detect common false positive patterns in adversary findings.
 pub(crate) fn is_common_false_positive(description: &str, reasoning: &str) -> bool {
-    let combined = format!("{} {}", description, reasoning);
+    let combined = format!("{description} {reasoning}");
 
     let false_positive_patterns = [
         // Standard Rust patterns the adversary may flag incorrectly
@@ -132,7 +140,10 @@ pub(crate) fn string_similarity(a: &str, b: &str) -> f32 {
         return 0.0;
     }
 
-    intersection as f32 / union as f32
+    #[allow(clippy::cast_precision_loss)] // word counts are small
+    {
+        intersection as f32 / union as f32
+    }
 }
 
 // ==========================================================================

@@ -1,11 +1,11 @@
-//! Granular tool permission system for OpenClaudia.
+//! Granular tool permission system for `OpenClaudia`.
 //!
 //! Provides glob-pattern-based permission rules that control tool execution:
 //! - Per-tool rules with glob patterns matching commands or file paths
-//! - Three decision levels: Allow, Deny, AlwaysAllow (persisted across sessions)
+//! - Three decision levels: Allow, Deny, `AlwaysAllow` (persisted across sessions)
 //! - Configurable defaults and persistence to `.openclaudia/permissions.json`
 //!
-//! Check order: always-allow rules -> session rules -> config default_allow -> Deny (prompt user)
+//! Check order: always-allow rules -> session rules -> config `default_allow` -> Deny (prompt user)
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -39,7 +39,7 @@ pub struct PermissionRule {
     pub tool: String,
     /// Glob-style pattern matched against the tool's primary argument.
     /// For Bash: matched against the command string.
-    /// For Edit/Write: matched against the file_path.
+    /// For Edit/Write: matched against the `file_path`.
     pub pattern: String,
     /// The decision to apply when this rule matches.
     pub decision: PermissionDecision,
@@ -61,10 +61,10 @@ pub enum CheckResult {
 /// Rules are checked in priority order:
 /// 1. Persisted always-allow rules (loaded from disk)
 /// 2. Session rules (added at runtime via user responses)
-/// 3. Config-level default_allow patterns
+/// 3. Config-level `default_allow` patterns
 /// 4. If nothing matches, returns `NeedsPrompt`
 pub struct PermissionManager {
-    /// Persisted rules (AlwaysAllow) loaded from `.openclaudia/permissions.json`
+    /// Persisted rules (`AlwaysAllow`) loaded from `.openclaudia/permissions.json`
     persisted_rules: Vec<PermissionRule>,
     /// Transient session rules (Allow/Deny added during this session)
     session_rules: Vec<PermissionRule>,
@@ -77,7 +77,7 @@ pub struct PermissionManager {
 }
 
 impl PermissionManager {
-    /// Create a new PermissionManager, loading persisted rules from disk.
+    /// Create a new `PermissionManager`, loading persisted rules from disk.
     pub fn new(
         persist_path: impl Into<PathBuf>,
         enabled: bool,
@@ -104,7 +104,7 @@ impl PermissionManager {
 
     /// Check whether a tool invocation is allowed.
     ///
-    /// - `tool_name`: e.g. "bash", "edit_file", "write_file"
+    /// - `tool_name`: e.g. "bash", "`edit_file`", "`write_file`"
     /// - `tool_args`: the parsed arguments map from the tool call
     ///
     /// Returns `Allowed`, `Denied`, or `NeedsPrompt`.
@@ -123,8 +123,7 @@ impl PermissionManager {
                     "Malformed tool args: required argument is not a string — denying"
                 );
                 return CheckResult::Denied(format!(
-                    "Denied: {} tool call has malformed arguments (expected string, got wrong type)",
-                    tool
+                    "Denied: {tool} tool call has malformed arguments (expected string, got wrong type)"
                 ));
             }
             None => {
@@ -301,23 +300,26 @@ impl PermissionManager {
     /// The pattern is anchored (must match the entire target).
     /// Compiled regexes are cached in `GLOB_CACHE` so each pattern is only compiled once.
     fn glob_matches(pattern: &str, target: &str) -> bool {
-        let re = Self::glob_to_regex_cached(pattern);
-        match re {
-            Some(re) => re.is_match(target),
-            None => false,
-        }
+        Self::glob_to_regex_cached(pattern).is_some_and(|re| re.is_match(target))
     }
 
     /// Return a cached compiled `Regex` for a glob pattern, compiling and caching it on first use.
     fn glob_to_regex_cached(pattern: &str) -> Option<Regex> {
-        let mut cache = GLOB_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        let cache = GLOB_CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(re) = cache.get(pattern) {
             return Some(re.clone());
         }
         let regex_str = Self::glob_to_regex(pattern);
-        match Regex::new(&regex_str) {
+        let result = Regex::new(&regex_str);
+        drop(cache);
+        match result {
             Ok(re) => {
-                cache.insert(pattern.to_string(), re.clone());
+                GLOB_CACHE
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(pattern.to_string(), re.clone());
                 Some(re)
             }
             Err(e) => {
@@ -415,17 +417,20 @@ impl PermissionManager {
     }
 
     /// Get all persisted rules (for inspection/debugging).
+    #[must_use]
     pub fn persisted_rules(&self) -> &[PermissionRule] {
         &self.persisted_rules
     }
 
     /// Get all session rules (for inspection/debugging).
+    #[must_use]
     pub fn session_rules(&self) -> &[PermissionRule] {
         &self.session_rules
     }
 
     /// Check if the permission system is enabled.
-    pub fn is_enabled(&self) -> bool {
+    #[must_use]
+    pub const fn is_enabled(&self) -> bool {
         self.enabled
     }
 

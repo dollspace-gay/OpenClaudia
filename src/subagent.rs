@@ -1,8 +1,8 @@
-//! Subagent System for OpenClaudia
+//! Subagent System for `OpenClaudia`
 //!
 //! Provides Claude Code-style subagent capabilities:
 //! - Task tool for spawning autonomous sub-agents
-//! - AgentOutput tool for retrieving background agent results
+//! - `AgentOutput` tool for retrieving background agent results
 //! - Agent type configurations with specialized system prompts
 //! - Isolated conversation contexts per subagent
 //! - Background execution with async tracking
@@ -13,6 +13,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fmt::Write as _;
+use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -44,34 +46,35 @@ pub enum AgentType {
 
 impl AgentType {
     /// Parse agent type from string
+    #[must_use]
     pub fn parse_type(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
-            "general-purpose" | "general_purpose" | "generalpurpose" => {
-                Some(AgentType::GeneralPurpose)
-            }
-            "explore" | "explorer" => Some(AgentType::Explore),
-            "plan" | "planner" => Some(AgentType::Plan),
-            "guide" | "claude-code-guide" => Some(AgentType::Guide),
-            "coordinator" => Some(AgentType::Coordinator),
+            "general-purpose" | "general_purpose" | "generalpurpose" => Some(Self::GeneralPurpose),
+            "explore" | "explorer" => Some(Self::Explore),
+            "plan" | "planner" => Some(Self::Plan),
+            "guide" | "claude-code-guide" => Some(Self::Guide),
+            "coordinator" => Some(Self::Coordinator),
             _ => None,
         }
     }
 
     /// Get the system prompt for this agent type
-    pub fn system_prompt(&self) -> &'static str {
+    #[must_use]
+    pub const fn system_prompt(&self) -> &'static str {
         match self {
-            AgentType::GeneralPurpose => GENERAL_PURPOSE_PROMPT,
-            AgentType::Explore => EXPLORE_PROMPT,
-            AgentType::Plan => PLAN_PROMPT,
-            AgentType::Guide => GUIDE_PROMPT,
-            AgentType::Coordinator => COORDINATOR_PROMPT,
+            Self::GeneralPurpose => GENERAL_PURPOSE_PROMPT,
+            Self::Explore => EXPLORE_PROMPT,
+            Self::Plan => PLAN_PROMPT,
+            Self::Guide => GUIDE_PROMPT,
+            Self::Coordinator => COORDINATOR_PROMPT,
         }
     }
 
     /// Get the tools available to this agent type
+    #[must_use]
     pub fn allowed_tools(&self) -> Vec<&'static str> {
         match self {
-            AgentType::GeneralPurpose => vec![
+            Self::GeneralPurpose => vec![
                 "bash",
                 "bash_output",
                 "kill_shell",
@@ -82,12 +85,12 @@ impl AgentType {
                 "web_fetch",
                 "web_search",
             ],
-            AgentType::Explore => {
+            Self::Explore => {
                 vec!["bash", "read_file", "list_files", "web_fetch", "web_search"]
             }
-            AgentType::Plan => vec!["bash", "read_file", "list_files", "web_fetch", "web_search"],
-            AgentType::Guide => vec!["read_file", "list_files", "web_fetch", "web_search"],
-            AgentType::Coordinator => vec![
+            Self::Plan => vec!["bash", "read_file", "list_files", "web_fetch", "web_search"],
+            Self::Guide => vec!["read_file", "list_files", "web_fetch", "web_search"],
+            Self::Coordinator => vec![
                 "task",
                 "agent_output",
                 "task_create",
@@ -104,19 +107,18 @@ impl AgentType {
     }
 
     /// Get model preference for this agent type
-    pub fn preferred_model(&self) -> Option<&'static str> {
+    #[must_use]
+    pub const fn preferred_model(&self) -> Option<&'static str> {
         match self {
-            AgentType::Explore => Some("haiku"), // Fast, cheap searches
-            AgentType::Guide => Some("haiku"),   // Documentation lookup
-            AgentType::Coordinator => None,      // Uses main model
-            _ => None,                           // Use default model
+            Self::Explore | Self::Guide => Some("haiku"),
+            Self::Coordinator | Self::GeneralPurpose | Self::Plan => None,
         }
     }
 }
 
 // === System Prompts for Agent Types ===
 
-const GENERAL_PURPOSE_PROMPT: &str = r#"You are a specialized subagent spawned to handle a complex task autonomously.
+const GENERAL_PURPOSE_PROMPT: &str = r"You are a specialized subagent spawned to handle a complex task autonomously.
 
 Your goal is to complete the assigned task thoroughly and return a comprehensive summary of what you accomplished.
 
@@ -130,9 +132,9 @@ Guidelines:
   - Any issues encountered
   - Recommendations for follow-up if needed
 
-You have access to file and shell tools. Use them to explore the codebase, make changes, and verify your work."#;
+You have access to file and shell tools. Use them to explore the codebase, make changes, and verify your work.";
 
-const EXPLORE_PROMPT: &str = r#"You are a fast exploration agent specialized for searching codebases.
+const EXPLORE_PROMPT: &str = r"You are a fast exploration agent specialized for searching codebases.
 
 Your goal is to quickly find relevant files, code patterns, and answer questions about the codebase structure.
 
@@ -145,9 +147,9 @@ Guidelines:
   - Key code snippets or patterns
   - Direct answers to the question asked
 
-Focus on speed and relevance. Don't modify any files - this is read-only exploration."#;
+Focus on speed and relevance. Don't modify any files - this is read-only exploration.";
 
-const PLAN_PROMPT: &str = r#"You are a software architect agent for designing implementation plans.
+const PLAN_PROMPT: &str = r"You are a software architect agent for designing implementation plans.
 
 Your goal is to analyze the codebase and design a clear implementation strategy for the requested feature or change.
 
@@ -164,9 +166,9 @@ Return a structured plan including:
 - Potential risks or considerations
 - Dependencies or prerequisites
 
-Do NOT implement the changes - only plan them."#;
+Do NOT implement the changes - only plan them.";
 
-const GUIDE_PROMPT: &str = r#"You are a documentation lookup agent.
+const GUIDE_PROMPT: &str = r"You are a documentation lookup agent.
 
 Your goal is to find and summarize relevant documentation for the user's question.
 
@@ -176,17 +178,17 @@ Guidelines:
 - Provide clear, accurate information
 - Include relevant code examples when helpful
 
-Return a helpful answer with sources cited."#;
+Return a helpful answer with sources cited.";
 
-const COORDINATOR_PROMPT: &str = r#"You are a coordinator agent responsible for multi-agent orchestration.
+const COORDINATOR_PROMPT: &str = "You are a coordinator agent responsible for multi-agent orchestration.
 
-You break down complex tasks into smaller units of work and delegate them to specialized worker agents. You do NOT execute tools directly — no bash commands, no file writes, no file edits. Your job is to plan, delegate, monitor, and synthesize.
+You break down complex tasks into smaller units of work and delegate them to specialized worker agents. You do NOT execute tools directly \u{2014} no bash commands, no file writes, no file edits. Your job is to plan, delegate, monitor, and synthesize.
 
 ## Workflow
 
 1. **Research**: Use read_file, list_files, web_search, and web_fetch to understand the problem space, codebase structure, and requirements before delegating.
 2. **Planning**: Decompose the task into discrete sub-tasks. Use task_create to track each one. Identify dependencies and ordering constraints.
-3. **Delegation**: Spawn worker agents via the `task` tool to execute each sub-task. Each worker prompt must be fully self-contained — include all file paths, context, and acceptance criteria the worker needs. Never assume workers share your context.
+3. **Delegation**: Spawn worker agents via the `task` tool to execute each sub-task. Each worker prompt must be fully self-contained \u{2014} include all file paths, context, and acceptance criteria the worker needs. Never assume workers share your context.
 4. **Monitoring**: Use agent_output to check on background workers. Use task_update to record progress. Re-delegate or adjust the plan if a worker fails or produces unexpected results.
 5. **Synthesis**: Once all sub-tasks complete, combine worker outputs into a coherent final summary. Report what was accomplished, what failed, and any follow-up needed.
 
@@ -199,13 +201,13 @@ You break down complex tasks into smaller units of work and delegate them to spe
 
 ## Rules
 
-- NEVER use bash, write_file, or edit_file — you do not have access to these tools.
+- NEVER use bash, write_file, or edit_file \u{2014} you do not have access to these tools.
 - Every worker prompt must be self-contained: include file paths, expected behavior, and all relevant context.
 - Use task_create/task_update to maintain a clear record of sub-tasks and their status.
 - Prefer spawning workers in background (run_in_background: true) when tasks are independent, then collect results with agent_output.
 - If a worker fails, analyze the failure and either retry with a corrected prompt or adjust your plan.
 - Use ask_user_question when requirements are ambiguous or you need clarification before proceeding.
-- Always provide a final summary that maps each sub-task to its outcome."#;
+- Always provide a final summary that maps each sub-task to its outcome.";
 
 // === Background Agent Management ===
 
@@ -234,6 +236,7 @@ pub struct BackgroundAgentManager {
 }
 
 impl BackgroundAgentManager {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             agents: Mutex::new(HashMap::new()),
@@ -287,30 +290,28 @@ impl BackgroundAgentManager {
 
     /// Increment turn counter for an agent
     pub fn increment_turns(&self, id: &str) -> u64 {
-        if let Some(agent) = self.get(id) {
-            agent.turns.fetch_add(1, Ordering::SeqCst) + 1
-        } else {
-            0
-        }
+        self.get(id)
+            .map_or(0, |agent| agent.turns.fetch_add(1, Ordering::SeqCst) + 1)
     }
 
     /// List all agents
     pub fn list(&self) -> Vec<(String, AgentType, String, bool)> {
-        if let Ok(agents) = self.agents.lock() {
-            agents
-                .iter()
-                .map(|(id, agent)| {
-                    (
-                        id.clone(),
-                        agent.agent_type,
-                        agent.task.clone(),
-                        agent.finished.load(Ordering::SeqCst),
-                    )
-                })
-                .collect()
-        } else {
-            Vec::new()
-        }
+        self.agents.lock().map_or_else(
+            |_| Vec::new(),
+            |agents| {
+                agents
+                    .iter()
+                    .map(|(id, agent)| {
+                        (
+                            id.clone(),
+                            agent.agent_type,
+                            agent.task.clone(),
+                            agent.finished.load(Ordering::SeqCst),
+                        )
+                    })
+                    .collect()
+            },
+        )
     }
 
     /// Remove a finished agent
@@ -365,7 +366,7 @@ fn store_transcript(agent_id: &str, messages: Vec<Value>, agent_type: AgentType)
 
 /// Load a stored transcript for resume
 fn load_transcript(agent_id: &str) -> Option<(Vec<Value>, AgentType)> {
-    if let Ok(mut store) = TRANSCRIPT_STORE.lock() {
+    TRANSCRIPT_STORE.lock().map_or(None, |mut store| {
         // Evict expired first
         let now = Instant::now();
         store.retain(|_, t| now.duration_since(t.created_at).as_secs() < TRANSCRIPT_TTL_SECS);
@@ -373,9 +374,7 @@ fn load_transcript(agent_id: &str) -> Option<(Vec<Value>, AgentType)> {
         store
             .get(agent_id)
             .map(|t| (t.messages.clone(), t.agent_type))
-    } else {
-        None
-    }
+    })
 }
 
 // === Worktree Isolation ===
@@ -388,15 +387,20 @@ pub struct WorktreeIsolation {
 }
 
 impl WorktreeIsolation {
-    /// Create a new git worktree for agent isolation
+    /// Create a new git worktree for agent isolation.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if git is not available, the current directory is not
+    /// a git repository, or the worktree/branch creation fails.
     pub fn create(agent_id: &str) -> Result<Self, String> {
-        let branch_name = format!("agent/{}", agent_id);
+        let branch_name = format!("agent/{agent_id}");
 
         // Find the git root
         let git_root = std::process::Command::new("git")
             .args(["rev-parse", "--show-toplevel"])
             .output()
-            .map_err(|e| format!("git not available: {}", e))?;
+            .map_err(|e| format!("git not available: {e}"))?;
 
         if !git_root.status.success() {
             return Err("Not in a git repository".to_string());
@@ -407,7 +411,7 @@ impl WorktreeIsolation {
 
         // Ensure worktree directory exists
         std::fs::create_dir_all(&worktree_dir)
-            .map_err(|e| format!("Failed to create worktree directory: {}", e))?;
+            .map_err(|e| format!("Failed to create worktree directory: {e}"))?;
 
         let worktree_path = worktree_dir.join(agent_id);
 
@@ -421,11 +425,11 @@ impl WorktreeIsolation {
                 &branch_name,
             ])
             .output()
-            .map_err(|e| format!("Failed to create worktree: {}", e))?;
+            .map_err(|e| format!("Failed to create worktree: {e}"))?;
 
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
-            return Err(format!("git worktree add failed: {}", stderr));
+            return Err(format!("git worktree add failed: {stderr}"));
         }
 
         Ok(Self {
@@ -435,6 +439,7 @@ impl WorktreeIsolation {
     }
 
     /// Check if the worktree has uncommitted changes
+    #[must_use]
     pub fn has_changes(&self) -> bool {
         let result = std::process::Command::new("git")
             .args([
@@ -451,11 +456,16 @@ impl WorktreeIsolation {
         }
     }
 
-    /// Remove the worktree (only if no changes)
+    /// Remove the worktree (only if no changes).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the worktree has uncommitted changes or if the
+    /// git worktree remove command fails.
     pub fn cleanup(&self) -> Result<(), String> {
         if self.has_changes() {
             return Err(format!(
-                "Worktree has changes — keeping at {} on branch {}",
+                "Worktree has changes \u{2014} keeping at {} on branch {}",
                 self.worktree_path.display(),
                 self.branch_name
             ));
@@ -469,11 +479,11 @@ impl WorktreeIsolation {
                 "--force",
             ])
             .output()
-            .map_err(|e| format!("Failed to remove worktree: {}", e))?;
+            .map_err(|e| format!("Failed to remove worktree: {e}"))?;
 
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
-            return Err(format!("git worktree remove failed: {}", stderr));
+            return Err(format!("git worktree remove failed: {stderr}"));
         }
 
         // Also delete the branch
@@ -488,20 +498,11 @@ impl WorktreeIsolation {
 // === Model Name Resolution ===
 
 /// Map friendly model names to actual model IDs
-fn resolve_model_name(friendly: &str, provider: &str) -> String {
+fn resolve_model_name(friendly: &str, _provider: &str) -> String {
     match friendly.to_lowercase().as_str() {
-        "opus" => match provider {
-            "anthropic" => "claude-opus-4-6".to_string(),
-            _ => "claude-opus-4-6".to_string(),
-        },
-        "sonnet" => match provider {
-            "anthropic" => "claude-sonnet-4-6".to_string(),
-            _ => "claude-sonnet-4-6".to_string(),
-        },
-        "haiku" => match provider {
-            "anthropic" => "claude-haiku-4-5-20251001".to_string(),
-            _ => "claude-haiku-4-5-20251001".to_string(),
-        },
+        "opus" => "claude-opus-4-6".to_string(),
+        "sonnet" => "claude-sonnet-4-6".to_string(),
+        "haiku" => "claude-haiku-4-5-20251001".to_string(),
         other => other.to_string(),
     }
 }
@@ -509,6 +510,7 @@ fn resolve_model_name(friendly: &str, provider: &str) -> String {
 // === Tool Definitions ===
 
 /// Get the Task tool definition
+#[must_use]
 pub fn get_task_tool_definition() -> Value {
     json!({
         "type": "function",
@@ -556,7 +558,8 @@ pub fn get_task_tool_definition() -> Value {
     })
 }
 
-/// Get the AgentOutput tool definition
+/// Get the `AgentOutput` tool definition
+#[must_use]
 pub fn get_agent_output_tool_definition() -> Value {
     json!({
         "type": "function",
@@ -582,6 +585,7 @@ pub fn get_agent_output_tool_definition() -> Value {
 }
 
 /// Get all subagent tool definitions
+#[must_use]
 pub fn get_subagent_tool_definitions() -> Value {
     json!([
         get_task_tool_definition(),
@@ -615,6 +619,7 @@ pub struct SubagentResult {
 }
 
 /// Run a subagent synchronously, returning the final result
+#[allow(clippy::too_many_lines)]
 pub async fn run_subagent(
     config: &SubagentConfig,
     app_config: &AppConfig,
@@ -638,7 +643,7 @@ pub async fn run_subagent(
                 return SubagentResult {
                     agent_id: resume_id.clone(),
                     success: false,
-                    output: format!("No transcript found for agent '{}'. It may have expired (TTL: {} minutes).", resume_id, TRANSCRIPT_TTL_SECS / 60),
+                    output: format!("No transcript found for agent '{resume_id}'. It may have expired (TTL: {} minutes).", TRANSCRIPT_TTL_SECS / 60),
                     turns_used: 0,
                     is_background: config.run_in_background,
                     worktree: None,
@@ -679,7 +684,7 @@ pub async fn run_subagent(
                 return SubagentResult {
                     agent_id,
                     success: false,
-                    output: format!("Failed to create worktree: {}", e),
+                    output: format!("Failed to create worktree: {e}"),
                     turns_used: 0,
                     is_background: config.run_in_background,
                     worktree: None,
@@ -702,8 +707,7 @@ pub async fn run_subagent(
                     tool.get("function")
                         .and_then(|f| f.get("name"))
                         .and_then(|n| n.as_str())
-                        .map(|name| allowed_tools.contains(&name))
-                        .unwrap_or(false)
+                        .is_some_and(|name| allowed_tools.contains(&name))
                 })
                 .cloned()
                 .collect()
@@ -724,15 +728,18 @@ pub async fn run_subagent(
         });
 
     // Get provider config
-    let (base_url, api_key) =
-        if let Some(provider_config) = app_config.providers.get(&app_config.proxy.target) {
-            (
-                provider_config.base_url.clone(),
-                provider_config.api_key.clone().unwrap_or_default(),
-            )
-        } else {
-            ("https://api.anthropic.com/v1".to_string(), String::new())
-        };
+    let (base_url, api_key) = app_config
+        .providers
+        .get(&app_config.proxy.target)
+        .map_or_else(
+            || ("https://api.anthropic.com/v1".to_string(), String::new()),
+            |provider_config| {
+                (
+                    provider_config.base_url.clone(),
+                    provider_config.api_key.clone().unwrap_or_default(),
+                )
+            },
+        );
 
     // Run the agent loop
     let mut final_output = String::new();
@@ -744,14 +751,14 @@ pub async fn run_subagent(
         if turns > MAX_SUBAGENT_TURNS as u64 {
             BACKGROUND_AGENTS.fail(
                 &agent_id,
-                format!("Agent exceeded maximum turns ({})", MAX_SUBAGENT_TURNS),
+                format!("Agent exceeded maximum turns ({MAX_SUBAGENT_TURNS})"),
             );
             // Store transcript even on failure for potential resume
             store_transcript(&agent_id, messages, config.agent_type);
             return SubagentResult {
                 agent_id,
                 success: false,
-                output: format!("Agent exceeded maximum turns ({})", MAX_SUBAGENT_TURNS),
+                output: format!("Agent exceeded maximum turns ({MAX_SUBAGENT_TURNS})"),
                 turns_used: turns,
                 is_background: config.run_in_background,
                 worktree: worktree.clone(),
@@ -857,7 +864,7 @@ pub async fn run_subagent(
                 messages.push(json!({
                     "role": "tool",
                     "tool_call_id": tool_id,
-                    "content": format!("Error: Tool '{}' is not available to this agent type", name)
+                    "content": format!("Error: Tool '{name}' is not available to this agent type")
                 }));
                 continue;
             }
@@ -887,16 +894,14 @@ pub async fn run_subagent(
     store_transcript(&agent_id, messages, config.agent_type);
 
     // Handle worktree cleanup: remove if no changes, keep if changes exist
-    let final_worktree = if let Some(wt) = worktree {
+    let final_worktree = worktree.and_then(|wt| {
         if wt.has_changes() {
-            Some(wt) // Keep — return path and branch to caller
+            Some(wt) // Keep -- return path and branch to caller
         } else {
             let _ = wt.cleanup(); // No changes, clean up silently
             None
         }
-    } else {
-        None
-    };
+    });
 
     SubagentResult {
         agent_id,
@@ -931,7 +936,7 @@ async fn make_api_call(
         (
             format!("{}/chat/completions", base_url.trim_end_matches('/')),
             vec![
-                ("Authorization".to_string(), format!("Bearer {}", api_key)),
+                ("Authorization".to_string(), format!("Bearer {api_key}")),
                 ("Content-type".to_string(), "application/json".to_string()),
             ],
         )
@@ -953,7 +958,7 @@ async fn make_api_call(
     let response = req
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| format!("Request failed: {e}"))?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -961,13 +966,13 @@ async fn make_api_call(
             .text()
             .await
             .unwrap_or_else(|_| "Unknown error".to_string());
-        return Err(format!("API error ({}): {}", status, text));
+        return Err(format!("API error ({status}): {text}"));
     }
 
     let json: Value = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+        .map_err(|e| format!("Failed to parse response: {e}"))?;
 
     // Transform Anthropic response to OpenAI format if needed
     if is_anthropic {
@@ -977,7 +982,8 @@ async fn make_api_call(
     }
 }
 
-/// Transform OpenAI-format request to Anthropic format
+/// Transform `OpenAI`-format request to Anthropic format
+#[allow(clippy::too_many_lines)]
 fn transform_to_anthropic(request: &Value) -> Value {
     let messages = request.get("messages").and_then(|m| m.as_array());
     let tools = request.get("tools").and_then(|t| t.as_array());
@@ -998,7 +1004,7 @@ fn transform_to_anthropic(request: &Value) -> Value {
                 .filter(|m| m.get("role").and_then(|r| r.as_str()) != Some("system"))
                 .map(|m| {
                     let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("user");
-                    let content = m.get("content").cloned().unwrap_or(json!(""));
+                    let content = m.get("content").cloned().unwrap_or_else(|| json!(""));
 
                     // Handle tool role -> user with tool_result
                     if role == "tool" {
@@ -1060,11 +1066,10 @@ fn transform_to_anthropic(request: &Value) -> Value {
                     }
 
                     // Standard message
-                    let content_array = if let Some(text) = content.as_str() {
-                        json!([{"type": "text", "text": text}])
-                    } else {
-                        content
-                    };
+                    let content_array = content.as_str().map_or_else(
+                        || content.clone(),
+                        |text| json!([{"type": "text", "text": text}]),
+                    );
 
                     json!({
                         "role": if role == "assistant" { "assistant" } else { "user" },
@@ -1081,10 +1086,12 @@ fn transform_to_anthropic(request: &Value) -> Value {
             ts.iter()
                 .filter_map(|t| {
                     let func = t.get("function")?;
+                    let default_desc = json!("");
+                    let default_params = json!({});
                     Some(json!({
                         "name": func.get("name")?,
-                        "description": func.get("description").unwrap_or(&json!("")),
-                        "input_schema": func.get("parameters").unwrap_or(&json!({}))
+                        "description": func.get("description").unwrap_or(&default_desc),
+                        "input_schema": func.get("parameters").unwrap_or(&default_params)
                     }))
                 })
                 .collect()
@@ -1094,7 +1101,7 @@ fn transform_to_anthropic(request: &Value) -> Value {
     let mut body = json!({
         "model": request.get("model").and_then(|m| m.as_str()).unwrap_or("claude-sonnet-4-6"),
         "messages": converted_messages,
-        "max_tokens": request.get("max_tokens").and_then(|m| m.as_u64()).unwrap_or(SUBAGENT_MAX_TOKENS as u64)
+        "max_tokens": request.get("max_tokens").and_then(serde_json::Value::as_u64).unwrap_or_else(|| u64::from(SUBAGENT_MAX_TOKENS))
     });
 
     if let Some(sys) = system {
@@ -1108,7 +1115,7 @@ fn transform_to_anthropic(request: &Value) -> Value {
     body
 }
 
-/// Transform Anthropic response to OpenAI format
+/// Transform Anthropic response to `OpenAI` format
 fn transform_from_anthropic(response: &Value) -> Value {
     let content = response.get("content").and_then(|c| c.as_array());
 
@@ -1177,15 +1184,16 @@ fn parse_response(response: &Value) -> Result<Value, String> {
 // === Tool Execution ===
 
 /// Execute the Task tool
-pub fn execute_task_tool(args: &HashMap<String, Value>, app_config: &AppConfig) -> (String, bool) {
-    let description = match args.get("description").and_then(|v| v.as_str()) {
-        Some(d) => d,
-        None => return ("Missing 'description' argument".to_string(), true),
+pub fn execute_task_tool<S: BuildHasher>(
+    args: &HashMap<String, Value, S>,
+    app_config: &AppConfig,
+) -> (String, bool) {
+    let Some(description) = args.get("description").and_then(|v| v.as_str()) else {
+        return ("Missing 'description' argument".to_string(), true);
     };
 
-    let prompt = match args.get("prompt").and_then(|v| v.as_str()) {
-        Some(p) => p,
-        None => return ("Missing 'prompt' argument".to_string(), true),
+    let Some(prompt) = args.get("prompt").and_then(|v| v.as_str()) else {
+        return ("Missing 'prompt' argument".to_string(), true);
     };
 
     // Handle resume: if resume ID is provided, load previous transcript
@@ -1194,27 +1202,22 @@ pub fn execute_task_tool(args: &HashMap<String, Value>, app_config: &AppConfig) 
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    let subagent_type_str = match args.get("subagent_type").and_then(|v| v.as_str()) {
-        Some(t) => t,
-        None => return ("Missing 'subagent_type' argument".to_string(), true),
+    let Some(subagent_type_str) = args.get("subagent_type").and_then(|v| v.as_str()) else {
+        return ("Missing 'subagent_type' argument".to_string(), true);
     };
 
-    let agent_type = match AgentType::parse_type(subagent_type_str) {
-        Some(t) => t,
-        None => {
-            return (
-                format!(
-                    "Unknown agent type '{}'. Valid types: general-purpose, explore, plan, guide",
-                    subagent_type_str
-                ),
-                true,
-            )
-        }
+    let Some(agent_type) = AgentType::parse_type(subagent_type_str) else {
+        return (
+            format!(
+                "Unknown agent type '{subagent_type_str}'. Valid types: general-purpose, explore, plan, guide"
+            ),
+            true,
+        );
     };
 
     let run_in_background = args
         .get("run_in_background")
-        .and_then(|v| v.as_bool())
+        .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
 
     // Resolve model: map friendly names to actual model IDs
@@ -1246,25 +1249,24 @@ pub fn execute_task_tool(args: &HashMap<String, Value>, app_config: &AppConfig) 
         let agent_id = BACKGROUND_AGENTS.register(agent_type, description);
 
         // Spawn the background task
-        let config_clone = config.clone();
-        let app_config_clone = app_config.clone();
-        let client_clone = client.clone();
-        let agent_id_clone = agent_id.clone();
+        let config_bg = config;
+        let app_config_bg = app_config.clone();
+        let client_bg = client;
+        let agent_id_bg = agent_id.clone();
 
         // Use tokio runtime to spawn the background task
         if let Ok(handle) = Handle::try_current() {
             handle.spawn(async move {
-                let result = run_subagent(&config_clone, &app_config_clone, &client_clone).await;
+                let result = run_subagent(&config_bg, &app_config_bg, &client_bg).await;
 
                 if !result.success {
-                    BACKGROUND_AGENTS.fail(&agent_id_clone, result.output);
+                    BACKGROUND_AGENTS.fail(&agent_id_bg, result.output);
                 }
             });
         }
 
         let message = format!(
-            "Background agent started with ID: {}\nTask: {}\nType: {:?}\n\nUse agent_output with this agent_id to retrieve results.",
-            agent_id, description, agent_type
+            "Background agent started with ID: {agent_id}\nTask: {description}\nType: {agent_type:?}\n\nUse agent_output with this agent_id to retrieve results."
         );
 
         (message, false)
@@ -1277,7 +1279,7 @@ pub fn execute_task_tool(args: &HashMap<String, Value>, app_config: &AppConfig) 
             Err(_) => match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt.block_on(run_subagent(&config, app_config, &client)),
                 Err(e) => {
-                    return (format!("Failed to create runtime: {}", e), true);
+                    return (format!("Failed to create runtime: {e}"), true);
                 }
             },
         };
@@ -1290,11 +1292,12 @@ pub fn execute_task_tool(args: &HashMap<String, Value>, app_config: &AppConfig) 
 
             // If worktree was used and has changes, include path info
             if let Some(ref wt) = result.worktree {
-                message.push_str(&format!(
+                let _ = write!(
+                    message,
                     "\n\nWorktree: {}\nBranch: {}",
                     wt.worktree_path.display(),
                     wt.branch_name
-                ));
+                );
             }
 
             (message, false)
@@ -1304,38 +1307,36 @@ pub fn execute_task_tool(args: &HashMap<String, Value>, app_config: &AppConfig) 
     }
 }
 
-/// Execute the AgentOutput tool
-pub fn execute_agent_output_tool(args: &HashMap<String, Value>) -> (String, bool) {
-    let agent_id = match args.get("agent_id").and_then(|v| v.as_str()) {
-        Some(id) => id,
-        None => {
-            // List all agents if no ID provided
-            let agents = BACKGROUND_AGENTS.list();
-            if agents.is_empty() {
-                return ("No background agents running.".to_string(), false);
-            }
-            let mut result = format!("Background agents ({}):\n", agents.len());
-            for (id, agent_type, task, finished) in agents {
-                let status = if finished { "finished" } else { "running" };
-                let task_preview = if task.len() > 50 {
-                    format!("{}...", safe_truncate(&task, 50))
-                } else {
-                    task
-                };
-                result.push_str(&format!(
-                    "  {} [{:?}] [{}]: {}\n",
-                    id, agent_type, status, task_preview
-                ));
-            }
-            return (result, false);
+/// Execute the `AgentOutput` tool
+pub fn execute_agent_output_tool<S: BuildHasher>(
+    args: &HashMap<String, Value, S>,
+) -> (String, bool) {
+    let Some(agent_id) = args.get("agent_id").and_then(|v| v.as_str()) else {
+        // List all agents if no ID provided
+        let agents = BACKGROUND_AGENTS.list();
+        if agents.is_empty() {
+            return ("No background agents running.".to_string(), false);
         }
+        let mut result = format!("Background agents ({}):\n", agents.len());
+        for (id, agent_type, task, finished) in agents {
+            let status = if finished { "finished" } else { "running" };
+            let task_preview = if task.len() > 50 {
+                format!("{}...", safe_truncate(&task, 50))
+            } else {
+                task
+            };
+            let _ = writeln!(result, "  {id} [{agent_type:?}] [{status}]: {task_preview}");
+        }
+        return (result, false);
     };
 
-    let block = args.get("block").and_then(|v| v.as_bool()).unwrap_or(false);
+    let block = args
+        .get("block")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
 
-    let agent = match BACKGROUND_AGENTS.get(agent_id) {
-        Some(a) => a,
-        None => return (format!("Agent '{}' not found", agent_id), true),
+    let Some(agent) = BACKGROUND_AGENTS.get(agent_id) else {
+        return (format!("Agent '{agent_id}' not found"), true);
     };
 
     if block && !agent.finished.load(Ordering::SeqCst) {
@@ -1356,33 +1357,35 @@ pub fn execute_agent_output_tool(args: &HashMap<String, Value>) -> (String, bool
         let result = agent.result.lock().ok().and_then(|r| r.clone());
         let error = agent.error.lock().ok().and_then(|e| e.clone());
 
-        if let Some(err) = error {
-            (
-                format!(
-                    "Agent '{}' failed after {} turns:\n{}",
-                    agent_id, turns, err
-                ),
-                true,
-            )
-        } else if let Some(output) = result {
-            (
-                format!(
-                    "Agent '{}' completed in {} turns:\n\n{}",
-                    agent_id, turns, output
-                ),
-                false,
-            )
-        } else {
-            (
-                format!("Agent '{}' finished but produced no output", agent_id),
-                false,
-            )
-        }
+        error.map_or_else(
+            || {
+                result.map_or_else(
+                    || {
+                        (
+                            format!("Agent '{agent_id}' finished but produced no output"),
+                            false,
+                        )
+                    },
+                    |output| {
+                        (
+                            format!("Agent '{agent_id}' completed in {turns} turns:\n\n{output}"),
+                            false,
+                        )
+                    },
+                )
+            },
+            |err| {
+                (
+                    format!("Agent '{agent_id}' failed after {turns} turns:\n{err}"),
+                    true,
+                )
+            },
+        )
     } else {
         (
             format!(
-                "Agent '{}' is still running ({} turns so far)\nTask: {}",
-                agent_id, turns, agent.task
+                "Agent '{agent_id}' is still running ({turns} turns so far)\nTask: {}",
+                agent.task
             ),
             false,
         )

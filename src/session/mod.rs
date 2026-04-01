@@ -15,13 +15,14 @@ mod task;
 pub use audit::AuditLogger;
 pub use pricing::{calculate_cost, get_pricing, ModelPricing};
 pub use state::{
-    get_session_context, is_tool_allowed_in_plan_mode, AllowedPrompt, PlanModeState,
-    TokenUsage, TurnMetrics, PLAN_MODE_ALLOWED_TOOLS, PLAN_MODE_BLOCKED_TOOLS,
+    get_session_context, is_tool_allowed_in_plan_mode, AllowedPrompt, PlanModeState, TokenUsage,
+    TurnMetrics, PLAN_MODE_ALLOWED_TOOLS, PLAN_MODE_BLOCKED_TOOLS,
 };
 pub use task::{Task, TaskManager, TaskStatus, TaskUpdateParams};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
@@ -92,6 +93,7 @@ pub struct Session {
 
 impl Session {
     /// Create a new initializer session
+    #[must_use]
     pub fn new_initializer() -> Self {
         let now = Utc::now();
         Self {
@@ -109,6 +111,7 @@ impl Session {
     }
 
     /// Create a new coding session continuing from a parent
+    #[must_use]
     pub fn new_coding(parent_id: &str) -> Self {
         let now = Utc::now();
         Self {
@@ -180,43 +183,47 @@ impl Session {
     }
 
     /// Get session stats summary
+    #[must_use]
     pub fn stats_summary(&self) -> String {
         let mut s = String::new();
-        s.push_str(&format!("Session: {}\n", self.id));
-        s.push_str(&format!("Mode: {:?}\n", self.mode));
-        s.push_str(&format!("Turns: {}\n", self.turn_metrics.len()));
-        s.push_str(&format!("Requests: {}\n", self.request_count));
-        s.push_str(&format!(
-            "Input tokens:  {} (cumulative)\n",
+        let _ = writeln!(s, "Session: {}", self.id);
+        let _ = writeln!(s, "Mode: {:?}", self.mode);
+        let _ = writeln!(s, "Turns: {}", self.turn_metrics.len());
+        let _ = writeln!(s, "Requests: {}", self.request_count);
+        let _ = writeln!(
+            s,
+            "Input tokens:  {} (cumulative)",
             self.cumulative_usage.input_tokens
-        ));
-        s.push_str(&format!(
-            "Output tokens: {} (cumulative)\n",
+        );
+        let _ = writeln!(
+            s,
+            "Output tokens: {} (cumulative)",
             self.cumulative_usage.output_tokens
-        ));
-        s.push_str(&format!(
-            "Cache read:    {}\n",
+        );
+        let _ = writeln!(
+            s,
+            "Cache read:    {}",
             self.cumulative_usage.cache_read_tokens
-        ));
-        s.push_str(&format!(
-            "Cache write:   {}\n",
+        );
+        let _ = writeln!(
+            s,
+            "Cache write:   {}",
             self.cumulative_usage.cache_write_tokens
-        ));
-        s.push_str(&format!(
-            "Total tokens:  {}\n",
-            self.cumulative_usage.total()
-        ));
+        );
+        let _ = writeln!(s, "Total tokens:  {}", self.cumulative_usage.total());
 
         if let Some(last) = self.turn_metrics.last() {
-            s.push_str(&format!(
+            let _ = write!(
+                s,
                 "\nLast turn #{}: estimated {} input tokens",
                 last.turn_number, last.estimated_input_tokens
-            ));
+            );
             if let Some(actual) = &last.actual_usage {
-                s.push_str(&format!(
+                let _ = write!(
+                    s,
                     ", actual {}in/{}out",
                     actual.input_tokens, actual.output_tokens
-                ));
+                );
             }
             s.push('\n');
         }
@@ -246,22 +253,24 @@ impl Session {
     }
 
     /// Generate a handoff summary for the next agent
+    #[must_use]
     pub fn generate_handoff(&self) -> String {
         let mut handoff = String::new();
 
         handoff.push_str("## Session Handoff\n\n");
-        handoff.push_str(&format!("Previous Session: {}\n", self.id));
-        handoff.push_str(&format!("Mode: {:?}\n", self.mode));
-        handoff.push_str(&format!(
+        let _ = writeln!(handoff, "Previous Session: {}", self.id);
+        let _ = writeln!(handoff, "Mode: {:?}", self.mode);
+        let _ = write!(
+            handoff,
             "Duration: {} to {}\n\n",
             self.created_at.format("%Y-%m-%d %H:%M UTC"),
             self.updated_at.format("%Y-%m-%d %H:%M UTC")
-        ));
+        );
 
         if !self.progress.completed_tasks.is_empty() {
             handoff.push_str("### Completed Tasks\n");
             for task in &self.progress.completed_tasks {
-                handoff.push_str(&format!("- [x] {}\n", task));
+                let _ = writeln!(handoff, "- [x] {task}");
             }
             handoff.push('\n');
         }
@@ -269,7 +278,7 @@ impl Session {
         if !self.progress.in_progress_tasks.is_empty() {
             handoff.push_str("### In Progress\n");
             for task in &self.progress.in_progress_tasks {
-                handoff.push_str(&format!("- [ ] {}\n", task));
+                let _ = writeln!(handoff, "- [ ] {task}");
             }
             handoff.push('\n');
         }
@@ -277,7 +286,7 @@ impl Session {
         if !self.progress.pending_tasks.is_empty() {
             handoff.push_str("### Pending Tasks\n");
             for task in &self.progress.pending_tasks {
-                handoff.push_str(&format!("- [ ] {}\n", task));
+                let _ = writeln!(handoff, "- [ ] {task}");
             }
             handoff.push('\n');
         }
@@ -285,7 +294,7 @@ impl Session {
         if !self.progress.decisions.is_empty() {
             handoff.push_str("### Key Decisions\n");
             for decision in &self.progress.decisions {
-                handoff.push_str(&format!("- {}\n", decision));
+                let _ = writeln!(handoff, "- {decision}");
             }
             handoff.push('\n');
         }
@@ -293,7 +302,7 @@ impl Session {
         if !self.progress.files_modified.is_empty() {
             handoff.push_str("### Files Modified\n");
             for file in &self.progress.files_modified {
-                handoff.push_str(&format!("- {}\n", file));
+                let _ = writeln!(handoff, "- {file}");
             }
             handoff.push('\n');
         }
@@ -307,19 +316,22 @@ impl Session {
         // Include token usage stats
         if self.cumulative_usage.total() > 0 {
             handoff.push_str("\n### Token Usage\n");
-            handoff.push_str(&format!(
-                "- Input: {} tokens\n",
+            let _ = writeln!(
+                handoff,
+                "- Input: {} tokens",
                 self.cumulative_usage.input_tokens
-            ));
-            handoff.push_str(&format!(
-                "- Output: {} tokens\n",
+            );
+            let _ = writeln!(
+                handoff,
+                "- Output: {} tokens",
                 self.cumulative_usage.output_tokens
-            ));
-            handoff.push_str(&format!(
-                "- Cache read: {} tokens\n",
+            );
+            let _ = writeln!(
+                handoff,
+                "- Cache read: {} tokens",
                 self.cumulative_usage.cache_read_tokens
-            ));
-            handoff.push_str(&format!("- Turns: {}\n", self.turn_metrics.len()));
+            );
+            let _ = writeln!(handoff, "- Turns: {}", self.turn_metrics.len());
         }
 
         handoff
@@ -335,7 +347,7 @@ pub struct SessionManager {
     current_session: Option<Session>,
     /// VDD advisory context to inject into the next turn
     vdd_pending_context: Option<String>,
-    /// Structured task manager for task_create/update/get/list tools
+    /// Structured task manager for `task_create`/`update`/`get`/`list` tools
     pub task_manager: TaskManager,
 }
 
@@ -358,6 +370,11 @@ impl SessionManager {
     }
 
     /// Get the current session, creating one if none exists
+    ///
+    /// # Panics
+    ///
+    /// Panics if session creation succeeds but the internal option is still `None`
+    /// (should be unreachable).
     pub fn get_or_create_session(&mut self) -> &Session {
         if self.current_session.is_none() {
             self.current_session = Some(self.create_session());
@@ -368,12 +385,13 @@ impl SessionManager {
     }
 
     /// Get the current session mutably
-    pub fn get_session_mut(&mut self) -> Option<&mut Session> {
+    pub const fn get_session_mut(&mut self) -> Option<&mut Session> {
         self.current_session.as_mut()
     }
 
     /// Get the current session immutably
-    pub fn get_session(&self) -> Option<&Session> {
+    #[must_use]
+    pub const fn get_session(&self) -> Option<&Session> {
         self.current_session.as_ref()
     }
 
@@ -383,7 +401,7 @@ impl SessionManager {
     }
 
     /// Take (consume) the pending VDD context for injection
-    pub fn take_vdd_context(&mut self) -> Option<String> {
+    pub const fn take_vdd_context(&mut self) -> Option<String> {
         self.vdd_pending_context.take()
     }
 
@@ -403,6 +421,11 @@ impl SessionManager {
     }
 
     /// Start a fresh initializer session
+    ///
+    /// # Panics
+    ///
+    /// Panics if session assignment succeeds but the internal option is still `None`
+    /// (should be unreachable).
     pub fn start_initializer(&mut self) -> &Session {
         let session = Session::new_initializer();
         info!(session_id = %session.id, "Started initializer session");
@@ -413,6 +436,11 @@ impl SessionManager {
     }
 
     /// Start a coding session from a parent
+    ///
+    /// # Panics
+    ///
+    /// Panics if session assignment succeeds but the internal option is still `None`
+    /// (should be unreachable).
     pub fn start_coding(&mut self, parent_id: &str) -> &Session {
         let session = Session::new_coding(parent_id);
         info!(
@@ -478,18 +506,21 @@ impl SessionManager {
     }
 
     /// Load a session by ID
+    #[must_use]
     pub fn load_session(&self, session_id: &str) -> Option<Session> {
-        let path = self.persist_dir.join(format!("{}.json", session_id));
+        let path = self.persist_dir.join(format!("{session_id}.json"));
         self.load_session_from_path(&path)
     }
 
     /// Load the most recent session
+    #[must_use]
     pub fn load_latest_session(&self) -> Option<Session> {
         let path = self.persist_dir.join("latest.json");
         self.load_session_from_path(&path)
     }
 
     /// Load a session from a file path
+    #[allow(clippy::unused_self)]
     fn load_session_from_path(&self, path: &Path) -> Option<Session> {
         if !path.exists() {
             return None;
@@ -511,21 +542,23 @@ impl SessionManager {
     }
 
     /// Get the handoff context from the last session
+    #[must_use]
     pub fn get_handoff_context(&self) -> Option<String> {
         let handoff_path = self.persist_dir.join("handoff.md");
         fs::read_to_string(&handoff_path).ok()
     }
 
     /// List all persisted sessions
+    #[must_use]
     pub fn list_sessions(&self) -> Vec<Session> {
         let mut sessions = Vec::new();
 
         if let Ok(entries) = fs::read_dir(&self.persist_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().map(|e| e == "json").unwrap_or(false) {
+                if path.extension().is_some_and(|e| e == "json") {
                     // Skip latest.json as it's a copy
-                    if path.file_stem().map(|s| s == "latest").unwrap_or(false) {
+                    if path.file_stem().is_some_and(|s| s == "latest") {
                         continue;
                     }
                     if let Some(session) = self.load_session_from_path(&path) {

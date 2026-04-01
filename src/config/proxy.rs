@@ -11,15 +11,15 @@ pub struct ProxyConfig {
     pub target: String,
 }
 
-pub(crate) fn default_port() -> u16 {
+pub const fn default_port() -> u16 {
     8080
 }
 
-pub(crate) fn default_host() -> String {
+pub fn default_host() -> String {
     "127.0.0.1".to_string()
 }
 
-pub(crate) fn default_target() -> String {
+pub fn default_target() -> String {
     "anthropic".to_string()
 }
 

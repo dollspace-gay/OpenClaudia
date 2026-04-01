@@ -2,9 +2,10 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 
 /// Status of a managed task
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     Pending,
@@ -15,9 +16,9 @@ pub enum TaskStatus {
 impl std::fmt::Display for TaskStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TaskStatus::Pending => write!(f, "pending"),
-            TaskStatus::InProgress => write!(f, "in_progress"),
-            TaskStatus::Completed => write!(f, "completed"),
+            Self::Pending => write!(f, "pending"),
+            Self::InProgress => write!(f, "in_progress"),
+            Self::Completed => write!(f, "completed"),
         }
     }
 }
@@ -70,8 +71,9 @@ impl Default for TaskManager {
 }
 
 impl TaskManager {
-    /// Create a new empty TaskManager.
-    pub fn new() -> Self {
+    /// Create a new empty `TaskManager`.
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             tasks: Vec::new(),
             next_id: 1,
@@ -79,6 +81,11 @@ impl TaskManager {
     }
 
     /// Create a new task. Returns the created task.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal tasks vector is somehow empty after pushing
+    /// (should be unreachable).
     pub fn create_task(
         &mut self,
         subject: String,
@@ -105,6 +112,7 @@ impl TaskManager {
     }
 
     /// Get a task by ID.
+    #[must_use]
     pub fn get_task(&self, task_id: &str) -> Option<&Task> {
         self.tasks.iter().find(|t| t.id == task_id)
     }
@@ -119,6 +127,17 @@ impl TaskManager {
     /// Enforces that only one task can be `InProgress` at a time. When a task
     /// is set to `InProgress`, any currently in-progress task is moved back to
     /// `Pending`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the task is not found, the status is invalid,
+    /// a dependency references itself or a nonexistent task, or the task
+    /// is deleted (deletion is signaled via `Err` with a message).
+    ///
+    /// # Panics
+    ///
+    /// Panics if internal lookups fail after validation (should be unreachable).
+    #[allow(clippy::too_many_lines)]
     pub fn update_task(
         &mut self,
         task_id: &str,
@@ -126,7 +145,7 @@ impl TaskManager {
     ) -> Result<&Task, String> {
         // Validate the task exists
         if self.get_task(task_id).is_none() {
-            return Err(format!("Task '{}' not found", task_id));
+            return Err(format!("Task '{task_id}' not found"));
         }
 
         let TaskUpdateParams {
@@ -149,13 +168,12 @@ impl TaskManager {
                     self.tasks.retain(|t| t.id != task_id);
                     // Return a synthetic "deleted" result -- but we can't return a ref
                     // to a deleted task. Instead, just return an error-like message.
-                    return Err(format!("Task '{}' deleted", task_id));
+                    return Err(format!("Task '{task_id}' deleted"));
                 }
                 other => {
                     return Err(format!(
-                        "Invalid status '{}'. Must be: pending, in_progress, completed, deleted",
-                        other
-                    ))
+                    "Invalid status '{other}'. Must be: pending, in_progress, completed, deleted"
+                ))
                 }
             }
         } else {
@@ -178,7 +196,7 @@ impl TaskManager {
                     return Err("A task cannot block itself".to_string());
                 }
                 if !self.tasks.iter().any(|t| t.id == *bid) {
-                    return Err(format!("Referenced task '{}' not found", bid));
+                    return Err(format!("Referenced task '{bid}' not found"));
                 }
             }
         }
@@ -188,12 +206,12 @@ impl TaskManager {
                     return Err("A task cannot be blocked by itself".to_string());
                 }
                 if !self.tasks.iter().any(|t| t.id == *bid) {
-                    return Err(format!("Referenced task '{}' not found", bid));
+                    return Err(format!("Referenced task '{bid}' not found"));
                 }
             }
         }
 
-        // Apply updates to the task — task existence validated above
+        // Apply updates to the task -- task existence validated above
         let task = self
             .get_task_mut(task_id)
             .expect("task must exist after validation");
@@ -274,11 +292,13 @@ impl TaskManager {
     }
 
     /// List all tasks.
+    #[must_use]
     pub fn list_tasks(&self) -> &[Task] {
         &self.tasks
     }
 
     /// Get the currently in-progress task, if any.
+    #[must_use]
     pub fn current_task(&self) -> Option<&Task> {
         self.tasks
             .iter()
@@ -286,6 +306,7 @@ impl TaskManager {
     }
 
     /// Format a task summary for display.
+    #[must_use]
     pub fn format_task_summary(task: &Task) -> String {
         let status_icon = match task.status {
             TaskStatus::Pending => "[ ]",
@@ -294,43 +315,45 @@ impl TaskManager {
         };
 
         let mut summary = format!(
-            "{} {} {} ({})",
-            status_icon, task.id, task.subject, task.status
+            "{status_icon} {} {} ({})",
+            task.id, task.subject, task.status
         );
 
         if let Some(ref af) = task.active_form {
-            summary.push_str(&format!(" -- {}", af));
+            let _ = write!(summary, " -- {af}");
         }
 
         if !task.blocks.is_empty() {
-            summary.push_str(&format!("\n    blocks: {}", task.blocks.join(", ")));
+            let _ = write!(summary, "\n    blocks: {}", task.blocks.join(", "));
         }
         if !task.blocked_by.is_empty() {
-            summary.push_str(&format!("\n    blocked_by: {}", task.blocked_by.join(", ")));
+            let _ = write!(summary, "\n    blocked_by: {}", task.blocked_by.join(", "));
         }
 
         summary
     }
 
     /// Format full task details for display.
+    #[must_use]
     pub fn format_task_detail(task: &Task) -> String {
         let mut detail = String::new();
-        detail.push_str(&format!("ID: {}\n", task.id));
-        detail.push_str(&format!("Subject: {}\n", task.subject));
-        detail.push_str(&format!("Status: {}\n", task.status));
-        detail.push_str(&format!("Description: {}\n", task.description));
+        let _ = writeln!(detail, "ID: {}", task.id);
+        let _ = writeln!(detail, "Subject: {}", task.subject);
+        let _ = writeln!(detail, "Status: {}", task.status);
+        let _ = writeln!(detail, "Description: {}", task.description);
         if let Some(ref af) = task.active_form {
-            detail.push_str(&format!("Active form: {}\n", af));
+            let _ = writeln!(detail, "Active form: {af}");
         }
-        detail.push_str(&format!(
-            "Created: {}\n",
+        let _ = writeln!(
+            detail,
+            "Created: {}",
             task.created_at.format("%Y-%m-%d %H:%M:%S UTC")
-        ));
+        );
         if !task.blocks.is_empty() {
-            detail.push_str(&format!("Blocks: {}\n", task.blocks.join(", ")));
+            let _ = writeln!(detail, "Blocks: {}", task.blocks.join(", "));
         }
         if !task.blocked_by.is_empty() {
-            detail.push_str(&format!("Blocked by: {}\n", task.blocked_by.join(", ")));
+            let _ = writeln!(detail, "Blocked by: {}", task.blocked_by.join(", "));
         }
         detail
     }

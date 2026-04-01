@@ -4,13 +4,16 @@ mod notebook;
 mod read;
 mod write;
 
-pub(crate) use edit::execute_edit_file;
-pub(crate) use list::execute_list_files;
+pub use edit::execute_edit_file;
+pub use list::execute_list_files;
 #[allow(unused_imports)] // used by tests in tools::mod
-pub(crate) use notebook::{execute_notebook_edit, source_to_line_array};
+pub use notebook::{execute_notebook_edit, source_to_line_array};
 #[allow(unused_imports)] // used by tests in tools::mod
-pub(crate) use read::{detect_file_type, parse_page_range, read_image_file, read_notebook_file, read_text_file, FileType};
-pub(crate) use write::execute_write_file;
+pub use read::{
+    detect_file_type, parse_page_range, read_image_file, read_notebook_file, read_text_file,
+    FileType,
+};
+pub use write::execute_write_file;
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -19,11 +22,11 @@ use std::sync::Mutex;
 const READ_TRACKER_MAX_ENTRIES: usize = 10_000;
 
 /// Tracks which files have been read in the current session.
-/// edit_file will fail if the file hasn't been read first.
-pub(crate) static READ_TRACKER: std::sync::LazyLock<ReadFileTracker> =
+/// `edit_file` will fail if the file hasn't been read first.
+pub static READ_TRACKER: std::sync::LazyLock<ReadFileTracker> =
     std::sync::LazyLock::new(ReadFileTracker::new);
 
-pub(crate) struct ReadFileTracker {
+pub struct ReadFileTracker {
     read_files: Mutex<std::collections::HashSet<std::path::PathBuf>>,
 }
 
@@ -51,11 +54,10 @@ impl ReadFileTracker {
     /// Check if a file has been read
     pub(crate) fn has_been_read(&self, path: &Path) -> bool {
         let check_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        if let Ok(set) = self.read_files.lock() {
-            set.contains(&check_path)
-        } else {
-            false
-        }
+        self.read_files
+            .lock()
+            .ok()
+            .is_some_and(|set| set.contains(&check_path))
     }
 
     /// Clear tracking (called on new session)
@@ -85,17 +87,18 @@ impl ReadFileTracker {
 }
 
 /// Read a file's contents
-pub(crate) fn execute_read_file(args: &std::collections::HashMap<String, serde_json::Value>) -> (String, bool) {
-    let path = match args.get("path").and_then(|v| v.as_str()) {
-        Some(p) => p,
-        None => return ("Missing 'path' argument".to_string(), true),
+pub fn execute_read_file(
+    args: &std::collections::HashMap<String, serde_json::Value>,
+) -> (String, bool) {
+    let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
+        return ("Missing 'path' argument".to_string(), true);
     };
 
     // Reject path traversal attempts (relative paths with ..)
     let p = Path::new(path);
     if !p.is_absolute() {
         return (
-            format!("Path must be absolute, got relative path: '{}'", path),
+            format!("Path must be absolute, got relative path: '{path}'"),
             true,
         );
     }

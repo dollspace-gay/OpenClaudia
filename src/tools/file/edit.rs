@@ -1,50 +1,49 @@
 use super::READ_TRACKER;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
 /// Edit a file by replacing text
-pub(crate) fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
-    let path = match args.get("path").and_then(|v| v.as_str()) {
-        Some(p) => p,
-        None => return ("Missing 'path' argument".to_string(), true),
+pub fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
+    let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
+        return ("Missing 'path' argument".to_string(), true);
     };
 
     // Reject path traversal attempts (relative paths with ..)
     let p = Path::new(path);
     if !p.is_absolute() {
         return (
-            format!("Path must be absolute, got relative path: '{}'", path),
+            format!("Path must be absolute, got relative path: '{path}'"),
             true,
         );
     }
 
     // Reject path traversal attempts
     if p.components().any(|c| c == std::path::Component::ParentDir) {
-        return (
-            format!("Path traversal not allowed: '{}'", path),
-            true,
-        );
+        return (format!("Path traversal not allowed: '{path}'"), true);
     }
 
     // Resolve symlinks to prevent symlink-based path traversal.
     let canonical = match std::fs::canonicalize(p) {
         Ok(canon) => canon,
         Err(_) => {
-            // File doesn't exist — try to resolve the parent directory
+            // File doesn't exist -- try to resolve the parent directory
             if let Some(parent) = p.parent() {
                 match std::fs::canonicalize(parent) {
                     Ok(canon_parent) => canon_parent.join(p.file_name().unwrap_or_default()),
                     Err(_) => {
                         return (
-                            format!("Cannot resolve path '{}': parent directory does not exist", path),
+                            format!(
+                                "Cannot resolve path '{path}': parent directory does not exist"
+                            ),
                             true,
                         );
                     }
                 }
             } else {
-                return (format!("Invalid path: '{}'", path), true);
+                return (format!("Invalid path: '{path}'"), true);
             }
         }
     };
@@ -56,8 +55,7 @@ pub(crate) fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool)
     if !READ_TRACKER.has_been_read(Path::new(path)) {
         return (
             format!(
-                "You must read '{}' before editing it. Use read_file first to see the actual contents.",
-                path
+                "You must read '{path}' before editing it. Use read_file first to see the actual contents."
             ),
             true,
         );
@@ -68,28 +66,25 @@ pub(crate) fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool)
         return (msg, true);
     }
 
-    let old_string = match args.get("old_string").and_then(|v| v.as_str()) {
-        Some(s) => s,
-        None => return ("Missing 'old_string' argument".to_string(), true),
+    let Some(old_string) = args.get("old_string").and_then(|v| v.as_str()) else {
+        return ("Missing 'old_string' argument".to_string(), true);
     };
 
-    let new_string = match args.get("new_string").and_then(|v| v.as_str()) {
-        Some(s) => s,
-        None => return ("Missing 'new_string' argument".to_string(), true),
+    let Some(new_string) = args.get("new_string").and_then(|v| v.as_str()) else {
+        return ("Missing 'new_string' argument".to_string(), true);
     };
 
     // Read the file
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
-        Err(e) => return (format!("Failed to read file '{}': {}", path, e), true),
+        Err(e) => return (format!("Failed to read file '{path}': {e}"), true),
     };
 
     // Check if old_string exists
     if !content.contains(old_string) {
         return (
             format!(
-                "Could not find the specified text in '{}'. Make sure old_string matches exactly.",
-                path
+                "Could not find the specified text in '{path}'. Make sure old_string matches exactly."
             ),
             true,
         );
@@ -98,12 +93,12 @@ pub(crate) fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool)
     // Count occurrences
     let count = content.matches(old_string).count();
     if count > 1 {
-        return (format!("Found {} occurrences of the text. Please provide a more specific old_string that matches uniquely.", count), true);
+        return (format!("Found {count} occurrences of the text. Please provide a more specific old_string that matches uniquely."), true);
     }
 
     // Track diff: lines removed vs added
-    let lines_removed = old_string.lines().count() as u32;
-    let lines_added = new_string.lines().count() as u32;
+    let lines_removed = u32::try_from(old_string.lines().count()).unwrap_or(u32::MAX);
+    let lines_added = u32::try_from(new_string.lines().count()).unwrap_or(u32::MAX);
 
     // Make the replacement
     let new_content = content.replacen(old_string, new_string, 1);
@@ -128,10 +123,10 @@ pub(crate) fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool)
                 diff_json,
             );
             if let Some(warning) = crate::guardrails::check_diff_thresholds() {
-                result.push_str(&format!("\n\nWarning: {}", warning.message));
+                let _ = write!(result, "\n\nWarning: {}", warning.message);
             }
             (result, false)
         }
-        Err(e) => (format!("Failed to write file '{}': {}", path, e), true),
+        Err(e) => (format!("Failed to write file '{path}': {e}"), true),
     }
 }

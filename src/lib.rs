@@ -1,8 +1,8 @@
-//! OpenClaudia - Open-source universal agent harness
+//! `OpenClaudia` - Open-source universal agent harness
 //!
 //! Provides Claude Code-like capabilities for any AI agent.
 //!
-//! This library exposes the core functionality of OpenClaudia for both
+//! This library exposes the core functionality of `OpenClaudia` for both
 //! the CLI binary and integration testing.
 
 #![recursion_limit = "256"]

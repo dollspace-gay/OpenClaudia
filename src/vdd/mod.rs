@@ -26,6 +26,7 @@ pub use static_analysis::StaticAnalysisResult;
 use chrono::Utc;
 use reqwest::Client;
 use serde_json::Value;
+use std::fmt::Write;
 use std::time::Duration;
 use thiserror::Error;
 use tracing::{debug, info, warn};
@@ -153,6 +154,7 @@ pub struct VddEngine {
 }
 
 impl VddEngine {
+    #[must_use]
     pub fn new(config: &VddConfig, app_config: &AppConfig, client: Client) -> Self {
         Self {
             config: config.clone(),
@@ -163,6 +165,9 @@ impl VddEngine {
 
     /// Simplified entry point for chat loop integration.
     /// Takes just the builder text and user task, returns findings for injection.
+    ///
+    /// # Errors
+    /// Returns an error if the adversary request fails or the response cannot be parsed.
     pub async fn review_text(
         &self,
         builder_text: &str,
@@ -230,6 +235,9 @@ impl VddEngine {
 
     /// Main entry point — called by proxy after builder responds.
     /// Routes to advisory or blocking mode based on config.
+    ///
+    /// # Errors
+    /// Returns an error if the adversary request or builder revision fails.
     pub async fn process_response(
         &self,
         builder_response: &Value,
@@ -329,6 +337,7 @@ impl VddEngine {
     }
 
     /// Blocking mode: full adversarial loop until convergence.
+    #[allow(clippy::too_many_lines)]
     async fn blocking_loop(
         &self,
         initial_builder_response: &Value,
@@ -372,10 +381,12 @@ impl VddEngine {
             let mut findings = self.parse_findings(&adversary_text, iteration);
             self.triage_findings(&mut findings, &previous_fps);
 
+            #[allow(clippy::cast_possible_truncation)]
             let genuine_count = findings
                 .iter()
                 .filter(|f| f.status == FindingStatus::Genuine)
                 .count() as u32;
+            #[allow(clippy::cast_possible_truncation)]
             let fp_count = findings
                 .iter()
                 .filter(|f| f.status == FindingStatus::FalsePositive)
@@ -469,7 +480,7 @@ impl VddEngine {
                             "VDD blocking: builder revision failed: {}, stopping loop",
                             e
                         );
-                        session.finalize(false, &format!("Builder revision failed: {}", e));
+                        session.finalize(false, &format!("Builder revision failed: {e}"));
                         break;
                     }
                 }
@@ -507,7 +518,9 @@ impl VddEngine {
             .filter(|f| f.status == FindingStatus::Genuine)
             .collect();
 
-        let chainlink_issues = if !all_genuine.is_empty() {
+        let chainlink_issues = if all_genuine.is_empty() {
+            Vec::new()
+        } else {
             match self.create_chainlink_issues(&all_genuine).await {
                 Ok(ids) => ids,
                 Err(e) => {
@@ -515,8 +528,6 @@ impl VddEngine {
                     Vec::new()
                 }
             }
-        } else {
-            Vec::new()
         };
 
         // Persist session if configured
@@ -544,27 +555,27 @@ impl VddEngine {
         iteration: u32,
     ) -> ChatCompletionRequest {
         let mut user_content = format!(
-            "## Original Task\n{}\n\n## Builder Output (Iteration {})\n{}",
-            original_task, iteration, builder_output
+            "## Original Task\n{original_task}\n\n## Builder Output (Iteration {iteration})\n{builder_output}"
         );
 
         // Append static analysis results if any
         if !static_analysis_results.is_empty() {
             user_content.push_str("\n\n## Static Analysis Results\n");
             for result in static_analysis_results {
-                user_content.push_str(&format!(
+                let _ = write!(
+                    user_content,
                     "\n### `{}`\n**Exit code:** {} ({})\n",
                     result.command,
                     result.exit_code,
                     if result.passed { "PASSED" } else { "FAILED" }
-                ));
+                );
                 if !result.stdout.is_empty() {
                     let truncated = truncate_output(&result.stdout, 2000);
-                    user_content.push_str(&format!("**stdout:**\n```\n{}\n```\n", truncated));
+                    let _ = write!(user_content, "**stdout:**\n```\n{truncated}\n```\n");
                 }
                 if !result.stderr.is_empty() {
                     let truncated = truncate_output(&result.stderr, 2000);
-                    user_content.push_str(&format!("**stderr:**\n```\n{}\n```\n", truncated));
+                    let _ = write!(user_content, "**stderr:**\n```\n{truncated}\n```\n");
                 }
             }
         }
@@ -645,6 +656,7 @@ impl VddEngine {
     }
 
     /// Parse adversary response text into structured findings.
+    #[allow(clippy::unused_self)]
     fn parse_findings(&self, adversary_response: &str, iteration: u32) -> Vec<Finding> {
         // Try to parse as JSON first
         let parsed: Option<AdversaryResponse> = serde_json::from_str(adversary_response)
@@ -659,28 +671,24 @@ impl VddEngine {
                 try_parse_relaxed(adversary_response)
             });
 
-        let raw_findings = match parsed {
-            Some(response) => {
-                if response.assessment.as_deref() == Some("NO_FINDINGS") {
-                    info!("VDD: Adversary reported no findings");
-                    return Vec::new();
-                }
-                match response.findings {
-                    Some(findings) => findings,
-                    None => {
-                        warn!("VDD: Adversary response has no 'findings' field or it is not an array");
-                        return Vec::new();
-                    }
-                }
-            }
-            None => {
-                warn!("VDD: Could not parse adversary response as JSON, treating as no findings");
-                info!(
-                    "VDD: Unparseable response preview: {}",
-                    truncate_output(adversary_response, 500)
-                );
+        let raw_findings = if let Some(response) = parsed {
+            if response.assessment.as_deref() == Some("NO_FINDINGS") {
+                info!("VDD: Adversary reported no findings");
                 return Vec::new();
             }
+            if let Some(findings) = response.findings {
+                findings
+            } else {
+                warn!("VDD: Adversary response has no 'findings' field or it is not an array");
+                return Vec::new();
+            }
+        } else {
+            warn!("VDD: Could not parse adversary response as JSON, treating as no findings");
+            info!(
+                "VDD: Unparseable response preview: {}",
+                truncate_output(adversary_response, 500)
+            );
+            return Vec::new();
         };
 
         raw_findings
@@ -715,6 +723,7 @@ impl VddEngine {
     }
 
     /// Triage findings: mark duplicates and previously-seen false positives.
+    #[allow(clippy::unused_self)]
     fn triage_findings(&self, findings: &mut [Finding], previous_fps: &[String]) {
         for finding in findings.iter_mut() {
             // If this finding's description closely matches a previous false positive,
@@ -762,9 +771,7 @@ impl VddEngine {
                 finding.severity,
                 finding.cwe.as_deref().unwrap_or("N/A"),
                 finding.file_path.as_deref().unwrap_or("N/A"),
-                finding.line_range
-                    .map(|(s, e)| format!("{}-{}", s, e))
-                    .unwrap_or_else(|| "N/A".to_string()),
+                finding.line_range.map_or_else(|| "N/A".to_string(), |(s, e)| format!("{s}-{e}")),
                 finding.description,
                 finding.adversary_reasoning,
             );
@@ -784,6 +791,7 @@ impl VddEngine {
     }
 
     /// Build a revision request to send back to the builder with genuine findings.
+    #[allow(clippy::unused_self)]
     fn build_revision_request(
         &self,
         original_request: &ChatCompletionRequest,
@@ -796,7 +804,8 @@ impl VddEngine {
         );
 
         for (i, finding) in genuine_findings.iter().enumerate() {
-            findings_text.push_str(&format!(
+            let _ =
+                write!(findings_text,
                 "### Finding {} [{}] {}\n**File:** {}\n**Lines:** {}\n{}\n\n**Reasoning:** {}\n\n",
                 i + 1,
                 finding.severity,
@@ -804,11 +813,10 @@ impl VddEngine {
                 finding.file_path.as_deref().unwrap_or("N/A"),
                 finding
                     .line_range
-                    .map(|(s, e)| format!("{}-{}", s, e))
-                    .unwrap_or_else(|| "N/A".to_string()),
+                    .map_or_else(|| "N/A".to_string(), |(s, e)| format!("{s}-{e}")),
                 finding.description,
                 finding.adversary_reasoning,
-            ));
+            );
         }
 
         // Clone original messages and append the revision request
@@ -816,8 +824,7 @@ impl VddEngine {
         messages.push(ChatMessage {
             role: "user".to_string(),
             content: MessageContent::Text(format!(
-                "<vdd-revision iteration=\"{}\">\n{}</vdd-revision>",
-                iteration, findings_text
+                "<vdd-revision iteration=\"{iteration}\">\n{findings_text}</vdd-revision>"
             )),
             name: None,
             tool_calls: None,
@@ -836,7 +843,7 @@ impl VddEngine {
         }
     }
 
-    /// Send a request to the adversary provider. Returns (response_text, token_usage).
+    /// Send a request to the adversary provider. Returns (`response_text`, `token_usage`).
     async fn send_to_adversary(
         &self,
         request: &ChatCompletionRequest,
@@ -924,8 +931,7 @@ impl VddEngine {
             .get(provider_name)
             .ok_or_else(|| {
                 VddError::BuilderRevisionFailed(format!(
-                    "Builder provider '{}' not configured",
-                    provider_name
+                    "Builder provider '{provider_name}' not configured"
                 ))
             })?;
 
@@ -998,9 +1004,9 @@ async fn forward_request(
 
     // Google/Gemini requires model name in the URL path
     let url = if provider_name == "google" {
-        format!("{}/v1beta/models/{}:generateContent", base_url, model)
+        format!("{base_url}/v1beta/models/{model}:generateContent")
     } else {
-        format!("{}{}", base_url, endpoint)
+        format!("{base_url}{endpoint}")
     };
 
     // Validate the constructed URL before sending the request
@@ -1072,22 +1078,23 @@ fn format_findings_for_injection(
             "Adversarial review identified the following issues in your previous response:\n\n",
         );
         for (i, finding) in genuine.iter().enumerate() {
-            output.push_str(&format!(
-                "{}. [{}] {}{}: {}\n",
+            let _ = writeln!(
+                output,
+                "{}. [{}] {}{}: {}",
                 i + 1,
                 finding.severity,
                 finding
                     .cwe
                     .as_deref()
-                    .map(|c| format!("{} ", c))
+                    .map(|c| format!("{c} "))
                     .unwrap_or_default(),
                 finding
                     .file_path
                     .as_deref()
-                    .map(|f| format!(" in {}", f))
+                    .map(|f| format!(" in {f}"))
                     .unwrap_or_default(),
                 finding.description
-            ));
+            );
         }
         output.push_str("\nAddress these issues in your next response.\n");
     }
@@ -1097,10 +1104,11 @@ fn format_findings_for_injection(
     if !failed_analysis.is_empty() {
         output.push_str("\nStatic analysis failures:\n");
         for result in failed_analysis {
-            output.push_str(&format!(
-                "- `{}` (exit code {})\n",
+            let _ = writeln!(
+                output,
+                "- `{}` (exit code {})",
                 result.command, result.exit_code
-            ));
+            );
         }
     }
 

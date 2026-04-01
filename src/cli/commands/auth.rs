@@ -1,5 +1,6 @@
 use openclaudia::tools::safe_truncate;
 
+#[allow(clippy::too_many_lines)]
 /// Authenticate with Claude Max subscription via OAuth
 pub async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
     use openclaudia::oauth::{parse_auth_code, OAuthClient, OAuthStore, PkceParams};
@@ -14,26 +15,17 @@ pub async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
             let persist_path =
                 dirs::data_local_dir().map(|d| d.join("openclaudia").join("oauth_sessions.json"));
 
-            if let Some(path) = persist_path {
-                if path.exists() {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        if let Ok(sessions) = serde_json::from_str::<
-                            std::collections::HashMap<String, serde_json::Value>,
-                        >(&content)
-                        {
-                            sessions.into_iter().collect()
-                        } else {
-                            vec![]
-                        }
-                    } else {
-                        vec![]
-                    }
-                } else {
-                    vec![]
-                }
-            } else {
-                vec![]
-            }
+            persist_path
+                .filter(|path| path.exists())
+                .and_then(|path| std::fs::read_to_string(&path).ok())
+                .and_then(|content| {
+                    serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(
+                        &content,
+                    )
+                    .ok()
+                })
+                .map(|sessions| sessions.into_iter().collect())
+                .unwrap_or_default()
         };
 
         if sessions.is_empty() {
@@ -77,7 +69,7 @@ pub async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
     let auth_url = pkce.build_auth_url();
 
     println!("Step 1: Open this URL in your browser:\n");
-    println!("  {}\n", auth_url);
+    println!("  {auth_url}\n");
 
     // Try to open browser automatically
     #[cfg(target_os = "windows")]
@@ -140,7 +132,7 @@ pub async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
                 println!("API key created successfully");
             }
             Err(e) => {
-                eprintln!("Warning: Failed to create API key: {}", e);
+                eprintln!("Warning: Failed to create API key: {e}");
                 eprintln!("Falling back to Bearer token authentication.");
                 session.auth_mode = openclaudia::oauth::AuthMode::BearerToken;
             }

@@ -1,4 +1,4 @@
-//! OpenAI Chat Completions API adapter (mostly passthrough).
+//! `OpenAI` Chat Completions API adapter (mostly passthrough).
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -9,11 +9,12 @@ use crate::proxy::ChatCompletionRequest;
 
 use super::{ProviderAdapter, ProviderError};
 
-/// OpenAI API adapter (mostly passthrough)
+/// `OpenAI` API adapter (mostly passthrough)
 pub struct OpenAIAdapter;
 
 impl OpenAIAdapter {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -26,7 +27,7 @@ impl Default for OpenAIAdapter {
 
 #[async_trait]
 impl ProviderAdapter for OpenAIAdapter {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "openai"
     }
 
@@ -48,9 +49,8 @@ impl ProviderAdapter for OpenAIAdapter {
         // Only valid for reasoning models (o1, o3, o4 series)
         if thinking.enabled {
             let model = request.model.as_str();
-            let is_reasoning_model = model.starts_with("o1")
-                || model.starts_with("o3")
-                || model.starts_with("o4");
+            let is_reasoning_model =
+                model.starts_with("o1") || model.starts_with("o3") || model.starts_with("o4");
             if is_reasoning_model {
                 let effort = thinking.reasoning_effort.as_deref().unwrap_or("medium");
                 body["reasoning_effort"] = json!(effort);
@@ -77,7 +77,7 @@ impl ProviderAdapter for OpenAIAdapter {
 
     fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {
         vec![
-            ("Authorization".to_string(), format!("Bearer {}", api_key)),
+            ("Authorization".to_string(), format!("Bearer {api_key}")),
             ("content-type".to_string(), "application/json".to_string()),
         ]
     }

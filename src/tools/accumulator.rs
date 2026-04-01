@@ -18,7 +18,8 @@ pub struct PartialToolCall {
 }
 
 impl ToolCallAccumulator {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             tool_calls: Vec::new(),
         }
@@ -28,7 +29,10 @@ impl ToolCallAccumulator {
     pub fn process_delta(&mut self, delta: &Value) {
         if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
             for tc in tool_calls {
-                let index = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let index = tc
+                    .get("index")
+                    .and_then(serde_json::Value::as_u64)
+                    .map_or(0, |v| usize::try_from(v).unwrap_or(usize::MAX));
 
                 // Ensure we have enough slots
                 while self.tool_calls.len() <= index {
@@ -57,6 +61,7 @@ impl ToolCallAccumulator {
     }
 
     /// Convert accumulated partials to complete tool calls
+    #[must_use]
     pub fn finalize(&self) -> Vec<ToolCall> {
         self.tool_calls
             .iter()
@@ -77,6 +82,7 @@ impl ToolCallAccumulator {
     }
 
     /// Check if we have any tool calls
+    #[must_use]
     pub fn has_tool_calls(&self) -> bool {
         self.tool_calls.iter().any(|tc| !tc.id.is_empty())
     }
@@ -104,22 +110,22 @@ pub enum AnthropicContentBlock {
     },
 }
 
-/// Accumulates tool_use content blocks from Anthropic streaming responses.
+/// Accumulates `tool_use` content blocks from Anthropic streaming responses.
 ///
 /// When the Anthropic API receives tool definitions, it returns structured
 /// `tool_use` content blocks instead of XML in text. This accumulator
 /// processes the streaming events to collect those blocks.
 ///
-/// Anthropic streaming event sequence for tool_use:
+/// Anthropic streaming event sequence for `tool_use`:
 /// 1. `content_block_start` with `type: "tool_use"`, `id`, `name`
 /// 2. `content_block_delta` with `type: "input_json_delta"`, `partial_json`
 /// 3. `content_block_stop`
 /// 4. `message_delta` with `stop_reason: "tool_use"`
 #[derive(Debug)]
 pub struct AnthropicToolAccumulator {
-    /// Accumulated content blocks (text + tool_use)
+    /// Accumulated content blocks (text + `tool_use`)
     pub blocks: Vec<AnthropicContentBlock>,
-    /// The stop reason from message_delta
+    /// The stop reason from `message_delta`
     pub stop_reason: Option<String>,
 }
 
@@ -130,7 +136,8 @@ impl Default for AnthropicToolAccumulator {
 }
 
 impl AnthropicToolAccumulator {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             blocks: Vec::new(),
             stop_reason: None,
@@ -216,6 +223,7 @@ impl AnthropicToolAccumulator {
     }
 
     /// Check if the model requested tool use
+    #[must_use]
     pub fn has_tool_use(&self) -> bool {
         self.stop_reason.as_deref() == Some("tool_use")
             && self
@@ -225,18 +233,20 @@ impl AnthropicToolAccumulator {
     }
 
     /// Get concatenated text from all text blocks
+    #[must_use]
     pub fn get_text(&self) -> String {
         self.blocks
             .iter()
             .filter_map(|b| match b {
                 AnthropicContentBlock::Text(s) => Some(s.as_str()),
-                _ => None,
+                AnthropicContentBlock::ToolUse { .. } => None,
             })
             .collect::<Vec<_>>()
             .join("")
     }
 
-    /// Convert accumulated tool_use blocks to ToolCall format for execution
+    /// Convert accumulated `tool_use` blocks to `ToolCall` format for execution
+    #[must_use]
     pub fn finalize_tool_calls(&self) -> Vec<ToolCall> {
         self.blocks
             .iter()
@@ -253,13 +263,14 @@ impl AnthropicToolAccumulator {
                         arguments: input_json.clone(),
                     },
                 }),
-                _ => None,
+                AnthropicContentBlock::Text(_) => None,
             })
             .collect()
     }
 
-    /// Convert to OpenAI-format tool_calls JSON for storage in chat_session.
+    /// Convert to OpenAI-format `tool_calls` JSON for storage in `chat_session`.
     /// This allows `convert_messages_to_anthropic` to handle the back-conversion.
+    #[must_use]
     pub fn to_openai_tool_calls_json(&self) -> Vec<serde_json::Value> {
         self.blocks
             .iter()
@@ -276,7 +287,7 @@ impl AnthropicToolAccumulator {
                         "arguments": input_json
                     }
                 })),
-                _ => None,
+                AnthropicContentBlock::Text(_) => None,
             })
             .collect()
     }

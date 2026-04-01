@@ -13,7 +13,8 @@ use super::{ProviderAdapter, ProviderError};
 pub struct AnthropicAdapter;
 
 impl AnthropicAdapter {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self
     }
 
@@ -32,7 +33,7 @@ impl AnthropicAdapter {
             })
     }
 
-    /// Convert OpenAI messages to Anthropic format
+    /// Convert `OpenAI` messages to Anthropic format
     fn convert_messages(messages: &[ChatMessage]) -> Vec<Value> {
         messages
             .iter()
@@ -49,17 +50,20 @@ impl AnthropicAdapter {
                         let converted: Vec<Value> = parts
                             .iter()
                             .map(|p| {
-                                if let Some(text) = &p.text {
-                                    json!({"type": "text", "text": text})
-                                } else if let Some(image) = &p.image_url {
-                                    // Convert OpenAI image format to Anthropic
-                                    json!({
-                                        "type": "image",
-                                        "source": image
-                                    })
-                                } else {
-                                    json!({"type": "text", "text": ""})
-                                }
+                                p.text.as_ref().map_or_else(
+                                    || {
+                                        p.image_url.as_ref().map_or_else(
+                                            || json!({"type": "text", "text": ""}),
+                                            |image| {
+                                                json!({
+                                                    "type": "image",
+                                                    "source": image
+                                                })
+                                            },
+                                        )
+                                    },
+                                    |text| json!({"type": "text", "text": text}),
+                                )
                             })
                             .collect();
                         Value::Array(converted)
@@ -74,8 +78,8 @@ impl AnthropicAdapter {
             .collect()
     }
 
-    /// Convert OpenAI tools to Anthropic format with optional prompt caching
-    /// If cache_last is true, adds cache_control to the last tool for prompt caching
+    /// Convert `OpenAI` tools to Anthropic format with optional prompt caching
+    /// If `cache_last` is true, adds `cache_control` to the last tool for prompt caching
     pub(crate) fn convert_tools(tools: &[Value], cache_last: bool) -> Vec<Value> {
         let len = tools.len();
         tools
@@ -85,8 +89,8 @@ impl AnthropicAdapter {
                 let func = tool.get("function")?;
                 let mut tool_def = json!({
                     "name": func.get("name")?,
-                    "description": func.get("description").unwrap_or(&json!("")),
-                    "input_schema": func.get("parameters").unwrap_or(&json!({}))
+                    "description": func.get("description").unwrap_or(&Value::String(String::new())),
+                    "input_schema": func.get("parameters").cloned().unwrap_or_else(|| Value::Object(serde_json::Map::default()))
                 });
 
                 // Add cache_control to the last tool for prompt caching
@@ -109,7 +113,7 @@ impl Default for AnthropicAdapter {
 
 #[async_trait]
 impl ProviderAdapter for AnthropicAdapter {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "anthropic"
     }
 
@@ -193,8 +197,7 @@ impl ProviderAdapter for AnthropicAdapter {
                             None
                         }
                     })
-                    .collect::<Vec<_>>()
-                    .join("")
+                    .collect::<String>()
             })
             .unwrap_or_default();
 
@@ -239,28 +242,30 @@ impl ProviderAdapter for AnthropicAdapter {
             message["tool_calls"] = json!(calls);
         }
 
+        let default_id = json!("msg_unknown");
+        let default_model = json!("unknown");
+        let default_zero = json!(0);
         Ok(json!({
-            "id": response.get("id").unwrap_or(&json!("msg_unknown")),
+            "id": response.get("id").unwrap_or(&default_id),
             "object": "chat.completion",
             "created": chrono::Utc::now().timestamp(),
-            "model": response.get("model").unwrap_or(&json!("unknown")),
+            "model": response.get("model").unwrap_or(&default_model),
             "choices": [{
                 "index": 0,
                 "message": message,
                 "finish_reason": match response.get("stop_reason").and_then(|s| s.as_str()) {
-                    Some("end_turn") => "stop",
                     Some("tool_use") => "tool_calls",
                     Some("max_tokens") => "length",
-                    _ => "stop"
+                    _ => "stop",
                 }
             }],
             "usage": {
-                "prompt_tokens": response.get("usage").and_then(|u| u.get("input_tokens")).unwrap_or(&json!(0)),
-                "completion_tokens": response.get("usage").and_then(|u| u.get("output_tokens")).unwrap_or(&json!(0)),
-                "total_tokens": response.get("usage").map(|u| {
-                    u.get("input_tokens").and_then(|i| i.as_u64()).unwrap_or(0) +
-                    u.get("output_tokens").and_then(|o| o.as_u64()).unwrap_or(0)
-                }).unwrap_or(0)
+                "prompt_tokens": response.get("usage").and_then(|u| u.get("input_tokens")).unwrap_or(&default_zero),
+                "completion_tokens": response.get("usage").and_then(|u| u.get("output_tokens")).unwrap_or(&default_zero),
+                "total_tokens": response.get("usage").map_or(0, |u| {
+                    u.get("input_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0) +
+                    u.get("output_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0)
+                })
             }
         }))
     }
@@ -278,20 +283,22 @@ impl ProviderAdapter for AnthropicAdapter {
     }
 }
 
-/// Convert tools from OpenAI format to Anthropic format
+/// Convert tools from `OpenAI` format to Anthropic format
 ///
-/// OpenAI format: `{ "type": "function", "function": { "name": ..., "parameters": ... } }`
+/// `OpenAI` format: `{ "type": "function", "function": { "name": ..., "parameters": ... } }`
 /// Anthropic format: `{ "name": ..., "description": ..., "input_schema": ... }`
+#[must_use]
 pub fn convert_tools_to_anthropic(tools: &[Value]) -> Vec<Value> {
     AnthropicAdapter::convert_tools(tools, true)
 }
 
-/// Convert messages from OpenAI format to Anthropic format
+/// Convert messages from `OpenAI` format to Anthropic format
 ///
 /// Handles the critical differences:
-/// - OpenAI `role: "tool"` -> Anthropic `role: "user"` with `type: "tool_result"` content
-/// - OpenAI `tool_calls` array -> Anthropic `type: "tool_use"` content blocks
+/// - `OpenAI` `role: "tool"` -> Anthropic `role: "user"` with `type: "tool_result"` content
+/// - `OpenAI` `tool_calls` array -> Anthropic `type: "tool_use"` content blocks
 /// - System messages are filtered out (handled separately at top level)
+#[must_use]
 pub fn convert_messages_to_anthropic(messages: &[Value]) -> Vec<Value> {
     let mut result = Vec::new();
 
@@ -312,7 +319,7 @@ pub fn convert_messages_to_anthropic(messages: &[Value]) -> Vec<Value> {
             let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
             let is_error = msg
                 .get("is_error")
-                .and_then(|v| v.as_bool())
+                .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
 
             let mut tool_result = json!({
@@ -356,7 +363,7 @@ pub fn convert_messages_to_anthropic(messages: &[Value]) -> Vec<Value> {
                         .unwrap_or("{}");
 
                     // Parse arguments string to JSON object
-                    let input: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
+                    let input: Value = serde_json::from_str(args_str).unwrap_or_else(|_| json!({}));
 
                     content_blocks.push(json!({
                         "type": "tool_use",
@@ -375,9 +382,9 @@ pub fn convert_messages_to_anthropic(messages: &[Value]) -> Vec<Value> {
         }
 
         // Regular user or assistant message - convert content to array format
-        let content = msg
-            .get("content")
-            .map(|c| {
+        let content = msg.get("content").map_or_else(
+            || json!([{"type": "text", "text": ""}]),
+            |c| {
                 if c.is_string() {
                     json!([{"type": "text", "text": c.as_str().unwrap_or("")}])
                 } else if c.is_array() {
@@ -385,8 +392,8 @@ pub fn convert_messages_to_anthropic(messages: &[Value]) -> Vec<Value> {
                 } else {
                     json!([{"type": "text", "text": ""}])
                 }
-            })
-            .unwrap_or_else(|| json!([{"type": "text", "text": ""}]));
+            },
+        );
 
         result.push(json!({
             "role": role,

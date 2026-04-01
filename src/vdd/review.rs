@@ -98,11 +98,14 @@ impl VddSession {
         self.total_findings += iteration.genuine_count + iteration.false_positive_count;
         self.total_genuine += iteration.genuine_count;
         self.total_false_positives += iteration.false_positive_count;
-        self.false_positive_rate = if self.total_findings > 0 {
-            self.total_false_positives as f32 / self.total_findings as f32
-        } else {
-            0.0
-        };
+        #[allow(clippy::cast_precision_loss)]
+        {
+            self.false_positive_rate = if self.total_findings > 0 {
+                self.total_false_positives as f32 / self.total_findings as f32
+            } else {
+                0.0
+            };
+        }
         self.adversary_tokens
             .accumulate(&iteration.adversary_review.tokens_used);
         self.iterations.push(iteration);

@@ -1,6 +1,6 @@
 //! Ollama API adapter for local LLM inference.
 //!
-//! See: https://github.com/ollama/ollama/blob/main/docs/api.md
+//! See: <https://github.com/ollama/ollama/blob/main/docs/api.md>
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -11,15 +11,16 @@ use crate::proxy::{ChatCompletionRequest, ChatMessage, MessageContent};
 use super::{ProviderAdapter, ProviderError};
 
 /// Ollama API adapter for local LLM inference
-/// See: https://github.com/ollama/ollama/blob/main/docs/api.md
+/// See: <https://github.com/ollama/ollama/blob/main/docs/api.md>
 pub struct OllamaAdapter;
 
 impl OllamaAdapter {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self
     }
 
-    /// Convert OpenAI messages to Ollama format
+    /// Convert `OpenAI` messages to Ollama format
     fn convert_messages(messages: &[ChatMessage]) -> Vec<Value> {
         messages
             .iter()
@@ -50,7 +51,7 @@ impl Default for OllamaAdapter {
 
 #[async_trait]
 impl ProviderAdapter for OllamaAdapter {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "ollama"
     }
 
@@ -79,12 +80,14 @@ impl ProviderAdapter for OllamaAdapter {
                 .iter()
                 .filter_map(|tool| {
                     let func = tool.get("function")?;
+                    let default_desc = json!("");
+                    let default_params = json!({});
                     Some(json!({
                         "type": "function",
                         "function": {
                             "name": func.get("name")?,
-                            "description": func.get("description").unwrap_or(&json!("")),
-                            "parameters": func.get("parameters").unwrap_or(&json!({}))
+                            "description": func.get("description").unwrap_or(&default_desc),
+                            "parameters": func.get("parameters").unwrap_or(&default_params)
                         }
                     }))
                 })
@@ -125,14 +128,13 @@ impl ProviderAdapter for OllamaAdapter {
                             "function": {
                                 "name": func.get("name")?,
                                 "arguments": func.get("arguments")
-                                    .map(|a| {
+                                    .map_or_else(|| "{}".to_string(), |a| {
                                         if a.is_string() {
                                             a.as_str().unwrap_or("{}").to_string()
                                         } else {
                                             serde_json::to_string(a).unwrap_or_else(|_| "{}".to_string())
                                         }
                                     })
-                                    .unwrap_or_else(|| "{}".to_string())
                             }
                         }))
                     })
@@ -152,7 +154,7 @@ impl ProviderAdapter for OllamaAdapter {
         // Determine finish reason
         let done = response
             .get("done")
-            .and_then(|d| d.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(true);
         let finish_reason = if !done {
             "length"
@@ -165,11 +167,11 @@ impl ProviderAdapter for OllamaAdapter {
         // Extract token counts if available
         let prompt_tokens = response
             .get("prompt_eval_count")
-            .and_then(|c| c.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(0);
         let completion_tokens = response
             .get("eval_count")
-            .and_then(|c| c.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(0);
 
         Ok(json!({
@@ -203,7 +205,7 @@ impl ProviderAdapter for OllamaAdapter {
         true
     }
 
-    fn models_endpoint(&self) -> &str {
+    fn models_endpoint(&self) -> &'static str {
         // Ollama uses /api/tags for model listing, but also supports /v1/models
         "/v1/models"
     }

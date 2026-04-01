@@ -2,7 +2,8 @@ use std::fs;
 use std::path::PathBuf;
 use tracing::info;
 
-/// Initialize OpenClaudia configuration
+#[allow(clippy::too_many_lines)]
+/// Initialize `OpenClaudia` configuration
 pub fn cmd_init(force: bool) -> anyhow::Result<()> {
     let config_dir = PathBuf::from(".openclaudia");
     let config_file = config_dir.join("config.yaml");
@@ -182,7 +183,7 @@ if __name__ == "__main__":
     fs::write(config_dir.join("hooks/session-start.py"), example_hook)?;
 
     // Write example rule
-    let example_rule = r#"# Global Rules
+    let example_rule = r"# Global Rules
 
 These rules are injected into every conversation.
 
@@ -195,7 +196,7 @@ These rules are injected into every conversation.
 - Validate all user input
 - Use parameterized queries
 - Follow OWASP guidelines
-"#;
+";
 
     fs::write(config_dir.join("rules/global.md"), example_rule)?;
 
@@ -308,13 +309,13 @@ pub fn init_project_rules() {
     } else {
         println!("\nDetected project types:");
         for (_, desc) in &detected {
-            println!("  - {}", desc);
+            println!("  - {desc}");
         }
     }
 
     let rules_dir = std::path::Path::new(".openclaudia/rules");
     if let Err(e) = fs::create_dir_all(rules_dir) {
-        eprintln!("\nFailed to create rules directory: {}\n", e);
+        eprintln!("\nFailed to create rules directory: {e}\n");
         return;
     }
 
@@ -332,6 +333,6 @@ pub fn init_project_rules() {
             println!("\nGenerated rules at: {}", rules_path.display());
             println!("Edit this file to customize rules for your project.\n");
         }
-        Err(e) => eprintln!("\nFailed to write rules: {}\n", e),
+        Err(e) => eprintln!("\nFailed to write rules: {e}\n"),
     }
 }

@@ -1,4 +1,4 @@
-//! OpenClaudia - Open-source universal agent harness
+//! `OpenClaudia` - Open-source universal agent harness
 //!
 //! Provides Claude Code-like capabilities for any AI agent.
 
@@ -74,7 +74,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize OpenClaudia configuration in the current directory
+    /// Initialize `OpenClaudia` configuration in the current directory
     Init {
         /// Force overwrite existing configuration
         #[arg(short, long)]
@@ -92,7 +92,7 @@ enum Commands {
         logout: bool,
     },
 
-    /// Start the OpenClaudia proxy server
+    /// Start the `OpenClaudia` proxy server
     Start {
         /// Port to listen on (overrides config)
         #[arg(short, long)]
@@ -165,20 +165,30 @@ async fn main() -> anyhow::Result<()> {
                 Ok(c) => c,
                 Err(e) => {
                     if config::config_file_exists() {
-                        eprintln!("Failed to parse configuration: {}", e);
+                        eprintln!("Failed to parse configuration: {e}");
                     } else {
                         eprintln!("No configuration found. Run 'openclaudia init' first.");
                     }
                     return Ok(());
                 }
             };
-            let model = cli.model
+            let model = cli
+                .model
                 .or_else(|| config.active_provider().and_then(|p| p.model.clone()))
                 .unwrap_or_else(|| "claude-sonnet-4-6".to_string());
             let mut app = tui::app::App::new(&model, &config.proxy.target);
-            app.run().map_err(|e| anyhow::anyhow!("TUI error: {}", e))
+            app.run().map_err(|e| anyhow::anyhow!("TUI error: {e}"))
         }
-        None => cmd_chat(cli.model, cli.resume, cli.session_id, cli.coordinator, cli.dangerously_skip_permissions).await,
+        None => {
+            cmd_chat(
+                cli.model,
+                cli.resume,
+                cli.session_id,
+                cli.coordinator,
+                cli.dangerously_skip_permissions,
+            )
+            .await
+        }
         Some(Commands::Init { force }) => cli::commands::init::cmd_init(force),
         Some(Commands::Auth { status, logout }) => {
             cli::commands::auth::cmd_auth(status, logout).await
@@ -190,7 +200,10 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Start { port, host, target }) => {
             cli::commands::start::cmd_start(port, host, target).await
         }
-        Some(Commands::Config) => cli::commands::config_cmd::cmd_config(),
+        Some(Commands::Config) => {
+            cli::commands::config_cmd::cmd_config();
+            Ok(())
+        }
         Some(Commands::Doctor) => cli::commands::doctor::cmd_doctor().await,
         Some(Commands::Loop {
             max_iterations,
@@ -211,7 +224,7 @@ enum ToolPermissionResult {
 /// Check whether a tool call requires interactive permission and prompt the user if so.
 ///
 /// Read-only / informational tools execute without prompting. Write/destructive tools
-/// (bash, write_file, edit_file, etc.) prompt the user unless:
+/// (bash, `write_file`, `edit_file`, etc.) prompt the user unless:
 /// - `skip_permissions` is true (--dangerously-skip-permissions flag)
 /// - The tool has been marked "always allow" for this session
 ///
@@ -259,7 +272,7 @@ fn check_tool_permission_interactive(
                 .get("command")
                 .and_then(|v| v.as_str())
                 .unwrap_or("(unknown)");
-            format!("Run command: {}", cmd)
+            format!("Run command: {cmd}")
         }
         "write_file" => {
             let path = tool_args
@@ -267,7 +280,7 @@ fn check_tool_permission_interactive(
                 .or_else(|| tool_args.get("path"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("(unknown)");
-            format!("Write file: {}", path)
+            format!("Write file: {path}")
         }
         "edit_file" => {
             let path = tool_args
@@ -275,12 +288,12 @@ fn check_tool_permission_interactive(
                 .or_else(|| tool_args.get("path"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("(unknown)");
-            format!("Edit file: {}", path)
+            format!("Edit file: {path}")
         }
-        _ => format!("Execute: {}", tool_name),
+        _ => format!("Execute: {tool_name}"),
     };
 
-    eprint!("\x1b[33m⚠ {}\x1b[0m [y/n/a(lways)] ", description);
+    eprint!("\x1b[33m⚠ {description}\x1b[0m [y/n/a(lways)] ");
     use std::io::Write as _;
     std::io::stderr().flush().ok();
 
@@ -288,8 +301,7 @@ fn check_tool_permission_interactive(
     if std::io::stdin().read_line(&mut input).is_err() {
         // Non-interactive / broken pipe -> deny
         return ToolPermissionResult::Denied(format!(
-            "Permission denied (non-interactive) for tool '{}'",
-            tool_name
+            "Permission denied (non-interactive) for tool '{tool_name}'"
         ));
     }
     let response = input.trim().to_lowercase();
@@ -299,20 +311,24 @@ fn check_tool_permission_interactive(
         "a" | "always" => {
             always_allowed.insert(tool_name.to_string());
             eprintln!(
-                "\x1b[32m✓ Will auto-allow '{}' for the rest of this session.\x1b[0m",
-                tool_name
+                "\x1b[32m✓ Will auto-allow '{tool_name}' for the rest of this session.\x1b[0m"
             );
             ToolPermissionResult::Allowed
         }
         _ => ToolPermissionResult::Denied(format!(
-            "Permission denied by user for tool '{}'",
-            tool_name
+            "Permission denied by user for tool '{tool_name}'"
         )),
     }
 }
 
 /// Interactive chat mode (default command)
-async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Option<String>, coordinator: bool, dangerously_skip_permissions: bool) -> anyhow::Result<()> {
+async fn cmd_chat(
+    model_override: Option<String>,
+    resume: bool,
+    session_id: Option<String>,
+    coordinator: bool,
+    dangerously_skip_permissions: bool,
+) -> anyhow::Result<()> {
     use indicatif::{ProgressBar, ProgressStyle};
     use openclaudia::hooks::{
         load_claude_code_hooks, merge_hooks_config, HookEngine, HookEvent, HookInput,
@@ -344,7 +360,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
         Ok(c) => c,
         Err(e) => {
             if config::config_file_exists() {
-                eprintln!("Failed to parse configuration: {}", e);
+                eprintln!("Failed to parse configuration: {e}");
                 eprintln!("Check your .openclaudia/config.yaml for syntax errors.");
             } else {
                 eprintln!("No configuration found. Run 'openclaudia init' first.");
@@ -369,15 +385,14 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
     // Initialize guardrails engine from config
     guardrails::configure(&config.guardrails);
 
-    let provider = match config.active_provider() {
-        Some(p) => p,
-        None => {
-            eprintln!(
-                "No provider configured for target '{}'",
-                config.proxy.target
-            );
-            return Ok(());
-        }
+    let provider = if let Some(p) = config.active_provider() {
+        p
+    } else {
+        eprintln!(
+            "No provider configured for target '{}'",
+            config.proxy.target
+        );
+        return Ok(());
     };
 
     // Authentication priority for Anthropic:
@@ -399,8 +414,10 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                     "claude-code-oauth".to_string()
                 }
                 Err(e) => {
-                    eprintln!("Error: Claude Code credentials unusable: {}", e);
-                    eprintln!("Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY.");
+                    eprintln!("Error: Claude Code credentials unusable: {e}");
+                    eprintln!(
+                        "Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY."
+                    );
                     return Ok(());
                 }
             }
@@ -482,7 +499,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
     let welcome = tui::WelcomeScreen::new(env!("CARGO_PKG_VERSION"), &config.proxy.target, &model);
     if let Err(e) = welcome.render() {
         // Fallback to simple output if TUI fails
-        eprintln!("TUI render failed: {}, using simple output", e);
+        eprintln!("TUI render failed: {e}, using simple output");
         println!("OpenClaudia v{}", env!("CARGO_PKG_VERSION"));
         println!("Provider: {} | Model: {}", config.proxy.target, model);
         println!("Type /help for commands, /sessions to list saved chats");
@@ -501,11 +518,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
             sessions.into_iter().next()
         };
         if let Some(loaded) = target {
-            eprintln!(
-                "Resuming session: {} ({})",
-                loaded.title,
-                &loaded.id[..8]
-            );
+            eprintln!("Resuming session: {} ({})", loaded.title, &loaded.id[..8]);
             chat_session = loaded;
         } else {
             eprintln!("No session found to resume. Starting new session.");
@@ -532,10 +545,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
             // Show short-term memory status
             let recent_count = db.get_recent_sessions(10).map(|s| s.len()).unwrap_or(0);
             if recent_count > 0 {
-                println!(
-                    "\x1b[90m📝 {} recent session(s) loaded from memory\x1b[0m",
-                    recent_count
-                );
+                println!("\x1b[90m📝 {recent_count} recent session(s) loaded from memory\x1b[0m");
             }
 
             // Show auto-learning stats
@@ -571,7 +581,8 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
 
     // Session-level set of tools the user has chosen to "always allow" during this session.
     // Populated when the user responds with 'a'/'always' at a permission prompt.
-    let mut always_allowed_tools: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut always_allowed_tools: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
 
     // Initialize VDD engine if enabled
     let vdd_engine: Option<vdd::VddEngine> = if config.vdd.enabled {
@@ -601,10 +612,10 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
             let _ = vim_state.yank_buffer.len();
             let _ = vim_state.last_find.is_some();
             let _ = vim::describe_action(&vim::VimAction::None);
-            if !vim_state.is_pending() {
-                format!("{} > ", status)
+            if vim_state.is_pending() {
+                format!("{status} {pending} > ")
             } else {
-                format!("{} {} > ", status, pending)
+                format!("{status} > ")
             }
         } else {
             "> ".to_string()
@@ -643,7 +654,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
 
                 // Add to history
                 let _ = rl.add_history_entry(&input);
-                let mut input = input.to_string();
+                let mut input = input.clone();
 
                 // Handle slash commands
                 if let Some(result) = handle_slash_command(
@@ -684,7 +695,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                             // Compact conversation by summarizing old messages
                             let (before, after) = compact_chat_session(&mut chat_session);
                             if before != after {
-                                println!("\nCompacted: ~{} tokens -> ~{} tokens\n", before, after);
+                                println!("\nCompacted: ~{before} tokens -> ~{after} tokens\n");
                                 if let Err(e) = save_chat_session(&chat_session) {
                                     tracing::warn!("Failed to save compacted session: {}", e);
                                 }
@@ -761,8 +772,8 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                 chat_session.mode.display(),
                                 chat_session.mode.description()
                             );
-                            println!("  Messages:   {}", msg_count);
-                            println!("  Est tokens: ~{}", tokens);
+                            println!("  Messages:   {msg_count}");
+                            println!("  Est tokens: ~{tokens}");
 
                             // Show estimated cost if pricing is available
                             if let Some(pricing) = session::get_pricing(&chat_session.model) {
@@ -776,7 +787,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                 if let Some(cost) =
                                     session::calculate_cost(&chat_session.model, &usage)
                                 {
-                                    println!("  Est cost:   ${:.4}", cost);
+                                    println!("  Est cost:   ${cost:.4}");
                                 }
                                 println!(
                                     "  Pricing:    ${}/M in, ${}/M out",
@@ -784,7 +795,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                 );
                             }
 
-                            println!("  Duration:   {} min", mins);
+                            println!("  Duration:   {mins} min");
                             println!(
                                 "  Created:    {}",
                                 chat_session.created_at.format("%Y-%m-%d %H:%M UTC")
@@ -812,7 +823,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                             if let Err(e) = save_chat_session(&chat_session) {
                                 tracing::warn!("Failed to save session: {}", e);
                             }
-                            println!("\nSession renamed to: {}\n", new_title);
+                            println!("\nSession renamed to: {new_title}\n");
                             continue;
                         }
                         SlashCommandResult::Memory(args) => {
@@ -838,22 +849,24 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                             if vim_enabled {
                                 // Switch rustyline to Vi edit mode
                                 rl = Editor::with_config(
-                                    Config::builder()
-                                        .edit_mode(EditMode::Vi)
-                                        .build(),
+                                    Config::builder().edit_mode(EditMode::Vi).build(),
                                 )
-                                .unwrap_or_else(|_| DefaultEditor::new().expect("Failed to initialize terminal editor"));
+                                .unwrap_or_else(|_| {
+                                    DefaultEditor::new()
+                                        .expect("Failed to initialize terminal editor")
+                                });
                                 let _ = rl.load_history(&history_path);
                                 vim_state = VimState::new();
                                 eprintln!("Vim mode enabled (rustyline Vi mode)");
                             } else {
                                 // Switch back to Emacs edit mode
                                 rl = Editor::with_config(
-                                    Config::builder()
-                                        .edit_mode(EditMode::Emacs)
-                                        .build(),
+                                    Config::builder().edit_mode(EditMode::Emacs).build(),
                                 )
-                                .unwrap_or_else(|_| DefaultEditor::new().expect("Failed to initialize terminal editor"));
+                                .unwrap_or_else(|_| {
+                                    DefaultEditor::new()
+                                        .expect("Failed to initialize terminal editor")
+                                });
                                 let _ = rl.load_history(&history_path);
                                 eprintln!("Vim mode disabled (Emacs mode)");
                             }
@@ -909,7 +922,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                     let expanded_input = if input.contains('@') {
                         expand_file_references(&input)
                     } else {
-                        input.to_string()
+                        input.clone()
                     };
 
                     chat_session.messages.push(serde_json::json!({
@@ -930,7 +943,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                             .rev()
                             .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
                             .and_then(|m| m.get("content").and_then(|c| c.as_str()))
-                            .map(|s| s.to_string());
+                            .map(std::string::ToString::to_string);
                         learner.on_user_message(&expanded_input, prev_assistant.as_deref());
                     }
 
@@ -947,7 +960,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                             .first()
                             .and_then(|o| o.reason.clone())
                             .unwrap_or_else(|| "Request blocked by hook".to_string());
-                        eprintln!("\nBlocked: {}\n", reason);
+                        eprintln!("\nBlocked: {reason}\n");
                         // Save before removing the blocked message (prevent data loss)
                         let _ = save_chat_session(&chat_session);
                         chat_session.messages.pop();
@@ -994,14 +1007,16 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                 // Inject rules if we found file extensions
                 if !extensions.is_empty() {
                     let rules_content = rules_engine.get_combined_rules(
-                        &extensions.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                        &extensions
+                            .iter()
+                            .map(std::string::String::as_str)
+                            .collect::<Vec<_>>(),
                     );
                     if !rules_content.is_empty()
                         && !chat_session.messages.iter().any(|m| {
                             m.get("content")
                                 .and_then(|c| c.as_str())
-                                .map(|s| s.contains("## Rules"))
-                                .unwrap_or(false)
+                                .is_some_and(|s| s.contains("## Rules"))
                         })
                     {
                         // Add rules as system message at the start
@@ -1023,8 +1038,8 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                     .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
                     .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
                     .filter(|c| !c.contains("You are Claudia")) // Don't include our own prompt
-                    .map(|s| s.to_string())
-                    .reduce(|acc, s| format!("{}\n\n{}", acc, s));
+                    .map(std::string::ToString::to_string)
+                    .reduce(|acc, s| format!("{acc}\n\n{s}"));
 
                 let mut system_prompt = prompt::build_system_prompt(
                     hook_instructions.as_deref(),
@@ -1105,8 +1120,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                 if !chat_session.messages.iter().any(|m| {
                     m.get("content")
                         .and_then(|c| c.as_str())
-                        .map(|s| s.contains("You are Claudia"))
-                        .unwrap_or(false)
+                        .is_some_and(|s| s.contains("You are Claudia"))
                 }) {
                     chat_session.messages.insert(
                         0,
@@ -1214,7 +1228,8 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                 if config.proxy.target == "anthropic" {
                     match effort_level.as_str() {
                         "high" => {
-                            request_body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": 10000});
+                            request_body["thinking"] =
+                                serde_json::json!({"type": "enabled", "budget_tokens": 10000});
                             request_body["max_tokens"] = serde_json::json!(16000);
                         }
                         "low" => {
@@ -1299,7 +1314,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                             .unwrap_or_default();
 
                                         if !text.is_empty() {
-                                            print!("{}", text);
+                                            print!("{text}");
                                             std::io::stdout().flush().ok();
                                             full_content.push_str(&text);
                                         }
@@ -1350,12 +1365,12 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                         let input_tokens = gemini_json
                                             .get("usageMetadata")
                                             .and_then(|u| u.get("promptTokenCount"))
-                                            .and_then(|t| t.as_u64())
+                                            .and_then(serde_json::Value::as_u64)
                                             .unwrap_or(0);
                                         let output_tokens = gemini_json
                                             .get("usageMetadata")
                                             .and_then(|u| u.get("candidatesTokenCount"))
-                                            .and_then(|t| t.as_u64())
+                                            .and_then(serde_json::Value::as_u64)
                                             .unwrap_or(0);
 
                                         // Audit: log model response
@@ -1564,7 +1579,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
 
                                                 // Store in session
                                                 let result_content = if final_is_error {
-                                                    format!("[ERROR] {}", final_content)
+                                                    format!("[ERROR] {final_content}")
                                                 } else {
                                                     final_content
                                                 };
@@ -1653,7 +1668,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
 
                                                         if !resp_text.is_empty() {
                                                             println!();
-                                                            print!("{}", resp_text);
+                                                            print!("{resp_text}");
                                                             std::io::stdout().flush().ok();
                                                             full_content = resp_text;
                                                         }
@@ -1668,9 +1683,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                             parts.iter().filter_map(|p| {
                                                                 let fc = p.get("functionCall")?;
                                                                 let name = fc.get("name")?.as_str()?.to_string();
-                                                                let args = fc.get("args")
-                                                                    .map(|a| serde_json::to_string(a).unwrap_or_default())
-                                                                    .unwrap_or_else(|| "{}".to_string());
+                                                                let args = fc.get("args").map_or_else(|| "{}".to_string(), |a| serde_json::to_string(a).unwrap_or_default());
                                                                 Some(tools::ToolCall {
                                                                     id: format!("call_{}", uuid::Uuid::new_v4()),
                                                                     call_type: "function".to_string(),
@@ -1689,13 +1702,12 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                     let err_body =
                                                         resp.text().await.unwrap_or_default();
                                                     eprintln!(
-                                                        "\nGemini follow-up failed: {} {}",
-                                                        status, err_body
+                                                        "\nGemini follow-up failed: {status} {err_body}"
                                                     );
                                                     break;
                                                 }
                                                 Err(e) => {
-                                                    eprintln!("\nGemini follow-up error: {}", e);
+                                                    eprintln!("\nGemini follow-up error: {e}");
                                                     break;
                                                 }
                                             }
@@ -1731,7 +1743,9 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                             match engine.review_text(&full_content, user_task).await
                                             {
                                                 Ok(result) => {
-                                                    if !result.findings.is_empty() {
+                                                    if result.findings.is_empty() {
+                                                        println!("\n\x1b[32m✓ VDD Review: No issues found\x1b[0m");
+                                                    } else {
                                                         let genuine_count = result
                                                             .findings
                                                             .iter()
@@ -1761,15 +1775,12 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                             "content": format!("<vdd-review>\n{}\n</vdd-review>", result.context_injection)
                                                         }));
                                                         }
-                                                    } else {
-                                                        println!("\n\x1b[32m✓ VDD Review: No issues found\x1b[0m");
                                                     }
                                                 }
                                                 Err(e) => {
                                                     tracing::warn!("VDD review failed: {}", e);
                                                     println!(
-                                                        "\n\x1b[31m⚠ VDD review failed: {}\x1b[0m",
-                                                        e
+                                                        "\n\x1b[31m⚠ VDD review failed: {e}\x1b[0m"
                                                     );
                                                 }
                                             }
@@ -1800,7 +1811,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                         );
                                     }
                                     Err(e) => {
-                                        eprintln!("\nFailed to parse Gemini response: {}", e);
+                                        eprintln!("\nFailed to parse Gemini response: {e}");
                                         eprintln!("Raw body: {}", &body[..body.len().min(500)]);
                                         let _ = save_chat_session(&chat_session);
                                         chat_session.messages.pop(); // Remove failed user message
@@ -1859,7 +1870,9 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                 "Stream timed out with partial content; preserving {} bytes",
                                                 full_content.len()
                                             );
-                                            full_content.push_str("\n\n[Response truncated: stream timeout]");
+                                            full_content.push_str(
+                                                "\n\n[Response truncated: stream timeout]",
+                                            );
                                         }
                                         break;
                                     }
@@ -1961,10 +1974,9 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                                 && in_thinking_block
                                                             {
                                                                 let elapsed = thinking_start_time
-                                                                    .map(|t| {
+                                                                    .map_or(0.0, |t| {
                                                                         t.elapsed().as_secs_f64()
-                                                                    })
-                                                                    .unwrap_or(0.0);
+                                                                    });
                                                                 tui::print_thinking_end(elapsed);
                                                                 in_thinking_block = false;
                                                                 thinking_start_time = None;
@@ -1996,7 +2008,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                         if let Some(text) = anthropic_accumulator
                                                             .process_event(&json)
                                                         {
-                                                            print!("{}", text);
+                                                            print!("{text}");
                                                             std::io::stdout().flush().ok();
                                                             full_content.push_str(&text);
                                                         }
@@ -2011,7 +2023,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                                 .get("content")
                                                                 .and_then(|c| c.as_str())
                                                             {
-                                                                print!("{}", content);
+                                                                print!("{content}");
                                                                 std::io::stdout().flush().ok();
                                                                 full_content.push_str(content);
                                                             }
@@ -2023,7 +2035,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                             }
                                         }
                                         Err(e) => {
-                                            eprintln!("\nStream error: {}", e);
+                                            eprintln!("\nStream error: {e}");
                                             break;
                                         }
                                     }
@@ -2103,8 +2115,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                 && proxy_iteration >= max_proxy_iterations
                                             {
                                                 eprintln!(
-                                                "\n\x1b[33m⚠ Reached max_turns limit ({} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m",
-                                                max_proxy_iterations
+                                                "\n\x1b[33m⚠ Reached max_turns limit ({max_proxy_iterations} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m"
                                             );
                                                 break;
                                             }
@@ -2148,10 +2159,10 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                             // convert_messages_to_anthropic handles back-conversion
                                             // to tool_use blocks for the API.
                                             chat_session.messages.push(serde_json::json!({
-                                            "role": "assistant",
-                                            "content": serde_json::Value::String(text.clone()),
-                                            "tool_calls": tool_calls_json
-                                        }));
+                                                "role": "assistant",
+                                                "content": serde_json::Value::String(text.clone()),
+                                                "tool_calls": tool_calls_json
+                                            }));
 
                                             // Execute each tool locally
                                             for tool_call in &tool_calls {
@@ -2274,7 +2285,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
 
                                                 // Store tool result with error flag
                                                 let result_content = if final_is_error {
-                                                    format!("[ERROR] {}", final_content)
+                                                    format!("[ERROR] {final_content}")
                                                 } else {
                                                     final_content
                                                 };
@@ -2308,7 +2319,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                             .take(3)
                                                             .collect::<Vec<_>>()
                                                             .join("\n");
-                                                        eprintln!("  {}", preview);
+                                                        eprintln!("  {preview}");
                                                     }
                                                     // Inject findings into context so model can address them
                                                     chat_session.messages.push(serde_json::json!({
@@ -2426,7 +2437,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                                                     &json,
                                                                                 )
                                                                         {
-                                                                            print!("{}", text);
+                                                                            print!("{text}");
                                                                             std::io::stdout()
                                                                                 .flush()
                                                                                 .ok();
@@ -2438,7 +2449,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                                 }
                                                             }
                                                             Err(e) => {
-                                                                eprintln!("\nStream error: {}", e);
+                                                                eprintln!("\nStream error: {e}");
                                                                 break;
                                                             }
                                                         }
@@ -2454,7 +2465,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                     break;
                                                 }
                                                 Err(e) => {
-                                                    eprintln!("\nFollow-up request error: {}", e);
+                                                    eprintln!("\nFollow-up request error: {e}");
                                                     break;
                                                 }
                                             }
@@ -2512,7 +2523,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                 let params_str: String = tool
                                                     .parameters
                                                     .iter()
-                                                    .map(|(k, v)| format!("{}={}", k, v))
+                                                    .map(|(k, v)| format!("{k}={v}"))
                                                     .collect::<Vec<_>>()
                                                     .join(",");
                                                 let sig = format!("{}:{}", tool.name, params_str);
@@ -2686,7 +2697,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                                                 t.as_str()
                                                                             })
                                                                         {
-                                                                            print!("{}", text);
+                                                                            print!("{text}");
                                                                             std::io::stdout()
                                                                                 .flush()
                                                                                 .ok();
@@ -2699,7 +2710,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                                 }
                                                             }
                                                             Err(e) => {
-                                                                eprintln!("\nStream error: {}", e);
+                                                                eprintln!("\nStream error: {e}");
                                                                 break;
                                                             }
                                                         }
@@ -2718,7 +2729,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                     break;
                                                 }
                                                 Err(e) => {
-                                                    eprintln!("\nFollow-up request error: {}", e);
+                                                    eprintln!("\nFollow-up request error: {e}");
                                                     break;
                                                 }
                                             }
@@ -2730,8 +2741,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                             && tool_interceptor.has_complete_block()
                                         {
                                             eprintln!(
-                                        "\n\x1b[33m⚠ Reached max_turns limit ({} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m",
-                                        max_proxy_iterations
+                                        "\n\x1b[33m⚠ Reached max_turns limit ({max_proxy_iterations} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m"
                                     );
                                         }
 
@@ -2762,7 +2772,9 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
 
                                         match engine.review_text(&full_content, user_task).await {
                                             Ok(result) => {
-                                                if !result.findings.is_empty() {
+                                                if result.findings.is_empty() {
+                                                    println!("\n\x1b[32m✓ VDD Review: No issues found\x1b[0m");
+                                                } else {
                                                     let genuine_count = result
                                                         .findings
                                                         .iter()
@@ -2801,15 +2813,12 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                         )
                                                     }));
                                                     }
-                                                } else {
-                                                    println!("\n\x1b[32m✓ VDD Review: No issues found\x1b[0m");
                                                 }
                                             }
                                             Err(e) => {
                                                 tracing::warn!("VDD review failed: {}", e);
                                                 println!(
-                                                    "\n\x1b[31m⚠ VDD review failed: {}\x1b[0m",
-                                                    e
+                                                    "\n\x1b[31m⚠ VDD review failed: {e}\x1b[0m"
                                                 );
                                             }
                                         }
@@ -2907,8 +2916,16 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                         }
 
                                         // Permission check
-                                        let tool_args_val3: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
-                                            .unwrap_or_else(|e| { tracing::warn!("Malformed tool arguments for '{}': {}", tool_call.function.name, e); serde_json::Value::Object(Default::default()) });
+                                        let tool_args_val3: serde_json::Value =
+                                            serde_json::from_str(&tool_call.function.arguments)
+                                                .unwrap_or_else(|e| {
+                                                    tracing::warn!(
+                                                        "Malformed tool arguments for '{}': {}",
+                                                        tool_call.function.name,
+                                                        e
+                                                    );
+                                                    serde_json::Value::Object(Default::default())
+                                                });
                                         match check_tool_permission_interactive(
                                             &tool_call.function.name,
                                             &tool_args_val3,
@@ -3040,7 +3057,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
 
                                         // Add tool result with error flag
                                         let result_content = if final_is_error {
-                                            format!("[ERROR] {}", final_content)
+                                            format!("[ERROR] {final_content}")
                                         } else {
                                             final_content
                                         };
@@ -3071,7 +3088,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                     .take(3)
                                                     .collect::<Vec<_>>()
                                                     .join("\n");
-                                                eprintln!("  {}", preview);
+                                                eprintln!("  {preview}");
                                             }
                                             // Inject findings into context so model can address them
                                             chat_session.messages.push(serde_json::json!({
@@ -3194,7 +3211,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                                         .and_then(|d| d.get("text"))
                                                                         .and_then(|t| t.as_str())
                                                                     {
-                                                                        print!("{}", text);
+                                                                        print!("{text}");
                                                                         std::io::stdout()
                                                                             .flush()
                                                                             .ok();
@@ -3213,7 +3230,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                                         .get("content")
                                                                         .and_then(|c| c.as_str())
                                                                     {
-                                                                        print!("{}", content);
+                                                                        print!("{content}");
                                                                         std::io::stdout()
                                                                             .flush()
                                                                             .ok();
@@ -3241,8 +3258,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                     && tool_accumulator.has_tool_calls()
                                 {
                                     eprintln!(
-                                    "\n\x1b[33m⚠ Reached max_turns limit ({} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m",
-                                    max_iterations
+                                    "\n\x1b[33m⚠ Reached max_turns limit ({max_iterations} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m"
                                 );
                                 }
 
@@ -3292,7 +3308,9 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
 
                                             match engine.review_text(vdd_content, user_task).await {
                                                 Ok(result) => {
-                                                    if !result.findings.is_empty() {
+                                                    if result.findings.is_empty() {
+                                                        println!("\n\x1b[32m✓ VDD Review: No issues found\x1b[0m");
+                                                    } else {
                                                         let genuine_count = result
                                                             .findings
                                                             .iter()
@@ -3322,15 +3340,12 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                             "content": format!("<vdd-review>\n{}\n</vdd-review>", result.context_injection)
                                                         }));
                                                         }
-                                                    } else {
-                                                        println!("\n\x1b[32m✓ VDD Review: No issues found\x1b[0m");
                                                     }
                                                 }
                                                 Err(e) => {
                                                     tracing::warn!("VDD review failed: {}", e);
                                                     println!(
-                                                        "\n\x1b[31m⚠ VDD review failed: {}\x1b[0m",
-                                                        e
+                                                        "\n\x1b[31m⚠ VDD review failed: {e}\x1b[0m"
                                                     );
                                                 }
                                             }
@@ -3388,9 +3403,9 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                 .to_string();
                             let body = response.text().await.unwrap_or_default();
                             if content_type.contains("text/html") {
-                                eprintln!("\nError {}: (HTML response — check your provider configuration)\n", status);
+                                eprintln!("\nError {status}: (HTML response — check your provider configuration)\n");
                             } else {
-                                eprintln!("\nError {}: {}\n", status, body);
+                                eprintln!("\nError {status}: {body}\n");
                             }
                             // Save before removing the failed user message
                             let _ = save_chat_session(&chat_session);
@@ -3399,7 +3414,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                     }
                     Err(e) => {
                         spinner.finish_and_clear();
-                        eprintln!("\nRequest failed: {}\n", e);
+                        eprintln!("\nRequest failed: {e}\n");
                         let _ = save_chat_session(&chat_session);
                         chat_session.messages.pop();
                     }
@@ -3414,19 +3429,12 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                     let (should_warn, should_compact, pct) =
                         openclaudia::compaction::check_context_budget(est, &model);
                     if should_compact {
-                        eprintln!(
-                            "\x1b[33m⚠ Context at {:.0}% — auto-compacting...\x1b[0m",
-                            pct
-                        );
+                        eprintln!("\x1b[33m⚠ Context at {pct:.0}% — auto-compacting...\x1b[0m");
                         let (before, after) = compact_chat_session(&mut chat_session);
-                        eprintln!(
-                            "\x1b[32m✓ Compacted: {} → {} messages\x1b[0m",
-                            before, after
-                        );
+                        eprintln!("\x1b[32m✓ Compacted: {before} → {after} messages\x1b[0m");
                     } else if should_warn {
                         eprintln!(
-                            "\x1b[33m⚠ Context at {:.0}% — use /compact to free space\x1b[0m",
-                            pct
+                            "\x1b[33m⚠ Context at {pct:.0}% — use /compact to free space\x1b[0m"
                         );
                     }
                 }
@@ -3441,7 +3449,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                 break;
             }
             Err(err) => {
-                eprintln!("Error: {:?}", err);
+                eprintln!("Error: {err:?}");
                 break;
             }
         }

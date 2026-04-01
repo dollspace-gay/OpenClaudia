@@ -2,7 +2,7 @@ use openclaudia::config;
 use tracing::{error, info};
 
 /// Show current configuration
-pub fn cmd_config() -> anyhow::Result<()> {
+pub fn cmd_config() {
     match config::load_config() {
         Ok(config) => {
             println!("OpenClaudia Configuration\n");
@@ -24,7 +24,7 @@ pub fn cmd_config() -> anyhow::Result<()> {
             println!();
             println!("Session:");
             println!("  Timeout: {} minutes", config.session.timeout_minutes);
-            println!("  Persist path: {:?}", config.session.persist_path);
+            println!("  Persist path: {}", config.session.persist_path.display());
         }
         Err(e) => {
             if config::config_file_exists() {
@@ -36,5 +36,4 @@ pub fn cmd_config() -> anyhow::Result<()> {
             }
         }
     }
-    Ok(())
 }

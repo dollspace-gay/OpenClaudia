@@ -2,13 +2,13 @@
 //!
 //! Supports:
 //! - Anthropic Messages API
-//! - OpenAI Chat Completions API
+//! - `OpenAI` Chat Completions API
 //! - Google Gemini API
-//! - DeepSeek API (with thinking/reasoning support)
+//! - `DeepSeek` API (with thinking/reasoning support)
 //! - Qwen/Alibaba API (with thinking support)
 //! - Z.AI/GLM API (with thinking support)
 //! - Ollama (local LLM inference)
-//! - Any OpenAI-compatible server (LM Studio, LocalAI, etc.)
+//! - Any OpenAI-compatible server (LM Studio, `LocalAI`, etc.)
 //!
 //! Handles message format translation and tool/function calling conversion.
 
@@ -65,10 +65,18 @@ pub trait ProviderAdapter: Send + Sync {
     /// Get the provider name
     fn name(&self) -> &str;
 
-    /// Transform an OpenAI-compatible request to provider format
+    /// Transform an OpenAI-compatible request to provider format.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `ProviderError` if the request cannot be transformed.
     fn transform_request(&self, request: &ChatCompletionRequest) -> Result<Value, ProviderError>;
 
-    /// Transform request with thinking config applied
+    /// Transform request with thinking config applied.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `ProviderError` if the request cannot be transformed.
     fn transform_request_with_thinking(
         &self,
         request: &ChatCompletionRequest,
@@ -79,7 +87,11 @@ pub trait ProviderAdapter: Send + Sync {
         self.transform_request(request)
     }
 
-    /// Transform a provider response to OpenAI-compatible format
+    /// Transform a provider response to OpenAI-compatible format.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `ProviderError` if the response cannot be transformed.
     fn transform_response(&self, response: Value, stream: bool) -> Result<Value, ProviderError>;
 
     /// Get the endpoint path for chat completions.
@@ -95,12 +107,13 @@ pub trait ProviderAdapter: Send + Sync {
     }
 
     /// Get the models endpoint path (for providers that support it)
-    fn models_endpoint(&self) -> &str {
+    fn models_endpoint(&self) -> &'static str {
         "/v1/models"
     }
 }
 
 /// Get the appropriate adapter for a provider name
+#[must_use]
 pub fn get_adapter(provider: &str) -> Box<dyn ProviderAdapter> {
     match provider.to_lowercase().as_str() {
         "anthropic" => Box::new(AnthropicAdapter::new()),
@@ -111,14 +124,17 @@ pub fn get_adapter(provider: &str) -> Box<dyn ProviderAdapter> {
         "ollama" => Box::new(OllamaAdapter::new()),
         // OpenAI-compatible providers (default)
         // Includes: openai, local, lmstudio, localai, text-generation-webui, etc.
-        "openai" | "local" | "lmstudio" | "localai" => Box::new(OpenAIAdapter::new()),
-        // Default fallback for unknown providers (assume OpenAI-compatible)
+        // OpenAI-compatible providers and default fallback
         _ => Box::new(OpenAIAdapter::new()),
     }
 }
 
-/// Fetch available models from a provider's /v1/models endpoint
-/// Works with OpenAI-compatible APIs (LM Studio, LocalAI, Ollama, etc.)
+/// Fetch available models from a provider's `/v1/models` endpoint.
+/// Works with OpenAI-compatible APIs (LM Studio, `LocalAI`, Ollama, etc.)
+///
+/// # Errors
+///
+/// Returns a `ProviderError` if the provider does not support model listing or the request fails.
 pub async fn fetch_models(
     base_url: &str,
     api_key: Option<&str>,
@@ -145,14 +161,14 @@ pub async fn fetch_models(
     // Add auth header if API key provided
     if let Some(key) = api_key {
         if !key.is_empty() {
-            request = request.header("Authorization", format!("Bearer {}", key));
+            request = request.header("Authorization", format!("Bearer {key}"));
         }
     }
 
     let response = request
         .send()
         .await
-        .map_err(|e| ProviderError::RequestFailed(format!("Failed to fetch models: {}", e)))?;
+        .map_err(|e| ProviderError::RequestFailed(format!("Failed to fetch models: {e}")))?;
 
     if !response.status().is_success() {
         return Err(ProviderError::RequestFailed(format!(
@@ -162,7 +178,7 @@ pub async fn fetch_models(
     }
 
     let body: Value = response.json().await.map_err(|e| {
-        ProviderError::InvalidResponse(format!("Failed to parse models response: {}", e))
+        ProviderError::InvalidResponse(format!("Failed to parse models response: {e}"))
     })?;
 
     // Parse OpenAI-style response: { "data": [...], "object": "list" }

@@ -13,7 +13,8 @@ use super::{ProviderAdapter, ProviderError};
 pub struct QwenAdapter;
 
 impl QwenAdapter {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -26,7 +27,7 @@ impl Default for QwenAdapter {
 
 #[async_trait]
 impl ProviderAdapter for QwenAdapter {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "qwen"
     }
 
@@ -65,7 +66,7 @@ impl ProviderAdapter for QwenAdapter {
 
     fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {
         vec![
-            ("Authorization".to_string(), format!("Bearer {}", api_key)),
+            ("Authorization".to_string(), format!("Bearer {api_key}")),
             ("content-type".to_string(), "application/json".to_string()),
         ]
     }

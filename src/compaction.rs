@@ -3,7 +3,7 @@
 //! Features:
 //! - Token estimation for messages
 //! - Context window limit detection
-//! - PreCompact hook triggering
+//! - `PreCompact` hook triggering
 //! - Conversation summarization
 //! - Critical information preservation
 
@@ -62,6 +62,7 @@ impl Default for CompactionConfig {
 
 impl CompactionConfig {
     /// Create config for a specific model
+    #[must_use]
     pub fn for_model(model: &str) -> Self {
         let max_context_tokens = get_context_window(model);
         Self {
@@ -72,6 +73,7 @@ impl CompactionConfig {
 }
 
 /// Get context window size for a model
+#[must_use]
 pub fn get_context_window(model: &str) -> usize {
     let model_lower = model.to_lowercase();
 
@@ -105,7 +107,7 @@ pub fn get_context_window(model: &str) -> usize {
 
 /// Estimate token count for a string (approximate: ~4 chars per token for ASCII).
 ///
-/// NOTE: This is a heuristic. Real tokenizers (tiktoken, SentencePiece) use
+/// NOTE: This is a heuristic. Real tokenizers (tiktoken, `SentencePiece`) use
 /// subword vocabularies that vary by model. The ~4 chars/token ratio is a
 /// reasonable average for English ASCII text but under-counts for:
 /// - CJK characters (often 1 token each)
@@ -113,6 +115,7 @@ pub fn get_context_window(model: &str) -> usize {
 /// - Other non-ASCII scripts
 ///
 /// We apply a safety adjustment for non-ASCII content to reduce under-estimation.
+#[must_use]
 pub fn estimate_tokens(text: &str) -> usize {
     // More accurate estimation considering whitespace and punctuation
     let char_count = text.chars().count();
@@ -121,7 +124,8 @@ pub fn estimate_tokens(text: &str) -> usize {
     // Use a weighted average of character-based and word-based estimation
     // Most tokenizers use subword units, so this approximates that
     let char_estimate = char_count / 4;
-    let word_estimate = (word_count as f32 * 1.3) as usize;
+    // word_count * 13 / 10 avoids f32 precision and sign-loss casts
+    let word_estimate = word_count * 13 / 10;
 
     // Take the average, biased toward character count
     let base_estimate = (char_estimate * 2 + word_estimate) / 3;
@@ -137,6 +141,7 @@ pub fn estimate_tokens(text: &str) -> usize {
 }
 
 /// Estimate token count for a message
+#[must_use]
 pub fn estimate_message_tokens(message: &ChatMessage) -> usize {
     let content_tokens = match &message.content {
         MessageContent::Text(text) => estimate_tokens(text),
@@ -144,7 +149,7 @@ pub fn estimate_message_tokens(message: &ChatMessage) -> usize {
             parts
                 .iter()
                 .map(|p| {
-                    p.text.as_ref().map(|t| estimate_tokens(t)).unwrap_or(0)
+                    p.text.as_ref().map_or(0, |t| estimate_tokens(t))
                         + if p.image_url.is_some() { 1000 } else { 0 } // Images cost ~1000 tokens
                 })
                 .sum()
@@ -152,23 +157,15 @@ pub fn estimate_message_tokens(message: &ChatMessage) -> usize {
     };
 
     // Add overhead for role, name, etc.
-    let overhead = 4 + message
-        .name
-        .as_ref()
-        .map(|n| estimate_tokens(n))
-        .unwrap_or(0);
+    let overhead = 4 + message.name.as_ref().map_or(0, |n| estimate_tokens(n));
 
     // Tool calls add significant tokens
-    let tool_tokens = message
-        .tool_calls
-        .as_ref()
-        .map(|calls| {
-            calls
-                .iter()
-                .map(|c| estimate_tokens(&c.to_string()))
-                .sum::<usize>()
-        })
-        .unwrap_or(0);
+    let tool_tokens = message.tool_calls.as_ref().map_or(0, |calls| {
+        calls
+            .iter()
+            .map(|c| estimate_tokens(&c.to_string()))
+            .sum::<usize>()
+    });
 
     content_tokens + overhead + tool_tokens
 }
@@ -178,16 +175,12 @@ pub fn estimate_request_tokens(request: &ChatCompletionRequest) -> usize {
     let message_tokens: usize = request.messages.iter().map(estimate_message_tokens).sum();
 
     // Add tool definitions if present
-    let tool_tokens = request
-        .tools
-        .as_ref()
-        .map(|tools| {
-            tools
-                .iter()
-                .map(|t| estimate_tokens(&t.to_string()))
-                .sum::<usize>()
-        })
-        .unwrap_or(0);
+    let tool_tokens = request.tools.as_ref().map_or(0, |tools| {
+        tools
+            .iter()
+            .map(|t| estimate_tokens(&t.to_string()))
+            .sum::<usize>()
+    });
 
     // Add some overhead for request structure
     message_tokens + tool_tokens + 100
@@ -218,11 +211,13 @@ pub struct ContextCompactor {
 
 impl ContextCompactor {
     /// Create a new context compactor
-    pub fn new(config: CompactionConfig) -> Self {
+    #[must_use]
+    pub const fn new(config: CompactionConfig) -> Self {
         Self { config }
     }
 
     /// Create a compactor for a specific model
+    #[must_use]
     pub fn for_model(model: &str) -> Self {
         Self::new(CompactionConfig::for_model(model))
     }
@@ -242,13 +237,14 @@ impl ContextCompactor {
             debug!(
                 estimated = estimated,
                 actual = current_tokens,
-                delta = (current_tokens as i64 - estimated as i64),
+                delta = (i64::try_from(current_tokens).unwrap_or(i64::MAX)
+                    - i64::try_from(estimated).unwrap_or(i64::MAX)),
                 "Using actual token count for compaction analysis"
             );
         }
 
         let threshold_tokens =
-            (self.config.max_context_tokens as f32 * self.config.threshold) as usize;
+            threshold_tokens_for(self.config.max_context_tokens, self.config.threshold);
         let effective_threshold = threshold_tokens.saturating_sub(RESPONSE_RESERVE);
         let needs_compaction = current_tokens > effective_threshold;
 
@@ -272,10 +268,11 @@ impl ContextCompactor {
     }
 
     /// Analyze whether compaction is needed
+    #[must_use]
     pub fn analyze(&self, request: &ChatCompletionRequest) -> CompactionAnalysis {
         let current_tokens = estimate_request_tokens(request);
         let threshold_tokens =
-            (self.config.max_context_tokens as f32 * self.config.threshold) as usize;
+            threshold_tokens_for(self.config.max_context_tokens, self.config.threshold);
         let effective_threshold = threshold_tokens.saturating_sub(RESPONSE_RESERVE);
         let needs_compaction = current_tokens > effective_threshold;
 
@@ -325,7 +322,12 @@ impl ContextCompactor {
         (preserve, summarize)
     }
 
-    /// Compact the request by summarizing older messages
+    /// Compact the request by summarizing older messages.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CompactionError::HookBlocked` if a pre-compact hook rejects, or
+    /// `CompactionError::Failed` if summarization did not reduce token count.
     pub async fn compact(
         &self,
         request: &mut ChatCompletionRequest,
@@ -336,7 +338,12 @@ impl ContextCompactor {
             .await
     }
 
-    /// Compact with an optional actual token count hint from the provider
+    /// Compact with an optional actual token count hint from the provider.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CompactionError::HookBlocked` if a pre-compact hook rejects, or
+    /// `CompactionError::Failed` if summarization did not reduce token count.
     pub async fn compact_with_hint(
         &self,
         request: &mut ChatCompletionRequest,
@@ -406,40 +413,14 @@ impl ContextCompactor {
         }
 
         // Generate summary of old messages
-        let summary = self.generate_summary(&messages_to_summarize);
-
-        // Build new message list: system + summary + preserved messages
-        let mut new_messages = Vec::new();
-
-        // Keep system messages at the start
-        for &i in &analysis.messages_to_preserve {
-            if let Some(msg) = request.messages.get(i) {
-                if msg.role == "system" {
-                    new_messages.push(msg.clone());
-                }
-            }
-        }
-
-        // Add summary as a system message
-        new_messages.push(ChatMessage {
-            role: "system".to_string(),
-            content: MessageContent::Text(summary.clone()),
-            name: None,
-            tool_calls: None,
-            tool_call_id: None,
-        });
-
-        // Add non-system preserved messages
-        for &i in &analysis.messages_to_preserve {
-            if let Some(msg) = request.messages.get(i) {
-                if msg.role != "system" {
-                    new_messages.push(msg.clone());
-                }
-            }
-        }
-
+        let summary = Self::generate_summary(&messages_to_summarize);
         let original_count = request.messages.len();
         let summarized_count = messages_to_summarize.len();
+
+        // Drop borrows into request.messages before mutating
+        drop(messages_to_summarize);
+
+        let new_messages = Self::build_compacted_messages(&analysis, &request.messages, &summary);
         request.messages = new_messages;
 
         let new_tokens = estimate_request_tokens(request);
@@ -475,8 +456,48 @@ impl ContextCompactor {
         })
     }
 
+    /// Build the compacted message list: system messages + summary + preserved non-system.
+    fn build_compacted_messages(
+        analysis: &CompactionAnalysis,
+        original_messages: &[ChatMessage],
+        summary: &str,
+    ) -> Vec<ChatMessage> {
+        let mut new_messages = Vec::new();
+
+        // Keep system messages at the start
+        for &i in &analysis.messages_to_preserve {
+            if let Some(msg) = original_messages.get(i) {
+                if msg.role == "system" {
+                    new_messages.push(msg.clone());
+                }
+            }
+        }
+
+        // Add summary as a system message
+        new_messages.push(ChatMessage {
+            role: "system".to_string(),
+            content: MessageContent::Text(summary.to_string()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
+        // Add non-system preserved messages
+        for &i in &analysis.messages_to_preserve {
+            if let Some(msg) = original_messages.get(i) {
+                if msg.role != "system" {
+                    new_messages.push(msg.clone());
+                }
+            }
+        }
+
+        new_messages
+    }
+
     /// Generate a summary of messages
-    fn generate_summary(&self, messages: &[&ChatMessage]) -> String {
+    fn generate_summary(messages: &[&ChatMessage]) -> String {
+        use std::fmt::Write;
+
         let mut summary = String::new();
         summary.push_str("<context-summary>\n");
         summary.push_str("The following is a summary of the earlier conversation:\n\n");
@@ -487,7 +508,7 @@ impl ContextCompactor {
 
         for msg in messages {
             if msg.role != current_role && !turn_content.is_empty() {
-                summary.push_str(&format!("**{}**: ", capitalize(current_role)));
+                let _ = write!(summary, "**{}**: ", capitalize(current_role));
                 summary.push_str(&turn_content.join(" "));
                 summary.push_str("\n\n");
                 turn_content.clear();
@@ -520,7 +541,7 @@ impl ContextCompactor {
 
         // Flush remaining
         if !turn_content.is_empty() {
-            summary.push_str(&format!("**{}**: ", capitalize(current_role)));
+            let _ = write!(summary, "**{}**: ", capitalize(current_role));
             summary.push_str(&turn_content.join(" "));
             summary.push('\n');
         }
@@ -530,7 +551,8 @@ impl ContextCompactor {
     }
 
     /// Get the current configuration
-    pub fn config(&self) -> &CompactionConfig {
+    #[must_use]
+    pub const fn config(&self) -> &CompactionConfig {
         &self.config
     }
 
@@ -565,28 +587,41 @@ pub enum CompactionError {
     Failed(String),
 }
 
+/// Compute threshold tokens from a context size and a ratio, using integer
+/// arithmetic to avoid `usize as f32` precision loss.
+fn threshold_tokens_for(max_context_tokens: usize, threshold: f32) -> usize {
+    // Multiply threshold by 1000, do integer math, then divide back.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let ratio_millths = (threshold * 1000.0) as usize;
+    max_context_tokens / 1000 * ratio_millths
+}
+
 /// Check if conversation needs compaction based on token usage.
-/// Returns (should_warn, should_compact, usage_pct)
+/// Returns (`should_warn`, `should_compact`, `usage_pct`)
 ///
 /// - Warns at 85% context window usage
 /// - Triggers auto-compaction at 90% context window usage
+#[must_use]
 pub fn check_context_budget(estimated_tokens: usize, model: &str) -> (bool, bool, f32) {
     let max_tokens = get_context_window(model);
-    let usage_pct = estimated_tokens as f32 / max_tokens as f32;
+    // Token counts are well within f64 mantissa range for practical models
+    #[allow(clippy::cast_precision_loss)]
+    let usage_pct = (estimated_tokens as f64) / (max_tokens as f64);
 
     let should_warn = usage_pct >= 0.85;
     let should_compact = usage_pct >= 0.90;
 
-    (should_warn, should_compact, usage_pct * 100.0)
+    #[allow(clippy::cast_possible_truncation)]
+    let pct_f32 = (usage_pct * 100.0) as f32;
+    (should_warn, should_compact, pct_f32)
 }
 
 /// Helper to capitalize first letter
 fn capitalize(s: &str) -> String {
     let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-    }
+    chars.next().map_or_else(String::new, |c| {
+        c.to_uppercase().collect::<String>() + chars.as_str()
+    })
 }
 
 /// Helper to truncate text for summary
@@ -746,7 +781,7 @@ mod tests {
 
         let compactor = ContextCompactor::new(CompactionConfig::default());
         let msg_refs: Vec<&ChatMessage> = messages.iter().collect();
-        let summary = compactor.generate_summary(&msg_refs);
+        let summary = ContextCompactor::generate_summary(&msg_refs);
 
         assert!(summary.contains("<context-summary>"));
         assert!(summary.contains("</context-summary>"));
@@ -1034,7 +1069,7 @@ mod tests {
 
         let compactor = ContextCompactor::new(CompactionConfig::default());
         let msg_refs: Vec<&ChatMessage> = messages.iter().collect();
-        let summary = compactor.generate_summary(&msg_refs);
+        let summary = ContextCompactor::generate_summary(&msg_refs);
 
         assert!(summary.contains("[Used tools]"));
         assert!(summary.contains("[Tool result]"));

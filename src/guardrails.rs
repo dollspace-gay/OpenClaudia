@@ -35,7 +35,11 @@ pub fn configure(config: &GuardrailsConfig) {
 }
 
 /// Check if a file path is allowed by blast radius rules.
-/// Returns Ok(()) if allowed, Err(message) if blocked in strict mode.
+/// Returns `Ok(())` if allowed, `Err(message)` if blocked in strict mode.
+///
+/// # Errors
+///
+/// Returns an error string if the path is blocked by blast radius rules in strict mode.
 pub fn check_file_access(path: &str) -> Result<(), String> {
     if let Ok(guard) = GUARDRAILS.lock() {
         if let Some(engine) = guard.as_ref() {
@@ -46,7 +50,7 @@ pub fn check_file_access(path: &str) -> Result<(), String> {
 }
 
 /// Record a file modification for diff monitoring.
-/// Call after successful write_file or edit_file.
+/// Call after successful `write_file` or `edit_file`.
 pub fn record_file_modification(path: &str, lines_added: u32, lines_removed: u32) {
     if let Ok(guard) = GUARDRAILS.lock() {
         if let Some(engine) = guard.as_ref() {
@@ -198,13 +202,13 @@ impl GuardrailsEngine {
     fn check_diff_thresholds(&self) -> Option<DiffWarning> {
         self.diff_monitor
             .as_ref()
-            .and_then(|dm| dm.check_thresholds())
+            .and_then(DiffMonitor::check_thresholds)
     }
 
     fn run_quality_gates(&self) -> Vec<QualityCheckResult> {
         self.quality_gates
             .as_ref()
-            .map(|qg| qg.run())
+            .map(QualityGateRunner::run)
             .unwrap_or_default()
     }
 
@@ -215,7 +219,7 @@ impl GuardrailsEngine {
     }
 
     fn get_diff_stats(&self) -> Option<DiffStats> {
-        self.diff_monitor.as_ref().map(|dm| dm.get_stats())
+        self.diff_monitor.as_ref().map(DiffMonitor::get_stats)
     }
 }
 
@@ -266,7 +270,7 @@ impl BlastRadiusGuard {
         // Denied paths take priority
         for pattern in &self.denied_patterns {
             if pattern.is_match(&normalized) {
-                let msg = format!("Blast radius: path '{}' matches deny list pattern", path);
+                let msg = format!("Blast radius: path '{path}' matches deny list pattern");
                 return match self.config.mode {
                     GuardrailMode::Strict => {
                         warn!("{} (BLOCKED)", msg);
@@ -287,7 +291,7 @@ impl BlastRadiusGuard {
                 .iter()
                 .any(|p| p.is_match(&normalized));
             if !allowed {
-                let msg = format!("Blast radius: path '{}' not in allowed list", path);
+                let msg = format!("Blast radius: path '{path}' not in allowed list");
                 return match self.config.mode {
                     GuardrailMode::Strict => {
                         warn!("{} (BLOCKED)", msg);
@@ -312,7 +316,7 @@ impl BlastRadiusGuard {
         let normalized = normalize_path(path);
         if let Ok(mut files) = self.files_this_turn.lock() {
             files.insert(normalized);
-            if files.len() as u32 > self.config.max_files_per_turn {
+            if u32::try_from(files.len()).unwrap_or(u32::MAX) > self.config.max_files_per_turn {
                 let msg = format!(
                     "Blast radius: exceeded max files per turn ({}/{})",
                     files.len(),
@@ -385,7 +389,7 @@ impl DiffMonitor {
     fn check_thresholds(&self) -> Option<DiffWarning> {
         if let Ok(stats) = self.stats.lock() {
             let total_lines = stats.lines_added + stats.lines_removed;
-            let total_files = stats.files.len() as u32;
+            let total_files = u32::try_from(stats.files.len()).unwrap_or(u32::MAX);
 
             let mut warnings = Vec::new();
 
@@ -427,17 +431,16 @@ impl DiffMonitor {
     }
 
     fn get_stats(&self) -> DiffStats {
-        if let Ok(stats) = self.stats.lock() {
-            DiffStats {
+        self.stats.lock().map_or_else(
+            |_| DiffStats::default(),
+            |stats| DiffStats {
                 lines_added: stats.lines_added,
                 lines_removed: stats.lines_removed,
                 lines_changed: stats.lines_added + stats.lines_removed,
-                files_changed: stats.files.len() as u32,
+                files_changed: u32::try_from(stats.files.len()).unwrap_or(u32::MAX),
                 file_list: stats.files.iter().cloned().collect(),
-            }
-        } else {
-            DiffStats::default()
-        }
+            },
+        )
     }
 }
 
@@ -450,7 +453,7 @@ struct QualityGateRunner {
 }
 
 impl QualityGateRunner {
-    fn new(config: QualityGatesConfig) -> Self {
+    const fn new(config: QualityGatesConfig) -> Self {
         Self { config }
     }
 
@@ -497,7 +500,7 @@ fn run_shell_command_sync(command: &str, timeout_seconds: u64) -> (i32, String, 
 
     // Wrap command with timeout if a positive timeout is specified
     let actual_command = if timeout_seconds > 0 {
-        format!("timeout {} {}", timeout_seconds, command)
+        format!("timeout {timeout_seconds} {command}")
     } else {
         command.to_string()
     };
@@ -533,7 +536,7 @@ fn run_shell_command_sync(command: &str, timeout_seconds: u64) -> (i32, String, 
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             (exit_code, stdout, stderr)
         }
-        Err(e) => (-1, String::new(), format!("Failed to execute: {}", e)),
+        Err(e) => (-1, String::new(), format!("Failed to execute: {e}")),
     }
 }
 
@@ -578,6 +581,7 @@ impl std::fmt::Display for ProjectLanguage {
 }
 
 /// Detect project languages by checking for marker files in the working directory.
+#[must_use]
 pub fn detect_project_languages() -> Vec<ProjectLanguage> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     detect_languages_in_dir(&cwd)
@@ -634,8 +638,13 @@ pub fn detect_languages_in_dir(dir: &Path) -> Vec<ProjectLanguage> {
     // C# detection: .sln or .csproj files
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
+            let path = entry.path();
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".sln") || name.ends_with(".csproj") {
+            if ext.eq_ignore_ascii_case("sln")
+                || name.eq_ignore_ascii_case(".csproj")
+                || ext.eq_ignore_ascii_case("csproj")
+            {
                 if !languages.contains(&ProjectLanguage::CSharp) {
                     languages.push(ProjectLanguage::CSharp);
                 }
@@ -648,14 +657,18 @@ pub fn detect_languages_in_dir(dir: &Path) -> Vec<ProjectLanguage> {
     if languages.is_empty() && dir.join("Makefile").exists() {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.ends_with(".c") || name.ends_with(".h") {
+                let path = entry.path();
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if ext.eq_ignore_ascii_case("c") || ext.eq_ignore_ascii_case("h") {
                     if !languages.contains(&ProjectLanguage::C) {
                         languages.push(ProjectLanguage::C);
                     }
                     break;
                 }
-                if name.ends_with(".cpp") || name.ends_with(".cc") || name.ends_with(".hpp") {
+                if ext.eq_ignore_ascii_case("cpp")
+                    || ext.eq_ignore_ascii_case("cc")
+                    || ext.eq_ignore_ascii_case("hpp")
+                {
                     if !languages.contains(&ProjectLanguage::Cpp) {
                         languages.push(ProjectLanguage::Cpp);
                     }
@@ -671,6 +684,7 @@ pub fn detect_languages_in_dir(dir: &Path) -> Vec<ProjectLanguage> {
 
 /// Get default static analysis commands for a detected language.
 /// Returns Vec<(name, command)>.
+#[must_use]
 pub fn get_default_analysis_commands(lang: &ProjectLanguage) -> Vec<(String, String)> {
     match lang {
         ProjectLanguage::Rust => vec![
@@ -733,7 +747,7 @@ pub fn get_default_analysis_commands(lang: &ProjectLanguage) -> Vec<(String, Str
 }
 
 /// Get auto-detected static analysis commands for the current project.
-/// Used by VDD when auto_detect is enabled and no explicit commands are configured.
+/// Used by VDD when `auto_detect` is enabled and no explicit commands are configured.
 pub fn get_auto_detected_commands() -> Vec<String> {
     let languages = detect_project_languages();
     let mut commands = Vec::new();
@@ -748,7 +762,7 @@ pub fn get_auto_detected_commands() -> Vec<String> {
 
     if !commands.is_empty() {
         info!(
-            languages = ?languages.iter().map(|l| l.to_string()).collect::<Vec<_>>(),
+            languages = ?languages.iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
             commands = ?commands,
             "Auto-detected static analysis commands"
         );

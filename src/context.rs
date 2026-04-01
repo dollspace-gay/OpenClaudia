@@ -8,7 +8,7 @@ use crate::proxy::{ChatCompletionRequest, ChatMessage, MessageContent};
 
 /// Wraps content in a system-reminder tag
 fn wrap_system_reminder(content: &str) -> String {
-    format!("<system-reminder>\n{}\n</system-reminder>", content)
+    format!("<system-reminder>\n{content}\n</system-reminder>")
 }
 
 /// Context injector that modifies requests based on hook results

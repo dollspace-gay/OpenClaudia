@@ -8,10 +8,9 @@ static CHAINLINK_INSTALL_SHOWN: AtomicBool = AtomicBool::new(false);
 
 /// Execute chainlink command for task management
 /// Uses Git Bash on Windows (which has access to Windows PATH)
-pub(crate) fn execute_chainlink(args: &HashMap<String, Value>) -> (String, bool) {
-    let cmd_args = match args.get("args").and_then(|v| v.as_str()) {
-        Some(a) => a,
-        None => return ("Missing 'args' argument".to_string(), true),
+pub fn execute_chainlink(args: &HashMap<String, Value>) -> (String, bool) {
+    let Some(cmd_args) = args.get("args").and_then(|v| v.as_str()) else {
+        return ("Missing 'args' argument".to_string(), true);
     };
 
     // Use Git Bash to run chainlink (same approach as execute_bash)
@@ -29,7 +28,7 @@ pub(crate) fn execute_chainlink(args: &HashMap<String, Value>) -> (String, bool)
 
     #[cfg(not(windows))]
     let output = Command::new("bash")
-        .args(["-c", &format!("chainlink {}", cmd_args)])
+        .args(["-c", &format!("chainlink {cmd_args}")])
         .output();
 
     match output {
@@ -48,9 +47,8 @@ pub(crate) fn execute_chainlink(args: &HashMap<String, Value>) -> (String, bool)
                         Install from: https://github.com/dollspace-gay/chainlink".to_string(),
                         true
                     );
-                } else {
-                    return ("Chainlink not available.".to_string(), true);
                 }
+                return ("Chainlink not available.".to_string(), true);
             }
 
             let mut result = stdout.to_string();
@@ -69,6 +67,6 @@ pub(crate) fn execute_chainlink(args: &HashMap<String, Value>) -> (String, bool)
 
             (result.trim().to_string(), !output.status.success())
         }
-        Err(e) => (format!("Failed to execute chainlink: {}", e), true),
+        Err(e) => (format!("Failed to execute chainlink: {e}"), true),
     }
 }

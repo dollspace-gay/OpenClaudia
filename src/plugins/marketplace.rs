@@ -82,7 +82,7 @@ pub struct MarketplacePlugin {
     pub version: Option<String>,
 }
 
-fn default_strict() -> bool {
+const fn default_strict() -> bool {
     true
 }
 

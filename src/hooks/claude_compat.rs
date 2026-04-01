@@ -1,7 +1,7 @@
 //! Claude Code Compatibility Layer
 //!
 //! Types and functions for loading hooks from Claude Code's `.claude/settings.json`
-//! format and converting them to OpenClaudia's internal representation.
+//! format and converting them to `OpenClaudia`'s internal representation.
 
 use crate::config::HooksConfig;
 use serde::Deserialize;
@@ -41,7 +41,8 @@ pub enum ClaudeCodeHook {
     },
 }
 
-fn default_claude_timeout() -> Option<u64> {
+#[allow(clippy::unnecessary_wraps)]
+const fn default_claude_timeout() -> Option<u64> {
     Some(60)
 }
 
@@ -51,7 +52,7 @@ fn default_claude_timeout() -> Option<u64> {
 /// 1. .claude/settings.json (project-level)
 /// 2. ~/.claude/settings.json (user-level, lower priority)
 ///
-/// Returns merged HooksConfig with Claude Code hooks converted to OpenClaudia format
+/// Returns merged `HooksConfig` with Claude Code hooks converted to `OpenClaudia` format
 pub fn load_claude_code_hooks() -> HooksConfig {
     let mut config = HooksConfig::default();
 
@@ -105,7 +106,7 @@ pub struct LayeredSettings {
 /// Deep merge: arrays concatenate, objects merge recursively,
 /// scalars from later files override.
 pub fn load_claude_settings() -> LayeredSettings {
-    let mut settings = Value::Object(Default::default());
+    let mut settings = Value::Object(serde_json::Map::default());
     let mut managed_path: Option<PathBuf> = None;
 
     // 1. User global settings
@@ -186,7 +187,7 @@ pub fn load_claude_settings() -> LayeredSettings {
 /// Load hooks from all layered settings files.
 ///
 /// Uses the new 4-layer settings loading instead of the old 2-layer approach.
-/// Returns merged HooksConfig with Claude Code hooks converted to OpenClaudia format.
+/// Returns merged `HooksConfig` with Claude Code hooks converted to `OpenClaudia` format.
 pub fn load_claude_code_hooks_layered() -> (HooksConfig, LayeredSettings) {
     let layered = load_claude_settings();
     let mut config = HooksConfig::default();

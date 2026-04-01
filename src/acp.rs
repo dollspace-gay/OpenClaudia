@@ -1,6 +1,6 @@
 //! ACP (Agent Client Protocol) Server — JSON-RPC 2.0 over stdio.
 //!
-//! Enables OpenClaudia to interoperate with `acpx` and other agent harnesses.
+//! Enables `OpenClaudia` to interoperate with `acpx` and other agent harnesses.
 //! Implements all stable ACP methods:
 //! - `initialize` — handshake/capability negotiation
 //! - `authenticate` — credential validation
@@ -17,6 +17,7 @@
 //!   `terminal/kill`, `terminal/release` — shell execution
 
 use std::collections::HashMap;
+use std::fmt::Write as FmtWrite;
 use std::io::{self, BufRead, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -87,7 +88,7 @@ struct JsonRpcNotification {
     params: Option<Value>,
 }
 
-/// Outgoing JSON-RPC request (server → client, e.g. fs/read_text_file).
+/// Outgoing JSON-RPC request (server → client, e.g. `fs/read_text_file`).
 #[derive(Debug, Serialize)]
 struct JsonRpcRequest {
     jsonrpc: &'static str,
@@ -120,7 +121,7 @@ pub struct AcpServer {
     /// Rules engine (used to inject .clauderules context)
     #[allow(dead_code)]
     rules_engine: RulesEngine,
-    /// Active ACP session ID → OpenClaudia session ID mapping
+    /// Active ACP session ID → `OpenClaudia` session ID mapping
     session_map: HashMap<String, String>,
     /// Conversation messages for the active session
     messages: Vec<Value>,
@@ -137,7 +138,7 @@ pub struct AcpServer {
     cancel_flag: Arc<AtomicBool>,
     /// Channel for writing to stdout (serialized access)
     stdout_tx: mpsc::UnboundedSender<String>,
-    /// Session config options set via session/set_config_option
+    /// Session config options set via `session/set_config_option`
     config_options: HashMap<String, Value>,
     /// Terminal ID counter for ACP terminal lifecycle
     #[allow(dead_code)]
@@ -146,6 +147,7 @@ pub struct AcpServer {
 
 impl AcpServer {
     /// Create a new ACP server from the loaded config.
+    #[must_use]
     pub fn new(
         config: AppConfig,
         model: String,
@@ -240,13 +242,14 @@ impl AcpServer {
                 // Clean up pending
                 let mut pending = self.pending_responses.lock().await;
                 pending.remove(&id);
+                drop(pending);
                 Err("Client request timed out".to_string())
             }
         }
     }
 
     /// Send a session/update notification.
-    fn send_session_update(&self, session_id: &str, update_type: &str, content: Value) {
+    fn send_session_update(&self, session_id: &str, update_type: &str, content: &Value) {
         self.send_notification(
             "session/update",
             Some(json!({
@@ -277,7 +280,7 @@ impl AcpServer {
     async fn handle_message(&mut self, msg: JsonRpcMessage) {
         // Is this a response to a server→client request?
         if msg.method.is_none() && (msg.result.is_some() || msg.error.is_some()) {
-            if let Some(id) = msg.id.as_ref().and_then(|v| v.as_u64()) {
+            if let Some(id) = msg.id.as_ref().and_then(serde_json::Value::as_u64) {
                 let mut pending = self.pending_responses.lock().await;
                 if let Some(tx) = pending.remove(&id) {
                     if let Some(err) = msg.error {
@@ -291,14 +294,13 @@ impl AcpServer {
         }
 
         // It's a request or notification from the client
-        let method = match msg.method {
-            Some(ref m) => m.clone(),
-            None => {
-                if let Some(id) = msg.id {
-                    self.send_error(id, INVALID_REQUEST, "Missing method field");
-                }
-                return;
+        let method = if let Some(ref m) = msg.method {
+            m.clone()
+        } else {
+            if let Some(id) = msg.id {
+                self.send_error(id, INVALID_REQUEST, "Missing method field");
             }
+            return;
         };
 
         let params = msg.params.unwrap_or(Value::Null);
@@ -307,14 +309,14 @@ impl AcpServer {
             "initialize" => self.handle_initialize(msg.id, params),
             "authenticate" => self.handle_authenticate(msg.id, params),
             "session/new" => self.handle_session_new(msg.id, params),
-            "session/load" => self.handle_session_load(msg.id, params),
+            "session/load" => self.handle_session_load(msg.id, &params),
             "session/prompt" => self.handle_session_prompt(msg.id, params).await,
             "session/cancel" => self.handle_session_cancel(msg.id, params),
-            "session/set_mode" => self.handle_session_set_mode(msg.id, params),
-            "session/set_config_option" => self.handle_session_set_config_option(msg.id, params),
+            "session/set_mode" => self.handle_session_set_mode(msg.id, &params),
+            "session/set_config_option" => self.handle_session_set_config_option(msg.id, &params),
             _ => {
                 if let Some(id) = msg.id {
-                    self.send_error(id, METHOD_NOT_FOUND, &format!("Unknown method: {}", method));
+                    self.send_error(id, METHOD_NOT_FOUND, &format!("Unknown method: {method}"));
                 }
             }
         }
@@ -325,10 +327,7 @@ impl AcpServer {
     // ========================================================================
 
     fn handle_initialize(&self, id: Option<Value>, _params: Value) {
-        let id = match id {
-            Some(id) => id,
-            None => return, // Notification — no response needed
-        };
+        let Some(id) = id else { return };
 
         self.send_response(
             id,
@@ -355,10 +354,7 @@ impl AcpServer {
     }
 
     fn handle_authenticate(&self, id: Option<Value>, _params: Value) {
-        let id = match id {
-            Some(id) => id,
-            None => return,
-        };
+        let Some(id) = id else { return };
 
         // OpenClaudia uses its own provider API keys from config, so ACP auth
         // is accepted unconditionally — the client doesn't need to provide credentials.
@@ -372,10 +368,7 @@ impl AcpServer {
     }
 
     fn handle_session_new(&mut self, id: Option<Value>, _params: Value) {
-        let id = match id {
-            Some(id) => id,
-            None => return,
-        };
+        let Some(id) = id else { return };
 
         let session = self.session_manager.get_or_create_session();
         let oc_session_id = session.id.clone();
@@ -397,18 +390,14 @@ impl AcpServer {
         info!(acp_session_id = %acp_session_id, "Created new ACP session");
     }
 
-    fn handle_session_load(&mut self, id: Option<Value>, params: Value) {
-        let id = match id {
-            Some(id) => id,
-            None => return,
-        };
+    fn handle_session_load(&mut self, id: Option<Value>, params: &Value) {
+        let Some(id) = id else { return };
 
-        let acp_session_id = match params.get("sessionId").and_then(|v| v.as_str()) {
-            Some(sid) => sid.to_string(),
-            None => {
-                self.send_error(id, INVALID_PARAMS, "Missing sessionId");
-                return;
-            }
+        let acp_session_id = if let Some(sid) = params.get("sessionId").and_then(|v| v.as_str()) {
+            sid.to_string()
+        } else {
+            self.send_error(id, INVALID_PARAMS, "Missing sessionId");
+            return;
         };
 
         // Check if we know this ACP session
@@ -465,18 +454,12 @@ impl AcpServer {
         info!("Prompt cancellation requested");
     }
 
-    fn handle_session_set_mode(&self, id: Option<Value>, params: Value) {
-        let id = match id {
-            Some(id) => id,
-            None => return,
-        };
+    fn handle_session_set_mode(&self, id: Option<Value>, params: &Value) {
+        let Some(id) = id else { return };
 
-        let mode = match params.get("mode").and_then(|v| v.as_str()) {
-            Some(m) => m,
-            None => {
-                self.send_error(id, INVALID_PARAMS, "Missing mode");
-                return;
-            }
+        let Some(mode) = params.get("mode").and_then(|v| v.as_str()) else {
+            self.send_error(id, INVALID_PARAMS, "Missing mode");
+            return;
         };
 
         // Map to OpenClaudia session modes
@@ -489,40 +472,31 @@ impl AcpServer {
                 self.send_error(
                     id,
                     INVALID_PARAMS,
-                    &format!("Invalid mode: {}. Supported: initializer, coding, auto", mode),
+                    &format!("Invalid mode: {mode}. Supported: initializer, coding, auto"),
                 );
             }
         }
     }
 
-    fn handle_session_set_config_option(&mut self, id: Option<Value>, params: Value) {
-        let id = match id {
-            Some(id) => id,
-            None => return,
+    fn handle_session_set_config_option(&mut self, id: Option<Value>, params: &Value) {
+        let Some(id) = id else { return };
+
+        let key = if let Some(k) = params.get("key").and_then(|v| v.as_str()) {
+            k.to_string()
+        } else {
+            self.send_error(id, INVALID_PARAMS, "Missing key");
+            return;
         };
 
-        let key = match params.get("key").and_then(|v| v.as_str()) {
-            Some(k) => k.to_string(),
-            None => {
-                self.send_error(id, INVALID_PARAMS, "Missing key");
-                return;
-            }
-        };
-
-        let value = match params.get("value") {
-            Some(v) => v.clone(),
-            None => {
-                self.send_error(id, INVALID_PARAMS, "Missing value");
-                return;
-            }
+        let value = if let Some(v) = params.get("value") {
+            v.clone()
+        } else {
+            self.send_error(id, INVALID_PARAMS, "Missing value");
+            return;
         };
 
         self.config_options.insert(key.clone(), value.clone());
-        self.send_response(
-            id,
-            Some(json!({"key": key, "value": value})),
-            None,
-        );
+        self.send_response(id, Some(json!({"key": key, "value": value})), None);
 
         info!(key = %key, "Config option set");
     }
@@ -532,25 +506,20 @@ impl AcpServer {
     // ========================================================================
 
     async fn handle_session_prompt(&mut self, id: Option<Value>, params: Value) {
-        let id = match id {
-            Some(id) => id,
-            None => return,
+        let Some(id) = id else { return };
+
+        let acp_session_id = if let Some(sid) = params.get("sessionId").and_then(|v| v.as_str()) {
+            sid.to_string()
+        } else {
+            self.send_error(id, INVALID_PARAMS, "Missing sessionId");
+            return;
         };
 
-        let acp_session_id = match params.get("sessionId").and_then(|v| v.as_str()) {
-            Some(sid) => sid.to_string(),
-            None => {
-                self.send_error(id, INVALID_PARAMS, "Missing sessionId");
-                return;
-            }
-        };
-
-        let prompt = match params.get("prompt").and_then(|v| v.as_str()) {
-            Some(p) => p.to_string(),
-            None => {
-                self.send_error(id, INVALID_PARAMS, "Missing prompt");
-                return;
-            }
+        let prompt = if let Some(p) = params.get("prompt").and_then(|v| v.as_str()) {
+            p.to_string()
+        } else {
+            self.send_error(id, INVALID_PARAMS, "Missing prompt");
+            return;
         };
 
         // Reset cancel flag
@@ -581,6 +550,8 @@ impl AcpServer {
     }
 
     /// Run the prompt → tool calls → re-prompt loop.
+    // Complex protocol handler, splitting would reduce readability
+    #[allow(clippy::too_many_lines)]
     async fn run_prompt_loop(&mut self, acp_session_id: &str) -> String {
         let adapter = get_adapter(&self.config.proxy.target);
         let client = reqwest::Client::new();
@@ -596,17 +567,18 @@ impl AcpServer {
             let system_prompt = crate::prompt::build_system_prompt(None, None, None);
 
             // Prepend system prompt to messages
-            let mut all_messages: Vec<crate::proxy::ChatMessage> = vec![
-                crate::proxy::ChatMessage {
+            let mut all_messages: Vec<crate::proxy::ChatMessage> =
+                vec![crate::proxy::ChatMessage {
                     role: "system".to_string(),
                     content: crate::proxy::MessageContent::Text(system_prompt),
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
-                },
-            ];
+                }];
             all_messages.extend(
-                self.messages.iter().filter_map(|m| serde_json::from_value(m.clone()).ok()),
+                self.messages
+                    .iter()
+                    .filter_map(|m| serde_json::from_value(m.clone()).ok()),
             );
 
             // Build a ChatCompletionRequest for the adapter
@@ -624,23 +596,26 @@ impl AcpServer {
             // Transform for provider
             let transformed = match adapter.transform_request_with_thinking(
                 &chat_request,
-                &self.config.active_provider().map(|p| p.thinking.clone()).unwrap_or_default(),
+                &self
+                    .config
+                    .active_provider()
+                    .map(|p| p.thinking.clone())
+                    .unwrap_or_default(),
             ) {
                 Ok(t) => t,
                 Err(e) => {
                     self.send_session_update(
                         acp_session_id,
                         "agent_message_chunk",
-                        json!({"type": "text", "text": format!("Provider error: {}", e)}),
+                        &json!({"type": "text", "text": format!("Provider error: {}", e)}),
                     );
                     return "error".to_string();
                 }
             };
 
             // Determine endpoint
-            let provider = match self.config.active_provider() {
-                Some(p) => p,
-                None => return "error".to_string(),
+            let Some(provider) = self.config.active_provider() else {
+                return "error".to_string();
             };
             let endpoint = format!(
                 "{}{}",
@@ -650,12 +625,7 @@ impl AcpServer {
 
             // Build HTTP request with headers
             let mut headers = adapter.get_headers(&self.api_key);
-            headers.extend(
-                provider
-                    .headers
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone())),
-            );
+            headers.extend(provider.headers.iter().map(|(k, v)| (k.clone(), v.clone())));
 
             let mut req = client.post(&endpoint).json(&transformed);
             for (key, value) in &headers {
@@ -670,7 +640,7 @@ impl AcpServer {
                     self.send_session_update(
                         acp_session_id,
                         "agent_message_chunk",
-                        json!({"type": "text", "text": format!("Request failed: {}", e)}),
+                        &json!({"type": "text", "text": format!("Request failed: {}", e)}),
                     );
                     return "error".to_string();
                 }
@@ -686,14 +656,14 @@ impl AcpServer {
                     .to_string();
                 let body = response.text().await.unwrap_or_default();
                 let error_msg = if content_type.contains("text/html") {
-                    format!("Error {}: (HTML response — check provider configuration)", status)
+                    format!("Error {status}: (HTML response — check provider configuration)")
                 } else {
-                    format!("Error {}: {}", status, body)
+                    format!("Error {status}: {body}")
                 };
                 self.send_session_update(
                     acp_session_id,
                     "agent_message_chunk",
-                    json!({"type": "text", "text": error_msg}),
+                    &json!({"type": "text", "text": error_msg}),
                 );
                 // Remove the failed user message
                 self.messages.pop();
@@ -750,8 +720,8 @@ impl AcpServer {
                         self.send_session_update(
                             acp_session_id,
                             "tool_call",
-                            json!({
-                                "title": format!("{}", tc.name),
+                            &json!({
+                                "title": tc.name,
                                 "status": "running",
                             }),
                         );
@@ -761,8 +731,8 @@ impl AcpServer {
                         self.send_session_update(
                             acp_session_id,
                             "tool_call",
-                            json!({
-                                "title": format!("{}", tc.name),
+                            &json!({
+                                "title": tc.name,
                                 "status": "completed",
                                 "output": result.content,
                             }),
@@ -785,7 +755,7 @@ impl AcpServer {
                     self.send_session_update(
                         acp_session_id,
                         "agent_message_chunk",
-                        json!({"type": "text", "text": msg}),
+                        &json!({"type": "text", "text": msg}),
                     );
                     return "error".to_string();
                 }
@@ -800,6 +770,8 @@ impl AcpServer {
     // ========================================================================
 
     /// Stream a provider response and extract content + tool calls.
+    // Complex protocol handler, splitting would reduce readability
+    #[allow(clippy::too_many_lines)]
     async fn stream_provider_response(
         &self,
         acp_session_id: &str,
@@ -823,7 +795,7 @@ impl AcpServer {
             let chunk = match chunk_result {
                 Ok(c) => c,
                 Err(e) => {
-                    return StreamResult::Error(format!("Stream error: {}", e));
+                    return StreamResult::Error(format!("Stream error: {e}"));
                 }
             };
 
@@ -841,12 +813,11 @@ impl AcpServer {
                             return StreamResult::EndTurn {
                                 content: full_content,
                             };
-                        } else {
-                            return StreamResult::ToolCalls {
-                                content: full_content,
-                                tool_calls,
-                            };
                         }
+                        return StreamResult::ToolCalls {
+                            content: full_content,
+                            tool_calls,
+                        };
                     }
                     continue;
                 }
@@ -860,12 +831,11 @@ impl AcpServer {
                                 return StreamResult::EndTurn {
                                     content: full_content,
                                 };
-                            } else {
-                                return StreamResult::ToolCalls {
-                                    content: full_content,
-                                    tool_calls,
-                                };
                             }
+                            return StreamResult::ToolCalls {
+                                content: full_content,
+                                tool_calls,
+                            };
                         }
                     }
                     continue;
@@ -880,9 +850,8 @@ impl AcpServer {
                 // Handle OpenAI-format streaming
                 if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
                     for choice in choices {
-                        let delta = match choice.get("delta") {
-                            Some(d) => d,
-                            None => continue,
+                        let Some(delta) = choice.get("delta") else {
+                            continue;
                         };
 
                         // Text content
@@ -891,22 +860,24 @@ impl AcpServer {
                             self.send_session_update(
                                 acp_session_id,
                                 "agent_message_chunk",
-                                json!({"type": "text", "text": text}),
+                                &json!({"type": "text", "text": text}),
                             );
                         }
 
                         // Tool calls
                         if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_array()) {
                             for tc_delta in tcs {
-                                let index =
-                                    tc_delta.get("index").and_then(|i| i.as_u64()).unwrap_or(0)
-                                        as usize;
+                                #[allow(clippy::cast_possible_truncation)]
+                                // Tool call index is always small; truncation is safe
+                                let index = tc_delta
+                                    .get("index")
+                                    .and_then(serde_json::Value::as_u64)
+                                    .unwrap_or(0)
+                                    as usize;
 
                                 // New tool call
                                 if let Some(func) = tc_delta.get("function") {
-                                    if let Some(name) =
-                                        func.get("name").and_then(|n| n.as_str())
-                                    {
+                                    if let Some(name) = func.get("name").and_then(|n| n.as_str()) {
                                         while tool_calls.len() <= index {
                                             tool_calls.push(AccumulatedToolCall {
                                                 id: String::new(),
@@ -926,9 +897,7 @@ impl AcpServer {
                                     }
                                 }
 
-                                if let Some(tc_id) =
-                                    tc_delta.get("id").and_then(|i| i.as_str())
-                                {
+                                if let Some(tc_id) = tc_delta.get("id").and_then(|i| i.as_str()) {
                                     if tool_calls.len() > index {
                                         tool_calls[index].id = tc_id.to_string();
                                     }
@@ -937,8 +906,7 @@ impl AcpServer {
                         }
 
                         // Finish reason
-                        if let Some(reason) = choice.get("finish_reason").and_then(|r| r.as_str())
-                        {
+                        if let Some(reason) = choice.get("finish_reason").and_then(|r| r.as_str()) {
                             if reason == "stop" && tool_calls.is_empty() {
                                 return StreamResult::EndTurn {
                                     content: full_content,
@@ -958,17 +926,18 @@ impl AcpServer {
                 if let Some(delta_type) = json.get("type").and_then(|t| t.as_str()) {
                     match delta_type {
                         "content_block_start" => {
-                            let content_block =
-                                json.get("content_block").unwrap_or(&Value::Null);
-                            let block_type =
-                                content_block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                            let content_block = json.get("content_block").unwrap_or(&Value::Null);
+                            let block_type = content_block
+                                .get("type")
+                                .and_then(|t| t.as_str())
+                                .unwrap_or("");
 
                             match block_type {
                                 "thinking" => {
                                     self.send_session_update(
                                         acp_session_id,
                                         "thinking",
-                                        json!({"type": "thinking", "status": "started"}),
+                                        &json!({"type": "thinking", "status": "started"}),
                                     );
                                 }
                                 "tool_use" => {
@@ -997,13 +966,12 @@ impl AcpServer {
 
                             match delta_type {
                                 "text_delta" => {
-                                    if let Some(text) = delta.get("text").and_then(|t| t.as_str())
-                                    {
+                                    if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
                                         full_content.push_str(text);
                                         self.send_session_update(
                                             acp_session_id,
                                             "agent_message_chunk",
-                                            json!({"type": "text", "text": text}),
+                                            &json!({"type": "text", "text": text}),
                                         );
                                     }
                                 }
@@ -1014,7 +982,7 @@ impl AcpServer {
                                         self.send_session_update(
                                             acp_session_id,
                                             "thinking",
-                                            json!({"type": "thinking", "text": text}),
+                                            &json!({"type": "thinking", "text": text}),
                                         );
                                     }
                                 }
@@ -1031,9 +999,6 @@ impl AcpServer {
                                 }
                                 _ => {}
                             }
-                        }
-                        "content_block_stop" => {
-                            // Block finished — nothing special needed
                         }
                         "message_delta" => {
                             if let Some(delta) = json.get("delta") {
@@ -1079,8 +1044,7 @@ impl AcpServer {
 
     /// Execute a tool by delegating to ACP client methods.
     async fn execute_tool_via_acp(&self, tool_name: &str, arguments_json: &str) -> AcpToolResult {
-        let args: HashMap<String, Value> =
-            serde_json::from_str(arguments_json).unwrap_or_default();
+        let args: HashMap<String, Value> = serde_json::from_str(arguments_json).unwrap_or_default();
 
         match tool_name {
             "read_file" => self.acp_read_file(&args).await,
@@ -1092,19 +1056,9 @@ impl AcpServer {
             "list_files" => self.acp_list_files(&args).await,
             "glob" | "grep" => self.acp_search(&args, tool_name).await,
             // Internal tools run locally — not file/terminal operations
-            "web_fetch" | "web_search" | "web_browser" => {
-                self.execute_local_tool(tool_name, arguments_json)
-            }
-            "memory_search" | "memory_save" | "memory_delete" | "memory_list" => {
-                self.execute_local_tool(tool_name, arguments_json)
-            }
-            "task_create" | "task_update" | "task_get" | "task_list" => {
-                self.execute_local_tool(tool_name, arguments_json)
-            }
-            "todo_write" | "todo_read" => {
-                self.execute_local_tool(tool_name, arguments_json)
-            }
-            "enter_plan_mode" | "exit_plan_mode" => {
+            "web_fetch" | "web_search" | "web_browser" | "memory_search" | "memory_save"
+            | "memory_delete" | "memory_list" | "task_create" | "task_update" | "task_get"
+            | "task_list" | "todo_write" | "todo_read" | "enter_plan_mode" | "exit_plan_mode" => {
                 self.execute_local_tool(tool_name, arguments_json)
             }
             name if name.starts_with("mcp__") => {
@@ -1112,13 +1066,16 @@ impl AcpServer {
                 self.execute_local_tool(tool_name, arguments_json)
             }
             _ => AcpToolResult {
-                content: format!("Unknown tool: {}", tool_name),
+                content: format!("Unknown tool: {tool_name}"),
                 is_error: true,
             },
         }
     }
 
     /// Execute a tool locally (for internal tools that don't need ACP delegation).
+    /// Takes `&self` for API consistency with `execute_tool_via_acp` even though
+    /// the current implementation doesn't use instance state.
+    #[allow(clippy::unused_self)]
     fn execute_local_tool(&self, tool_name: &str, arguments_json: &str) -> AcpToolResult {
         use crate::tools::{FunctionCall, ToolCall};
 
@@ -1141,14 +1098,15 @@ impl AcpServer {
     // -- File operations via ACP client --
 
     async fn acp_read_file(&self, args: &HashMap<String, Value>) -> AcpToolResult {
-        let path = match args.get("file_path").or(args.get("path")).and_then(|v| v.as_str()) {
-            Some(p) => p,
-            None => {
-                return AcpToolResult {
-                    content: "Missing file_path argument".to_string(),
-                    is_error: true,
-                }
-            }
+        let Some(path) = args
+            .get("file_path")
+            .or_else(|| args.get("path"))
+            .and_then(|v| v.as_str())
+        else {
+            return AcpToolResult {
+                content: "Missing file_path argument".to_string(),
+                is_error: true,
+            };
         };
 
         match self
@@ -1158,25 +1116,26 @@ impl AcpServer {
             Ok(result) => {
                 let text = result
                     .get("text")
-                    .or(result.get("content"))
+                    .or_else(|| result.get("content"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
                 // Apply offset/limit if specified
+                #[allow(clippy::cast_possible_truncation)]
+                // Line offsets/limits from JSON are always small; truncation is safe
                 let offset = args
                     .get("offset")
-                    .and_then(|v| v.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                     .unwrap_or(0) as usize;
+                #[allow(clippy::cast_possible_truncation)]
                 let limit = args
                     .get("limit")
-                    .and_then(|v| v.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                     .map(|v| v as usize);
 
                 let lines: Vec<&str> = text.lines().collect();
                 let start = offset.min(lines.len());
-                let end = limit
-                    .map(|l| (start + l).min(lines.len()))
-                    .unwrap_or(lines.len());
+                let end = limit.map_or(lines.len(), |l| (start + l).min(lines.len()));
 
                 let numbered: String = lines[start..end]
                     .iter()
@@ -1191,31 +1150,29 @@ impl AcpServer {
                 }
             }
             Err(e) => AcpToolResult {
-                content: format!("Failed to read file: {}", e),
+                content: format!("Failed to read file: {e}"),
                 is_error: true,
             },
         }
     }
 
     async fn acp_write_file(&self, args: &HashMap<String, Value>) -> AcpToolResult {
-        let path = match args.get("file_path").or(args.get("path")).and_then(|v| v.as_str()) {
-            Some(p) => p,
-            None => {
-                return AcpToolResult {
-                    content: "Missing file_path argument".to_string(),
-                    is_error: true,
-                }
-            }
+        let Some(path) = args
+            .get("file_path")
+            .or_else(|| args.get("path"))
+            .and_then(|v| v.as_str())
+        else {
+            return AcpToolResult {
+                content: "Missing file_path argument".to_string(),
+                is_error: true,
+            };
         };
 
-        let content = match args.get("content").and_then(|v| v.as_str()) {
-            Some(c) => c,
-            None => {
-                return AcpToolResult {
-                    content: "Missing content argument".to_string(),
-                    is_error: true,
-                }
-            }
+        let Some(content) = args.get("content").and_then(|v| v.as_str()) else {
+            return AcpToolResult {
+                content: "Missing content argument".to_string(),
+                is_error: true,
+            };
         };
 
         match self
@@ -1226,45 +1183,40 @@ impl AcpServer {
             .await
         {
             Ok(_) => AcpToolResult {
-                content: format!("Successfully wrote to {}", path),
+                content: format!("Successfully wrote to {path}"),
                 is_error: false,
             },
             Err(e) => AcpToolResult {
-                content: format!("Failed to write file: {}", e),
+                content: format!("Failed to write file: {e}"),
                 is_error: true,
             },
         }
     }
 
     async fn acp_edit_file(&self, args: &HashMap<String, Value>) -> AcpToolResult {
-        let path = match args.get("file_path").or(args.get("path")).and_then(|v| v.as_str()) {
-            Some(p) => p,
-            None => {
-                return AcpToolResult {
-                    content: "Missing file_path argument".to_string(),
-                    is_error: true,
-                }
-            }
+        let Some(path) = args
+            .get("file_path")
+            .or_else(|| args.get("path"))
+            .and_then(|v| v.as_str())
+        else {
+            return AcpToolResult {
+                content: "Missing file_path argument".to_string(),
+                is_error: true,
+            };
         };
 
-        let old_string = match args.get("old_string").and_then(|v| v.as_str()) {
-            Some(s) => s,
-            None => {
-                return AcpToolResult {
-                    content: "Missing old_string argument".to_string(),
-                    is_error: true,
-                }
-            }
+        let Some(old_string) = args.get("old_string").and_then(|v| v.as_str()) else {
+            return AcpToolResult {
+                content: "Missing old_string argument".to_string(),
+                is_error: true,
+            };
         };
 
-        let new_string = match args.get("new_string").and_then(|v| v.as_str()) {
-            Some(s) => s,
-            None => {
-                return AcpToolResult {
-                    content: "Missing new_string argument".to_string(),
-                    is_error: true,
-                }
-            }
+        let Some(new_string) = args.get("new_string").and_then(|v| v.as_str()) else {
+            return AcpToolResult {
+                content: "Missing new_string argument".to_string(),
+                is_error: true,
+            };
         };
 
         // Read the file via ACP
@@ -1274,13 +1226,13 @@ impl AcpServer {
         {
             Ok(result) => result
                 .get("text")
-                .or(result.get("content"))
+                .or_else(|| result.get("content"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
             Err(e) => {
                 return AcpToolResult {
-                    content: format!("Failed to read file for edit: {}", e),
+                    content: format!("Failed to read file for edit: {e}"),
                     is_error: true,
                 }
             }
@@ -1289,7 +1241,7 @@ impl AcpServer {
         // Apply the edit
         let replace_all = args
             .get("replace_all")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
 
         let (new_content, count) = if replace_all {
@@ -1300,8 +1252,7 @@ impl AcpServer {
         } else {
             return AcpToolResult {
                 content: format!(
-                    "old_string not found in {}. Read the file first to see exact content.",
-                    path
+                    "old_string not found in {path}. Read the file first to see exact content."
                 ),
                 is_error: true,
             };
@@ -1309,7 +1260,7 @@ impl AcpServer {
 
         if count == 0 {
             return AcpToolResult {
-                content: format!("old_string not found in {}", path),
+                content: format!("old_string not found in {path}"),
                 is_error: true,
             };
         }
@@ -1327,12 +1278,12 @@ impl AcpServer {
                     "Successfully edited {} ({} replacement{})",
                     path,
                     count,
-                    if count != 1 { "s" } else { "" }
+                    if count == 1 { "" } else { "s" }
                 ),
                 is_error: false,
             },
             Err(e) => AcpToolResult {
-                content: format!("Failed to write edited file: {}", e),
+                content: format!("Failed to write edited file: {e}"),
                 is_error: true,
             },
         }
@@ -1341,19 +1292,16 @@ impl AcpServer {
     // -- Terminal operations via ACP client --
 
     async fn acp_bash(&self, args: &HashMap<String, Value>) -> AcpToolResult {
-        let command = match args.get("command").and_then(|v| v.as_str()) {
-            Some(c) => c,
-            None => {
-                return AcpToolResult {
-                    content: "Missing command argument".to_string(),
-                    is_error: true,
-                }
-            }
+        let Some(command) = args.get("command").and_then(|v| v.as_str()) else {
+            return AcpToolResult {
+                content: "Missing command argument".to_string(),
+                is_error: true,
+            };
         };
 
         let run_in_background = args
             .get("run_in_background")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
 
         // Create terminal
@@ -1377,7 +1325,7 @@ impl AcpServer {
                 .to_string(),
             Err(e) => {
                 return AcpToolResult {
-                    content: format!("Failed to create terminal: {}", e),
+                    content: format!("Failed to create terminal: {e}"),
                     is_error: true,
                 }
             }
@@ -1386,8 +1334,7 @@ impl AcpServer {
         if run_in_background {
             return AcpToolResult {
                 content: format!(
-                    "Background shell started with terminal ID: {}\nUse bash_output with this ID to retrieve output.",
-                    terminal_id
+                    "Background shell started with terminal ID: {terminal_id}\nUse bash_output with this ID to retrieve output."
                 ),
                 is_error: false,
             };
@@ -1404,133 +1351,111 @@ impl AcpServer {
             Ok(result) => result,
             Err(e) => {
                 return AcpToolResult {
-                    content: format!("Failed waiting for terminal: {}", e),
+                    content: format!("Failed waiting for terminal: {e}"),
                     is_error: true,
                 }
             }
         };
 
         // Get output
-        let output = match self
-            .client_request(
-                "terminal/output",
-                Some(json!({"terminalId": terminal_id})),
-            )
+        let output = self
+            .client_request("terminal/output", Some(json!({"terminalId": terminal_id})))
             .await
-        {
-            Ok(result) => result
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            Err(_) => String::new(),
-        };
+            .map_or_else(
+                |_| String::new(),
+                |result| {
+                    result
+                        .get("output")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string()
+                },
+            );
 
         // Release terminal
         let _ = self
-            .client_request(
-                "terminal/release",
-                Some(json!({"terminalId": terminal_id})),
-            )
+            .client_request("terminal/release", Some(json!({"terminalId": terminal_id})))
             .await;
 
         let exit_code = exit_result
             .get("exitCode")
-            .and_then(|v| v.as_i64())
+            .and_then(serde_json::Value::as_i64)
             .unwrap_or(-1);
 
         AcpToolResult {
             content: if output.is_empty() {
-                format!("(exit code {})", exit_code)
+                format!("(exit code {exit_code})")
             } else {
-                format!("{}\n(exit code {})", output, exit_code)
+                format!("{output}\n(exit code {exit_code})")
             },
             is_error: exit_code != 0,
         }
     }
 
     async fn acp_bash_output(&self, args: &HashMap<String, Value>) -> AcpToolResult {
-        let terminal_id = match args
+        let Some(terminal_id) = args
             .get("shell_id")
-            .or(args.get("terminal_id"))
+            .or_else(|| args.get("terminal_id"))
             .and_then(|v| v.as_str())
-        {
-            Some(id) => id,
-            None => {
-                return AcpToolResult {
-                    content: "Missing shell_id argument".to_string(),
-                    is_error: true,
-                }
-            }
+        else {
+            return AcpToolResult {
+                content: "Missing shell_id argument".to_string(),
+                is_error: true,
+            };
         };
 
         match self
-            .client_request(
-                "terminal/output",
-                Some(json!({"terminalId": terminal_id})),
-            )
+            .client_request("terminal/output", Some(json!({"terminalId": terminal_id})))
             .await
         {
             Ok(result) => {
-                let output = result
-                    .get("output")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let output = result.get("output").and_then(|v| v.as_str()).unwrap_or("");
                 AcpToolResult {
                     content: output.to_string(),
                     is_error: false,
                 }
             }
             Err(e) => AcpToolResult {
-                content: format!("Failed to get terminal output: {}", e),
+                content: format!("Failed to get terminal output: {e}"),
                 is_error: true,
             },
         }
     }
 
     async fn acp_kill_shell(&self, args: &HashMap<String, Value>) -> AcpToolResult {
-        let terminal_id = match args
+        let Some(terminal_id) = args
             .get("shell_id")
-            .or(args.get("terminal_id"))
+            .or_else(|| args.get("terminal_id"))
             .and_then(|v| v.as_str())
-        {
-            Some(id) => id,
-            None => {
-                return AcpToolResult {
-                    content: "Missing shell_id argument".to_string(),
-                    is_error: true,
-                }
-            }
+        else {
+            return AcpToolResult {
+                content: "Missing shell_id argument".to_string(),
+                is_error: true,
+            };
         };
 
         match self
-            .client_request(
-                "terminal/kill",
-                Some(json!({"terminalId": terminal_id})),
-            )
+            .client_request("terminal/kill", Some(json!({"terminalId": terminal_id})))
             .await
         {
             Ok(_) => AcpToolResult {
-                content: format!("Terminal {} killed", terminal_id),
+                content: format!("Terminal {terminal_id} killed"),
                 is_error: false,
             },
             Err(e) => AcpToolResult {
-                content: format!("Failed to kill terminal: {}", e),
+                content: format!("Failed to kill terminal: {e}"),
                 is_error: true,
             },
         }
     }
 
     async fn acp_list_files(&self, args: &HashMap<String, Value>) -> AcpToolResult {
-        let path = args
-            .get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or(".");
+        let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
         // Delegate as a terminal command
         let mut ls_args = HashMap::new();
         ls_args.insert(
             "command".to_string(),
-            Value::String(format!("ls -la {}", path)),
+            Value::String(format!("ls -la {path}")),
         );
         self.acp_bash(&ls_args).await
     }
@@ -1539,35 +1464,29 @@ impl AcpServer {
         // Delegate glob/grep as terminal commands using find/rg
         let command = match tool_name {
             "glob" => {
-                let pattern = args
-                    .get("pattern")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("*");
+                let pattern = args.get("pattern").and_then(|v| v.as_str()).unwrap_or("*");
                 let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-                format!("find {} -name '{}' -type f 2>/dev/null | head -100", path, pattern)
+                format!("find {path} -name '{pattern}' -type f 2>/dev/null | head -100")
             }
             "grep" => {
-                let pattern = args
-                    .get("pattern")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let pattern = args.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
                 let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
                 let file_type = args.get("type").and_then(|v| v.as_str());
                 let glob = args.get("glob").and_then(|v| v.as_str());
 
                 let mut cmd = "rg --no-heading".to_string();
                 if let Some(ft) = file_type {
-                    cmd.push_str(&format!(" --type {}", ft));
+                    let _ = write!(cmd, " --type {ft}");
                 }
                 if let Some(g) = glob {
-                    cmd.push_str(&format!(" --glob '{}'", g));
+                    let _ = write!(cmd, " --glob '{g}'");
                 }
-                cmd.push_str(&format!(" '{}' {} 2>/dev/null | head -200", pattern, path));
+                let _ = write!(cmd, " '{pattern}' {path} 2>/dev/null | head -200");
                 cmd
             }
             _ => {
                 return AcpToolResult {
-                    content: format!("Unknown search tool: {}", tool_name),
+                    content: format!("Unknown search tool: {tool_name}"),
                     is_error: true,
                 }
             }
@@ -1618,11 +1537,10 @@ struct AcpToolResult {
 // ============================================================================
 
 /// Run the ACP server on stdin/stdout.
-pub async fn run_acp_server(
-    config: AppConfig,
-    model: String,
-    api_key: String,
-) -> Result<()> {
+///
+/// # Errors
+/// Returns an error if the server fails to start or encounters an I/O error.
+pub async fn run_acp_server(config: AppConfig, model: String, api_key: String) -> Result<()> {
     // Set up stdout writer channel — all writes go through this to avoid interleaving
     let (stdout_tx, mut stdout_rx) = mpsc::unbounded_channel::<String>();
 
@@ -1631,7 +1549,7 @@ pub async fn run_acp_server(
         let stdout = io::stdout();
         while let Some(line) = stdout_rx.blocking_recv() {
             let mut out = stdout.lock();
-            if writeln!(out, "{}", line).is_err() {
+            if writeln!(out, "{line}").is_err() {
                 break;
             }
             if out.flush().is_err() {
@@ -1673,7 +1591,7 @@ pub async fn run_acp_server(
                     .and_then(|v| v.get("id").cloned())
                     .unwrap_or(Value::Null);
 
-                server.send_error(id, PARSE_ERROR, &format!("Parse error: {}", e));
+                server.send_error(id, PARSE_ERROR, &format!("Parse error: {e}"));
                 continue;
             }
         };

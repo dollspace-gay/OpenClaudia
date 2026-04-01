@@ -4,10 +4,9 @@ use std::collections::HashMap;
 use std::process::Command;
 
 /// Kill a background shell
-pub(crate) fn execute_kill_shell(args: &HashMap<String, Value>) -> (String, bool) {
-    let shell_id = match args.get("shell_id").and_then(|v| v.as_str()) {
-        Some(id) => id,
-        None => return ("Missing 'shell_id' argument".to_string(), true),
+pub fn execute_kill_shell(args: &HashMap<String, Value>) -> (String, bool) {
+    let Some(shell_id) = args.get("shell_id").and_then(|v| v.as_str()) else {
+        return ("Missing 'shell_id' argument".to_string(), true);
     };
 
     match BACKGROUND_SHELLS.kill(shell_id) {
@@ -24,23 +23,23 @@ pub(crate) fn execute_kill_shell(args: &HashMap<String, Value>) -> (String, bool
 /// killing to work correctly.
 ///
 /// On Windows, uses `taskkill /T` which terminates the process tree.
-pub(crate) fn terminate_process_tree(pid: u32) {
+pub fn terminate_process_tree(pid: u32) {
     #[cfg(unix)]
     {
         use std::time::{Duration, Instant};
 
-        let pgid = pid.to_string();
-        let neg_pgid = format!("-{}", pid);
+        let pid_str = pid.to_string();
+        let neg_pid_str = format!("-{pid}");
 
         // Step 1: Send SIGTERM to the entire process group
-        let _ = Command::new("kill").args(["-TERM", &neg_pgid]).output();
+        let _ = Command::new("kill").args(["-TERM", &neg_pid_str]).output();
 
         // Step 2: Wait up to 2 seconds for the process to exit
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut exited = false;
         while Instant::now() < deadline {
             // `kill -0` checks if process exists without sending a signal
-            let check = Command::new("kill").args(["-0", &pgid]).output();
+            let check = Command::new("kill").args(["-0", &pid_str]).output();
             match check {
                 Ok(output) if !output.status.success() => {
                     // Process no longer exists
@@ -55,7 +54,7 @@ pub(crate) fn terminate_process_tree(pid: u32) {
 
         // Step 3: If still alive, send SIGKILL to the process group
         if !exited {
-            let _ = Command::new("kill").args(["-KILL", &neg_pgid]).output();
+            let _ = Command::new("kill").args(["-KILL", &neg_pid_str]).output();
 
             // Brief wait for SIGKILL to take effect
             std::thread::sleep(Duration::from_millis(100));

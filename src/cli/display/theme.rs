@@ -29,7 +29,7 @@ pub fn handle_theme_command(args: &str) -> Option<String> {
         println!("\n=== Available Themes ===\n");
 
         for (name, desc, primary, _secondary) in themes {
-            let preview = format!("  {} - {}", name, desc);
+            let preview = format!("  {name} - {desc}");
             println!("{}", preview.with(*primary));
         }
 
@@ -43,14 +43,14 @@ pub fn handle_theme_command(args: &str) -> Option<String> {
         {
             if let Some(theme) = tui::Theme::from_name(name) {
                 if let Err(e) = theme.save() {
-                    eprintln!("Warning: could not save theme preference: {}", e);
+                    eprintln!("Warning: could not save theme preference: {e}");
                 }
             }
 
             println!();
             println!(
                 "{}",
-                format!("Switched to '{}' theme: {}", name, desc).with(*primary)
+                format!("Switched to '{name}' theme: {desc}").with(*primary)
             );
             println!(
                 "{}",
@@ -61,7 +61,7 @@ pub fn handle_theme_command(args: &str) -> Option<String> {
 
             Some(name.to_string())
         } else {
-            eprintln!("\nUnknown theme: '{}'\n", theme_name);
+            eprintln!("\nUnknown theme: '{theme_name}'\n");
             eprintln!(
                 "Available themes: {}\n",
                 themes

@@ -1,23 +1,24 @@
-//! Web tools for OpenClaudia
+//! Web tools for `OpenClaudia`
 //!
 //! Provides web access capabilities for agents:
 //! - `web_fetch`: Fetch URL content via Jina Reader (free, handles JS/Cloudflare)
-//! - `web_search`: Search the web via Tavily, Brave API, or DuckDuckGo (headless browser)
+//! - `web_search`: Search the web via Tavily, Brave API, or `DuckDuckGo` (headless browser)
 //! - `web_browser`: Full browser automation via headless Chrome (optional feature)
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 use std::time::Duration;
 use url::Url;
 
 /// Validate that a URL is safe to fetch (prevents SSRF and restricts schemes)
 fn validate_url(url_str: &str) -> Result<(), String> {
-    let parsed = Url::parse(url_str).map_err(|e| format!("Invalid URL: {}", e))?;
+    let parsed = Url::parse(url_str).map_err(|e| format!("Invalid URL: {e}"))?;
 
     // Only allow http/https schemes (blocks file://, data:, ftp://, etc.)
     match parsed.scheme() {
         "http" | "https" => {}
-        scheme => return Err(format!("Unsupported URL scheme: {}", scheme)),
+        scheme => return Err(format!("Unsupported URL scheme: {scheme}")),
     }
 
     // Block private/internal network addresses to prevent SSRF
@@ -38,7 +39,7 @@ fn validate_url(url_str: &str) -> Result<(), String> {
             || host.starts_with("169.254.")
             || host == "0.0.0.0"
         {
-            return Err(format!("URL points to private/internal network: {}", host));
+            return Err(format!("URL points to private/internal network: {host}"));
         }
     } else {
         return Err("URL has no host".to_string());
@@ -56,7 +57,7 @@ const TAVILY_API_URL: &str = "https://api.tavily.com/search";
 /// Brave Search API endpoint
 const BRAVE_SEARCH_URL: &str = "https://api.search.brave.com/res/v1/web/search";
 
-/// DuckDuckGo HTML search endpoint (no API key required)
+/// `DuckDuckGo` HTML search endpoint (no API key required)
 #[cfg(feature = "browser")]
 const DUCKDUCKGO_HTML_URL: &str = "https://html.duckduckgo.com/html/";
 
@@ -69,6 +70,7 @@ pub struct WebConfig {
 
 impl WebConfig {
     /// Load web config from environment variables
+    #[must_use]
     pub fn from_env() -> Self {
         Self {
             tavily_api_key: std::env::var("TAVILY_API_KEY").ok(),
@@ -77,7 +79,7 @@ impl WebConfig {
     }
 }
 
-/// Result from web_fetch
+/// Result from `web_fetch`
 #[derive(Debug, Clone)]
 pub struct FetchResult {
     pub content: String,
@@ -99,23 +101,28 @@ pub struct SearchResult {
 /// - JavaScript rendering
 /// - Cloudflare bypass
 /// - Clean markdown output
+///
+/// # Errors
+///
+/// Returns an error string if the URL is invalid, the HTTP client cannot be created,
+/// or the fetch fails.
 pub async fn fetch_url(url: &str) -> Result<FetchResult, String> {
     validate_url(url)?;
 
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
 
     // Use Jina Reader to fetch and convert to markdown
-    let jina_url = format!("{}{}", JINA_READER_URL, url);
+    let jina_url = format!("{JINA_READER_URL}{url}");
 
     let response = client
         .get(&jina_url)
         .header("Accept", "text/markdown")
         .send()
         .await
-        .map_err(|e| format!("Failed to fetch URL: {}", e))?;
+        .map_err(|e| format!("Failed to fetch URL: {e}"))?;
 
     if !response.status().is_success() {
         return Err(format!("HTTP error: {} - {}", response.status(), url));
@@ -124,7 +131,7 @@ pub async fn fetch_url(url: &str) -> Result<FetchResult, String> {
     let content = response
         .text()
         .await
-        .map_err(|e| format!("Failed to read response: {}", e))?;
+        .map_err(|e| format!("Failed to read response: {e}"))?;
 
     // Extract title from markdown if present (first # heading)
     let title = content
@@ -170,7 +177,11 @@ struct BraveResult {
     description: String,
 }
 
-/// Search the web using DuckDuckGo (default) or configured API provider
+/// Search the web using `DuckDuckGo` (default) or configured API provider
+///
+/// # Errors
+///
+/// Returns an error string if all search backends fail.
 pub async fn search_web(
     query: &str,
     config: &WebConfig,
@@ -196,7 +207,7 @@ pub async fn search_web(
         return search_brave(query, api_key, limit).await;
     }
 
-    Err(format!("Web search failed. DuckDuckGo error: {}. No fallback API keys configured (TAVILY_API_KEY or BRAVE_API_KEY).", ddg_error))
+    Err(format!("Web search failed. DuckDuckGo error: {ddg_error}. No fallback API keys configured (TAVILY_API_KEY or BRAVE_API_KEY)."))
 }
 
 /// Search using Tavily API
@@ -205,11 +216,6 @@ async fn search_tavily(
     api_key: &str,
     limit: usize,
 ) -> Result<Vec<SearchResult>, String> {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
     #[derive(Serialize)]
     struct TavilyRequest<'a> {
         api_key: &'a str,
@@ -217,6 +223,11 @@ async fn search_tavily(
         max_results: usize,
         include_answer: bool,
     }
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
 
     let request = TavilyRequest {
         api_key,
@@ -230,18 +241,18 @@ async fn search_tavily(
         .json(&request)
         .send()
         .await
-        .map_err(|e| format!("Tavily API request failed: {}", e))?;
+        .map_err(|e| format!("Tavily API request failed: {e}"))?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Tavily API error {}: {}", status, body));
+        return Err(format!("Tavily API error {status}: {body}"));
     }
 
     let tavily_response: TavilyResponse = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse Tavily response: {}", e))?;
+        .map_err(|e| format!("Failed to parse Tavily response: {e}"))?;
 
     Ok(tavily_response
         .results
@@ -263,7 +274,7 @@ async fn search_brave(
     let client = Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
 
     let response = client
         .get(BRAVE_SEARCH_URL)
@@ -272,18 +283,18 @@ async fn search_brave(
         .query(&[("q", query), ("count", &limit.to_string())])
         .send()
         .await
-        .map_err(|e| format!("Brave Search API request failed: {}", e))?;
+        .map_err(|e| format!("Brave Search API request failed: {e}"))?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Brave Search API error {}: {}", status, body));
+        return Err(format!("Brave Search API error {status}: {body}"));
     }
 
     let brave_response: BraveResponse = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse Brave response: {}", e))?;
+        .map_err(|e| format!("Failed to parse Brave response: {e}"))?;
 
     Ok(brave_response
         .web
@@ -300,9 +311,13 @@ async fn search_brave(
         .unwrap_or_default())
 }
 
-/// Search DuckDuckGo using headless Chrome browser
+/// Search `DuckDuckGo` using headless Chrome browser
 ///
 /// No API key required - scrapes the HTML search results page
+///
+/// # Errors
+///
+/// Returns an error string if the browser cannot be launched or no results are found.
 #[cfg(feature = "browser")]
 pub fn search_duckduckgo(query: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
     use headless_chrome::{Browser, LaunchOptions};
@@ -312,22 +327,22 @@ pub fn search_duckduckgo(query: &str, limit: usize) -> Result<Vec<SearchResult>,
         LaunchOptions::default_builder()
             .headless(true)
             .build()
-            .map_err(|e| format!("Failed to configure browser: {}", e))?,
+            .map_err(|e| format!("Failed to configure browser: {e}"))?,
     )
-    .map_err(|e| format!("Failed to launch browser: {}", e))?;
+    .map_err(|e| format!("Failed to launch browser: {e}"))?;
 
     let tab = browser
         .new_tab()
-        .map_err(|e| format!("Failed to create browser tab: {}", e))?;
+        .map_err(|e| format!("Failed to create browser tab: {e}"))?;
 
     // Navigate to DuckDuckGo HTML search
     let search_url = format!("{}?q={}", DUCKDUCKGO_HTML_URL, urlencoding::encode(query));
 
     tab.navigate_to(&search_url)
-        .map_err(|e| format!("Failed to navigate to DuckDuckGo: {}", e))?;
+        .map_err(|e| format!("Failed to navigate to DuckDuckGo: {e}"))?;
 
     tab.wait_until_navigated()
-        .map_err(|e| format!("Navigation timeout: {}", e))?;
+        .map_err(|e| format!("Navigation timeout: {e}"))?;
 
     // Wait for page to load
     std::thread::sleep(Duration::from_millis(500));
@@ -335,18 +350,18 @@ pub fn search_duckduckgo(query: &str, limit: usize) -> Result<Vec<SearchResult>,
     // Get page HTML
     let html = tab
         .get_content()
-        .map_err(|e| format!("Failed to get page content: {}", e))?;
+        .map_err(|e| format!("Failed to get page content: {e}"))?;
 
     // Parse HTML and extract results
     let document = Html::parse_document(&html);
 
     // DDG HTML selectors
     let result_selector =
-        Selector::parse(".result").map_err(|e| format!("Invalid selector: {:?}", e))?;
+        Selector::parse(".result").map_err(|e| format!("Invalid selector: {e:?}"))?;
     let title_selector =
-        Selector::parse(".result__a").map_err(|e| format!("Invalid selector: {:?}", e))?;
+        Selector::parse(".result__a").map_err(|e| format!("Invalid selector: {e:?}"))?;
     let snippet_selector =
-        Selector::parse(".result__snippet").map_err(|e| format!("Invalid selector: {:?}", e))?;
+        Selector::parse(".result__snippet").map_err(|e| format!("Invalid selector: {e:?}"))?;
 
     let mut results = Vec::new();
 
@@ -363,20 +378,20 @@ pub fn search_duckduckgo(query: &str, limit: usize) -> Result<Vec<SearchResult>,
                     // DDG HTML uses direct URLs or //duckduckgo.com/l/?uddg=<encoded_url>
                     if href.starts_with("//duckduckgo.com/l/") {
                         // Extract the actual URL from the redirect
-                        if let Some(uddg_start) = href.find("uddg=") {
-                            let encoded = &href[uddg_start + 5..];
-                            // Find end of URL (next & or end of string)
-                            let end = encoded.find('&').unwrap_or(encoded.len());
-                            urlencoding::decode(&encoded[..end])
-                                .map(|s| s.into_owned())
-                                .unwrap_or_else(|_| href.to_string())
-                        } else {
-                            href.to_string()
-                        }
+                        href.find("uddg=").map_or_else(
+                            || href.to_string(),
+                            |uddg_start| {
+                                let encoded = &href[uddg_start + 5..];
+                                // Find end of URL (next & or end of string)
+                                let end = encoded.find('&').unwrap_or(encoded.len());
+                                urlencoding::decode(&encoded[..end])
+                                    .map_or_else(|_| href.to_string(), std::borrow::Cow::into_owned)
+                            },
+                        )
                     } else if href.starts_with("http") {
                         href.to_string()
                     } else {
-                        format!("https:{}", href)
+                        format!("https:{href}")
                     }
                 })
                 .unwrap_or_default();
@@ -422,29 +437,33 @@ pub fn search_duckduckgo(_query: &str, _limit: usize) -> Result<Vec<SearchResult
 /// Fetch URL using headless Chrome browser
 ///
 /// Use this when Jina Reader fails (e.g., complex authentication, specific Cloudflare challenges)
+///
+/// # Errors
+///
+/// Returns an error string if the URL is invalid or browser automation fails.
 #[cfg(feature = "browser")]
 pub fn fetch_with_browser(url: &str) -> Result<FetchResult, String> {
-    validate_url(url)?;
-
     use headless_chrome::{Browser, LaunchOptions};
+
+    validate_url(url)?;
 
     let browser = Browser::new(
         LaunchOptions::default_builder()
             .headless(true)
             .build()
-            .map_err(|e| format!("Failed to configure browser: {}", e))?,
+            .map_err(|e| format!("Failed to configure browser: {e}"))?,
     )
-    .map_err(|e| format!("Failed to launch browser: {}", e))?;
+    .map_err(|e| format!("Failed to launch browser: {e}"))?;
 
     let tab = browser
         .new_tab()
-        .map_err(|e| format!("Failed to create browser tab: {}", e))?;
+        .map_err(|e| format!("Failed to create browser tab: {e}"))?;
 
     tab.navigate_to(url)
-        .map_err(|e| format!("Failed to navigate to URL: {}", e))?;
+        .map_err(|e| format!("Failed to navigate to URL: {e}"))?;
 
     tab.wait_until_navigated()
-        .map_err(|e| format!("Navigation timeout: {}", e))?;
+        .map_err(|e| format!("Navigation timeout: {e}"))?;
 
     // Wait a bit for JavaScript to render
     std::thread::sleep(Duration::from_secs(2));
@@ -452,7 +471,7 @@ pub fn fetch_with_browser(url: &str) -> Result<FetchResult, String> {
     // Get page content
     let content = tab
         .get_content()
-        .map_err(|e| format!("Failed to get page content: {}", e))?;
+        .map_err(|e| format!("Failed to get page content: {e}"))?;
 
     // Get title
     let title = tab.get_title().ok();
@@ -464,6 +483,11 @@ pub fn fetch_with_browser(url: &str) -> Result<FetchResult, String> {
     })
 }
 
+/// Fetch URL using headless Chrome browser (stub when browser feature is disabled)
+///
+/// # Errors
+///
+/// Always returns an error when the browser feature is not enabled.
 #[cfg(not(feature = "browser"))]
 pub fn fetch_with_browser(url: &str) -> Result<FetchResult, String> {
     validate_url(url)?;
@@ -471,6 +495,7 @@ pub fn fetch_with_browser(url: &str) -> Result<FetchResult, String> {
 }
 
 /// Format search results for display to the agent
+#[must_use]
 pub fn format_search_results(results: &[SearchResult]) -> String {
     if results.is_empty() {
         return "No results found.".to_string();
@@ -479,13 +504,14 @@ pub fn format_search_results(results: &[SearchResult]) -> String {
     let mut output = format!("Found {} results:\n\n", results.len());
 
     for (i, result) in results.iter().enumerate() {
-        output.push_str(&format!(
+        let _ = write!(
+            output,
             "{}. **{}**\n   {}\n   URL: {}\n\n",
             i + 1,
             result.title,
             result.snippet,
             result.url
-        ));
+        );
     }
 
     output

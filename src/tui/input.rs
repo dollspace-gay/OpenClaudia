@@ -7,7 +7,8 @@ pub struct TextInput {
 }
 
 impl TextInput {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             content: String::new(),
             cursor_pos: 0,
@@ -24,8 +25,7 @@ impl TextInput {
             let prev = self.content[..self.cursor_pos]
                 .chars()
                 .last()
-                .map(|c| c.len_utf8())
-                .unwrap_or(1);
+                .map_or(1, char::len_utf8);
             self.cursor_pos -= prev;
             self.content.remove(self.cursor_pos);
         }
@@ -42,8 +42,7 @@ impl TextInput {
             let prev = self.content[..self.cursor_pos]
                 .chars()
                 .last()
-                .map(|c| c.len_utf8())
-                .unwrap_or(1);
+                .map_or(1, char::len_utf8);
             self.cursor_pos -= prev;
         }
     }
@@ -53,17 +52,16 @@ impl TextInput {
             let next = self.content[self.cursor_pos..]
                 .chars()
                 .next()
-                .map(|c| c.len_utf8())
-                .unwrap_or(1);
+                .map_or(1, char::len_utf8);
             self.cursor_pos += next;
         }
     }
 
-    pub fn home(&mut self) {
+    pub const fn home(&mut self) {
         self.cursor_pos = 0;
     }
 
-    pub fn end(&mut self) {
+    pub const fn end(&mut self) {
         self.cursor_pos = self.content.len();
     }
 
@@ -74,7 +72,8 @@ impl TextInput {
         s
     }
 
-    pub fn is_empty(&self) -> bool {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
         self.content.is_empty()
     }
 }

@@ -1,4 +1,4 @@
-//! Installation tracking types for installed_plugins.json (V2 format).
+//! Installation tracking types for `installed_plugins.json` (V2 format).
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -12,7 +12,7 @@ use super::PluginError;
 // ---------------------------------------------------------------------------
 
 /// Installation scope for a plugin
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum InstallScope {
     Managed,
@@ -41,8 +41,7 @@ impl std::str::FromStr for InstallScope {
             "project" => Ok(Self::Project),
             "local" => Ok(Self::Local),
             _ => Err(format!(
-                "Invalid scope '{}'. Must be: managed, user, project, local",
-                s
+                "Invalid scope '{s}'. Must be: managed, user, project, local"
             )),
         }
     }
@@ -135,7 +134,11 @@ impl InstalledPlugins {
         }
     }
 
-    /// Save to disk
+    /// Save to disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be serialized or written.
     pub fn save(&self) -> Result<(), PluginError> {
         let path = Self::file_path();
         if let Some(parent) = path.parent() {
@@ -166,19 +169,24 @@ impl InstalledPlugins {
         self.plugins.remove(plugin_id).is_some()
     }
 
-    /// Get the file path for installed_plugins.json
+    /// Get the file path for `installed_plugins.json`
     fn file_path() -> PathBuf {
-        if let Some(home) = dirs::home_dir() {
-            home.join(".openclaudia")
-                .join("plugins")
-                .join("installed_plugins.json")
-        } else {
-            PathBuf::from(".openclaudia/plugins/installed_plugins.json")
-        }
+        dirs::home_dir().map_or_else(
+            || PathBuf::from(".openclaudia/plugins/installed_plugins.json"),
+            |home| {
+                home.join(".openclaudia")
+                    .join("plugins")
+                    .join("installed_plugins.json")
+            },
+        )
     }
 
     /// Get all plugin IDs
+    #[must_use]
     pub fn plugin_ids(&self) -> Vec<&str> {
-        self.plugins.keys().map(|s| s.as_str()).collect()
+        self.plugins
+            .keys()
+            .map(std::string::String::as_str)
+            .collect()
     }
 }

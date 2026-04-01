@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -46,11 +47,11 @@ impl ScheduleStore {
         let path = PathBuf::from(SCHEDULES_FILE);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create directory: {}", e))?;
+                .map_err(|e| format!("Failed to create directory: {e}"))?;
         }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Serialization error: {}", e))?;
-        std::fs::write(&path, json).map_err(|e| format!("Failed to write: {}", e))
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| format!("Serialization error: {e}"))?;
+        std::fs::write(&path, json).map_err(|e| format!("Failed to write: {e}"))
     }
 }
 
@@ -80,8 +81,18 @@ fn validate_cron(expr: &str) -> Result<(), String> {
         // Handle */N step values
         if let Some(step) = field.strip_prefix("*/") {
             match step.parse::<u32>() {
-                Ok(0) => return Err(format!("Step value cannot be 0 in {} field", field_names[i])),
-                Err(_) => return Err(format!("Invalid step value '{}' in {} field", step, field_names[i])),
+                Ok(0) => {
+                    return Err(format!(
+                        "Step value cannot be 0 in {} field",
+                        field_names[i]
+                    ))
+                }
+                Err(_) => {
+                    return Err(format!(
+                        "Invalid step value '{}' in {} field",
+                        step, field_names[i]
+                    ))
+                }
                 _ => {}
             }
             continue;
@@ -96,9 +107,9 @@ fn validate_cron(expr: &str) -> Result<(), String> {
                 ));
             }
             for part in parts {
-                let val: u32 = part.parse().map_err(|_| {
-                    format!("Invalid value '{}' in {} field", part, field_names[i])
-                })?;
+                let val: u32 = part
+                    .parse()
+                    .map_err(|_| format!("Invalid value '{}' in {} field", part, field_names[i]))?;
                 if val < field_ranges[i].0 || val > field_ranges[i].1 {
                     return Err(format!(
                         "Value {} out of range for {} field",
@@ -110,12 +121,9 @@ fn validate_cron(expr: &str) -> Result<(), String> {
         }
         // Handle comma-separated values
         for val_str in field.split(',') {
-            let val: u32 = val_str.parse().map_err(|_| {
-                format!(
-                    "Invalid value '{}' in {} field",
-                    val_str, field_names[i]
-                )
-            })?;
+            let val: u32 = val_str
+                .parse()
+                .map_err(|_| format!("Invalid value '{}' in {} field", val_str, field_names[i]))?;
             if val < field_ranges[i].0 || val > field_ranges[i].1 {
                 return Err(format!(
                     "Value {} out of range for {} field",
@@ -135,7 +143,12 @@ pub fn execute_cron_create(args: &HashMap<String, Value>) -> (String, bool) {
 
     let cron_expression = match args.get("schedule").and_then(|v| v.as_str()) {
         Some(c) => c.to_string(),
-        None => return ("Error: schedule (cron expression) is required".to_string(), true),
+        None => {
+            return (
+                "Error: schedule (cron expression) is required".to_string(),
+                true,
+            )
+        }
     };
 
     let prompt = match args.get("prompt").and_then(|v| v.as_str()) {
@@ -144,7 +157,7 @@ pub fn execute_cron_create(args: &HashMap<String, Value>) -> (String, bool) {
     };
 
     if let Err(e) = validate_cron(&cron_expression) {
-        return (format!("Invalid cron expression: {}", e), true);
+        return (format!("Invalid cron expression: {e}"), true);
     }
 
     let mut store = ScheduleStore::load();
@@ -152,10 +165,7 @@ pub fn execute_cron_create(args: &HashMap<String, Value>) -> (String, bool) {
     // Check for duplicate names
     if store.schedules.iter().any(|s| s.name == name) {
         return (
-            format!(
-                "Schedule '{}' already exists. Delete it first or use a different name.",
-                name
-            ),
+            format!("Schedule '{name}' already exists. Delete it first or use a different name."),
             true,
         );
     }
@@ -174,7 +184,7 @@ pub fn execute_cron_create(args: &HashMap<String, Value>) -> (String, bool) {
     store.schedules.push(schedule.clone());
 
     if let Err(e) = store.save() {
-        return (format!("Failed to save schedule: {}", e), true);
+        return (format!("Failed to save schedule: {e}"), true);
     }
 
     (
@@ -204,17 +214,14 @@ pub fn execute_cron_delete(args: &HashMap<String, Value>) -> (String, bool) {
         .retain(|s| s.id != id_or_name && s.name != id_or_name);
 
     if store.schedules.len() == initial_len {
-        return (
-            format!("No schedule found matching '{}'", id_or_name),
-            true,
-        );
+        return (format!("No schedule found matching '{id_or_name}'"), true);
     }
 
     if let Err(e) = store.save() {
-        return (format!("Failed to save: {}", e), true);
+        return (format!("Failed to save: {e}"), true);
     }
 
-    (format!("Deleted schedule '{}'", id_or_name), false)
+    (format!("Deleted schedule '{id_or_name}'"), false)
 }
 
 pub fn execute_cron_list(_args: &HashMap<String, Value>) -> (String, bool) {
@@ -226,7 +233,8 @@ pub fn execute_cron_list(_args: &HashMap<String, Value>) -> (String, bool) {
 
     let mut output = String::from("Scheduled tasks:\n\n");
     for s in &store.schedules {
-        output.push_str(&format!(
+        let _ = write!(
+            output,
             "  {} [{}] {}\n    Cron: {}\n    Prompt: {}\n    Runs: {} | Last: {}\n\n",
             if s.enabled { "\u{25cf}" } else { "\u{25cb}" },
             s.id,
@@ -239,7 +247,7 @@ pub fn execute_cron_list(_args: &HashMap<String, Value>) -> (String, bool) {
             },
             s.run_count,
             s.last_run.as_deref().unwrap_or("never"),
-        ));
+        );
     }
 
     (output, false)

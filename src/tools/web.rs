@@ -2,13 +2,13 @@ use crate::tools::safe_truncate;
 use crate::web::{self, WebConfig};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use tokio::runtime::Handle;
 
 /// Fetch a URL using Jina Reader
-pub(crate) fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool) {
-    let url = match args.get("url").and_then(|v| v.as_str()) {
-        Some(u) => u,
-        None => return ("Missing 'url' argument".to_string(), true),
+pub fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool) {
+    let Some(url) = args.get("url").and_then(|v| v.as_str()) else {
+        return ("Missing 'url' argument".to_string(), true);
     };
 
     // Validate URL format
@@ -29,7 +29,7 @@ pub(crate) fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool)
             // Create a new runtime for sync context
             match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt.block_on(web::fetch_url(url)),
-                Err(e) => return (format!("Failed to create runtime: {}", e), true),
+                Err(e) => return (format!("Failed to create runtime: {e}"), true),
             }
         }
     };
@@ -38,9 +38,9 @@ pub(crate) fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool)
         Ok(fetch_result) => {
             let mut output = String::new();
             if let Some(title) = fetch_result.title {
-                output.push_str(&format!("# {}\n\n", title));
+                let _ = write!(output, "# {title}\n\n");
             }
-            output.push_str(&format!("URL: {}\n\n", fetch_result.url));
+            let _ = write!(output, "URL: {}\n\n", fetch_result.url);
             output.push_str(&fetch_result.content);
 
             // Truncate if too long
@@ -54,18 +54,20 @@ pub(crate) fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool)
 
             (output, false)
         }
-        Err(e) => (format!("Failed to fetch URL: {}", e), true),
+        Err(e) => (format!("Failed to fetch URL: {e}"), true),
     }
 }
 
 /// Search the web using Tavily or Brave API
-pub(crate) fn execute_web_search(args: &HashMap<String, Value>) -> (String, bool) {
-    let query = match args.get("query").and_then(|v| v.as_str()) {
-        Some(q) => q,
-        None => return ("Missing 'query' argument".to_string(), true),
+pub fn execute_web_search(args: &HashMap<String, Value>) -> (String, bool) {
+    let Some(query) = args.get("query").and_then(|v| v.as_str()) else {
+        return ("Missing 'query' argument".to_string(), true);
     };
 
-    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+    let limit = args
+        .get("limit")
+        .and_then(serde_json::Value::as_u64)
+        .map_or(5, |v| usize::try_from(v).unwrap_or(usize::MAX));
 
     // Load web config from environment
     // Falls back to DuckDuckGo with headless browser if no API keys configured
@@ -78,22 +80,21 @@ pub(crate) fn execute_web_search(args: &HashMap<String, Value>) -> (String, bool
         }
         Err(_) => match tokio::runtime::Runtime::new() {
             Ok(rt) => rt.block_on(web::search_web(query, &config, limit)),
-            Err(e) => return (format!("Failed to create runtime: {}", e), true),
+            Err(e) => return (format!("Failed to create runtime: {e}"), true),
         },
     };
 
     match result {
         Ok(results) => (web::format_search_results(&results), false),
-        Err(e) => (format!("Search failed: {}", e), true),
+        Err(e) => (format!("Search failed: {e}"), true),
     }
 }
 
 /// Fetch a URL using headless Chrome browser
 /// Fallback for when Jina Reader fails on complex sites
-pub(crate) fn execute_web_browser(args: &HashMap<String, Value>) -> (String, bool) {
-    let url = match args.get("url").and_then(|v| v.as_str()) {
-        Some(u) => u,
-        None => return ("Missing 'url' argument".to_string(), true),
+pub fn execute_web_browser(args: &HashMap<String, Value>) -> (String, bool) {
+    let Some(url) = args.get("url").and_then(|v| v.as_str()) else {
+        return ("Missing 'url' argument".to_string(), true);
     };
 
     // Validate URL format
@@ -108,9 +109,9 @@ pub(crate) fn execute_web_browser(args: &HashMap<String, Value>) -> (String, boo
         Ok(fetch_result) => {
             let mut output = String::new();
             if let Some(title) = fetch_result.title {
-                output.push_str(&format!("# {}\n\n", title));
+                let _ = write!(output, "# {title}\n\n");
             }
-            output.push_str(&format!("URL: {}\n\n", fetch_result.url));
+            let _ = write!(output, "URL: {}\n\n", fetch_result.url);
             output.push_str(&fetch_result.content);
 
             // Truncate if too long
@@ -124,6 +125,6 @@ pub(crate) fn execute_web_browser(args: &HashMap<String, Value>) -> (String, boo
 
             (output, false)
         }
-        Err(e) => (format!("Browser fetch failed: {}", e), true),
+        Err(e) => (format!("Browser fetch failed: {e}"), true),
     }
 }

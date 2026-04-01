@@ -1,12 +1,13 @@
 use super::READ_TRACKER;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
 /// Split source text into a JSON array of line strings for notebook cell source format.
 /// Each line except possibly the last ends with '\n'.
-pub(crate) fn source_to_line_array(source: &str) -> Value {
+pub fn source_to_line_array(source: &str) -> Value {
     if source.is_empty() {
         return json!([]);
     }
@@ -27,20 +28,19 @@ pub(crate) fn source_to_line_array(source: &str) -> Value {
 }
 
 /// Edit a Jupyter notebook cell
-pub(crate) fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
-    let notebook_path = match args.get("notebook_path").and_then(|v| v.as_str()) {
-        Some(p) => p,
-        None => return ("Missing 'notebook_path' argument".to_string(), true),
+#[allow(clippy::too_many_lines)]
+pub fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
+    let Some(notebook_path) = args.get("notebook_path").and_then(|v| v.as_str()) else {
+        return ("Missing 'notebook_path' argument".to_string(), true);
     };
 
-    let cell_number = match args.get("cell_number").and_then(|v| v.as_u64()) {
-        Some(n) => n as usize,
-        None => return ("Missing 'cell_number' argument".to_string(), true),
+    let Some(cell_number) = args.get("cell_number").and_then(serde_json::Value::as_u64) else {
+        return ("Missing 'cell_number' argument".to_string(), true);
     };
+    let cell_number = usize::try_from(cell_number).unwrap_or(usize::MAX);
 
-    let new_source = match args.get("new_source").and_then(|v| v.as_str()) {
-        Some(s) => s,
-        None => return ("Missing 'new_source' argument".to_string(), true),
+    let Some(new_source) = args.get("new_source").and_then(|v| v.as_str()) else {
+        return ("Missing 'new_source' argument".to_string(), true);
     };
 
     let cell_type = args.get("cell_type").and_then(|v| v.as_str());
@@ -52,10 +52,7 @@ pub(crate) fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, b
     // Validate edit_mode
     if !["replace", "insert", "delete"].contains(&edit_mode) {
         return (
-            format!(
-                "Invalid edit_mode '{}'. Must be 'replace', 'insert', or 'delete'.",
-                edit_mode
-            ),
+            format!("Invalid edit_mode '{edit_mode}'. Must be 'replace', 'insert', or 'delete'."),
             true,
         );
     }
@@ -64,8 +61,7 @@ pub(crate) fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, b
     if !READ_TRACKER.has_been_read(Path::new(notebook_path)) {
         return (
             format!(
-                "You must read '{}' before editing it. Use read_file first to see the actual contents.",
-                notebook_path
+                "You must read '{notebook_path}' before editing it. Use read_file first to see the actual contents."
             ),
             true,
         );
@@ -77,7 +73,7 @@ pub(crate) fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, b
         Ok(canon) => canon.to_string_lossy().to_string(),
         Err(_) => {
             return (
-                format!("Cannot resolve notebook path '{}'", notebook_path),
+                format!("Cannot resolve notebook path '{notebook_path}'"),
                 true,
             );
         }
@@ -93,7 +89,7 @@ pub(crate) fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, b
         Ok(c) => c,
         Err(e) => {
             return (
-                format!("Failed to read notebook '{}': {}", notebook_path, e),
+                format!("Failed to read notebook '{notebook_path}': {e}"),
                 true,
             )
         }
@@ -103,18 +99,14 @@ pub(crate) fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, b
         Ok(v) => v,
         Err(e) => {
             return (
-                format!(
-                    "Failed to parse notebook '{}' as JSON: {}",
-                    notebook_path, e
-                ),
+                format!("Failed to parse notebook '{notebook_path}' as JSON: {e}"),
                 true,
             )
         }
     };
 
-    let cells = match notebook.get_mut("cells").and_then(|c| c.as_array_mut()) {
-        Some(c) => c,
-        None => return ("Notebook has no 'cells' array.".to_string(), true),
+    let Some(cells) = notebook.get_mut("cells").and_then(|c| c.as_array_mut()) else {
+        return ("Notebook has no 'cells' array.".to_string(), true);
     };
 
     match edit_mode {
@@ -139,13 +131,12 @@ pub(crate) fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, b
             }
         }
         "insert" => {
-            let ct = match cell_type {
-                Some(ct) => ct,
-                None => return (
+            let Some(ct) = cell_type else {
+                return (
                     "cell_type is required when inserting a new cell. Use 'code' or 'markdown'."
                         .to_string(),
                     true,
-                ),
+                );
             };
 
             if cell_number > cells.len() {
@@ -193,10 +184,10 @@ pub(crate) fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, b
     }
 
     // Write back with pretty formatting
-    let old_lines = content.lines().count() as u32;
+    let old_lines = u32::try_from(content.lines().count()).unwrap_or(u32::MAX);
     match serde_json::to_string_pretty(&notebook) {
         Ok(pretty) => {
-            let new_lines = pretty.lines().count() as u32;
+            let new_lines = u32::try_from(pretty.lines().count()).unwrap_or(u32::MAX);
             match fs::write(notebook_path, &pretty) {
                 Ok(()) => {
                     crate::guardrails::record_file_modification(
@@ -205,13 +196,13 @@ pub(crate) fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, b
                         old_lines,
                     );
                     let action = match edit_mode {
-                        "replace" => format!("Replaced cell {} contents", cell_number),
+                        "replace" => format!("Replaced cell {cell_number} contents"),
                         "insert" => format!(
                             "Inserted new {} cell at position {}",
                             cell_type.unwrap_or("unknown"),
                             cell_number
                         ),
-                        "delete" => format!("Deleted cell {}", cell_number),
+                        "delete" => format!("Deleted cell {cell_number}"),
                         _ => unreachable!(),
                     };
                     let mut result = format!(
@@ -221,20 +212,19 @@ pub(crate) fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, b
                         notebook
                             .get("cells")
                             .and_then(|c| c.as_array())
-                            .map(|a| a.len())
-                            .unwrap_or(0)
+                            .map_or(0, std::vec::Vec::len)
                     );
                     if let Some(warning) = crate::guardrails::check_diff_thresholds() {
-                        result.push_str(&format!("\n\nWarning: {}", warning.message));
+                        let _ = write!(result, "\n\nWarning: {}", warning.message);
                     }
                     (result, false)
                 }
                 Err(e) => (
-                    format!("Failed to write notebook '{}': {}", notebook_path, e),
+                    format!("Failed to write notebook '{notebook_path}': {e}"),
                     true,
                 ),
             }
         }
-        Err(e) => (format!("Failed to serialize notebook: {}", e), true),
+        Err(e) => (format!("Failed to serialize notebook: {e}"), true),
     }
 }

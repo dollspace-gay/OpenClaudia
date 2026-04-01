@@ -1,4 +1,4 @@
-//! Skills system for OpenClaudia.
+//! Skills system for `OpenClaudia`.
 //!
 //! Loads user-defined skills from `.openclaudia/skills/` directories.
 //! Skills are markdown files with YAML frontmatter that define
@@ -33,6 +33,7 @@ pub struct SkillDefinition {
 }
 
 /// Parse a skill file (YAML frontmatter + markdown body)
+#[must_use]
 pub fn parse_skill_file(path: &Path) -> Option<SkillDefinition> {
     let content = std::fs::read_to_string(path).ok()?;
 
@@ -54,6 +55,7 @@ pub fn parse_skill_file(path: &Path) -> Option<SkillDefinition> {
 }
 
 /// Scan directories for skill files
+#[must_use]
 pub fn load_skills() -> Vec<SkillDefinition> {
     let mut skills = Vec::new();
     let mut dirs_to_scan: Vec<PathBuf> = Vec::new();
@@ -118,6 +120,7 @@ pub fn load_skills() -> Vec<SkillDefinition> {
 }
 
 /// Get a skill by name
+#[must_use]
 pub fn get_skill(name: &str) -> Option<SkillDefinition> {
     load_skills().into_iter().find(|s| s.name == name)
 }

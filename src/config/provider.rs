@@ -16,16 +16,16 @@ pub struct ThinkingConfig {
     /// Preserve thinking across turns (Z.AI/GLM specific)
     #[serde(default)]
     pub preserve_across_turns: bool,
-    /// Reasoning effort level for OpenAI o1/o3: "low", "medium", "high"
+    /// Reasoning effort level for `OpenAI` o1/o3: "low", "medium", "high"
     #[serde(default)]
     pub reasoning_effort: Option<String>,
 }
 
-fn default_thinking_enabled() -> bool {
+const fn default_thinking_enabled() -> bool {
     true
 }
 
-/// Provider configuration (Anthropic, OpenAI, Google, etc.)
+/// Provider configuration (Anthropic, `OpenAI`, Google, etc.)
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProviderConfig {
     pub api_key: Option<String>,

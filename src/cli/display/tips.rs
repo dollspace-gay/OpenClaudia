@@ -38,5 +38,7 @@ pub fn get_random_tip() -> &'static str {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    #[allow(clippy::cast_possible_truncation)]
+    // seed is a Unix timestamp in seconds; truncation on 32-bit is harmless for modulo indexing
     TIPS[(seed as usize) % TIPS.len()]
 }

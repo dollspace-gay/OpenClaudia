@@ -1,16 +1,16 @@
-//! Tool definitions and execution for OpenClaudia
+//! Tool definitions and execution for `OpenClaudia`
 //!
-//! Implements the core tools that make OpenClaudia an agent:
+//! Implements the core tools that make `OpenClaudia` an agent:
 //! - Bash: Execute shell commands
 //! - Read: Read file contents
 //! - Write: Write/create files
 //! - Edit: Make targeted edits to files
 //!
 //! Stateful mode adds memory tools:
-//! - memory_save: Store information in archival memory
-//! - memory_search: Search archival memory
-//! - memory_update: Update existing memory
-//! - core_memory_update: Update core memory sections
+//! - `memory_save`: Store information in archival memory
+//! - `memory_search`: Search archival memory
+//! - `memory_update`: Update existing memory
+//! - `core_memory_update`: Update core memory sections
 //!
 
 mod accumulator;
@@ -44,6 +44,7 @@ use std::collections::HashMap;
 
 /// Safely truncate a string at a byte boundary without splitting multi-byte UTF-8 characters.
 /// Returns the longest prefix of `s` that is at most `max_bytes` bytes and ends on a char boundary.
+#[must_use]
 pub fn safe_truncate(s: &str, max_bytes: usize) -> &str {
     if s.len() <= max_bytes {
         return s;
@@ -86,18 +87,20 @@ pub struct ToolResult {
     pub is_error: bool,
 }
 
-/// Marker type for ask_user_question results.
-/// The tool returns a JSON object with type "user_question" that the main loop
+/// Marker type for `ask_user_question` results.
+/// The tool returns a JSON object with type "`user_question`" that the main loop
 /// intercepts to display questions and collect answers from the user.
 pub const USER_QUESTION_MARKER: &str = "user_question";
 
-/// Marker type for enter_plan_mode results.
+/// Marker type for `enter_plan_mode` results.
 pub const ENTER_PLAN_MODE_MARKER: &str = "enter_plan_mode";
 
-/// Marker type for exit_plan_mode results.
+/// Marker type for `exit_plan_mode` results.
 pub const EXIT_PLAN_MODE_MARKER: &str = "exit_plan_mode";
 
-/// Get all tool definitions for the API request (OpenAI function format)
+/// Get all tool definitions for the API request (`OpenAI` function format)
+#[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn get_tool_definitions() -> Value {
     json!([
         {
@@ -790,11 +793,13 @@ pub fn get_tool_definitions() -> Value {
 /// This is a convenience wrapper around `execute_tool_with_memory` for
 /// when memory tools are not needed. Memory-related tool calls will
 /// return an error indicating stateful mode is required.
+#[must_use]
 pub fn execute_tool(tool_call: &ToolCall) -> ToolResult {
     execute_tool_with_memory(tool_call, None)
 }
 
-/// Execute a tool call (memory_db kept for API compatibility with execute_tool_full)
+/// Execute a tool call (`memory_db` kept for API compatibility with `execute_tool_full`)
+#[must_use]
 pub fn execute_tool_with_memory(tool_call: &ToolCall, _memory_db: Option<&MemoryDb>) -> ToolResult {
     let args: HashMap<String, Value> =
         serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
@@ -858,6 +863,7 @@ pub fn execute_tool_with_memory(tool_call: &ToolCall, _memory_db: Option<&Memory
 }
 
 /// Execute a tool call with full context (memory + config for subagents)
+#[must_use]
 pub fn execute_tool_full(
     tool_call: &ToolCall,
     memory_db: Option<&MemoryDb>,
@@ -868,16 +874,15 @@ pub fn execute_tool_full(
 
     // Check for subagent tools first (they need config)
     let (content, is_error) = match tool_call.function.name.as_str() {
-        "task" => {
-            if let Some(config) = app_config {
-                subagent::execute_task_tool(&args, config)
-            } else {
+        "task" => app_config.map_or_else(
+            || {
                 (
                     "Task tool requires application configuration".to_string(),
                     true,
                 )
-            }
-        }
+            },
+            |config| subagent::execute_task_tool(&args, config),
+        ),
         "agent_output" => subagent::execute_agent_output_tool(&args),
         // For all other tools, delegate to the existing function
         _ => {
@@ -894,6 +899,7 @@ pub fn execute_tool_full(
 }
 
 /// Get all tool definitions, optionally including subagent tools
+#[must_use]
 pub fn get_all_tool_definitions(subagents: bool) -> Value {
     let mut tools = get_tool_definitions();
 
@@ -913,6 +919,7 @@ pub fn get_all_tool_definitions(subagents: bool) -> Value {
 
 /// Check if a tool result contains a special marker that needs main loop handling.
 /// Returns the marker type if found, None otherwise.
+#[must_use]
 pub fn check_tool_result_marker(content: &str) -> Option<String> {
     if let Ok(parsed) = serde_json::from_str::<Value>(content) {
         if let Some(marker_type) = parsed.get("type").and_then(|v| v.as_str()) {
@@ -927,13 +934,15 @@ pub fn check_tool_result_marker(content: &str) -> Option<String> {
     None
 }
 
-/// Parse user questions from a tool result with the user_question marker.
+/// Parse user questions from a tool result with the `user_question` marker.
+#[must_use]
 pub fn parse_user_questions(content: &str) -> Option<Vec<Value>> {
     let parsed: Value = serde_json::from_str(content).ok()?;
     parsed.get("questions").and_then(|v| v.as_array()).cloned()
 }
 
-/// Parse allowed prompts from an exit_plan_mode tool result.
+/// Parse allowed prompts from an `exit_plan_mode` tool result.
+#[must_use]
 pub fn parse_exit_plan_mode_prompts(content: &str) -> Vec<crate::session::AllowedPrompt> {
     let parsed: Value = match serde_json::from_str(content) {
         Ok(v) => v,
@@ -959,8 +968,9 @@ pub fn parse_exit_plan_mode_prompts(content: &str) -> Vec<crate::session::Allowe
 // Permission-Checked Tool Execution
 // =========================================================================
 
-/// Check permissions before executing a tool. Returns a ToolResult with an
+/// Check permissions before executing a tool. Returns a `ToolResult` with an
 /// error if permission is denied, or None if the tool should proceed.
+#[must_use]
 pub fn check_tool_permission(
     tool_call: &ToolCall,
     permission_mgr: Option<&PermissionManager>,
@@ -976,7 +986,7 @@ pub fn check_tool_permission(
         CheckResult::Allowed => None, // Proceed with execution
         CheckResult::Denied(reason) => Some(ToolResult {
             tool_call_id: tool_call.id.clone(),
-            content: format!("Permission denied: {}", reason),
+            content: format!("Permission denied: {reason}"),
             is_error: true,
         }),
         CheckResult::NeedsPrompt { tool, target } => {
@@ -985,10 +995,7 @@ pub fn check_tool_permission(
             // can intercept to show a prompt.
             Some(ToolResult {
                 tool_call_id: tool_call.id.clone(),
-                content: format!(
-                    "PERMISSION_PROMPT: Allow {} on '{}'? [y/n/a(lways)]",
-                    tool, target
-                ),
+                content: format!("PERMISSION_PROMPT: Allow {tool} on '{target}'? [y/n/a(lways)]"),
                 is_error: true,
             })
         }
@@ -999,10 +1006,11 @@ pub fn check_tool_permission(
 ///
 /// This is the highest-level execution function that handles:
 /// - Permission checking (via the caller using `check_tool_permission`)
-/// - Task management tools (task_create, task_update, task_get, task_list)
+/// - Task management tools (`task_create`, `task_update`, `task_get`, `task_list`)
 /// - Subagent tools (via config)
-/// - Memory tools (via memory_db)
+/// - Memory tools (via `memory_db`)
 /// - All standard tools
+#[must_use]
 pub fn execute_tool_with_tasks(
     tool_call: &ToolCall,
     memory_db: Option<&MemoryDb>,

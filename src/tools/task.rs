@@ -1,9 +1,10 @@
 use crate::session::TaskManager;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
-/// Execute the task_create tool
-pub(crate) fn execute_task_create(
+/// Execute the `task_create` tool
+pub fn execute_task_create(
     args: &HashMap<String, Value>,
     task_mgr: &mut TaskManager,
 ) -> (String, bool) {
@@ -20,7 +21,7 @@ pub(crate) fn execute_task_create(
     let active_form = args
         .get("active_form")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     let task = task_mgr.create_task(subject, description, active_form);
     let output = format!(
@@ -31,29 +32,28 @@ pub(crate) fn execute_task_create(
     (output, false)
 }
 
-/// Execute the task_update tool
-pub(crate) fn execute_task_update(
+/// Execute the `task_update` tool
+pub fn execute_task_update(
     args: &HashMap<String, Value>,
     task_mgr: &mut TaskManager,
 ) -> (String, bool) {
-    let task_id = match args.get("task_id").and_then(|v| v.as_str()) {
-        Some(id) => id,
-        None => return ("Missing 'task_id' argument".to_string(), true),
+    let Some(task_id) = args.get("task_id").and_then(|v| v.as_str()) else {
+        return ("Missing 'task_id' argument".to_string(), true);
     };
 
     let status = args.get("status").and_then(|v| v.as_str());
     let subject = args
         .get("subject")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
     let description = args
         .get("description")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
     let active_form = args
         .get("active_form")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     let add_blocks: Option<Vec<String>> =
         args.get("add_blocks")
@@ -103,21 +103,20 @@ pub(crate) fn execute_task_update(
     }
 }
 
-/// Execute the task_get tool
-pub(crate) fn execute_task_get(args: &HashMap<String, Value>, task_mgr: &TaskManager) -> (String, bool) {
-    let task_id = match args.get("task_id").and_then(|v| v.as_str()) {
-        Some(id) => id,
-        None => return ("Missing 'task_id' argument".to_string(), true),
+/// Execute the `task_get` tool
+pub fn execute_task_get(args: &HashMap<String, Value>, task_mgr: &TaskManager) -> (String, bool) {
+    let Some(task_id) = args.get("task_id").and_then(|v| v.as_str()) else {
+        return ("Missing 'task_id' argument".to_string(), true);
     };
 
-    match task_mgr.get_task(task_id) {
-        Some(task) => (TaskManager::format_task_detail(task), false),
-        None => (format!("Task '{}' not found", task_id), true),
-    }
+    task_mgr.get_task(task_id).map_or_else(
+        || (format!("Task '{task_id}' not found"), true),
+        |task| (TaskManager::format_task_detail(task), false),
+    )
 }
 
-/// Execute the task_list tool
-pub(crate) fn execute_task_list(task_mgr: &TaskManager) -> (String, bool) {
+/// Execute the `task_list` tool
+pub fn execute_task_list(task_mgr: &TaskManager) -> (String, bool) {
     let tasks = task_mgr.list_tasks();
 
     if tasks.is_empty() {
@@ -143,13 +142,14 @@ pub(crate) fn execute_task_list(task_mgr: &TaskManager) -> (String, bool) {
         .filter(|t| t.status == crate::session::TaskStatus::Pending)
         .count();
 
-    output.push_str(&format!(
+    let _ = write!(
+        output,
         "\n({} total: {} completed, {} in progress, {} pending)",
         tasks.len(),
         completed,
         in_progress,
         pending
-    ));
+    );
 
     (output, false)
 }

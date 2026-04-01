@@ -13,7 +13,8 @@ use super::{ProviderAdapter, ProviderError};
 pub struct ZaiAdapter;
 
 impl ZaiAdapter {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -26,7 +27,7 @@ impl Default for ZaiAdapter {
 
 #[async_trait]
 impl ProviderAdapter for ZaiAdapter {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "zai"
     }
 
@@ -81,7 +82,7 @@ impl ProviderAdapter for ZaiAdapter {
 
     fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {
         vec![
-            ("Authorization".to_string(), format!("Bearer {}", api_key)),
+            ("Authorization".to_string(), format!("Bearer {api_key}")),
             ("content-type".to_string(), "application/json".to_string()),
         ]
     }

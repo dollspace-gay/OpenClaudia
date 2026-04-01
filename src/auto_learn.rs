@@ -1,4 +1,4 @@
-//! Auto-learning module for OpenClaudia
+//! Auto-learning module for `OpenClaudia`
 //!
 //! Captures knowledge automatically from tool execution signals,
 //! user corrections, and session patterns. No model discretion required.
@@ -13,7 +13,7 @@ struct PendingError {
     file_context: Option<String>,
 }
 
-/// AutoLearner captures knowledge from tool signals and user interactions
+/// `AutoLearner` captures knowledge from tool signals and user interactions
 pub struct AutoLearner<'a> {
     db: &'a MemoryDb,
     /// Files modified in this session (for co-edit tracking)
@@ -158,7 +158,7 @@ impl<'a> AutoLearner<'a> {
 
     // === Internal: Edit Failure ===
 
-    fn handle_edit_failure(&mut self, args: &serde_json::Value, error: &str) {
+    fn handle_edit_failure(&self, args: &serde_json::Value, error: &str) {
         let file_path = args
             .get("path")
             .or_else(|| args.get("file_path"))
@@ -267,6 +267,31 @@ impl<'a> AutoLearner<'a> {
 
 // === Helper Functions ===
 
+/// Check if a word has a source-code file extension (case-insensitive).
+fn has_source_extension(word: &str) -> bool {
+    let path = std::path::Path::new(word);
+    path.extension().is_some_and(|ext| {
+        ext.eq_ignore_ascii_case("rs")
+            || ext.eq_ignore_ascii_case("py")
+            || ext.eq_ignore_ascii_case("ts")
+            || ext.eq_ignore_ascii_case("js")
+    })
+}
+
+/// Check if a word has a config/source file extension (case-insensitive).
+fn has_file_extension(word: &str) -> bool {
+    let path = std::path::Path::new(word);
+    path.extension().is_some_and(|ext| {
+        ext.eq_ignore_ascii_case("rs")
+            || ext.eq_ignore_ascii_case("py")
+            || ext.eq_ignore_ascii_case("ts")
+            || ext.eq_ignore_ascii_case("js")
+            || ext.eq_ignore_ascii_case("toml")
+            || ext.eq_ignore_ascii_case("yaml")
+            || ext.eq_ignore_ascii_case("json")
+    })
+}
+
 /// Extract the most meaningful error line from stderr output
 fn extract_error_signature(error: &str) -> String {
     for line in error.lines() {
@@ -304,12 +329,7 @@ fn extract_file_from_error(error: &str) -> Option<String> {
         // Match "error: file.rs" or similar
         if trimmed.starts_with("error") {
             for word in trimmed.split_whitespace() {
-                if (word.ends_with(".rs")
-                    || word.ends_with(".py")
-                    || word.ends_with(".ts")
-                    || word.ends_with(".js"))
-                    && (word.contains('/') || word.contains('\\'))
-                {
+                if has_source_extension(word) && (word.contains('/') || word.contains('\\')) {
                     return Some(
                         word.trim_matches(|c: char| {
                             !c.is_alphanumeric()
@@ -331,15 +351,7 @@ fn extract_file_from_error(error: &str) -> Option<String> {
 /// Try to extract a file path from a command string
 fn extract_file_from_command(command: &str) -> Option<String> {
     for word in command.split_whitespace() {
-        if (word.ends_with(".rs")
-            || word.ends_with(".py")
-            || word.ends_with(".ts")
-            || word.ends_with(".js")
-            || word.ends_with(".toml")
-            || word.ends_with(".yaml")
-            || word.ends_with(".json"))
-            && (word.contains('/') || word.contains('\\'))
-        {
+        if has_file_extension(word) && (word.contains('/') || word.contains('\\')) {
             return Some(word.to_string());
         }
     }

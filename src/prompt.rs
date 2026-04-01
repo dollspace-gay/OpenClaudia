@@ -230,6 +230,7 @@ Only retry a tool if:
 - You're using different parameters"#;
 
 /// Build the complete system prompt with all components
+#[must_use]
 pub fn build_system_prompt(
     hook_instructions: Option<&str>,
     custom_instructions: Option<&str>,

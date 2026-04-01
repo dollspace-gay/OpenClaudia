@@ -1,4 +1,4 @@
-//! TUI module for OpenClaudia
+//! TUI module for `OpenClaudia`
 //!
 //! Provides a rich terminal user interface similar to Claude Code,
 //! with two-column layout, tips panel, styled text, markdown rendering,
@@ -33,8 +33,7 @@ use syntect::parsing::SyntaxSet;
 
 static SYNTAX_SET: std::sync::LazyLock<SyntaxSet> =
     std::sync::LazyLock::new(SyntaxSet::load_defaults_newlines);
-static THEME_SET: std::sync::LazyLock<ThemeSet> =
-    std::sync::LazyLock::new(ThemeSet::load_defaults);
+static THEME_SET: std::sync::LazyLock<ThemeSet> = std::sync::LazyLock::new(ThemeSet::load_defaults);
 
 /// Purple color for branding (from logo)
 const PURPLE: Color = Color::Rgb(147, 112, 219);
@@ -86,6 +85,7 @@ impl Default for Theme {
 
 impl Theme {
     /// Build a theme from one of the built-in names
+    #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "default" => Some(Self::default()),
@@ -165,6 +165,10 @@ impl Theme {
     }
 
     /// Save the current theme name to disk (in user config directory)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the theme file cannot be written.
     pub fn save(&self) -> io::Result<()> {
         let path = theme_path();
         if let Some(dir) = path.parent() {
@@ -175,6 +179,7 @@ impl Theme {
     }
 
     /// Load the saved theme from disk, falling back to default
+    #[must_use]
     pub fn load() -> Self {
         let path = theme_path();
         if let Ok(name) = std::fs::read_to_string(&path) {
@@ -235,12 +240,12 @@ pub fn render_markdown_themed(text: &str, theme: &Theme) {
                 code_lang = line.trim_start_matches('`').trim().to_string();
 
                 // Set up syntax highlighter for the detected language
-                let syntax = if !code_lang.is_empty() {
+                let syntax = if code_lang.is_empty() {
+                    SYNTAX_SET.find_syntax_plain_text()
+                } else {
                     SYNTAX_SET
                         .find_syntax_by_token(&code_lang)
                         .unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text())
-                } else {
-                    SYNTAX_SET.find_syntax_plain_text()
                 };
                 let theme_name = "base16-ocean.dark";
                 if let Some(syn_theme) = THEME_SET.themes.get(theme_name) {
@@ -249,7 +254,7 @@ pub fn render_markdown_themed(text: &str, theme: &Theme) {
 
                 if !code_lang.is_empty() {
                     let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
-                    println!("  --- {} ---", code_lang);
+                    println!("  --- {code_lang} ---");
                     let _ = stdout.execute(ResetColor);
                 }
             }
@@ -262,7 +267,7 @@ pub fn render_markdown_themed(text: &str, theme: &Theme) {
             } else {
                 // Fallback: render with flat code color (same as before)
                 let _ = stdout.execute(SetForegroundColor(theme.code_color));
-                println!("    {}", line);
+                println!("    {line}");
                 let _ = stdout.execute(ResetColor);
             }
             continue;
@@ -331,26 +336,23 @@ fn render_highlighted_code_line(
     highlighter: &mut HighlightLines,
     fallback_color: CtColor,
 ) {
-    match highlighter.highlight_line(line, &SYNTAX_SET) {
-        Ok(ranges) => {
-            let _ = stdout.execute(Print("    "));
-            for (style, text) in ranges {
-                let color = CtColor::Rgb {
-                    r: style.foreground.r,
-                    g: style.foreground.g,
-                    b: style.foreground.b,
-                };
-                let _ = stdout.execute(SetForegroundColor(color));
-                let _ = stdout.execute(Print(text));
-            }
-            let _ = stdout.execute(ResetColor);
-            let _ = stdout.execute(Print("\n"));
+    if let Ok(ranges) = highlighter.highlight_line(line, &SYNTAX_SET) {
+        let _ = stdout.execute(Print("    "));
+        for (style, text) in ranges {
+            let color = CtColor::Rgb {
+                r: style.foreground.r,
+                g: style.foreground.g,
+                b: style.foreground.b,
+            };
+            let _ = stdout.execute(SetForegroundColor(color));
+            let _ = stdout.execute(Print(text));
         }
-        Err(_) => {
-            let _ = stdout.execute(SetForegroundColor(fallback_color));
-            let _ = stdout.execute(Print(format!("    {}\n", line)));
-            let _ = stdout.execute(ResetColor);
-        }
+        let _ = stdout.execute(ResetColor);
+        let _ = stdout.execute(Print("\n"));
+    } else {
+        let _ = stdout.execute(SetForegroundColor(fallback_color));
+        let _ = stdout.execute(Print(format!("    {line}\n")));
+        let _ = stdout.execute(ResetColor);
     }
 }
 
@@ -366,9 +368,8 @@ fn render_heading(stdout: &mut io::Stdout, line: &str, theme: &Theme) {
 
     match level {
         1 => println!("\n{}\n", text.to_uppercase()),
-        2 => println!("\n{}\n", text),
-        3 => println!("{}", text),
-        _ => println!("{}", text),
+        2 => println!("\n{text}\n"),
+        _ => println!("{text}"),
     }
 
     let _ = stdout.execute(SetAttribute(Attribute::Reset));
@@ -387,7 +388,7 @@ fn render_inline(stdout: &mut io::Stdout, text: &str, theme: &Theme) {
             if let Some(end) = find_closing(&chars, i + 2, "**") {
                 let _ = stdout.execute(SetAttribute(Attribute::Bold));
                 let inner: String = chars[i + 2..end].iter().collect();
-                print!("{}", inner);
+                print!("{inner}");
                 let _ = stdout.execute(SetAttribute(Attribute::NoBold));
                 i = end + 2;
                 continue;
@@ -399,7 +400,7 @@ fn render_inline(stdout: &mut io::Stdout, text: &str, theme: &Theme) {
             if let Some(end) = find_closing_char(&chars, i + 1, '*') {
                 let _ = stdout.execute(SetAttribute(Attribute::Italic));
                 let inner: String = chars[i + 1..end].iter().collect();
-                print!("{}", inner);
+                print!("{inner}");
                 let _ = stdout.execute(SetAttribute(Attribute::NoItalic));
                 i = end + 1;
                 continue;
@@ -411,7 +412,7 @@ fn render_inline(stdout: &mut io::Stdout, text: &str, theme: &Theme) {
             if let Some(end) = find_closing_char(&chars, i + 1, '`') {
                 let _ = stdout.execute(SetForegroundColor(theme.code_color));
                 let inner: String = chars[i + 1..end].iter().collect();
-                print!("{}", inner);
+                print!("{inner}");
                 let _ = stdout.execute(ResetColor);
                 i = end + 1;
                 continue;
@@ -422,10 +423,10 @@ fn render_inline(stdout: &mut io::Stdout, text: &str, theme: &Theme) {
         if chars[i] == '[' {
             if let Some((link_text, url, end_pos)) = parse_link(&chars, i) {
                 let _ = stdout.execute(SetAttribute(Attribute::Underlined));
-                print!("{}", link_text);
+                print!("{link_text}");
                 let _ = stdout.execute(SetAttribute(Attribute::NoUnderline));
                 let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
-                print!(" ({})", url);
+                print!(" ({url})");
                 let _ = stdout.execute(ResetColor);
                 i = end_pos;
                 continue;
@@ -515,26 +516,24 @@ pub fn draw_status_bar(model: &str, tokens: usize, cost: Option<f64>, mode: &str
     let mut stdout = io::stdout();
 
     let cost_str = match cost {
-        Some(c) if c >= 0.01 => format!("${:.2}", c),
-        Some(c) => format!("${:.4}", c),
+        Some(c) if c >= 0.01 => format!("${c:.2}"),
+        Some(c) => format!("${c:.4}"),
         None => String::new(),
     };
 
+    #[allow(clippy::cast_precision_loss)] // token counts fit comfortably in f64
     let token_str = if tokens >= 1_000_000 {
         format!("{:.1}M tokens", tokens as f64 / 1_000_000.0)
     } else if tokens >= 1_000 {
         format!("{:.1}k tokens", tokens as f64 / 1_000.0)
     } else {
-        format!("{} tokens", tokens)
+        format!("{tokens} tokens")
     };
 
     let status = if cost_str.is_empty() {
-        format!(" {} | {} | {} | {} ", model, token_str, mode, duration)
+        format!(" {model} | {token_str} | {mode} | {duration} ")
     } else {
-        format!(
-            " {} | {} | {} | {} | {} ",
-            model, cost_str, token_str, mode, duration
-        )
+        format!(" {model} | {cost_str} | {token_str} | {mode} | {duration} ")
     };
 
     // Print inline with dim styling — no absolute cursor positioning
@@ -551,7 +550,7 @@ pub fn print_thinking_chunk(text: &str) {
     let mut stdout = io::stdout();
     let _ = stdout.execute(SetAttribute(Attribute::Dim));
     let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
-    print!("{}", text);
+    print!("{text}");
     let _ = stdout.execute(SetAttribute(Attribute::Reset));
     let _ = stdout.execute(ResetColor);
     stdout.flush().ok();
@@ -574,7 +573,7 @@ pub fn print_thinking_end(duration_secs: f64) {
     let _ = stdout.execute(SetAttribute(Attribute::Dim));
     let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
     if duration_secs > 0.0 {
-        println!("\n  (thought for {:.1}s)", duration_secs);
+        println!("\n  (thought for {duration_secs:.1}s)");
     } else {
         println!();
     }
@@ -586,6 +585,7 @@ pub fn print_thinking_end(duration_secs: f64) {
 // ─── Original TUI components ────────────────────────────────────────────────
 
 /// Get a random tip for the tips section
+#[must_use]
 pub fn get_tips() -> Vec<&'static str> {
     vec![
         "Run /init to create a config file with instructions",
@@ -607,6 +607,7 @@ pub struct WelcomeScreen {
 }
 
 impl WelcomeScreen {
+    #[must_use]
     pub fn new(version: &str, provider: &str, model: &str) -> Self {
         Self {
             version: version.to_string(),
@@ -617,6 +618,10 @@ impl WelcomeScreen {
     }
 
     /// Render the welcome screen using ratatui
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if terminal setup or drawing fails.
     pub fn render(&self) -> io::Result<()> {
         let mut stdout = stdout();
 
@@ -677,11 +682,10 @@ impl WelcomeScreen {
         frame.render_widget(block, area);
 
         // Left column content
-        let greeting = if let Some(ref name) = self.username {
-            format!("Welcome back, {}!", name)
-        } else {
-            "Welcome to OpenClaudia!".to_string()
-        };
+        let greeting = self.username.as_ref().map_or_else(
+            || "Welcome to OpenClaudia!".to_string(),
+            |name| format!("Welcome back, {name}!"),
+        );
 
         let left_text = vec![
             Line::from(Span::styled(&greeting, Style::default().fg(Color::White))),
@@ -715,6 +719,10 @@ impl WelcomeScreen {
 }
 
 /// Render the input prompt hints inline (no absolute positioning).
+///
+/// # Errors
+///
+/// Returns an error if writing to stdout fails.
 pub fn render_input_prompt(mode: &str) -> io::Result<()> {
     let mut stdout = io::stdout();
     let right_hint = format!(
@@ -727,7 +735,7 @@ pub fn render_input_prompt(mode: &str) -> io::Result<()> {
         g: 100,
         b: 100,
     }))?;
-    writeln!(stdout, "  /help for commands · {}", right_hint)?;
+    writeln!(stdout, "  /help for commands · {right_hint}")?;
     stdout.execute(ResetColor)?;
     stdout.flush()?;
     Ok(())
@@ -743,13 +751,16 @@ fn get_username() -> Option<String> {
 /// Capitalize the first letter of a string
 pub(crate) fn capitalize_first(s: &str) -> String {
     let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first) => first.to_uppercase().chain(chars).collect(),
-    }
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
 }
 
 /// Clear the screen and move cursor to top
+///
+/// # Errors
+///
+/// Returns an error if terminal commands fail.
 pub fn clear_screen() -> io::Result<()> {
     let mut stdout = io::stdout();
     stdout.execute(Clear(ClearType::All))?;
@@ -764,7 +775,11 @@ pub fn clear_screen() -> io::Result<()> {
 pub fn print_turn_separator() {
     let width = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
     let mut out = stdout();
-    let _ = out.execute(SetForegroundColor(CtColor::Rgb { r: 60, g: 60, b: 60 }));
+    let _ = out.execute(SetForegroundColor(CtColor::Rgb {
+        r: 60,
+        g: 60,
+        b: 60,
+    }));
     let _ = out.execute(Print("─".repeat(width.min(120))));
     let _ = out.execute(Print("\n"));
     let _ = out.execute(ResetColor);
@@ -773,15 +788,43 @@ pub fn print_turn_separator() {
 /// Print a role header with icon and color.
 pub fn print_role_header(role: &str) {
     let (icon, color) = match role {
-        "assistant" | "Assistant" => ("●", CtColor::Rgb { r: 147, g: 112, b: 219 }),
-        "user" | "User" => ("›", CtColor::Rgb { r: 100, g: 180, b: 255 }),
-        "tool" | "Tool" => ("⚙", CtColor::Rgb { r: 218, g: 165, b: 32 }),
-        _ => ("·", CtColor::Rgb { r: 128, g: 128, b: 128 }),
+        "assistant" | "Assistant" => (
+            "●",
+            CtColor::Rgb {
+                r: 147,
+                g: 112,
+                b: 219,
+            },
+        ),
+        "user" | "User" => (
+            "›",
+            CtColor::Rgb {
+                r: 100,
+                g: 180,
+                b: 255,
+            },
+        ),
+        "tool" | "Tool" => (
+            "⚙",
+            CtColor::Rgb {
+                r: 218,
+                g: 165,
+                b: 32,
+            },
+        ),
+        _ => (
+            "·",
+            CtColor::Rgb {
+                r: 128,
+                g: 128,
+                b: 128,
+            },
+        ),
     };
     let mut out = stdout();
     let _ = out.execute(SetForegroundColor(color));
     let _ = out.execute(SetAttribute(Attribute::Bold));
-    let _ = out.execute(Print(format!("{} {}", icon, role)));
+    let _ = out.execute(Print(format!("{icon} {role}")));
     let _ = out.execute(SetAttribute(Attribute::Reset));
     let _ = out.execute(ResetColor);
     let _ = out.execute(Print("\n"));
@@ -791,9 +834,9 @@ pub fn print_role_header(role: &str) {
 pub fn print_tool_start(tool_name: &str, description: &str) {
     let mut out = stdout();
     let _ = out.execute(SetForegroundColor(CtColor::Cyan));
-    let _ = out.execute(Print(format!("\n⚡ {} ", tool_name)));
+    let _ = out.execute(Print(format!("\n⚡ {tool_name} ")));
     let _ = out.execute(SetForegroundColor(CtColor::DarkGrey));
-    let _ = out.execute(Print(format!("— {}", description)));
+    let _ = out.execute(Print(format!("— {description}")));
     let _ = out.execute(ResetColor);
     let _ = out.execute(Print("\n"));
 }
@@ -803,14 +846,14 @@ pub fn print_tool_done(tool_name: &str, success: bool, duration_ms: u64) {
     let mut out = stdout();
     if success {
         let _ = out.execute(SetForegroundColor(CtColor::Green));
-        let _ = out.execute(Print(format!("  ✓ {} ", tool_name)));
+        let _ = out.execute(Print(format!("  ✓ {tool_name} ")));
     } else {
         let _ = out.execute(SetForegroundColor(CtColor::Red));
-        let _ = out.execute(Print(format!("  ✗ {} ", tool_name)));
+        let _ = out.execute(Print(format!("  ✗ {tool_name} ")));
     }
     if duration_ms > 0 {
         let _ = out.execute(SetForegroundColor(CtColor::DarkGrey));
-        let _ = out.execute(Print(format!("({}ms)", duration_ms)));
+        let _ = out.execute(Print(format!("({duration_ms}ms)")));
     }
     let _ = out.execute(ResetColor);
     let _ = out.execute(Print("\n"));
@@ -818,12 +861,27 @@ pub fn print_tool_done(tool_name: &str, success: bool, duration_ms: u64) {
 
 /// Print a context usage bar (green/yellow/red).
 pub fn print_context_usage(used_tokens: usize, max_tokens: usize) {
-    if max_tokens == 0 { return; }
+    if max_tokens == 0 {
+        return;
+    }
+    #[allow(clippy::cast_precision_loss)] // token counts are small enough for f32
+    #[allow(clippy::cast_precision_loss)] // token counts are well within f32 range
     let pct = (used_tokens as f32 / max_tokens as f32 * 100.0).min(100.0);
-    let bar_width = 20;
+    let bar_width: usize = 20;
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )] // pct clamped 0..100, bar_width=20
     let filled = (pct / 100.0 * bar_width as f32) as usize;
     let empty = bar_width - filled;
-    let color = if pct >= 90.0 { CtColor::Red } else if pct >= 75.0 { CtColor::Yellow } else { CtColor::Green };
+    let color = if pct >= 90.0 {
+        CtColor::Red
+    } else if pct >= 75.0 {
+        CtColor::Yellow
+    } else {
+        CtColor::Green
+    };
 
     let mut out = stdout();
     let _ = out.execute(SetForegroundColor(CtColor::DarkGrey));
@@ -832,7 +890,7 @@ pub fn print_context_usage(used_tokens: usize, max_tokens: usize) {
     let _ = out.execute(Print("█".repeat(filled)));
     let _ = out.execute(SetForegroundColor(CtColor::DarkGrey));
     let _ = out.execute(Print("░".repeat(empty)));
-    let _ = out.execute(Print(format!("] {:.0}%", pct)));
+    let _ = out.execute(Print(format!("] {pct:.0}%")));
     let _ = out.execute(ResetColor);
     let _ = out.execute(Print("\n"));
 }
@@ -840,14 +898,18 @@ pub fn print_context_usage(used_tokens: usize, max_tokens: usize) {
 /// Print a clean welcome banner.
 pub fn print_welcome_banner(version: &str, provider: &str, model: &str, auth_method: &str) {
     let mut out = stdout();
-    let _ = out.execute(SetForegroundColor(CtColor::Rgb { r: 147, g: 112, b: 219 }));
+    let _ = out.execute(SetForegroundColor(CtColor::Rgb {
+        r: 147,
+        g: 112,
+        b: 219,
+    }));
     let _ = out.execute(SetAttribute(Attribute::Bold));
-    let _ = out.execute(Print(format!("  OpenClaudia v{}", version)));
+    let _ = out.execute(Print(format!("  OpenClaudia v{version}")));
     let _ = out.execute(SetAttribute(Attribute::Reset));
     let _ = out.execute(ResetColor);
     let _ = out.execute(Print("\n"));
     let _ = out.execute(SetForegroundColor(CtColor::DarkGrey));
-    let _ = out.execute(Print(format!("  {} · {} · {}\n\n", provider, model, auth_method)));
+    let _ = out.execute(Print(format!("  {provider} · {model} · {auth_method}\n\n")));
     let _ = out.execute(ResetColor);
 }
 

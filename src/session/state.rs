@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 use std::path::Path;
 
 use super::Session;
@@ -22,12 +23,13 @@ pub struct TokenUsage {
 
 impl TokenUsage {
     /// Total tokens (input + output)
-    pub fn total(&self) -> u64 {
+    #[must_use]
+    pub const fn total(&self) -> u64 {
         self.input_tokens + self.output_tokens
     }
 
-    /// Accumulate usage from another TokenUsage
-    pub fn accumulate(&mut self, other: &TokenUsage) {
+    /// Accumulate usage from another `TokenUsage`
+    pub const fn accumulate(&mut self, other: &Self) {
         self.input_tokens += other.input_tokens;
         self.output_tokens += other.output_tokens;
         self.cache_read_tokens += other.cache_read_tokens;
@@ -109,7 +111,8 @@ pub const PLAN_MODE_ALLOWED_TOOLS: &[&str] = &[
 pub const PLAN_MODE_BLOCKED_TOOLS: &[&str] = &["bash", "edit_file", "kill_shell", "todo_write"];
 
 /// Check if a tool is allowed in plan mode.
-/// write_file is special: it's allowed only if targeting the plan file path.
+/// `write_file` is special: it's allowed only if targeting the plan file path.
+#[must_use]
 pub fn is_tool_allowed_in_plan_mode(
     tool_name: &str,
     plan_file: &Path,
@@ -143,15 +146,13 @@ pub fn is_tool_allowed_in_plan_mode(
                 target.to_path_buf()
             } else {
                 std::env::current_dir()
-                    .map(|cwd| cwd.join(target))
-                    .unwrap_or_else(|_| target.to_path_buf())
+                    .map_or_else(|_| target.to_path_buf(), |cwd| cwd.join(target))
             };
             let abs_plan = if plan_file.is_absolute() {
                 plan_file.to_path_buf()
             } else {
                 std::env::current_dir()
-                    .map(|cwd| cwd.join(plan_file))
-                    .unwrap_or_else(|_| plan_file.to_path_buf())
+                    .map_or_else(|_| plan_file.to_path_buf(), |cwd| cwd.join(plan_file))
             };
             return abs_target == abs_plan;
         }
@@ -168,34 +169,34 @@ pub fn is_tool_allowed_in_plan_mode(
 }
 
 /// Context to inject at session start based on mode
+#[must_use]
 pub fn get_session_context(session: &Session) -> String {
     match session.mode {
-        SessionMode::Initializer => r#"## Session Context: Initializer Agent
-
-You are the first agent working on this task. Your responsibilities:
-1. Understand the full scope of the work
-2. Create a clear plan with actionable steps
-3. Document key decisions and rationale
-4. Set up any necessary project structure
-5. Prepare detailed handoff notes for subsequent sessions
-
-Focus on establishing a solid foundation that future agents can build upon."#
+        SessionMode::Initializer => "## Session Context: Initializer Agent\n\
+            \n\
+            You are the first agent working on this task. Your responsibilities:\n\
+            1. Understand the full scope of the work\n\
+            2. Create a clear plan with actionable steps\n\
+            3. Document key decisions and rationale\n\
+            4. Set up any necessary project structure\n\
+            5. Prepare detailed handoff notes for subsequent sessions\n\
+            \n\
+            Focus on establishing a solid foundation that future agents can build upon."
             .to_string(),
         SessionMode::Coding => {
-            let mut context = r#"## Session Context: Coding Agent
-
-You are continuing work from a previous session. Your responsibilities:
-1. Review the handoff notes from the previous session
-2. Continue from where the last agent left off
-3. Track your progress and decisions
-4. Prepare handoff notes if you won't complete the task
-
-"#
+            let mut context = "## Session Context: Coding Agent\n\
+                \n\
+                You are continuing work from a previous session. Your responsibilities:\n\
+                1. Review the handoff notes from the previous session\n\
+                2. Continue from where the last agent left off\n\
+                3. Track your progress and decisions\n\
+                4. Prepare handoff notes if you won't complete the task\n\
+                \n"
             .to_string();
 
             // Add parent session info if available
             if let Some(parent_id) = &session.parent_session_id {
-                context.push_str(&format!("Previous session ID: {}\n", parent_id));
+                let _ = writeln!(context, "Previous session ID: {parent_id}");
             }
 
             context

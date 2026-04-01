@@ -3,11 +3,12 @@
 //! Parses Claude's XML-style tool invocations from the response stream
 //! and executes them locally instead of letting Anthropic's sandbox handle them.
 //!
-//! Claude Code uses an XML format with antml:function_calls and antml:invoke tags.
+//! Claude Code uses an XML format with `antml:function_calls` and antml:invoke tags.
 //! This module parses those invocations and maps them to local tool execution.
 
 use crate::tools::{safe_truncate, FunctionCall, ToolCall};
 use std::collections::HashMap;
+use std::fmt::Write;
 use uuid::Uuid;
 
 /// A parsed tool invocation from Claude's response
@@ -22,7 +23,8 @@ pub struct InterceptedToolCall {
 }
 
 impl InterceptedToolCall {
-    /// Convert to a ToolCall that can be executed by our tool system
+    /// Convert to a `ToolCall` that can be executed by our tool system
+    #[must_use]
     pub fn to_tool_call(&self) -> ToolCall {
         // Map Claude Code tool names to our internal names
         let name_lower = self.name.to_lowercase();
@@ -43,28 +45,15 @@ impl InterceptedToolCall {
         for (key, value) in &self.parameters {
             let internal_key = match (name_lower.as_str(), key.as_str()) {
                 ("bash", "command") => "command",
-                ("read", "file_path") => "path",
-                ("read", "path") => "path",
-                ("write", "file_path") => "path",
-                ("write", "content") => "content",
-                ("write", "contents") => "content", // Claude sometimes uses plural
-                ("write_file", "file_path") => "path",
-                ("write_file", "path") => "path",
-                ("write_file", "content") => "content",
-                ("write_file", "contents") => "content", // Claude sometimes uses plural
-                ("edit", "file_path") => "path",
-                ("edit", "old_string") => "old_string",
-                ("edit", "new_string") => "new_string",
-                ("edit_file", "file_path") => "path",
-                ("edit_file", "path") => "path",
-                ("edit_file", "old_string") => "old_string",
-                ("edit_file", "new_string") => "new_string",
-                ("read_file", "file_path") => "path",
-                ("read_file", "path") => "path",
-                ("glob", "pattern") => "pattern",
-                ("glob", "path") => "path",
-                ("grep", "pattern") => "pattern",
-                ("grep", "path") => "path",
+                (
+                    "read" | "write" | "write_file" | "edit" | "edit_file" | "read_file",
+                    "file_path" | "path",
+                )
+                | ("glob" | "grep", "path") => "path",
+                ("write" | "write_file", "content" | "contents") => "content",
+                ("edit" | "edit_file", "old_string") => "old_string",
+                ("edit" | "edit_file", "new_string") => "new_string",
+                ("glob" | "grep", "pattern") => "pattern",
                 (_, k) => k,
             };
             args.insert(
@@ -88,7 +77,7 @@ impl InterceptedToolCall {
 pub struct ToolInterceptor {
     /// Accumulated content that may contain tool calls
     buffer: String,
-    /// Whether we're currently inside a function_calls block
+    /// Whether we're currently inside a `function_calls` block
     in_function_calls: bool,
 }
 
@@ -99,7 +88,8 @@ impl Default for ToolInterceptor {
 }
 
 impl ToolInterceptor {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             buffer: String::new(),
             in_function_calls: false,
@@ -112,6 +102,7 @@ impl ToolInterceptor {
     }
 
     /// Get the current buffer contents
+    #[must_use]
     pub fn get_buffer(&self) -> &str {
         &self.buffer
     }
@@ -139,7 +130,8 @@ impl ToolInterceptor {
     /// Claude Code uses multiple formats:
     /// 1. <invoke name="Bash"><parameter name="command">...</parameter></invoke>
     /// 2. <bash>...</bash> (shorthand)
-    /// 3. <function_calls><invoke>...</invoke></function_calls>
+    /// 3. <`function_calls`><invoke>...</invoke></`function_calls`>
+    #[must_use]
     pub fn has_pending_tool_calls(&self) -> bool {
         // Check for full invoke format
         if self.buffer.contains("<invoke name=\"") {
@@ -147,8 +139,8 @@ impl ToolInterceptor {
         }
         // Check for shorthand format like <bash>, <read>, etc.
         for tool in Self::SHORTHAND_TOOLS {
-            let open_tag = format!("<{}>", tool);
-            let open_tag_with_attr = format!("<{} ", tool); // <write path="...">
+            let open_tag = format!("<{tool}>");
+            let open_tag_with_attr = format!("<{tool} "); // <write path="...">
             if self.buffer.contains(&open_tag) || self.buffer.contains(&open_tag_with_attr) {
                 return true;
             }
@@ -157,6 +149,7 @@ impl ToolInterceptor {
     }
 
     /// Check if we have a complete tool block
+    #[must_use]
     pub fn has_complete_block(&self) -> bool {
         // Check for full invoke format
         if let Some(start) = self.buffer.find("<invoke name=\"") {
@@ -171,9 +164,9 @@ impl ToolInterceptor {
         }
         // Check for shorthand format
         for tool in Self::SHORTHAND_TOOLS {
-            let open_tag = format!("<{}>", tool);
-            let open_tag_with_attr = format!("<{} ", tool);
-            let close_tag = format!("</{}>", tool);
+            let open_tag = format!("<{tool}>");
+            let open_tag_with_attr = format!("<{tool} ");
+            let close_tag = format!("</{tool}>");
 
             let has_open =
                 self.buffer.contains(&open_tag) || self.buffer.contains(&open_tag_with_attr);
@@ -206,7 +199,7 @@ impl ToolInterceptor {
 
     /// Strip hallucinated result blocks and wrapper tags from the buffer.
     ///
-    /// When a model generates tool calls in text mode (no structured tool_use),
+    /// When a model generates tool calls in text mode (no structured `tool_use`),
     /// it often continues generating fabricated `<function_results>` blocks after
     /// each tool call. This method strips those hallucinated outputs so we can
     /// extract the real tool calls and execute them ourselves.
@@ -295,11 +288,9 @@ impl ToolInterceptor {
         // Check if there's a <result> block to skip
         let after_invoke = &self.buffer[invoke_end..];
         let result_end = if after_invoke.trim_start().starts_with(RESULT_OPEN) {
-            if let Some(result_close_idx) = after_invoke.find(RESULT_CLOSE) {
-                invoke_end + result_close_idx + RESULT_CLOSE.len()
-            } else {
-                invoke_end
-            }
+            after_invoke
+                .find(RESULT_CLOSE)
+                .map_or(invoke_end, |idx| invoke_end + idx + RESULT_CLOSE.len())
         } else {
             invoke_end
         };
@@ -309,7 +300,7 @@ impl ToolInterceptor {
         let invoke_block = &self.buffer[start_idx..invoke_end];
 
         let tools = self.parse_invocations(invoke_block);
-        self.buffer = after.clone();
+        self.buffer.clone_from(&after);
 
         Some((tools, before, after))
     }
@@ -322,8 +313,8 @@ impl ToolInterceptor {
         let mut earliest_match: Option<(usize, &str)> = None;
 
         for tool in Self::SHORTHAND_TOOLS {
-            let open_tag = format!("<{}>", tool);
-            let open_tag_attr = format!("<{} ", tool);
+            let open_tag = format!("<{tool}>");
+            let open_tag_attr = format!("<{tool} ");
 
             // Check for <tool> or <tool attr="...">
             if let Some(idx) = self.buffer.find(&open_tag) {
@@ -339,7 +330,7 @@ impl ToolInterceptor {
         }
 
         let (start_idx, tool_name) = earliest_match?;
-        let close_tag = format!("</{}>", tool_name);
+        let close_tag = format!("</{tool_name}>");
         let close_idx = self.buffer[start_idx..].find(&close_tag)?;
         let block_end = start_idx + close_idx + close_tag.len();
 
@@ -351,21 +342,21 @@ impl ToolInterceptor {
 
         let before = self.buffer[..start_idx].to_string();
         let after = self.buffer[block_end..].to_string();
-        self.buffer = after.clone();
+        self.buffer.clone_from(&after);
 
         Some((vec![tool], before, after))
     }
 
     /// Parse a shorthand tool tag like <bash>command</bash> or <write path="file">content</write>
-    /// Also handles nested element format: <write_file><path>file</path><content>...</content></write_file>
+    /// Also handles nested element format: <`write_file`><path>file</path><content>...</content></`write_file`>
     fn parse_shorthand_tag(
         &self,
         tool_name: &str,
         tag_content: &str,
     ) -> Option<InterceptedToolCall> {
-        let open_simple = format!("<{}>", tool_name);
-        let open_attr = format!("<{} ", tool_name);
-        let close_tag = format!("</{}>", tool_name);
+        let open_simple = format!("<{tool_name}>");
+        let open_attr = format!("<{tool_name} ");
+        let close_tag = format!("</{tool_name}>");
 
         let mut parameters = HashMap::new();
 
@@ -428,19 +419,12 @@ impl ToolInterceptor {
                         parameters.insert("content".to_string(), content);
                     }
                 }
-                "edit" | "edit_file" => {
-                    // Content might be used for something, but usually params are in attributes
-                }
-                "glob" => {
+                "glob" | "grep" => {
                     if !parameters.contains_key("pattern") {
                         parameters.insert("pattern".to_string(), content);
                     }
                 }
-                "grep" => {
-                    if !parameters.contains_key("pattern") {
-                        parameters.insert("pattern".to_string(), content);
-                    }
-                }
+                // edit/edit_file: params are in attributes; other tools: no special handling
                 _ => {}
             }
         }
@@ -450,12 +434,13 @@ impl ToolInterceptor {
             parameters,
             id: format!(
                 "toolu_{}",
-                safe_truncate(&Uuid::new_v4().to_string().replace("-", ""), 24)
+                safe_truncate(&Uuid::new_v4().to_string().replace('-', ""), 24)
             ),
         })
     }
 
     /// Parse nested XML elements like <path>value</path><content>...</content>
+    #[allow(clippy::unused_self)]
     fn parse_nested_elements(&self, content: &str, parameters: &mut HashMap<String, String>) {
         let mut search_pos = 0;
 
@@ -492,7 +477,7 @@ impl ToolInterceptor {
             }
 
             // Find closing tag
-            let close_tag = format!("</{}>", elem_name);
+            let close_tag = format!("</{elem_name}>");
             let Some(close_pos) = content[abs_tag_end..].find(&close_tag) else {
                 search_pos = abs_tag_end + 1;
                 continue;
@@ -518,7 +503,8 @@ impl ToolInterceptor {
         }
     }
 
-    /// Parse invoke tags within a function_calls block
+    /// Parse invoke tags within a `function_calls` block
+    #[allow(clippy::unused_self)]
     fn parse_invocations(&self, block: &str) -> Vec<InterceptedToolCall> {
         const INVOKE_OPEN: &str = "<invoke name=\"";
         const INVOKE_CLOSE: &str = "</invoke>";
@@ -588,7 +574,7 @@ impl ToolInterceptor {
                 parameters,
                 id: format!(
                     "toolu_{}",
-                    &Uuid::new_v4().to_string().replace("-", "")[..24]
+                    &Uuid::new_v4().to_string().replace('-', "")[..24]
                 ),
             });
 
@@ -608,6 +594,7 @@ pub struct ToolExecutionResult {
 }
 
 /// Execute intercepted tool calls locally and format results for Claude
+#[must_use]
 pub fn execute_intercepted_tools(
     tools: &[InterceptedToolCall],
     memory_db: Option<&crate::memory::MemoryDb>,
@@ -619,11 +606,10 @@ pub fn execute_intercepted_tools(
 
         println!("\n\x1b[36m⚡ Running {} locally...\x1b[0m", tool.name);
 
-        let result = if let Some(db) = memory_db {
-            crate::tools::execute_tool_with_memory(&tool_call, Some(db))
-        } else {
-            crate::tools::execute_tool(&tool_call)
-        };
+        let result = memory_db.map_or_else(
+            || crate::tools::execute_tool(&tool_call),
+            |db| crate::tools::execute_tool_with_memory(&tool_call, Some(db)),
+        );
 
         // Show preview
         let preview: String = result
@@ -633,7 +619,7 @@ pub fn execute_intercepted_tools(
             .collect::<Vec<_>>()
             .join("\n");
         if result.is_error {
-            println!("\x1b[31m✗ Error:\x1b[0m {}", preview);
+            println!("\x1b[31m✗ Error:\x1b[0m {preview}");
         } else {
             println!(
                 "\x1b[32m✓\x1b[0m {}",
@@ -657,6 +643,7 @@ pub fn execute_intercepted_tools(
 }
 
 /// Format tool execution results as XML with tool names for better completion signaling
+#[must_use]
 pub fn format_execution_results_xml(results: &[ToolExecutionResult]) -> String {
     let refs: Vec<(&str, Option<&str>, &str, bool)> = results
         .iter()
@@ -676,6 +663,7 @@ pub fn format_execution_results_xml(results: &[ToolExecutionResult]) -> String {
 ///
 /// Results include explicit status and completion signals to prevent the model
 /// from retrying operations that already succeeded.
+#[must_use]
 pub fn format_tool_results_xml(results: &[(String, String, bool)]) -> String {
     format_tool_results_xml_with_names(
         &results
@@ -697,13 +685,14 @@ fn xml_escape(s: &str) -> String {
 }
 
 /// Format tool results with tool names for better completion signaling
+#[must_use]
 pub fn format_tool_results_xml_with_names(results: &[(&str, Option<&str>, &str, bool)]) -> String {
     let mut xml = String::new();
     xml.push_str("<function_results>\n");
 
     for (id, tool_name, content, is_error) in results {
         xml.push_str("<result>\n");
-        xml.push_str(&format!("<tool_use_id>{}</tool_use_id>\n", xml_escape(id)));
+        let _ = writeln!(xml, "<tool_use_id>{}</tool_use_id>", xml_escape(id));
 
         if *is_error {
             xml.push_str("<status>error</status>\n");
@@ -735,7 +724,7 @@ pub fn format_tool_results_xml_with_names(results: &[(&str, Option<&str>, &str, 
                     _ => None,
                 };
                 if let Some(hint) = completion_hint {
-                    xml.push_str(&format!("<completion_note>{}</completion_note>\n", hint));
+                    let _ = writeln!(xml, "<completion_note>{hint}</completion_note>");
                 }
             }
         }

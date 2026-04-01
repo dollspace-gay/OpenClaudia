@@ -7,7 +7,7 @@ use std::fs;
 pub fn handle_enter_plan_mode(chat_session: &mut ChatSession) -> String {
     let plans_dir = std::path::PathBuf::from(".openclaudia/plans");
     if let Err(e) = fs::create_dir_all(&plans_dir) {
-        return format!("Failed to create plans directory: {}", e);
+        return format!("Failed to create plans directory: {e}");
     }
 
     let plans_dir = std::fs::canonicalize(&plans_dir).unwrap_or(plans_dir);
@@ -16,12 +16,18 @@ pub fn handle_enter_plan_mode(chat_session: &mut ChatSession) -> String {
     let safe_id: String = chat_session
         .id
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if safe_id.is_empty() {
         return "Invalid session ID for plan file".to_string();
     }
-    let plan_file = plans_dir.join(format!("{}.md", safe_id));
+    let plan_file = plans_dir.join(format!("{safe_id}.md"));
 
     if !plan_file.exists() {
         let header = format!(
@@ -30,7 +36,7 @@ pub fn handle_enter_plan_mode(chat_session: &mut ChatSession) -> String {
             chrono::Utc::now().format("%Y-%m-%d %H:%M UTC")
         );
         if let Err(e) = fs::write(&plan_file, &header) {
-            return format!("Failed to create plan file: {}", e);
+            return format!("Failed to create plan file: {e}");
         }
     }
 
@@ -61,7 +67,7 @@ pub fn handle_enter_plan_mode(chat_session: &mut ChatSession) -> String {
 }
 
 /// Handle exiting plan mode. Reads plan file, shows to user for approval.
-/// Returns (result_text, should_exit_plan_mode).
+/// Returns (`result_text`, `should_exit_plan_mode`).
 pub fn handle_exit_plan_mode(
     chat_session: &mut ChatSession,
     allowed_prompts_json: &str,
@@ -91,7 +97,7 @@ pub fn handle_exit_plan_mode(
 
     println!("\n\x1b[1;36m{}\x1b[0m", "=".repeat(60));
     println!("\x1b[1;36m## Implementation Plan\x1b[0m\n");
-    println!("{}", plan_content);
+    println!("{plan_content}");
     println!("\x1b[1;36m{}\x1b[0m\n", "=".repeat(60));
     print!("\x1b[1;33mApprove? [y/n/edit]: \x1b[0m");
     io::stdout().flush().ok();
@@ -121,7 +127,9 @@ pub fn handle_exit_plan_mode(
                     "[Approved Implementation Plan]\n\
                      The user has approved the following plan. Execute it step by step.\n\n{}\n\n{}",
                     plan_content,
-                    if !allowed_prompts.is_empty() {
+                    if allowed_prompts.is_empty() {
+                        String::new()
+                    } else {
                         format!(
                             "Allowed operations:\n{}",
                             allowed_prompts
@@ -130,8 +138,6 @@ pub fn handle_exit_plan_mode(
                                 .collect::<Vec<_>>()
                                 .join("\n")
                         )
-                    } else {
-                        String::new()
                     }
                 )
             }));
@@ -154,7 +160,7 @@ pub fn handle_exit_plan_mode(
         }
         "edit" | "e" => {
             let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
-            println!("\n\x1b[90mOpening plan in {}...\x1b[0m", editor);
+            println!("\n\x1b[90mOpening plan in {editor}...\x1b[0m");
 
             let edit_result = std::process::Command::new(&editor)
                 .arg(&plan_state.plan_file)
@@ -166,7 +172,7 @@ pub fn handle_exit_plan_mode(
                         fs::read_to_string(&plan_state.plan_file).unwrap_or_default();
 
                     println!("\n\x1b[1;36m## Edited Plan\x1b[0m\n");
-                    println!("{}", edited_content);
+                    println!("{edited_content}");
                     println!();
                     print!("\x1b[1;33mApprove edited plan? [y/n]: \x1b[0m");
                     io::stdout().flush().ok();
@@ -192,7 +198,9 @@ pub fn handle_exit_plan_mode(
                                 "[Approved Implementation Plan (edited by user)]\n\
                                  The user has edited and approved the following plan. Execute it step by step.\n\n{}\n\n{}",
                                 edited_content,
-                                if !allowed_prompts.is_empty() {
+                                if allowed_prompts.is_empty() {
+                                    String::new()
+                                } else {
                                     format!(
                                         "Allowed operations:\n{}",
                                         allowed_prompts
@@ -201,8 +209,6 @@ pub fn handle_exit_plan_mode(
                                             .collect::<Vec<_>>()
                                             .join("\n")
                                     )
-                                } else {
-                                    String::new()
                                 }
                             )
                         }));
@@ -224,7 +230,7 @@ pub fn handle_exit_plan_mode(
                     false,
                 ),
                 Err(e) => {
-                    println!("\x1b[31mFailed to open editor '{}': {}\x1b[0m", editor, e);
+                    println!("\x1b[31mFailed to open editor '{editor}': {e}\x1b[0m");
                     (
                         "Failed to open editor. Still in plan mode.".to_string(),
                         false,
@@ -271,7 +277,7 @@ pub fn check_plan_mode_restriction(
     }
 }
 
-/// Process a tool result, checking for special markers (user_question, plan mode).
+/// Process a tool result, checking for special markers (`user_question`, plan mode).
 /// Returns the (possibly replaced) result content and whether it was a special marker.
 pub fn process_tool_result_marker(
     chat_session: &mut ChatSession,

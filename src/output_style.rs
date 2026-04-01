@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 /// Load the active output style, if any.
 /// Checks project-level first, then user-level.
+#[must_use]
 pub fn load_output_style() -> Option<String> {
     let project_style = PathBuf::from(".openclaudia/output-style.md");
     if project_style.exists() {
@@ -32,6 +33,7 @@ fn read_style(path: &Path) -> Option<String> {
 }
 
 /// Get a list of built-in style presets
+#[must_use]
 pub fn builtin_styles() -> Vec<(&'static str, &'static str)> {
     vec![
         (
@@ -57,19 +59,27 @@ pub fn builtin_styles() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
-/// Save a style to the project output-style file
+/// Save a style to the project output-style file.
+///
+/// # Errors
+///
+/// Returns an error if the directory cannot be created or the file cannot be written.
 pub fn save_output_style(content: &str) -> Result<(), String> {
     let dir = PathBuf::from(".openclaudia");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create directory: {}", e))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create directory: {e}"))?;
     std::fs::write(dir.join("output-style.md"), content)
-        .map_err(|e| format!("Failed to write: {}", e))
+        .map_err(|e| format!("Failed to write: {e}"))
 }
 
-/// Remove the project output-style file
+/// Remove the project output-style file.
+///
+/// # Errors
+///
+/// Returns an error if the file exists but cannot be removed.
 pub fn clear_output_style() -> Result<(), String> {
     let path = PathBuf::from(".openclaudia/output-style.md");
     if path.exists() {
-        std::fs::remove_file(&path).map_err(|e| format!("Failed to remove: {}", e))
+        std::fs::remove_file(&path).map_err(|e| format!("Failed to remove: {e}"))
     } else {
         Ok(())
     }

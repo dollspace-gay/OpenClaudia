@@ -2,12 +2,13 @@ use crate::tools::safe_truncate;
 use base64::Engine;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-/// Supported file types for read_file
-pub(crate) enum FileType {
+/// Supported file types for `read_file`
+pub enum FileType {
     Text,
     Image(&'static str), // mime type
     Pdf,
@@ -15,19 +16,20 @@ pub(crate) enum FileType {
 }
 
 /// Detect file type from extension
-pub(crate) fn detect_file_type(path: &str) -> FileType {
-    let lower = path.to_lowercase();
-    if lower.ends_with(".png") {
+pub fn detect_file_type(path: &str) -> FileType {
+    let p = Path::new(path);
+    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext.eq_ignore_ascii_case("png") {
         FileType::Image("image/png")
-    } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+    } else if ext.eq_ignore_ascii_case("jpg") || ext.eq_ignore_ascii_case("jpeg") {
         FileType::Image("image/jpeg")
-    } else if lower.ends_with(".gif") {
+    } else if ext.eq_ignore_ascii_case("gif") {
         FileType::Image("image/gif")
-    } else if lower.ends_with(".webp") {
+    } else if ext.eq_ignore_ascii_case("webp") {
         FileType::Image("image/webp")
-    } else if lower.ends_with(".pdf") {
+    } else if ext.eq_ignore_ascii_case("pdf") {
         FileType::Pdf
-    } else if lower.ends_with(".ipynb") {
+    } else if ext.eq_ignore_ascii_case("ipynb") {
         FileType::Notebook
     } else {
         FileType::Text
@@ -35,29 +37,27 @@ pub(crate) fn detect_file_type(path: &str) -> FileType {
 }
 
 /// Read an image file, base64-encode it, and return a structured result
-pub(crate) fn read_image_file(path: &str, mime_type: &str) -> (String, bool) {
+pub fn read_image_file(path: &str, mime_type: &str) -> (String, bool) {
     match fs::read(path) {
         Ok(bytes) => {
             let file_size = bytes.len();
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
             let filename = Path::new(path)
                 .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.to_string());
+                .map_or_else(|| path.to_string(), |n| n.to_string_lossy().to_string());
 
             let result = format!(
-                "[Image: {} ({} bytes, {}) - base64 data included for vision-capable models]\n{}",
-                filename, file_size, mime_type, b64
+                "[Image: {filename} ({file_size} bytes, {mime_type}) - base64 data included for vision-capable models]\n{b64}"
             );
             (result, false)
         }
-        Err(e) => (format!("Failed to read image file '{}': {}", path, e), true),
+        Err(e) => (format!("Failed to read image file '{path}': {e}"), true),
     }
 }
 
 /// Parse a page range string like "1-5", "3", or "10-20"
-/// Returns (first_page, last_page) as 1-indexed values
-pub(crate) fn parse_page_range(pages: &str) -> Result<(u32, u32), String> {
+/// Returns (`first_page`, `last_page`) as 1-indexed values
+pub fn parse_page_range(pages: &str) -> Result<(u32, u32), String> {
     let pages = pages.trim();
     if let Some((start, end)) = pages.split_once('-') {
         let start: u32 = start
@@ -72,16 +72,13 @@ pub(crate) fn parse_page_range(pages: &str) -> Result<(u32, u32), String> {
             return Err("Page numbers must be 1 or greater".to_string());
         }
         if start > end {
-            return Err(format!(
-                "Invalid page range: start ({}) > end ({})",
-                start, end
-            ));
+            return Err(format!("Invalid page range: start ({start}) > end ({end})"));
         }
         Ok((start, end))
     } else {
         let page: u32 = pages
             .parse()
-            .map_err(|_| format!("Invalid page number: '{}'", pages))?;
+            .map_err(|_| format!("Invalid page number: '{pages}'"))?;
         if page == 0 {
             return Err("Page numbers must be 1 or greater".to_string());
         }
@@ -90,7 +87,7 @@ pub(crate) fn parse_page_range(pages: &str) -> Result<(u32, u32), String> {
 }
 
 /// Read a PDF file using pdftotext
-pub(crate) fn read_pdf_file(path: &str, pages: Option<&str>) -> (String, bool) {
+pub fn read_pdf_file(path: &str, pages: Option<&str>) -> (String, bool) {
     // Check if pdftotext is available
     let check = Command::new("which").arg("pdftotext").output();
     match check {
@@ -127,9 +124,8 @@ pub(crate) fn read_pdf_file(path: &str, pages: Option<&str>) -> (String, bool) {
                                 if count > 10 {
                                     return (
                                         format!(
-                                            "PDF has {} pages. For large PDFs (>10 pages), you must specify \
-                                             a page range using the 'pages' parameter (e.g., '1-5', '3', '10-20').",
-                                            count
+                                            "PDF has {count} pages. For large PDFs (>10 pages), you must specify \
+                                             a page range using the 'pages' parameter (e.g., '1-5', '3', '10-20')."
                                         ),
                                         true,
                                     );
@@ -150,7 +146,7 @@ pub(crate) fn read_pdf_file(path: &str, pages: Option<&str>) -> (String, bool) {
                 cmd.arg("-f").arg(first.to_string());
                 cmd.arg("-l").arg(last.to_string());
             }
-            Err(e) => return (format!("Invalid pages parameter: {}", e), true),
+            Err(e) => return (format!("Invalid pages parameter: {e}"), true),
         }
     }
     cmd.arg(path);
@@ -160,48 +156,41 @@ pub(crate) fn read_pdf_file(path: &str, pages: Option<&str>) -> (String, bool) {
         Ok(output) => {
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return (format!("pdftotext failed for '{}': {}", path, stderr), true);
+                return (format!("pdftotext failed for '{path}': {stderr}"), true);
             }
             let text = String::from_utf8_lossy(&output.stdout).to_string();
             if text.trim().is_empty() {
                 (
-                    format!(
-                        "PDF '{}' produced no extractable text (may be image-based).",
-                        path
-                    ),
+                    format!("PDF '{path}' produced no extractable text (may be image-based)."),
                     false,
                 )
             } else {
                 (text, false)
             }
         }
-        Err(e) => (
-            format!("Failed to run pdftotext on '{}': {}", path, e),
-            true,
-        ),
+        Err(e) => (format!("Failed to run pdftotext on '{path}': {e}"), true),
     }
 }
 
 /// Read a Jupyter notebook (.ipynb) and format cells for display
-pub(crate) fn read_notebook_file(path: &str) -> (String, bool) {
+pub fn read_notebook_file(path: &str) -> (String, bool) {
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
-        Err(e) => return (format!("Failed to read notebook '{}': {}", path, e), true),
+        Err(e) => return (format!("Failed to read notebook '{path}': {e}"), true),
     };
 
     let notebook: Value = match serde_json::from_str(&content) {
         Ok(v) => v,
         Err(e) => {
             return (
-                format!("Failed to parse notebook '{}' as JSON: {}", path, e),
+                format!("Failed to parse notebook '{path}' as JSON: {e}"),
                 true,
             )
         }
     };
 
-    let cells = match notebook.get("cells").and_then(|c| c.as_array()) {
-        Some(c) => c,
-        None => return ("Notebook has no 'cells' array.".to_string(), true),
+    let Some(cells) = notebook.get("cells").and_then(|c| c.as_array()) else {
+        return ("Notebook has no 'cells' array.".to_string(), true);
     };
 
     let mut output = String::new();
@@ -222,10 +211,7 @@ pub(crate) fn read_notebook_file(path: &str) -> (String, bool) {
             _ => String::new(),
         };
 
-        output.push_str(&format!(
-            "Cell {} ({}):\n```\n{}\n```\n",
-            i, cell_type, source
-        ));
+        let _ = write!(output, "Cell {i} ({cell_type}):\n```\n{source}\n```\n");
 
         // For code cells, include text outputs (skip binary/image outputs)
         if cell_type == "code" {
@@ -244,10 +230,10 @@ pub(crate) fn read_notebook_file(path: &str) -> (String, bool) {
                                     Value::String(s) => s.clone(),
                                     _ => continue,
                                 };
-                                output.push_str(&format!("Output:\n{}\n", text_str));
+                                let _ = write!(output, "Output:\n{text_str}\n");
                             }
                         }
-                        Some("execute_result") | Some("display_data") => {
+                        Some("execute_result" | "display_data") => {
                             // Only include text/plain data, skip images and other binary
                             if let Some(data) = out.get("data") {
                                 if let Some(text_plain) = data.get("text/plain") {
@@ -260,7 +246,7 @@ pub(crate) fn read_notebook_file(path: &str) -> (String, bool) {
                                         Value::String(s) => s.clone(),
                                         _ => continue,
                                     };
-                                    output.push_str(&format!("Output:\n{}\n", text_str));
+                                    let _ = write!(output, "Output:\n{text_str}\n");
                                 }
                             }
                         }
@@ -269,7 +255,7 @@ pub(crate) fn read_notebook_file(path: &str) -> (String, bool) {
                             {
                                 let tb: Vec<&str> =
                                     traceback.iter().filter_map(|v| v.as_str()).collect();
-                                output.push_str(&format!("Error:\n{}\n", tb.join("\n")));
+                                let _ = write!(output, "Error:\n{}\n", tb.join("\n"));
                             }
                         }
                         _ => {}
@@ -284,23 +270,24 @@ pub(crate) fn read_notebook_file(path: &str) -> (String, bool) {
 }
 
 /// Read a plain text file with optional offset/limit
-pub(crate) fn read_text_file(path: &str, args: &HashMap<String, Value>) -> (String, bool) {
+pub fn read_text_file(path: &str, args: &HashMap<String, Value>) -> (String, bool) {
     // Get optional offset (1-indexed line number to start from)
     let offset = args
         .get("offset")
-        .and_then(|v| v.as_u64())
-        .map(|n| n.saturating_sub(1) as usize) // Convert to 0-indexed
-        .unwrap_or(0);
+        .and_then(serde_json::Value::as_u64)
+        .map_or(0, |n| {
+            usize::try_from(n.saturating_sub(1)).unwrap_or(usize::MAX)
+        });
 
     // Get optional limit (max lines to read)
     let limit = args
         .get("limit")
-        .and_then(|v| v.as_u64())
-        .map(|n| n as usize);
+        .and_then(serde_json::Value::as_u64)
+        .map(|n| usize::try_from(n).unwrap_or(usize::MAX));
 
     match fs::read_to_string(path) {
-        Ok(content) => {
-            let lines: Vec<&str> = content.lines().collect();
+        Ok(file_content) => {
+            let lines: Vec<&str> = file_content.lines().collect();
             let total_lines = lines.len();
 
             // Apply offset and limit
@@ -320,32 +307,29 @@ pub(crate) fn read_text_file(path: &str, args: &HashMap<String, Value>) -> (Stri
             let result = numbered.join("\n");
 
             // Add context about what was shown
-            let context = if offset > 0 || limit.is_some() {
+            let suffix = if offset > 0 || limit.is_some() {
                 let shown_start = offset + 1;
                 let shown_end = offset + selected_lines.len();
-                format!(
-                    "\n(showing lines {}-{} of {} total)",
-                    shown_start, shown_end, total_lines
-                )
+                format!("\n(showing lines {shown_start}-{shown_end} of {total_lines} total)")
             } else {
                 String::new()
             };
 
             // Truncate if too long
-            if result.len() > 100000 {
+            if result.len() > 100_000 {
                 (
                     format!(
                         "{}...\n(file truncated, {} total chars){}",
-                        safe_truncate(&result, 100000),
+                        safe_truncate(&result, 100_000),
                         result.len(),
-                        context
+                        suffix
                     ),
                     false,
                 )
             } else {
-                (format!("{}{}", result, context), false)
+                (format!("{result}{suffix}"), false)
             }
         }
-        Err(e) => (format!("Failed to read file '{}': {}", path, e), true),
+        Err(e) => (format!("Failed to read file '{path}': {e}"), true),
     }
 }

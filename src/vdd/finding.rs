@@ -23,11 +23,11 @@ pub enum Severity {
 impl std::fmt::Display for Severity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Severity::Critical => write!(f, "CRITICAL"),
-            Severity::High => write!(f, "HIGH"),
-            Severity::Medium => write!(f, "MEDIUM"),
-            Severity::Low => write!(f, "LOW"),
-            Severity::Info => write!(f, "INFO"),
+            Self::Critical => write!(f, "CRITICAL"),
+            Self::High => write!(f, "HIGH"),
+            Self::Medium => write!(f, "MEDIUM"),
+            Self::Low => write!(f, "LOW"),
+            Self::Info => write!(f, "INFO"),
         }
     }
 }
@@ -37,7 +37,7 @@ impl std::fmt::Display for Severity {
 // ==========================================================================
 
 /// Whether a finding is genuine or a false positive
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FindingStatus {
     Genuine,

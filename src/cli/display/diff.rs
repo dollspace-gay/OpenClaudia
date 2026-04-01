@@ -11,7 +11,7 @@ pub fn render_color_diff(path: &str, old_text: &str, new_text: &str) {
 
     // Header
     let _ = stdout.execute(SetForegroundColor(Color::DarkGrey));
-    let _ = stdout.execute(Print(format!("  ── {} ", path)));
+    let _ = stdout.execute(Print(format!("  ── {path} ")));
     let _ = stdout.execute(ResetColor);
     let _ = stdout.execute(Print("\n"));
 
@@ -33,7 +33,7 @@ pub fn render_color_diff(path: &str, old_text: &str, new_text: &str) {
                 };
 
                 // Line number gutter
-                if let Some(line_no) = change.old_index().or(change.new_index()) {
+                if let Some(line_no) = change.old_index().or_else(|| change.new_index()) {
                     let _ = stdout.execute(SetForegroundColor(Color::DarkGrey));
                     let _ = stdout.execute(Print(format!("  {:>4} ", line_no + 1)));
                 }
@@ -54,7 +54,7 @@ pub fn render_color_diff(path: &str, old_text: &str, new_text: &str) {
                                 let _ = stdout.execute(SetBackgroundColor(Color::DarkGreen));
                                 let _ = stdout.execute(SetForegroundColor(Color::White));
                             }
-                            _ => {}
+                            ChangeTag::Equal => {}
                         }
                         let _ = stdout.execute(Print(&value));
                         let _ = stdout.execute(ResetColor);

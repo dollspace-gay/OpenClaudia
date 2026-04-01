@@ -104,7 +104,7 @@ impl RulesEngine {
             let path = entry.path();
 
             // Only process .md files
-            if path.extension().map(|e| e == "md").unwrap_or(false) {
+            if path.extension().is_some_and(|e| e == "md") {
                 if let Some(rule) = Self::load_rule(&path) {
                     info!(name = %rule.name, languages = ?rule.languages, "Loaded rule");
                     rules.push(rule);
@@ -198,7 +198,7 @@ impl RulesEngine {
         ];
 
         for lang in known_languages {
-            if lower == lang || lower.starts_with(&format!("{}-", lang)) {
+            if lower == lang || lower.starts_with(&format!("{lang}-")) {
                 return (filename.to_string(), vec![lang.to_string()]);
             }
         }
@@ -208,6 +208,7 @@ impl RulesEngine {
     }
 
     /// Get all rules that apply to the given file extensions
+    #[must_use]
     pub fn get_rules_for_extensions(&self, extensions: &[&str]) -> Vec<&Rule> {
         // Convert extensions to languages
         let languages: Vec<&str> = extensions
@@ -231,6 +232,7 @@ impl RulesEngine {
     }
 
     /// Get all rules that apply to files with the given paths
+    #[must_use]
     pub fn get_rules_for_files(&self, file_paths: &[&str]) -> Vec<&Rule> {
         let extensions: Vec<&str> = file_paths
             .iter()
@@ -241,6 +243,7 @@ impl RulesEngine {
     }
 
     /// Get combined rule content for the given extensions
+    #[must_use]
     pub fn get_combined_rules(&self, extensions: &[&str]) -> String {
         let rules = self.get_rules_for_extensions(extensions);
 
@@ -261,17 +264,20 @@ impl RulesEngine {
     }
 
     /// Get the rules directory path
+    #[must_use]
     pub fn rules_dir(&self) -> &Path {
         &self.rules_dir
     }
 
     /// Get all loaded rules
+    #[must_use]
     pub fn all_rules(&self) -> &[Rule] {
         &self.rules
     }
 }
 
-/// Extract file extensions from tool input (for PreToolUse hooks)
+/// Extract file extensions from tool input (for `PreToolUse` hooks)
+#[must_use]
 pub fn extract_extensions_from_tool_input(
     tool_name: &str,
     input: &serde_json::Value,

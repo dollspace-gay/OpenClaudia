@@ -35,6 +35,7 @@ pub struct App {
 }
 
 impl App {
+    #[must_use]
     pub fn new(model: &str, provider: &str) -> Self {
         Self {
             messages: MessageList::new(),
@@ -51,11 +52,18 @@ impl App {
     }
 
     /// Get an event sender for pushing async API events into the TUI loop.
+    #[must_use]
     pub fn event_sender(&self) -> Option<std::sync::mpsc::Sender<AppEvent>> {
-        self.event_handler.as_ref().map(|h| h.sender())
+        self.event_handler
+            .as_ref()
+            .map(super::events::EventHandler::sender)
     }
 
     /// Run the interactive TUI event loop.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if terminal initialization or rendering fails.
     pub fn run(&mut self) -> io::Result<()> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -95,7 +103,8 @@ impl App {
                     self.messages.scroll_to_bottom();
                 }
                 Ok(AppEvent::StreamThinking(text)) => {
-                    self.messages.append_streaming(&format!("[thinking] {}", text));
+                    self.messages
+                        .append_streaming(&format!("[thinking] {text}"));
                 }
                 Ok(AppEvent::ToolStart { name, description }) => {
                     self.messages.add(DisplayMessage {
@@ -132,7 +141,7 @@ impl App {
                     self.messages.finish_streaming();
                     self.messages.add(DisplayMessage {
                         role: "system".to_string(),
-                        content: format!("Error: {}", msg),
+                        content: format!("Error: {msg}"),
                         tool_name: None,
                         is_error: true,
                         is_thinking: false,
@@ -209,7 +218,7 @@ impl App {
                     // Show user message
                     self.messages.add(DisplayMessage {
                         role: "user".to_string(),
-                        content: text.clone(),
+                        content: text,
                         tool_name: None,
                         is_error: false,
                         is_thinking: false,
@@ -249,7 +258,7 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(3),   // Messages
+                Constraint::Min(3),    // Messages
                 Constraint::Length(3), // Input
                 Constraint::Length(1), // Status
             ])
@@ -260,10 +269,7 @@ impl App {
 
         // ── Input ──
         let title = if self.is_waiting {
-            format!(
-                " {} Waiting... ",
-                SPINNER_FRAMES[self.spinner_frame]
-            )
+            format!(" {} Waiting... ", SPINNER_FRAMES[self.spinner_frame])
         } else {
             " Message ".to_string()
         };
@@ -280,9 +286,13 @@ impl App {
 
         // Cursor
         if !self.is_waiting {
+            #[allow(clippy::cast_possible_truncation)] // cursor_pos bounded by terminal width
             let cx = chunks[1].x + 1 + self.input.cursor_pos as u16;
             let cy = chunks[1].y + 1;
-            frame.set_cursor_position(Position::new(cx.min(chunks[1].right().saturating_sub(1)), cy));
+            frame.set_cursor_position(Position::new(
+                cx.min(chunks[1].right().saturating_sub(1)),
+                cy,
+            ));
         }
 
         // ── Status bar ──

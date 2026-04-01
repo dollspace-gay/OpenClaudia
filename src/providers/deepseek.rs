@@ -1,4 +1,4 @@
-//! DeepSeek API adapter (OpenAI-compatible with thinking support).
+//! `DeepSeek` API adapter (OpenAI-compatible with thinking support).
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -9,11 +9,12 @@ use crate::proxy::ChatCompletionRequest;
 
 use super::{ProviderAdapter, ProviderError};
 
-/// DeepSeek API adapter (OpenAI-compatible with thinking support)
+/// `DeepSeek` API adapter (OpenAI-compatible with thinking support)
 pub struct DeepSeekAdapter;
 
 impl DeepSeekAdapter {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -26,7 +27,7 @@ impl Default for DeepSeekAdapter {
 
 #[async_trait]
 impl ProviderAdapter for DeepSeekAdapter {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "deepseek"
     }
 
@@ -63,7 +64,7 @@ impl ProviderAdapter for DeepSeekAdapter {
 
     fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {
         vec![
-            ("Authorization".to_string(), format!("Bearer {}", api_key)),
+            ("Authorization".to_string(), format!("Bearer {api_key}")),
             ("content-type".to_string(), "application/json".to_string()),
         ]
     }

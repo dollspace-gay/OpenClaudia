@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use super::default_true;
 
 /// VDD operating mode
-#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum VddMode {
     /// Adversary findings injected as context for next turn
@@ -18,8 +18,8 @@ pub enum VddMode {
 impl fmt::Display for VddMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            VddMode::Advisory => write!(f, "advisory"),
-            VddMode::Blocking => write!(f, "blocking"),
+            Self::Advisory => write!(f, "advisory"),
+            Self::Blocking => write!(f, "blocking"),
         }
     }
 }
@@ -84,11 +84,11 @@ fn default_adversary_provider() -> String {
     "google".to_string()
 }
 
-fn default_adversary_temperature() -> f32 {
+const fn default_adversary_temperature() -> f32 {
     0.3
 }
 
-fn default_adversary_max_tokens() -> u32 {
+const fn default_adversary_max_tokens() -> u32 {
     4096
 }
 
@@ -118,15 +118,15 @@ pub struct VddThresholds {
     pub min_iterations: u32,
 }
 
-fn default_max_iterations() -> u32 {
+const fn default_max_iterations() -> u32 {
     5
 }
 
-fn default_fp_threshold() -> f32 {
+const fn default_fp_threshold() -> f32 {
     0.75
 }
 
-fn default_min_iterations() -> u32 {
+const fn default_min_iterations() -> u32 {
     2
 }
 
@@ -151,7 +151,7 @@ pub struct VddStaticAnalysis {
     #[serde(default = "default_true")]
     pub auto_detect: bool,
     /// Shell commands to run (exit code 0 = pass)
-    /// If empty and auto_detect is true, commands are auto-detected from project type.
+    /// If empty and `auto_detect` is true, commands are auto-detected from project type.
     #[serde(default)]
     pub commands: Vec<String>,
     /// Timeout per command in seconds
@@ -159,7 +159,7 @@ pub struct VddStaticAnalysis {
     pub timeout_seconds: u64,
 }
 
-fn default_analysis_timeout() -> u64 {
+const fn default_analysis_timeout() -> u64 {
     120
 }
 
@@ -204,6 +204,11 @@ impl Default for VddTracking {
 
 impl VddConfig {
     /// Validate VDD configuration. Returns error message if invalid.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the adversary provider is the same as the builder,
+    /// or if required configuration fields are missing.
     pub fn validate(&self, builder_provider: &str) -> Result<(), String> {
         if !self.enabled {
             return Ok(());

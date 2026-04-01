@@ -24,7 +24,8 @@ pub struct MessageList {
 }
 
 impl MessageList {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             messages: Vec::new(),
             scroll_offset: 0,
@@ -56,15 +57,15 @@ impl MessageList {
         self.is_streaming = false;
     }
 
-    pub fn scroll_up(&mut self, n: u16) {
+    pub const fn scroll_up(&mut self, n: u16) {
         self.scroll_offset = self.scroll_offset.saturating_add(n);
     }
 
-    pub fn scroll_down(&mut self, n: u16) {
+    pub const fn scroll_down(&mut self, n: u16) {
         self.scroll_offset = self.scroll_offset.saturating_sub(n);
     }
 
-    pub fn scroll_to_bottom(&mut self) {
+    pub const fn scroll_to_bottom(&mut self) {
         self.scroll_offset = 0;
     }
 
@@ -87,15 +88,19 @@ impl MessageList {
                         .add_modifier(Modifier::BOLD),
                 ),
                 "tool" => ("⚙ ", Style::default().fg(Color::Rgb(218, 165, 32))),
-                "system" => ("  ", Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
+                "system" => (
+                    "  ",
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::ITALIC),
+                ),
                 _ => ("  ", Style::default().fg(Color::DarkGray)),
             };
 
-            let header = if let Some(ref tool) = msg.tool_name {
-                format!("{}Tool: {}", icon, tool)
-            } else {
-                format!("{}{}", icon, msg.role)
-            };
+            let header = msg.tool_name.as_ref().map_or_else(
+                || format!("{}{}", icon, msg.role),
+                |tool| format!("{icon}Tool: {tool}"),
+            );
             lines.push(Line::from(Span::styled(header, style)));
 
             let content_style = if msg.is_error {
@@ -109,10 +114,7 @@ impl MessageList {
             };
 
             for line in msg.content.lines() {
-                lines.push(Line::from(Span::styled(
-                    format!("  {}", line),
-                    content_style,
-                )));
+                lines.push(Line::from(Span::styled(format!("  {line}"), content_style)));
             }
             lines.push(Line::from(""));
         }
@@ -126,7 +128,7 @@ impl MessageList {
                     .add_modifier(Modifier::BOLD),
             )));
             for line in self.streaming_text.lines() {
-                lines.push(Line::from(format!("  {}", line)));
+                lines.push(Line::from(format!("  {line}")));
             }
             // Blinking cursor
             lines.push(Line::from(Span::styled(
@@ -141,6 +143,7 @@ impl MessageList {
     /// Render the message list into a frame area.
     pub fn render(&self, frame: &mut Frame, area: Rect) {
         let lines = self.build_lines();
+        #[allow(clippy::cast_possible_truncation)] // line count bounded by terminal height
         let total = lines.len() as u16;
         let visible = area.height;
         let scroll = if total > visible {

@@ -2,7 +2,7 @@
 //!
 //! Uses a scoring algorithm inspired by fzf-v2/nucleo with:
 //! - Boundary bonuses (start of path segment)
-//! - CamelCase bonuses
+//! - `CamelCase` bonuses
 //! - Consecutive match bonuses
 //! - Gap penalties
 //! - First-char bonus
@@ -31,7 +31,8 @@ pub struct FileIndex {
 }
 
 impl FileIndex {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             paths: Vec::new(),
             lower_paths: Vec::new(),
@@ -39,6 +40,7 @@ impl FileIndex {
     }
 
     /// Build index by walking the directory tree, respecting .gitignore.
+    #[must_use]
     pub fn build(root: &Path) -> Self {
         let mut index = Self::new();
         // Walk directory, skip hidden dirs, .git, node_modules, target, etc.
@@ -47,9 +49,8 @@ impl FileIndex {
     }
 
     fn walk_dir(&mut self, root: &Path, dir: &Path) {
-        let entries = match std::fs::read_dir(dir) {
-            Ok(e) => e,
-            Err(_) => return,
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
         };
         for entry in entries.flatten() {
             let path = entry.path();
@@ -77,6 +78,7 @@ impl FileIndex {
     }
 
     /// Search for files matching the query, returning top N results sorted by score.
+    #[must_use]
     pub fn search(&self, query: &str, limit: usize) -> Vec<SearchResult> {
         if query.is_empty() {
             return Vec::new();
@@ -143,12 +145,7 @@ impl FileIndex {
                 // Boundary bonus (after /, \, ., -, _)
                 if pi > 0 {
                     let prev = path_chars[pi - 1];
-                    if prev == '/'
-                        || prev == '\\'
-                        || prev == '.'
-                        || prev == '-'
-                        || prev == '_'
-                    {
+                    if prev == '/' || prev == '\\' || prev == '.' || prev == '-' || prev == '_' {
                         score += BONUS_BOUNDARY;
                     }
                     // CamelCase bonus
@@ -170,6 +167,7 @@ impl FileIndex {
                         score += BONUS_CONSECUTIVE * consecutive;
                     } else {
                         // Gap penalty
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
                         let gap = (pi - last - 1) as i32;
                         score -= PENALTY_GAP_START + PENALTY_GAP_EXTENSION * (gap - 1).max(0);
                         consecutive = 0;
@@ -182,7 +180,9 @@ impl FileIndex {
         }
 
         // Prefer shorter paths (less noise)
-        score -= (path_chars.len() as i32) / 10;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let path_len_penalty = (path_chars.len() as i32) / 10;
+        score -= path_len_penalty;
 
         // Penalize test files slightly
         if lower_path.contains("test") || lower_path.contains("spec") {
@@ -193,11 +193,13 @@ impl FileIndex {
     }
 
     /// Get total file count
-    pub fn len(&self) -> usize {
+    #[must_use]
+    pub const fn len(&self) -> usize {
         self.paths.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
         self.paths.is_empty()
     }
 }

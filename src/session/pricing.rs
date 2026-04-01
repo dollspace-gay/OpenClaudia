@@ -15,103 +15,128 @@ pub struct ModelPricing {
 ///
 /// Returns hardcoded pricing for common models. Pricing is approximate
 /// and may not reflect current rates or promotional pricing.
+#[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn get_pricing(model: &str) -> Option<ModelPricing> {
     let m = model.to_lowercase();
-    match () {
-        _ if m.contains("opus") => Some(ModelPricing {
+    if m.contains("opus") {
+        Some(ModelPricing {
             input_per_million: 15.0,
             output_per_million: 75.0,
-        }),
-        _ if m.contains("sonnet") && m.contains("3.5") => Some(ModelPricing {
+        })
+    } else if m.contains("sonnet") {
+        // Both Sonnet 3.5 and later Sonnet models share the same pricing
+        Some(ModelPricing {
             input_per_million: 3.0,
             output_per_million: 15.0,
-        }),
-        _ if m.contains("sonnet") => Some(ModelPricing {
-            input_per_million: 3.0,
-            output_per_million: 15.0,
-        }),
-        _ if m.contains("haiku") => Some(ModelPricing {
+        })
+    } else if m.contains("haiku") {
+        Some(ModelPricing {
             input_per_million: 0.25,
             output_per_million: 1.25,
-        }),
-        _ if m.contains("gpt-5.2") => Some(ModelPricing {
+        })
+    } else if m.contains("gpt-5.2") {
+        Some(ModelPricing {
             input_per_million: 2.0,
             output_per_million: 8.0,
-        }),
-        _ if m.contains("gpt-5") && m.contains("mini") => Some(ModelPricing {
+        })
+    } else if m.contains("gpt-5") && m.contains("mini") {
+        Some(ModelPricing {
             input_per_million: 0.50,
             output_per_million: 2.0,
-        }),
-        _ if m.contains("gpt-5") && m.contains("nano") => Some(ModelPricing {
+        })
+    } else if m.contains("gpt-5") && m.contains("nano") {
+        Some(ModelPricing {
             input_per_million: 0.10,
             output_per_million: 0.40,
-        }),
-        _ if m.contains("gpt-5") => Some(ModelPricing {
+        })
+    } else if m.contains("gpt-5") {
+        Some(ModelPricing {
             input_per_million: 2.0,
             output_per_million: 8.0,
-        }),
-        _ if m.contains("gpt-4.1") && m.contains("nano") => Some(ModelPricing {
+        })
+    } else if m.contains("gpt-4.1") && m.contains("nano") {
+        Some(ModelPricing {
             input_per_million: 0.10,
             output_per_million: 0.40,
-        }),
-        _ if m.contains("gpt-4.1") && m.contains("mini") => Some(ModelPricing {
+        })
+    } else if m.contains("gpt-4.1") && m.contains("mini") {
+        Some(ModelPricing {
             input_per_million: 0.40,
             output_per_million: 1.60,
-        }),
-        _ if m.contains("gpt-4.1") => Some(ModelPricing {
+        })
+    } else if m.contains("gpt-4.1") {
+        Some(ModelPricing {
             input_per_million: 2.0,
             output_per_million: 8.0,
-        }),
-        _ if m.contains("gpt-4o-mini") => Some(ModelPricing {
+        })
+    } else if m.contains("gpt-4o-mini") {
+        Some(ModelPricing {
             input_per_million: 0.15,
             output_per_million: 0.60,
-        }),
-        _ if m.contains("gpt-4o") => Some(ModelPricing {
+        })
+    } else if m.contains("gpt-4o") {
+        Some(ModelPricing {
             input_per_million: 2.5,
             output_per_million: 10.0,
-        }),
-        // gpt-4-turbo before generic gpt-4 (more specific first)
-        _ if m.contains("gpt-4-turbo") || m.contains("gpt-4.1") => Some(ModelPricing {
+        })
+    } else if m.contains("gpt-4-turbo") {
+        Some(ModelPricing {
             input_per_million: 10.0,
             output_per_million: 30.0,
-        }),
-        _ if m.contains("gpt-4") => Some(ModelPricing {
+        })
+    } else if m.contains("gpt-4") {
+        Some(ModelPricing {
             input_per_million: 30.0,
             output_per_million: 60.0,
-        }),
-        _ if m.contains("o3") || m.contains("o4") => Some(ModelPricing {
+        })
+    } else if m.contains("o3") || m.contains("o4") {
+        Some(ModelPricing {
             input_per_million: 10.0,
             output_per_million: 40.0,
-        }),
-        _ if m.contains("o1") => Some(ModelPricing {
+        })
+    } else if m.contains("o1") {
+        Some(ModelPricing {
             input_per_million: 15.0,
             output_per_million: 60.0,
-        }),
-        _ if m.contains("gemini-2") && m.contains("flash") => Some(ModelPricing {
+        })
+    } else if m.contains("gemini-2") && m.contains("flash") {
+        Some(ModelPricing {
             input_per_million: 0.075,
             output_per_million: 0.30,
-        }),
-        _ if m.contains("gemini-2") => Some(ModelPricing {
+        })
+    } else if m.contains("gemini-2") {
+        Some(ModelPricing {
             input_per_million: 1.25,
             output_per_million: 10.0,
-        }),
-        _ if m.contains("gemini") => Some(ModelPricing {
+        })
+    } else if m.contains("gemini") {
+        Some(ModelPricing {
             input_per_million: 1.25,
             output_per_million: 5.0,
-        }),
-        _ if m.contains("deepseek") => Some(ModelPricing {
+        })
+    } else if m.contains("deepseek") {
+        Some(ModelPricing {
             input_per_million: 0.27,
             output_per_million: 1.10,
-        }),
-        _ if m.contains("qwen") => Some(ModelPricing {
+        })
+    } else if m.contains("qwen") {
+        Some(ModelPricing {
             input_per_million: 0.50,
             output_per_million: 2.0,
-        }),
-        _ => None,
+        })
+    } else {
+        None
     }
 }
 
-/// Calculate the cost for given token usage and model
+/// Calculate the cost for given token usage and model.
+///
+/// Token counts are converted to `f64` for cost calculation. For values
+/// above 2^52 (~4.5 quadrillion tokens), precision loss may occur, but
+/// this is well beyond realistic usage.
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
 pub fn calculate_cost(model: &str, usage: &TokenUsage) -> Option<f64> {
     let pricing = get_pricing(model)?;
     let input_cost = usage.input_tokens as f64 * pricing.input_per_million / 1_000_000.0;
@@ -154,6 +179,6 @@ mod tests {
         assert!(cost.is_some());
         let c = cost.unwrap();
         // haiku: $0.25/M input + $1.25/M output * 0.1M = $0.25 + $0.125 = $0.375
-        assert!(c > 0.3 && c < 0.5, "Expected ~$0.375, got {}", c);
+        assert!(c > 0.3 && c < 0.5, "Expected ~$0.375, got {c}");
     }
 }

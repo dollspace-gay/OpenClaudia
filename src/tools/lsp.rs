@@ -1,20 +1,21 @@
 //! LSP (Language Server Protocol) integration tool.
 //!
 //! Provides code intelligence via external language servers:
-//! - goToDefinition: Find where a symbol is defined
-//! - findReferences: Find all references to a symbol
+//! - `goToDefinition`: Find where a symbol is defined
+//! - `findReferences`: Find all references to a symbol
 //! - hover: Get type/documentation info for a symbol
-//! - documentSymbols: List symbols in a file
+//! - `documentSymbols`: List symbols in a file
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
 /// LSP operation types
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum LspAction {
     GoToDefinition,
@@ -49,7 +50,7 @@ pub struct LspSymbol {
     pub kind: String,
     pub line: u32,
     pub end_line: Option<u32>,
-    pub children: Vec<LspSymbol>,
+    pub children: Vec<Self>,
 }
 
 /// Known language servers by file extension
@@ -57,9 +58,7 @@ fn detect_language_server(file_path: &str) -> Option<(&'static str, Vec<&'static
     let ext = file_path.rsplit('.').next().unwrap_or("");
     match ext {
         "rs" => Some(("rust-analyzer", vec![])),
-        "ts" | "tsx" | "js" | "jsx" => {
-            Some(("typescript-language-server", vec!["--stdio"]))
-        }
+        "ts" | "tsx" | "js" | "jsx" => Some(("typescript-language-server", vec!["--stdio"])),
         "py" => Some(("pylsp", vec![])),
         "go" => Some(("gopls", vec!["serve"])),
         "c" | "cpp" | "h" | "hpp" => Some(("clangd", vec![])),
@@ -70,35 +69,32 @@ fn detect_language_server(file_path: &str) -> Option<(&'static str, Vec<&'static
 }
 
 /// Execute an LSP action
-pub fn execute_lsp(args: &HashMap<String, Value>) -> (String, bool) {
+#[must_use]
+pub fn execute_lsp<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String, bool) {
     let action_str = args
         .get("action")
         .and_then(|v| v.as_str())
         .unwrap_or("hover");
 
-    let file_path = match args.get("file_path").and_then(|v| v.as_str()) {
-        Some(p) => p,
-        None => return ("Error: file_path is required".to_string(), true),
+    let Some(file_path) = args.get("file_path").and_then(|v| v.as_str()) else {
+        return ("Error: file_path is required".to_string(), true);
     };
 
     let line = args
         .get("line")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(1) as u32;
+        .and_then(serde_json::Value::as_u64)
+        .map_or(1, |v| u32::try_from(v).unwrap_or(u32::MAX));
     let character = args
         .get("character")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
+        .and_then(serde_json::Value::as_u64)
+        .map_or(0, |v| u32::try_from(v).unwrap_or(u32::MAX));
 
     // Detect language server
-    let (server_cmd, server_args) = match detect_language_server(file_path) {
-        Some(s) => s,
-        None => {
-            return (
-                format!("No language server known for file: {}", file_path),
-                true,
-            )
-        }
+    let Some((server_cmd, server_args)) = detect_language_server(file_path) else {
+        return (
+            format!("No language server known for file: {file_path}"),
+            true,
+        );
     };
 
     // Check if server is available
@@ -109,10 +105,7 @@ pub fn execute_lsp(args: &HashMap<String, Value>) -> (String, bool) {
         .unwrap_or(true)
     {
         return (
-            format!(
-                "Language server '{}' not found. Install it to use LSP features.",
-                server_cmd
-            ),
+            format!("Language server '{server_cmd}' not found. Install it to use LSP features."),
             true,
         );
     }
@@ -125,8 +118,7 @@ pub fn execute_lsp(args: &HashMap<String, Value>) -> (String, bool) {
         _ => {
             return (
                 format!(
-                    "Unknown LSP action: {}. Use: goToDefinition, findReferences, hover, documentSymbols",
-                    action_str
+                    "Unknown LSP action: {action_str}. Use: goToDefinition, findReferences, hover, documentSymbols"
                 ),
                 true,
             )
@@ -139,7 +131,7 @@ pub fn execute_lsp(args: &HashMap<String, Value>) -> (String, bool) {
             serde_json::to_string_pretty(&result).unwrap_or_default(),
             false,
         ),
-        Err(e) => (format!("LSP error: {}", e), true),
+        Err(e) => (format!("LSP error: {e}"), true),
     }
 }
 
@@ -152,13 +144,13 @@ fn run_lsp_request(
     action: LspAction,
 ) -> Result<LspResult, String> {
     let abs_path =
-        std::fs::canonicalize(file_path).map_err(|e| format!("Cannot resolve path: {}", e))?;
+        std::fs::canonicalize(file_path).map_err(|e| format!("Cannot resolve path: {e}"))?;
     let root_uri = find_project_root(&abs_path);
     let file_uri = format!("file://{}", abs_path.display());
 
     // Read file content for textDocument/didOpen
     let content =
-        std::fs::read_to_string(&abs_path).map_err(|e| format!("Cannot read file: {}", e))?;
+        std::fs::read_to_string(&abs_path).map_err(|e| format!("Cannot read file: {e}"))?;
 
     let mut child = Command::new(server_cmd)
         .args(server_args)
@@ -166,7 +158,7 @@ fn run_lsp_request(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("Failed to start {}: {}", server_cmd, e))?;
+        .map_err(|e| format!("Failed to start {server_cmd}: {e}"))?;
 
     let mut stdin = child.stdin.take().ok_or("Failed to get stdin")?;
     let stdout = child.stdout.take().ok_or("Failed to get stdout")?;
@@ -238,9 +230,10 @@ fn run_lsp_request(
     let _ = child.wait();
 
     // Parse response into our types
-    parse_lsp_response(action, file_path, &response)
+    Ok(parse_lsp_response(action, file_path, &response))
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn send_lsp_message(
     stdin: &mut impl Write,
     method: &str,
@@ -260,6 +253,7 @@ fn send_lsp_message(
     Ok(())
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn send_lsp_notification(
     stdin: &mut impl Write,
     method: &str,
@@ -291,7 +285,7 @@ fn read_lsp_response(
             let mut line = String::new();
             reader
                 .read_line(&mut line)
-                .map_err(|e| format!("Read error: {}", e))?;
+                .map_err(|e| format!("Read error: {e}"))?;
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 break;
@@ -299,7 +293,7 @@ fn read_lsp_response(
             if let Some(len_str) = trimmed.strip_prefix("Content-Length: ") {
                 content_length = len_str
                     .parse()
-                    .map_err(|e| format!("Bad content-length: {}", e))?;
+                    .map_err(|e| format!("Bad content-length: {e}"))?;
             }
         }
 
@@ -309,12 +303,12 @@ fn read_lsp_response(
 
         let mut body = vec![0u8; content_length];
         std::io::Read::read_exact(reader, &mut body)
-            .map_err(|e| format!("Body read error: {}", e))?;
+            .map_err(|e| format!("Body read error: {e}"))?;
         let msg: Value =
-            serde_json::from_slice(&body).map_err(|e| format!("JSON parse error: {}", e))?;
+            serde_json::from_slice(&body).map_err(|e| format!("JSON parse error: {e}"))?;
 
         // If this message has an "id" matching our expected_id, it's the response
-        if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
+        if let Some(id) = msg.get("id").and_then(serde_json::Value::as_u64) {
             if id == u64::from(expected_id) {
                 return Ok(msg);
             }
@@ -323,7 +317,9 @@ fn read_lsp_response(
         // Otherwise it's a notification (no id) or a response to a different request;
         // skip it and read the next message.
     }
-    Err(format!("LSP server did not respond to request {} after 100 messages", expected_id))
+    Err(format!(
+        "LSP server did not respond to request {expected_id} after 100 messages"
+    ))
 }
 
 fn find_project_root(file_path: &Path) -> String {
@@ -353,74 +349,78 @@ fn detect_language_id(file_path: &str) -> &str {
         "py" => "python",
         "go" => "go",
         "c" => "c",
-        "cpp" | "cc" | "cxx" => "cpp",
-        "h" | "hpp" => "cpp",
+        "cpp" | "cc" | "cxx" | "h" | "hpp" => "cpp",
         "java" => "java",
         "rb" => "ruby",
         _ => "plaintext",
     }
 }
 
-fn parse_lsp_response(
-    action: LspAction,
-    file_path: &str,
-    response: &Value,
-) -> Result<LspResult, String> {
+fn parse_lsp_response(action: LspAction, file_path: &str, response: &Value) -> LspResult {
     let result_data = response.get("result");
 
     match action {
         LspAction::Hover => {
-            let hover_text = result_data
-                .and_then(|r| r.get("contents"))
-                .map(|c| {
-                    if let Some(s) = c.as_str() {
-                        s.to_string()
-                    } else if let Some(obj) = c.as_object() {
-                        obj.get("value")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string()
-                    } else if let Some(arr) = c.as_array() {
-                        arr.iter()
-                            .filter_map(|v| {
-                                v.as_str()
-                                    .or_else(|| v.get("value").and_then(|x| x.as_str()))
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    } else {
-                        String::new()
-                    }
-                });
-            Ok(LspResult {
+            let hover_text = result_data.and_then(|r| r.get("contents")).map(|c| {
+                c.as_str().map_or_else(
+                    || {
+                        c.as_object().map_or_else(
+                            || {
+                                c.as_array().map_or_else(String::new, |arr| {
+                                    arr.iter()
+                                        .filter_map(|v| {
+                                            v.as_str()
+                                                .or_else(|| v.get("value").and_then(|x| x.as_str()))
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("\n")
+                                })
+                            },
+                            |obj| {
+                                obj.get("value")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string()
+                            },
+                        )
+                    },
+                    str::to_string,
+                )
+            });
+            LspResult {
                 action: "hover".to_string(),
                 file_path: file_path.to_string(),
                 results: Vec::new(),
                 hover_text,
                 symbols: Vec::new(),
-            })
+            }
         }
         LspAction::GoToDefinition | LspAction::FindReferences => {
             let locations = parse_locations(result_data);
-            Ok(LspResult {
-                action: format!("{:?}", action),
+            LspResult {
+                action: format!("{action:?}"),
                 file_path: file_path.to_string(),
                 results: locations,
                 hover_text: None,
                 symbols: Vec::new(),
-            })
+            }
         }
         LspAction::DocumentSymbols => {
             let symbols = parse_symbols(result_data);
-            Ok(LspResult {
+            LspResult {
                 action: "documentSymbols".to_string(),
                 file_path: file_path.to_string(),
                 results: Vec::new(),
                 hover_text: None,
                 symbols,
-            })
+            }
         }
     }
+}
+
+/// Convert a u64 to u32, saturating at `u32::MAX`.
+fn u64_to_u32_saturating(v: u64) -> u32 {
+    u32::try_from(v).unwrap_or(u32::MAX)
 }
 
 fn parse_locations(data: Option<&Value>) -> Vec<LspLocation> {
@@ -440,21 +440,21 @@ fn parse_locations(data: Option<&Value>) -> Vec<LspLocation> {
                 uri: uri.to_string(),
                 line: start
                     .get("line")
-                    .and_then(|l| l.as_u64())
-                    .unwrap_or(0) as u32
+                    .and_then(serde_json::Value::as_u64)
+                    .map_or(0, u64_to_u32_saturating)
                     + 1,
                 character: start
                     .get("character")
-                    .and_then(|c| c.as_u64())
-                    .unwrap_or(0) as u32,
+                    .and_then(serde_json::Value::as_u64)
+                    .map_or(0, u64_to_u32_saturating),
                 end_line: end
                     .and_then(|e| e.get("line"))
-                    .and_then(|l| l.as_u64())
-                    .map(|l| l as u32 + 1),
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|l| u64_to_u32_saturating(l) + 1),
                 end_character: end
                     .and_then(|e| e.get("character"))
-                    .and_then(|c| c.as_u64())
-                    .map(|c| c as u32),
+                    .and_then(serde_json::Value::as_u64)
+                    .map(u64_to_u32_saturating),
                 preview: None,
             })
         })
@@ -472,15 +472,17 @@ fn parse_symbols_inner(data: Option<&Value>, depth: usize) -> Vec<LspSymbol> {
         return Vec::new();
     }
 
-    let arr = match data {
-        Some(Value::Array(a)) => a,
-        _ => return Vec::new(),
+    let Some(Value::Array(arr)) = data else {
+        return Vec::new();
     };
 
     arr.iter()
         .filter_map(|sym| {
             let name = sym.get("name").and_then(|n| n.as_str())?;
-            let kind_num = sym.get("kind").and_then(|k| k.as_u64()).unwrap_or(0);
+            let kind_num = sym
+                .get("kind")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
             let range = sym
                 .get("range")
                 .or_else(|| sym.get("location").and_then(|l| l.get("range")))?;
@@ -498,13 +500,13 @@ fn parse_symbols_inner(data: Option<&Value>, depth: usize) -> Vec<LspSymbol> {
                 kind: symbol_kind_name(kind_num),
                 line: start
                     .get("line")
-                    .and_then(|l| l.as_u64())
-                    .unwrap_or(0) as u32
+                    .and_then(serde_json::Value::as_u64)
+                    .map_or(0, u64_to_u32_saturating)
                     + 1,
                 end_line: end
                     .and_then(|e| e.get("line"))
-                    .and_then(|l| l.as_u64())
-                    .map(|l| l as u32 + 1),
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|l| u64_to_u32_saturating(l) + 1),
                 children,
             })
         })
@@ -572,28 +574,28 @@ mod tests {
     #[test]
     fn test_parse_hover_response() {
         let resp = json!({"result": {"contents": {"kind": "markdown", "value": "fn main()"}}});
-        let result = parse_lsp_response(LspAction::Hover, "test.rs", &resp).unwrap();
+        let result = parse_lsp_response(LspAction::Hover, "test.rs", &resp);
         assert_eq!(result.hover_text, Some("fn main()".to_string()));
     }
 
     #[test]
     fn test_parse_hover_string_contents() {
         let resp = json!({"result": {"contents": "simple hover text"}});
-        let result = parse_lsp_response(LspAction::Hover, "test.rs", &resp).unwrap();
+        let result = parse_lsp_response(LspAction::Hover, "test.rs", &resp);
         assert_eq!(result.hover_text, Some("simple hover text".to_string()));
     }
 
     #[test]
     fn test_parse_hover_array_contents() {
         let resp = json!({"result": {"contents": ["line1", {"value": "line2"}]}});
-        let result = parse_lsp_response(LspAction::Hover, "test.rs", &resp).unwrap();
+        let result = parse_lsp_response(LspAction::Hover, "test.rs", &resp);
         assert_eq!(result.hover_text, Some("line1\nline2".to_string()));
     }
 
     #[test]
     fn test_parse_hover_null_result() {
         let resp = json!({"result": null});
-        let result = parse_lsp_response(LspAction::Hover, "test.rs", &resp).unwrap();
+        let result = parse_lsp_response(LspAction::Hover, "test.rs", &resp);
         assert_eq!(result.hover_text, None);
     }
 
@@ -719,10 +721,7 @@ mod tests {
             "file_path".to_string(),
             Value::String("test.rs".to_string()),
         );
-        args.insert(
-            "action".to_string(),
-            Value::String("badAction".to_string()),
-        );
+        args.insert("action".to_string(), Value::String("badAction".to_string()));
         // This will either fail on unknown action or missing server; both are valid error paths
         let (msg, is_err) = execute_lsp(&args);
         assert!(is_err);
@@ -752,8 +751,7 @@ mod tests {
                 }
             }]
         });
-        let result =
-            parse_lsp_response(LspAction::GoToDefinition, "test.rs", &resp).unwrap();
+        let result = parse_lsp_response(LspAction::GoToDefinition, "test.rs", &resp);
         assert_eq!(result.results.len(), 1);
         assert_eq!(result.results[0].line, 43);
         assert_eq!(result.results[0].uri, "file:///src/main.rs");
@@ -778,8 +776,7 @@ mod tests {
                 }
             ]
         });
-        let result =
-            parse_lsp_response(LspAction::DocumentSymbols, "test.rs", &resp).unwrap();
+        let result = parse_lsp_response(LspAction::DocumentSymbols, "test.rs", &resp);
         assert_eq!(result.symbols.len(), 1);
         assert_eq!(result.symbols[0].name, "Config");
         assert_eq!(result.symbols[0].kind, "Struct");

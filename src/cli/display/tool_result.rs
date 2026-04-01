@@ -20,7 +20,7 @@ pub fn display_tool_result(tool_name: &str, content: &str, is_error: bool) {
         let lines: Vec<&str> = content.lines().collect();
         let max = 30.min(lines.len());
         for line in &lines[..max] {
-            let _ = stdout.execute(Print(format!("    {}\n", line)));
+            let _ = stdout.execute(Print(format!("    {line}\n")));
         }
         if lines.len() > max {
             let _ = stdout.execute(Print(format!(
@@ -40,7 +40,7 @@ pub fn display_tool_result(tool_name: &str, content: &str, is_error: bool) {
             let msg = msg.trim();
             if !msg.is_empty() {
                 let _ = stdout.execute(SetForegroundColor(Color::Green));
-                let _ = stdout.execute(Print(format!("    {}\n", msg)));
+                let _ = stdout.execute(Print(format!("    {msg}\n")));
                 let _ = stdout.execute(ResetColor);
             }
         }
@@ -50,8 +50,7 @@ pub fn display_tool_result(tool_name: &str, content: &str, is_error: bool) {
     // Per-tool display strategies
     let max_lines = match tool_name {
         "bash" | "bash_output" => 25,
-        "read_file" => 15,
-        "grep" | "glob" | "list_files" => 15,
+        "read_file" | "grep" | "glob" | "list_files" => 15,
         "write_file" => 3,
         _ => 20,
     };
@@ -66,7 +65,7 @@ pub fn display_tool_result(tool_name: &str, content: &str, is_error: bool) {
     let lines: Vec<&str> = content.lines().collect();
     let show = max_lines.min(lines.len());
     for line in &lines[..show] {
-        let _ = stdout.execute(Print(format!("    {}\n", line)));
+        let _ = stdout.execute(Print(format!("    {line}\n")));
     }
     if lines.len() > show {
         let _ = stdout.execute(SetForegroundColor(Color::DarkGrey));
@@ -91,7 +90,7 @@ fn extract_diff_block(content: &str) -> Option<DiffBlock> {
     let v: serde_json::Value = match serde_json::from_str(json_str) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("\x1b[33mWarning: failed to parse diff block JSON: {}\x1b[0m", e);
+            eprintln!("\x1b[33mWarning: failed to parse diff block JSON: {e}\x1b[0m");
             return None;
         }
     };

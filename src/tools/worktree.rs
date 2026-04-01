@@ -17,6 +17,8 @@ pub struct WorktreeState {
 }
 
 /// Create a new git worktree for isolated agent work.
+#[must_use]
+#[allow(clippy::implicit_hasher)]
 pub fn execute_enter_worktree(args: &HashMap<String, Value>) -> (String, bool) {
     let branch = args
         .get("branch")
@@ -46,8 +48,7 @@ pub fn execute_enter_worktree(args: &HashMap<String, Value>) -> (String, bool) {
         .output()
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| PathBuf::from(s.trim()))
-        .unwrap_or_else(|| cwd.clone());
+        .map_or_else(|| cwd.clone(), |s| PathBuf::from(s.trim()));
 
     let worktree_dir = git_root.join(".worktrees").join(&branch);
 
@@ -125,17 +126,19 @@ pub fn execute_enter_worktree(args: &HashMap<String, Value>) -> (String, bool) {
                 )
             }
         }
-        Err(e) => (format!("Failed to run git: {}", e), true),
+        Err(e) => (format!("Failed to run git: {e}"), true),
     }
 }
 
 /// Exit a worktree and return to the original directory.
+#[must_use]
+#[allow(clippy::implicit_hasher)]
 pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     let apply_changes = args
         .get("apply_changes")
-        .and_then(|v| v.as_bool())
+        .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
 
     // Check if we're in a worktree
@@ -170,7 +173,7 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
     // Find the main worktree path
     let main_path = Path::new(&common_dir)
         .parent()
-        .unwrap_or(Path::new("."));
+        .unwrap_or_else(|| Path::new("."));
 
     if apply_changes {
         // Commit any uncommitted changes
@@ -179,7 +182,7 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
             .args([
                 "commit",
                 "-m",
-                &format!("Worktree changes from branch '{}'", current_branch),
+                &format!("Worktree changes from branch '{current_branch}'"),
             ])
             .output();
 
@@ -196,23 +199,18 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
 
             let merge_result = match merge {
                 Ok(o) if o.status.success() => {
-                    format!("Merged branch '{}' into main worktree.", current_branch)
+                    format!("Merged branch '{current_branch}' into main worktree.")
                 }
                 Ok(o) => format!(
                     "Merge had conflicts: {}",
                     String::from_utf8_lossy(&o.stderr).trim()
                 ),
-                Err(e) => format!("Merge failed: {}", e),
+                Err(e) => format!("Merge failed: {e}"),
             };
 
             // Clean up worktree
             let _ = Command::new("git")
-                .args([
-                    "worktree",
-                    "remove",
-                    cwd.to_str().unwrap_or(""),
-                    "--force",
-                ])
+                .args(["worktree", "remove", cwd.to_str().unwrap_or(""), "--force"])
                 .output();
 
             (
@@ -225,12 +223,7 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
             )
         } else {
             let _ = Command::new("git")
-                .args([
-                    "worktree",
-                    "remove",
-                    cwd.to_str().unwrap_or(""),
-                    "--force",
-                ])
+                .args(["worktree", "remove", cwd.to_str().unwrap_or(""), "--force"])
                 .output();
             (
                 format!(
@@ -244,12 +237,7 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
         // Discard and return
         let _ = std::env::set_current_dir(main_path);
         let _ = Command::new("git")
-            .args([
-                "worktree",
-                "remove",
-                cwd.to_str().unwrap_or(""),
-                "--force",
-            ])
+            .args(["worktree", "remove", cwd.to_str().unwrap_or(""), "--force"])
             .output();
         (
             format!(
@@ -263,6 +251,7 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
 }
 
 /// List active worktrees
+#[must_use]
 pub fn execute_list_worktrees() -> (String, bool) {
     let output = Command::new("git")
         .args(["worktree", "list", "--porcelain"])
@@ -286,7 +275,7 @@ pub fn execute_list_worktrees() -> (String, bool) {
                             .strip_prefix("refs/heads/")
                             .unwrap_or(&branch)
                             .to_string();
-                        worktrees.push(format!("  {} ({})", path, branch));
+                        worktrees.push(format!("  {path} ({branch})"));
                         current.clear();
                     }
                 } else if let Some((key, value)) = line.split_once(' ') {
@@ -305,7 +294,7 @@ pub fn execute_list_worktrees() -> (String, bool) {
                     .strip_prefix("refs/heads/")
                     .unwrap_or(&branch)
                     .to_string();
-                worktrees.push(format!("  {} ({})", path, branch));
+                worktrees.push(format!("  {path} ({branch})"));
             }
 
             if worktrees.is_empty() {
@@ -324,7 +313,7 @@ pub fn execute_list_worktrees() -> (String, bool) {
             ),
             true,
         ),
-        Err(e) => (format!("Failed to run git: {}", e), true),
+        Err(e) => (format!("Failed to run git: {e}"), true),
     }
 }
 

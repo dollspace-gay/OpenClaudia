@@ -1,8 +1,8 @@
 mod kill;
 mod output;
 
-pub(crate) use kill::{execute_kill_shell, terminate_process_tree};
-pub(crate) use output::execute_bash_output;
+pub use kill::{execute_kill_shell, terminate_process_tree};
+pub use output::execute_bash_output;
 
 use crate::tools::safe_truncate;
 use serde_json::Value;
@@ -33,7 +33,7 @@ struct BackgroundShell {
 }
 
 /// Manager for background shell processes
-pub(crate) struct BackgroundShellManager {
+pub struct BackgroundShellManager {
     shells: Mutex<HashMap<String, BackgroundShell>>,
 }
 
@@ -90,13 +90,12 @@ impl BackgroundShellManager {
 
             if shells.len() >= MAX_BACKGROUND_SHELLS {
                 return Err(format!(
-                    "Maximum background shell limit ({}) reached. Kill or wait for existing shells to finish.",
-                    MAX_BACKGROUND_SHELLS
+                    "Maximum background shell limit ({MAX_BACKGROUND_SHELLS}) reached. Kill or wait for existing shells to finish."
                 ));
             }
         }
 
-        let mut child = child.map_err(|e| format!("Failed to spawn background shell: {}", e))?;
+        let mut child = child.map_err(|e| format!("Failed to spawn background shell: {e}"))?;
 
         // Capture PID before moving the child handle into the wait thread
         let pid = child.id();
@@ -165,11 +164,15 @@ impl BackgroundShellManager {
     }
 
     /// Get output from a background shell (returns new output since last call)
+    #[allow(clippy::significant_drop_tightening)] // shells lock must be held while accessing shell
     pub(crate) fn get_output(&self, shell_id: &str) -> Result<(String, bool, Option<i32>), String> {
-        let shells = self.shells.lock().unwrap_or_else(|e| e.into_inner());
+        let shells = self
+            .shells
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let shell = shells
             .get(shell_id)
-            .ok_or_else(|| format!("Shell '{}' not found", shell_id))?;
+            .ok_or_else(|| format!("Shell '{shell_id}' not found"))?;
 
         let mut output = String::new();
 
@@ -213,7 +216,10 @@ impl BackgroundShellManager {
     /// if needed. Only removes the shell from tracking after the process has
     /// been terminated.
     pub(crate) fn kill(&self, shell_id: &str) -> Result<String, String> {
-        let mut shells = self.shells.lock().unwrap_or_else(|e| e.into_inner());
+        let mut shells = self
+            .shells
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         if let Some(shell) = shells.remove(shell_id) {
             if !shell.finished.load(Ordering::SeqCst) {
@@ -226,13 +232,16 @@ impl BackgroundShellManager {
                 shell_id, shell.command, shell.pid
             ))
         } else {
-            Err(format!("Shell '{}' not found", shell_id))
+            Err(format!("Shell '{shell_id}' not found"))
         }
     }
 
     /// List all background shells
     pub(crate) fn list(&self) -> Vec<(String, String, bool)> {
-        let shells = self.shells.lock().unwrap_or_else(|e| e.into_inner());
+        let shells = self
+            .shells
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         shells
             .iter()
             .map(|(id, shell)| {
@@ -247,7 +256,7 @@ impl BackgroundShellManager {
 }
 
 /// Global background shell manager
-pub(crate) static BACKGROUND_SHELLS: std::sync::LazyLock<BackgroundShellManager> =
+pub static BACKGROUND_SHELLS: std::sync::LazyLock<BackgroundShellManager> =
     std::sync::LazyLock::new(BackgroundShellManager::new);
 
 /// Find Git Bash on Windows
@@ -290,23 +299,22 @@ pub(crate) fn find_git_bash() -> Option<std::path::PathBuf> {
 }
 
 /// Execute a bash command
-pub(crate) fn execute_bash(args: &HashMap<String, Value>) -> (String, bool) {
-    let command = match args.get("command").and_then(|v| v.as_str()) {
-        Some(cmd) => cmd,
-        None => return ("Missing 'command' argument".to_string(), true),
+pub fn execute_bash(args: &HashMap<String, Value>) -> (String, bool) {
+    let Some(command) = args.get("command").and_then(|v| v.as_str()) else {
+        return ("Missing 'command' argument".to_string(), true);
     };
 
     // Check if this should run in background
     let run_in_background = args
         .get("run_in_background")
-        .and_then(|v| v.as_bool())
+        .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
 
     if run_in_background {
         // Spawn background shell and return shell_id
         match BACKGROUND_SHELLS.spawn(command) {
             Ok(shell_id) => {
-                (format!("Background shell started with ID: {}\nUse bash_output with this shell_id to retrieve output.", shell_id), false)
+                (format!("Background shell started with ID: {shell_id}\nUse bash_output with this shell_id to retrieve output."), false)
             }
             Err(e) => (e, true),
         }
@@ -368,7 +376,7 @@ pub(crate) fn execute_bash(args: &HashMap<String, Value>) -> (String, bool) {
 
                 (result, !output.status.success())
             }
-            Err(e) => (format!("Failed to execute command: {}", e), true),
+            Err(e) => (format!("Failed to execute command: {e}"), true),
         }
     }
 }

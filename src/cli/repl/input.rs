@@ -17,14 +17,11 @@ pub fn handle_user_questions(questions: &[serde_json::Value]) -> String {
             .unwrap_or_default();
         let multi_select = q
             .get("multi_select")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
 
         // Display the question
-        println!(
-            "\n\x1b[1;36m?\x1b[0m {}  \x1b[90m[{}]\x1b[0m",
-            question_text, header
-        );
+        println!("\n\x1b[1;36m?\x1b[0m {question_text}  \x1b[90m[{header}]\x1b[0m");
 
         // Display options
         for (i, opt) in options.iter().enumerate() {
@@ -42,10 +39,7 @@ pub fn handle_user_questions(questions: &[serde_json::Value]) -> String {
         }
         // Always append "Other" option
         let other_num = options.len() + 1;
-        println!(
-            "  \x1b[1m{}.\x1b[0m Other \x1b[90m(type your answer)\x1b[0m",
-            other_num
-        );
+        println!("  \x1b[1m{other_num}.\x1b[0m Other \x1b[90m(type your answer)\x1b[0m");
 
         if multi_select {
             print!("\x1b[36m> \x1b[0m\x1b[90m(comma-separated numbers) \x1b[0m");
@@ -145,7 +139,7 @@ pub fn open_external_editor() -> Option<String> {
     let temp_dir = std::env::temp_dir();
     let temp_file = temp_dir.join(format!("openclaudia_{}.txt", uuid::Uuid::new_v4()));
 
-    println!("\nOpening {}...", editor);
+    println!("\nOpening {editor}...");
 
     #[cfg(windows)]
     let status = Command::new("cmd")
@@ -156,8 +150,8 @@ pub fn open_external_editor() -> Option<String> {
     let status = Command::new(&editor).arg(&temp_file).status();
 
     match status {
-        Ok(s) if s.success() => match fs::read_to_string(&temp_file) {
-            Ok(content) => {
+        Ok(s) if s.success() => {
+            if let Ok(content) = fs::read_to_string(&temp_file) {
                 let _ = fs::remove_file(&temp_file);
                 let trimmed = content.trim().to_string();
                 if trimmed.is_empty() {
@@ -166,19 +160,18 @@ pub fn open_external_editor() -> Option<String> {
                 } else {
                     Some(trimmed)
                 }
-            }
-            Err(_) => {
+            } else {
                 println!("No content entered.\n");
                 None
             }
-        },
+        }
         Ok(_) => {
             eprintln!("Editor exited with error.\n");
             let _ = fs::remove_file(&temp_file);
             None
         }
         Err(e) => {
-            eprintln!("Failed to open editor '{}': {}\n", editor, e);
+            eprintln!("Failed to open editor '{editor}': {e}\n");
             None
         }
     }
@@ -204,8 +197,8 @@ pub fn expand_file_references(input: &str) -> String {
                 replacements.push((full_match.to_string(), file_context));
             }
             Err(e) => {
-                eprintln!("Warning: Could not read {}: {}", path, e);
-                let error_context = format!("[File not found or unreadable: {} ({})]", path, e);
+                eprintln!("Warning: Could not read {path}: {e}");
+                let error_context = format!("[File not found or unreadable: {path} ({e})]");
                 replacements.push((full_match.to_string(), error_context));
             }
         }

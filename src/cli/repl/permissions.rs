@@ -6,19 +6,19 @@ pub fn prompt_permission(
 ) -> bool {
     use std::io::{self, Write};
 
-    let key = format!("{}:{}", operation, details);
+    let key = format!("{operation}:{details}");
 
     if always_allowed.contains(&key) {
         return true;
     }
 
-    if always_allowed.contains(&format!("!{}", key)) {
+    if always_allowed.contains(&format!("!{key}")) {
         return false;
     }
 
     println!("\n=== Permission Required ===");
-    println!("Operation: {}", operation);
-    println!("Details: {}", details);
+    println!("Operation: {operation}");
+    println!("Details: {details}");
     println!();
     println!("  [y] Allow once");
     println!("  [n] Deny");
@@ -40,7 +40,7 @@ pub fn prompt_permission(
             true
         }
         "d" => {
-            always_allowed.insert(format!("!{}", key));
+            always_allowed.insert(format!("!{key}"));
             println!("(Will always deny this operation)\n");
             false
         }
@@ -89,12 +89,12 @@ pub fn execute_shell_command_internal(cmd: &str) {
             }
             if !output.status.success() {
                 if let Some(code) = output.status.code() {
-                    println!("(exit code: {})", code);
+                    println!("(exit code: {code})");
                 }
             }
         }
         Err(e) => {
-            eprintln!("Failed to execute command: {}", e);
+            eprintln!("Failed to execute command: {e}");
         }
     }
     println!();

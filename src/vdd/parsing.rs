@@ -71,7 +71,7 @@ pub(crate) fn extract_json_from_response(text: &str) -> Option<String> {
     None
 }
 
-/// Try to construct a valid AdversaryResponse from partial/malformed JSON
+/// Try to construct a valid `AdversaryResponse` from partial/malformed JSON
 pub(crate) fn try_parse_relaxed(text: &str) -> Option<AdversaryResponse> {
     // Check for "NO_FINDINGS" or "no findings" anywhere in response
     let lower = text.to_lowercase();
@@ -112,7 +112,7 @@ pub(crate) fn parse_severity(s: &str) -> super::finding::Severity {
 // ==========================================================================
 
 /// Extract the text content from a chat completion response.
-/// Supports OpenAI, Anthropic, and Google/Gemini formats.
+/// Supports `OpenAI`, Anthropic, and Google/Gemini formats.
 pub(crate) fn extract_response_text(response: &Value) -> String {
     // OpenAI format: choices[0].message.content
     if let Some(content) = response
@@ -173,20 +173,20 @@ pub(crate) fn extract_token_usage(response: &Value) -> TokenUsage {
             input_tokens: usage
                 .get("prompt_tokens")
                 .or_else(|| usage.get("input_tokens"))
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0),
             output_tokens: usage
                 .get("completion_tokens")
                 .or_else(|| usage.get("output_tokens"))
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0),
             cache_read_tokens: usage
                 .get("cache_read_input_tokens")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0),
             cache_write_tokens: usage
                 .get("cache_creation_input_tokens")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0),
         };
     }
@@ -196,15 +196,15 @@ pub(crate) fn extract_token_usage(response: &Value) -> TokenUsage {
         return TokenUsage {
             input_tokens: usage
                 .get("promptTokenCount")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0),
             output_tokens: usage
                 .get("candidatesTokenCount")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0),
             cache_read_tokens: usage
                 .get("cachedContentTokenCount")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0),
             cache_write_tokens: 0,
         };
