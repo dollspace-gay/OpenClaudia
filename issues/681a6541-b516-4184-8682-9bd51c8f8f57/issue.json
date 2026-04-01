@@ -1,0 +1,10 @@
+{
+  "uuid": "681a6541-b516-4184-8682-9bd51c8f8f57",
+  "display_id": null,
+  "title": "C-21: Unsafe YAML front matter parsing in plugins",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:38:50.123138490Z",
+  "updated_at": "2026-04-01T03:38:50.123138490Z"
+}
