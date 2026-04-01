@@ -442,12 +442,16 @@
     "170": {
       "agent_id": "lOrm",
       "claimed_at": "2026-04-01T18:13:30.282680038Z"
+    },
+    "171": {
+      "agent_id": "lOrm",
+      "claimed_at": "2026-04-01T18:13:36.772822783Z"
     }
   },
   "issues": {},
   "watermark": {
-    "timestamp": "2026-04-01T18:13:30.282680038Z",
+    "timestamp": "2026-04-01T18:13:36.772822783Z",
     "agent_id": "lOrm",
-    "agent_seq": 202
+    "agent_seq": 203
   }
 }
