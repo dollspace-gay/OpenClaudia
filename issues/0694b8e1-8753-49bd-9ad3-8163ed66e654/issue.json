@@ -1,0 +1,10 @@
+{
+  "uuid": "0694b8e1-8753-49bd-9ad3-8163ed66e654",
+  "display_id": 173,
+  "title": "Skill system: workflow markdown files with YAML frontmatter, 5 sources (managed/user/project/additional/legacy), conditional activation via path patterns, bundled skill library",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T18:13:45.543328209Z",
+  "updated_at": "2026-04-01T18:13:45.543328209Z"
+}
