@@ -1,0 +1,10 @@
+{
+  "uuid": "5cbba6c5-dcd3-4f6d-bb29-4608f462249f",
+  "display_id": null,
+  "title": "W-1: Malformed tool args bypass permission checks",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:38:59.201439372Z",
+  "updated_at": "2026-04-01T03:38:59.201439372Z"
+}
