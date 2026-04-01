@@ -1,0 +1,10 @@
+{
+  "uuid": "72ec875c-cb8a-4a99-b0af-8acbb9479203",
+  "display_id": null,
+  "title": "N-28: OAuth RwLock poison recovery not logged",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:51.453130839Z",
+  "updated_at": "2026-04-01T03:39:51.453130839Z"
+}
