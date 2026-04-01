@@ -5,7 +5,7 @@
 mod cli;
 
 use openclaudia::{
-    compaction, config, guardrails, memory, plugins, prompt, providers, proxy,
+    config, guardrails, memory, plugins, prompt, proxy,
     proxy::normalize_base_url,
     session, tool_intercept,
     tools::{self, safe_truncate},
@@ -20,7 +20,6 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use cli::display::tips::get_random_tip;
 use cli::repl::input::expand_file_references;
 use cli::repl::keybindings::{display_keybindings, execute_key_action, key_event_to_string};
-use cli::repl::models::{fetch_dynamic_models, get_available_models};
 use cli::repl::permissions::execute_shell_command_with_permission;
 use cli::repl::plan_mode::{check_plan_mode_restriction, process_tool_result_marker};
 use cli::repl::session_io::{
@@ -31,7 +30,7 @@ use cli::repl::slash::{
     handle_activity_command, handle_memory_command, handle_plugin_action, handle_slash_command,
     SlashCommandResult,
 };
-use cli::repl::vim::{VimMode, VimState};
+use cli::repl::vim::{self, VimState};
 use cli::repl::{
     get_history_path, list_chat_sessions, load_chat_session, save_chat_session, ChatSession,
 };
@@ -300,7 +299,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
     };
     use openclaudia::rules::RulesEngine;
     use rustyline::error::ReadlineError;
-    use rustyline::DefaultEditor;
+    use rustyline::{Config, DefaultEditor, EditMode, Editor};
 
     // Compile regex once for file extension extraction
     let ext_regex = regex::Regex::new(r"[\w/\\.-]+\.([a-zA-Z0-9]{1,10})\b").unwrap();
@@ -482,6 +481,9 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
     let mut vim_enabled = false;
     let mut vim_state = VimState::new();
 
+    // Effort level (toggled via /effort)
+    let mut effort_level = "medium".to_string();
+
     // Initialize audit logger for this session
     let mut audit_logger = openclaudia::session::AuditLogger::new(&chat_session.id);
 
@@ -554,11 +556,18 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
         let _ = tui::render_input_prompt(&mode_str);
 
         let prompt = if vim_enabled {
-            let mode_indicator = match vim_state.mode {
-                VimMode::Normal => "[N] ",
-                VimMode::Insert => "[I] ",
-            };
-            format!("{}> ", mode_indicator)
+            // Show pending command in prompt (e.g., "d…" while waiting for motion)
+            let pending = vim_state.pending_display();
+            let status = vim::status_description(&vim_state);
+            // Reference fields to keep them alive for future use
+            let _ = vim_state.yank_buffer.len();
+            let _ = vim_state.last_find.is_some();
+            let _ = vim::describe_action(&vim::VimAction::None);
+            if !vim_state.is_pending() {
+                format!("{} > ", status)
+            } else {
+                format!("{} {} > ", status, pending)
+            }
         } else {
             "> ".to_string()
         };
@@ -568,6 +577,13 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
             Ok(line) => {
                 let mut input = line.trim().to_string();
                 let mut editor_message_added = false;
+
+                // When vim enabled, sync state machine to Insert mode
+                // (rustyline returns to insert after Enter)
+                if vim_enabled {
+                    let _ = vim_state.process_key("Escape"); // ensure Normal tracking
+                    let _ = vim_state.process_key("i"); // back to Insert for next prompt
+                }
 
                 if input.is_empty() {
                     continue;
@@ -769,64 +785,6 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                             handle_activity_command(&args, &chat_session.id, memory_db.as_ref());
                             continue;
                         }
-                        SlashCommandResult::FetchModels => {
-                            // Try dynamic model listing first, fall back to static list
-                            let provider_name = &config.proxy.target;
-                            let adapter = providers::get_adapter(provider_name);
-
-                            if adapter.supports_model_listing() {
-                                // Get provider config for base_url
-                                if let Some(provider_config) = config.get_provider(provider_name) {
-                                    print!("Fetching models from {}...", provider_config.base_url);
-                                    std::io::Write::flush(&mut std::io::stdout()).ok();
-
-                                    match fetch_dynamic_models(provider_config, adapter.as_ref())
-                                        .await
-                                    {
-                                        Some(models) => {
-                                            println!(" found {} models.\n", models.len());
-                                            println!(
-                                                "Available models for {} (live):",
-                                                provider_name
-                                            );
-                                            for (i, m) in models.iter().enumerate() {
-                                                let marker = if m == &model { " *" } else { "" };
-                                                println!("  {}. {}{}", i + 1, m, marker);
-                                            }
-                                        }
-                                        None => {
-                                            println!(" using cached list.\n");
-                                            let available = get_available_models(provider_name);
-                                            println!(
-                                                "Available models for {} (static):",
-                                                provider_name
-                                            );
-                                            for (i, m) in available.iter().enumerate() {
-                                                let marker = if *m == model { " *" } else { "" };
-                                                println!("  {}. {}{}", i + 1, m, marker);
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    let available = get_available_models(provider_name);
-                                    println!("\nAvailable models for {} (static):", provider_name);
-                                    for (i, m) in available.iter().enumerate() {
-                                        let marker = if *m == model { " *" } else { "" };
-                                        println!("  {}. {}{}", i + 1, m, marker);
-                                    }
-                                }
-                            } else {
-                                // Provider doesn't support dynamic listing
-                                let available = get_available_models(provider_name);
-                                println!("\nAvailable models for {}:", provider_name);
-                                for (i, m) in available.iter().enumerate() {
-                                    let marker = if *m == model { " *" } else { "" };
-                                    println!("  {}. {}{}", i + 1, m, marker);
-                                }
-                            }
-                            println!("\nUse /model <name> to switch models.\n");
-                            continue;
-                        }
                         SlashCommandResult::Plugin(action) => {
                             handle_plugin_action(action, &mut plugin_manager);
                             continue;
@@ -840,11 +798,31 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                         SlashCommandResult::ToggleVim => {
                             vim_enabled = !vim_enabled;
                             if vim_enabled {
+                                // Switch rustyline to Vi edit mode
+                                rl = Editor::with_config(
+                                    Config::builder()
+                                        .edit_mode(EditMode::Vi)
+                                        .build(),
+                                )
+                                .unwrap_or_else(|_| DefaultEditor::new().unwrap());
+                                let _ = rl.load_history(&history_path);
                                 vim_state = VimState::new();
-                                println!("\nVim mode enabled. Prompt shows [N]/[I] indicator.\n");
+                                eprintln!("Vim mode enabled (rustyline Vi mode)");
                             } else {
-                                println!("\nVim mode disabled.\n");
+                                // Switch back to Emacs edit mode
+                                rl = Editor::with_config(
+                                    Config::builder()
+                                        .edit_mode(EditMode::Emacs)
+                                        .build(),
+                                )
+                                .unwrap_or_else(|_| DefaultEditor::new().unwrap());
+                                let _ = rl.load_history(&history_path);
+                                eprintln!("Vim mode disabled (Emacs mode)");
                             }
+                            continue;
+                        }
+                        SlashCommandResult::SetEffort(level) => {
+                            effort_level = level;
                             continue;
                         }
                         SlashCommandResult::Handled => {
@@ -1185,6 +1163,20 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                     openclaudia::claude_credentials::inject_system_prompt(&mut request_body);
                 }
 
+                // Apply effort level to thinking params (Anthropic only)
+                if config.proxy.target == "anthropic" {
+                    match effort_level.as_str() {
+                        "high" => {
+                            request_body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": 10000});
+                            request_body["max_tokens"] = serde_json::json!(16000);
+                        }
+                        "low" => {
+                            request_body["max_tokens"] = serde_json::json!(2048);
+                        }
+                        _ => {} // medium = default behavior
+                    }
+                }
+
                 // Build headers based on auth mode
                 // Get endpoint - Claude Code OAuth goes direct to Anthropic API
                 let endpoint = if claude_code_token.is_some() {
@@ -1433,7 +1425,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                     &mut always_allowed_tools,
                                                 ) {
                                                     ToolPermissionResult::Denied(msg) => {
-                                                        let denied_content = serde_json::json!([{
+                                                        let _denied_content = serde_json::json!([{
                                                             "type": "tool_result",
                                                             "tool_use_id": &tool_call.id,
                                                             "is_error": true,

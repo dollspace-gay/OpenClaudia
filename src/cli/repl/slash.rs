@@ -78,8 +78,6 @@ pub enum SlashCommandResult {
     Memory(String),
     /// Activity command to show recent session activities
     Activity(String),
-    /// Fetch and display available models dynamically
-    FetchModels,
     /// Plugin management command
     Plugin(PluginAction),
     /// Theme was changed to the given name
@@ -147,6 +145,10 @@ pub fn handle_slash_command(
             println!("  /doctor          - Run inline diagnostics");
             println!("  /config          - Show current configuration");
             println!("  /config path     - Show config file locations");
+            println!("  /cost            - Show session cost estimate");
+            println!("  /context         - Show context window usage breakdown");
+            println!("  /login           - Check authentication status");
+            println!("  /logout          - Show how to clear credentials");
             println!();
             println!("Memory Commands (auto-learning):");
             println!("  /memory          - Show auto-learning stats");
@@ -210,17 +212,20 @@ pub fn handle_slash_command(
             if sessions.is_empty() {
                 println!("\nNo saved sessions.\n");
             } else {
-                println!("\nSaved Sessions:");
+                println!("\nSaved Sessions ({}):\n", sessions.len());
                 for (i, session) in sessions.iter().take(10).enumerate() {
                     let date = session.updated_at.format("%Y-%m-%d %H:%M");
                     let msg_count = session.messages.len();
+                    let id_prefix = &session.id[..8.min(session.id.len())];
                     println!(
-                        "  {}. [{}] {} ({} messages)",
+                        "  {}. \x1b[36m{}\x1b[0m  \x1b[90m{} · {} · {} msgs\x1b[0m",
                         i + 1,
-                        date,
                         session.title,
-                        msg_count
+                        date,
+                        session.model,
+                        msg_count,
                     );
+                    println!("     \x1b[90mid: {}\x1b[0m", id_prefix);
                 }
                 if sessions.len() > 10 {
                     println!("  ... and {} more", sessions.len() - 10);
@@ -282,17 +287,40 @@ pub fn handle_slash_command(
                 println!("Use /model list to see available models, /model <name> to switch.\n");
                 Some(SlashCommandResult::Handled)
             } else if args.is_empty() && cmd == "models" || args == "list" {
-                // List available models
+                // List available models (static list)
                 let models = get_available_models(provider);
                 println!("\nAvailable models for \x1b[36m{}\x1b[0m:\n", provider);
                 for m in &models {
                     let marker = if *m == current_model {
-                        " \x1b[32m\u{2190} current\x1b[0m"
+                        " \x1b[32m← current\x1b[0m"
                     } else {
                         ""
                     };
                     println!("  \x1b[36m{}\x1b[0m{}", m, marker);
                 }
+
+                // Try dynamic model listing for OpenAI-compatible providers
+                if let Ok(config) = openclaudia::config::load_config() {
+                    if let Some(provider_config) = config.get_provider(provider) {
+                        let adapter = openclaudia::providers::get_adapter(provider);
+                        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                            if let Some(dynamic) = handle.block_on(
+                                super::models::fetch_dynamic_models(provider_config, adapter.as_ref())
+                            ) {
+                                println!("\n  Dynamic models (from API):");
+                                for m in &dynamic {
+                                    let marker = if m == current_model {
+                                        " \x1b[32m← current\x1b[0m"
+                                    } else {
+                                        ""
+                                    };
+                                    println!("    \x1b[36m{}\x1b[0m{}", m, marker);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 println!("\nUse /model <name> to switch.\n");
                 Some(SlashCommandResult::Handled)
             } else {
@@ -969,46 +997,69 @@ session:
             }
             Some(SlashCommandResult::Handled)
         }
-        "effort" => {
-            match args.trim().to_lowercase().as_str() {
-                "low" | "l" => println!("\n✓ Effort set to \x1b[33mlow\x1b[0m (faster, less thorough)\n"),
-                "medium" | "med" | "m" | "" => println!("\n✓ Effort set to \x1b[36mmedium\x1b[0m (balanced)\n"),
-                "high" | "h" => println!("\n✓ Effort set to \x1b[32mhigh\x1b[0m (thorough, slower)\n"),
-                _ => {
-                    println!("\nUsage: /effort [low|medium|high]");
-                    println!("  low    - Quick answers, minimal thinking");
-                    println!("  medium - Balanced (default)");
-                    println!("  high   - Thorough, more thinking time\n");
-                }
-            }
+        "cost" => {
+            let msg_text: String = messages.iter()
+                .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
+                .collect::<Vec<_>>().join(" ");
+            let tokens = openclaudia::compaction::estimate_tokens(&msg_text);
+            // Rough pricing: Sonnet ~$3/M input, $15/M output; assume 50/50 split
+            let est_cost = tokens as f64 * 0.000009;
+            println!("\nSession cost estimate:");
+            println!("  Tokens used: ~{}", tokens);
+            println!("  Estimated cost: ${:.4}", est_cost);
+            println!("  (Approximate — actual cost depends on model and input/output ratio)\n");
             Some(SlashCommandResult::Handled)
         }
-        "init" => {
-            use std::path::Path;
-            if Path::new(".openclaudia/config.yaml").exists() {
-                println!("\n⚠ Configuration already exists at .openclaudia/config.yaml");
-                println!("Use /config to view, or delete the file to reinitialize.\n");
-            } else {
-                let _ = std::fs::create_dir_all(".openclaudia/skills");
-                let mut detected = Vec::new();
-                if Path::new("Cargo.toml").exists() { detected.push("Rust"); }
-                if Path::new("package.json").exists() { detected.push("Node.js"); }
-                if Path::new("pyproject.toml").exists() || Path::new("setup.py").exists() { detected.push("Python"); }
-                if Path::new("go.mod").exists() { detected.push("Go"); }
-                if Path::new("pom.xml").exists() { detected.push("Java"); }
-                if Path::new("Gemfile").exists() { detected.push("Ruby"); }
-                if !detected.is_empty() {
-                    println!("\nDetected: {}", detected.join(", "));
-                }
-                let cfg = "# OpenClaudia Configuration\nproxy:\n  port: 8080\n  host: \"127.0.0.1\"\n  target: anthropic\n\nproviders:\n  anthropic:\n    base_url: https://api.anthropic.com\n\nsession:\n  timeout_minutes: 30\n  persist_path: .openclaudia/session\n";
-                match std::fs::write(".openclaudia/config.yaml", cfg) {
-                    Ok(_) => {
-                        println!("✓ Created .openclaudia/config.yaml");
-                        println!("✓ Created .openclaudia/skills/\n");
-                    }
-                    Err(e) => println!("\n✗ Failed: {}\n", e),
-                }
+        "context" => {
+            let msg_count = messages.len();
+            let ctx_text: String = messages.iter()
+                .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
+                .collect::<Vec<_>>().join(" ");
+            let tokens = openclaudia::compaction::estimate_tokens(&ctx_text);
+            let user_msgs = messages.iter().filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("user")).count();
+            let asst_msgs = messages.iter().filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant")).count();
+            let tool_msgs = messages.iter().filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("tool")).count();
+            let sys_msgs = messages.iter().filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("system")).count();
+            let max_tokens = openclaudia::compaction::get_context_window(current_model);
+            let pct = if max_tokens > 0 { tokens as f32 / max_tokens as f32 * 100.0 } else { 0.0 };
+
+            println!("\nContext window:");
+            println!("  Messages: {} total (user: {}, assistant: {}, tool: {}, system: {})",
+                msg_count, user_msgs, asst_msgs, tool_msgs, sys_msgs);
+            println!("  Tokens: ~{} / {} ({:.1}%)", tokens, max_tokens, pct);
+            if pct >= 85.0 {
+                println!("  \x1b[33m⚠ Nearing limit — use /compact\x1b[0m");
             }
+            println!();
+            Some(SlashCommandResult::Handled)
+        }
+        "login" => {
+            if openclaudia::claude_credentials::has_claude_code_credentials() {
+                println!("\n✓ Authenticated via Claude Code credentials.");
+                println!("  File: ~/.claude/.credentials.json");
+                if let Ok(creds) = tokio::runtime::Handle::current().block_on(
+                    openclaudia::claude_credentials::load_credentials()
+                ) {
+                    println!("  Type: {}", creds.subscription_type.as_deref().unwrap_or("unknown"));
+                    println!("  Tier: {}", creds.rate_limit_tier.as_deref().unwrap_or("default"));
+                }
+            } else {
+                println!("\n✗ Not authenticated via Claude Code.");
+                println!("  To log in:");
+                println!("  1. Install Claude Code: npm install -g @anthropic-ai/claude-code");
+                println!("  2. Run: claude");
+                println!("  3. Complete the login flow");
+                println!("  4. Restart OpenClaudia");
+            }
+            println!();
+            Some(SlashCommandResult::Handled)
+        }
+        "logout" => {
+            println!("\nTo clear Claude Code credentials:");
+            println!("  rm ~/.claude/.credentials.json");
+            println!("\nTo use an API key instead:");
+            println!("  export ANTHROPIC_API_KEY=sk-...");
+            println!();
             Some(SlashCommandResult::Handled)
         }
         _ => {
