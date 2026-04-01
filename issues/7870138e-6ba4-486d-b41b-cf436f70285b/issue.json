@@ -1,0 +1,10 @@
+{
+  "uuid": "7870138e-6ba4-486d-b41b-cf436f70285b",
+  "display_id": null,
+  "title": "C-1: Path traversal in file/write.rs and file/edit.rs",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:38:31.381730395Z",
+  "updated_at": "2026-04-01T03:38:31.381730395Z"
+}
