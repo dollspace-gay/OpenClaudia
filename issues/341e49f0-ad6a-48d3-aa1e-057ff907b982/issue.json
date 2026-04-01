@@ -2,11 +2,12 @@
   "uuid": "341e49f0-ad6a-48d3-aa1e-057ff907b982",
   "display_id": null,
   "title": "Add /effort command for model effort level control",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-01T00:49:36.249041778Z",
-  "updated_at": "2026-04-01T00:49:36.405335249Z",
+  "updated_at": "2026-04-01T00:57:01.195427831Z",
+  "closed_at": "2026-04-01T00:57:01.195427831Z",
   "labels": [
     "feature"
   ]
