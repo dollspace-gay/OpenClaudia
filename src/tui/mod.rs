@@ -801,18 +801,41 @@ pub struct WelcomeScreen {
     pub version: String,
     pub provider: String,
     pub model: String,
+    pub auth_method: String,
+    pub working_dir: String,
     pub username: Option<String>,
 }
 
 impl WelcomeScreen {
     #[must_use]
     pub fn new(version: &str, provider: &str, model: &str) -> Self {
+        let cwd = std::env::current_dir()
+            .map(|p| {
+                // Shorten home dir to ~
+                if let Some(home) = dirs::home_dir() {
+                    if let Ok(rel) = p.strip_prefix(&home) {
+                        return format!("~/{}", rel.display());
+                    }
+                }
+                p.display().to_string()
+            })
+            .unwrap_or_else(|_| ".".to_string());
+
         Self {
             version: version.to_string(),
             provider: provider.to_string(),
             model: model.to_string(),
+            auth_method: "API Key".to_string(),
+            working_dir: cwd,
             username: get_username(),
         }
+    }
+
+    /// Set the auth method for display
+    #[must_use]
+    pub fn with_auth(mut self, auth: &str) -> Self {
+        self.auth_method = auth.to_string();
+        self
     }
 
     /// Render the welcome screen using ratatui
@@ -823,6 +846,18 @@ impl WelcomeScreen {
     pub fn render(&self) -> io::Result<()> {
         let mut stdout = stdout();
 
+        // Print version line above the box
+        let _ = stdout.execute(SetForegroundColor(CtColor::Rgb {
+            r: 147,
+            g: 112,
+            b: 219,
+        }));
+        let _ = stdout.execute(Print(format!(
+            "  \u{2576} OpenClaudia v{}\n",
+            self.version
+        )));
+        let _ = stdout.execute(ResetColor);
+
         // Setup terminal for ratatui
         terminal::enable_raw_mode()?;
 
@@ -832,7 +867,7 @@ impl WelcomeScreen {
             let mut terminal = Terminal::new(backend)?;
             terminal.draw(|frame| self.draw(frame))?;
             let size = terminal::size()?;
-            8.min(size.1)
+            9.min(size.1)
         }; // terminal dropped here, releasing stdout borrow
 
         // Restore terminal
@@ -849,25 +884,15 @@ impl WelcomeScreen {
 
         // Limit box width
         let box_width = size.width.min(90);
-        let box_height = 8;
+        let box_height = 9;
 
         // Center the box if terminal is wider
         let x_offset = (size.width.saturating_sub(box_width)) / 2;
         let area = Rect::new(x_offset, 0, box_width, box_height);
 
-        // Create the main block with title
-        let title = Line::from(vec![
-            Span::styled(
-                "OpenClaudia",
-                Style::default().fg(PURPLE).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(format!(" v{}", self.version), Style::default().fg(GOLD)),
-        ]);
-
         let block = Block::default()
-            .title(title)
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(DIM));
+            .border_style(Style::default().fg(PURPLE));
 
         // Split into two columns
         let inner = block.inner(area);
@@ -882,19 +907,29 @@ impl WelcomeScreen {
         // Left column content
         let greeting = self.username.as_ref().map_or_else(
             || "Welcome to OpenClaudia!".to_string(),
-            |name| format!("Welcome back, {name}!"),
+            |name| format!("Welcome back {name}!"),
+        );
+
+        // Model info line with · separators (Claude Code style)
+        let model_info = format!(
+            "{} \u{00B7} {} \u{00B7} {}",
+            self.model,
+            capitalize_first(&self.provider),
+            self.auth_method
         );
 
         let left_text = vec![
-            Line::from(Span::styled(&greeting, Style::default().fg(Color::White))),
-            Line::from(""),
             Line::from(Span::styled(
-                format!("Provider: {}", capitalize_first(&self.provider)),
-                Style::default().fg(PURPLE),
+                &greeting,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             )),
+            Line::from(""),
+            Line::from(Span::styled(&model_info, Style::default().fg(DIM))),
             Line::from(Span::styled(
-                format!("Model: {}", &self.model),
-                Style::default().fg(GOLD),
+                format!("  {}", self.working_dir),
+                Style::default().fg(DIM),
             )),
         ];
         let left_para = Paragraph::new(left_text).wrap(Wrap { trim: true });
@@ -902,7 +937,10 @@ impl WelcomeScreen {
 
         // Right column content
         let right_text = vec![
-            Line::from(Span::styled("Tips", Style::default().fg(GOLD))),
+            Line::from(Span::styled(
+                "Tips for getting started",
+                Style::default().fg(GOLD),
+            )),
             Line::from(Span::styled(
                 get_tips()[0],
                 Style::default().fg(Color::White),
@@ -916,25 +954,68 @@ impl WelcomeScreen {
     }
 }
 
-/// Render the input prompt hints inline (no absolute positioning).
+/// Render a horizontal separator line across the terminal width.
 ///
 /// # Errors
 ///
 /// Returns an error if writing to stdout fails.
-pub fn render_input_prompt(mode: &str) -> io::Result<()> {
+pub fn render_separator() -> io::Result<()> {
     let mut stdout = io::stdout();
-    let right_hint = format!(
-        "Tab for {} mode",
-        if mode == "build" { "Plan" } else { "Build" }
+    let (cols, _) = terminal::size().unwrap_or((80, 24));
+    stdout.execute(SetForegroundColor(CtColor::Rgb {
+        r: 60,
+        g: 60,
+        b: 60,
+    }))?;
+    writeln!(stdout, "{}", "\u{2500}".repeat(cols as usize))?;
+    stdout.execute(ResetColor)?;
+    stdout.flush()?;
+    Ok(())
+}
+
+/// Render the input prompt area: separator line, then bottom status bar.
+/// Matches Claude Code's layout: separator, prompt on left, status on right.
+///
+/// # Errors
+///
+/// Returns an error if writing to stdout fails.
+pub fn render_input_prompt(_mode: &str) -> io::Result<()> {
+    render_separator()?;
+    Ok(())
+}
+
+/// Render the bottom status bar (below the input prompt area).
+/// Shows "? for shortcuts" on left, effort/mode on right.
+///
+/// # Errors
+///
+/// Returns an error if writing to stdout fails.
+pub fn render_bottom_bar(effort: &str, _mode: &str) -> io::Result<()> {
+    let mut stdout = io::stdout();
+    let (cols, _) = terminal::size().unwrap_or((80, 24));
+
+    let left = "? for shortcuts";
+    let right = format!(
+        "\u{25CF} {} \u{00B7} /effort",
+        effort
     );
+
+    // Calculate padding between left and right
+    let padding = cols as usize - left.len() - right.len();
+    let padding = if padding > 0 {
+        " ".repeat(padding)
+    } else {
+        " ".to_string()
+    };
 
     stdout.execute(SetForegroundColor(CtColor::Rgb {
         r: 100,
         g: 100,
         b: 100,
     }))?;
-    writeln!(stdout, "  /help for commands · {right_hint}")?;
+    write!(stdout, "{left}{padding}{right}")?;
     stdout.execute(ResetColor)?;
+    writeln!(stdout)?;
     stdout.flush()?;
     Ok(())
 }
@@ -1098,21 +1179,20 @@ pub fn print_context_usage(used_tokens: usize, max_tokens: usize) {
     let _ = out.execute(Print("\n"));
 }
 
-/// Print a clean welcome banner.
+/// Print a clean welcome banner (inline fallback, no ratatui).
 pub fn print_welcome_banner(version: &str, provider: &str, model: &str, auth_method: &str) {
     let mut out = stdout();
+    // Version line (purple branding)
     let _ = out.execute(SetForegroundColor(CtColor::Rgb {
         r: 147,
         g: 112,
         b: 219,
     }));
-    let _ = out.execute(SetAttribute(Attribute::Bold));
-    let _ = out.execute(Print(format!("  OpenClaudia v{version}")));
-    let _ = out.execute(SetAttribute(Attribute::Reset));
+    let _ = out.execute(Print(format!("  \u{2576} OpenClaudia v{version}\n")));
     let _ = out.execute(ResetColor);
-    let _ = out.execute(Print("\n"));
+    // Model info with · separators
     let _ = out.execute(SetForegroundColor(CtColor::DarkGrey));
-    let _ = out.execute(Print(format!("  {provider} · {model} · {auth_method}\n\n")));
+    let _ = out.execute(Print(format!("  {model} \u{00B7} {provider} \u{00B7} {auth_method}\n\n")));
     let _ = out.execute(ResetColor);
 }
 

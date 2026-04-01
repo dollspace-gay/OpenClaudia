@@ -622,9 +622,10 @@ async fn cmd_chat(
     };
 
     loop {
-        // Show input hints before prompt
+        // Show separator and bottom status bar before prompt
         let mode_str = chat_session.mode.display().to_lowercase();
         let _ = tui::render_input_prompt(&mode_str);
+        let _ = tui::render_bottom_bar(&effort_level, &mode_str);
 
         let prompt = if vim_enabled {
             // Show pending command in prompt (e.g., "d…" while waiting for motion)
@@ -635,12 +636,12 @@ async fn cmd_chat(
             let _ = vim_state.last_find.is_some();
             let _ = vim::describe_action(&vim::VimAction::None);
             if vim_state.is_pending() {
-                format!("{status} {pending} > ")
+                format!("{status} {pending} \u{203A} ")
             } else {
-                format!("{status} > ")
+                format!("{status} \u{203A} ")
             }
         } else {
-            "> ".to_string()
+            "\u{203A} ".to_string()
         };
         let readline = rl.readline(&prompt);
 
