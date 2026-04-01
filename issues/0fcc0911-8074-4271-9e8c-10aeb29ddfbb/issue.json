@@ -1,6 +1,6 @@
 {
   "uuid": "0fcc0911-8074-4271-9e8c-10aeb29ddfbb",
-  "display_id": null,
+  "display_id": 89,
   "title": "W-4: Background shell limit checked after spawn",
   "status": "open",
   "priority": "medium",

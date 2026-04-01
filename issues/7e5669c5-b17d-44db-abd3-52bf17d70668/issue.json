@@ -1,6 +1,6 @@
 {
   "uuid": "7e5669c5-b17d-44db-abd3-52bf17d70668",
-  "display_id": null,
+  "display_id": 83,
   "title": "C-22: Stream timeout discards partial content",
   "status": "open",
   "priority": "critical",

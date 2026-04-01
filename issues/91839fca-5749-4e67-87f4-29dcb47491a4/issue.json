@@ -1,6 +1,6 @@
 {
   "uuid": "91839fca-5749-4e67-87f4-29dcb47491a4",
-  "display_id": null,
+  "display_id": 109,
   "title": "W-24: VDD builder revision infinite loop risk",
   "status": "open",
   "priority": "medium",

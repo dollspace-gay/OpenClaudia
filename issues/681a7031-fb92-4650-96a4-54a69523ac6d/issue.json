@@ -1,6 +1,6 @@
 {
   "uuid": "681a7031-fb92-4650-96a4-54a69523ac6d",
-  "display_id": null,
+  "display_id": 79,
   "title": "C-18: Notebook edit has no symlink validation",
   "status": "open",
   "priority": "critical",

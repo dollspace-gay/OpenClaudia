@@ -1,6 +1,6 @@
 {
   "uuid": "7870138e-6ba4-486d-b41b-cf436f70285b",
-  "display_id": null,
+  "display_id": 62,
   "title": "C-1: Path traversal in file/write.rs and file/edit.rs",
   "status": "open",
   "priority": "critical",

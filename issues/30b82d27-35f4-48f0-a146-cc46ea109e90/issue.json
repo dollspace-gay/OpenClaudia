@@ -1,6 +1,6 @@
 {
   "uuid": "30b82d27-35f4-48f0-a146-cc46ea109e90",
-  "display_id": null,
+  "display_id": 77,
   "title": "C-16: Keybinding case sensitivity by accident",
   "status": "open",
   "priority": "critical",

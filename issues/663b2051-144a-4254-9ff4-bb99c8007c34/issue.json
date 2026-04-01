@@ -1,6 +1,6 @@
 {
   "uuid": "663b2051-144a-4254-9ff4-bb99c8007c34",
-  "display_id": null,
+  "display_id": 125,
   "title": "W-40: VDD adversary provider/key not validated at startup",
   "status": "open",
   "priority": "medium",

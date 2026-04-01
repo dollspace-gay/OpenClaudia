@@ -1,6 +1,6 @@
 {
   "uuid": "b4268c9e-91ed-4542-a102-7ecdf96f4483",
-  "display_id": null,
+  "display_id": 49,
   "title": "Wire TUI visual helpers into main REPL loop",
   "status": "closed",
   "priority": "high",

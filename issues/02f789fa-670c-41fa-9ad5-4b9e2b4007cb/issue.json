@@ -1,6 +1,6 @@
 {
   "uuid": "02f789fa-670c-41fa-9ad5-4b9e2b4007cb",
-  "display_id": null,
+  "display_id": 111,
   "title": "W-26: Pricing data hardcoded with no staleness check",
   "status": "open",
   "priority": "medium",

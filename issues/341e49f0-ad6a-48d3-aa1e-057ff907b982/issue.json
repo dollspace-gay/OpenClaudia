@@ -1,6 +1,6 @@
 {
   "uuid": "341e49f0-ad6a-48d3-aa1e-057ff907b982",
-  "display_id": null,
+  "display_id": 52,
   "title": "Add /effort command for model effort level control",
   "status": "closed",
   "priority": "medium",

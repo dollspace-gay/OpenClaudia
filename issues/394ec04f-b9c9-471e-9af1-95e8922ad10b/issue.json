@@ -1,6 +1,6 @@
 {
   "uuid": "394ec04f-b9c9-471e-9af1-95e8922ad10b",
-  "display_id": null,
+  "display_id": 98,
   "title": "W-13: Plan mode blocks create infinite retry loop",
   "status": "open",
   "priority": "medium",

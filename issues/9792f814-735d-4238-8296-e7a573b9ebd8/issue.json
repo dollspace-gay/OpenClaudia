@@ -1,6 +1,6 @@
 {
   "uuid": "9792f814-735d-4238-8296-e7a573b9ebd8",
-  "display_id": null,
+  "display_id": 43,
   "title": "Add /commit and /commit-push-pr slash commands",
   "status": "closed",
   "priority": "high",

@@ -1,6 +1,6 @@
 {
   "uuid": "b11c769c-9b9d-413f-9c32-ffbc5ece8a9c",
-  "display_id": null,
+  "display_id": 46,
   "title": "Add /mcp command for MCP server management",
   "status": "closed",
   "priority": "medium",

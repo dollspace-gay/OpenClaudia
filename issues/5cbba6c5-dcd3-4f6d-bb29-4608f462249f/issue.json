@@ -1,6 +1,6 @@
 {
   "uuid": "5cbba6c5-dcd3-4f6d-bb29-4608f462249f",
-  "display_id": null,
+  "display_id": 86,
   "title": "W-1: Malformed tool args bypass permission checks",
   "status": "open",
   "priority": "medium",

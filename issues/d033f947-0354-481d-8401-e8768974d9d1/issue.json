@@ -1,6 +1,6 @@
 {
   "uuid": "d033f947-0354-481d-8401-e8768974d9d1",
-  "display_id": null,
+  "display_id": 128,
   "title": "W-43: Credential path has no symlink validation",
   "status": "open",
   "priority": "medium",

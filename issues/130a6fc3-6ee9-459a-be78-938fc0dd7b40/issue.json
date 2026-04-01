@@ -1,6 +1,6 @@
 {
   "uuid": "130a6fc3-6ee9-459a-be78-938fc0dd7b40",
-  "display_id": null,
+  "display_id": 48,
   "title": "Better TUI: message boundaries, scroll hints, progress bars",
   "status": "closed",
   "priority": "medium",

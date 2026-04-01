@@ -1,6 +1,6 @@
 {
   "uuid": "2e1d9d50-1bf2-4340-9bed-ff8473e5250e",
-  "display_id": null,
+  "display_id": 126,
   "title": "W-41: Doctor command continues after config failure",
   "status": "open",
   "priority": "medium",

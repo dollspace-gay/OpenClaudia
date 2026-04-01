@@ -1,6 +1,6 @@
 {
   "uuid": "bc2aa74a-4899-4ce1-9d82-53da6b005874",
-  "display_id": null,
+  "display_id": 138,
   "title": "N-5: Terminal size queried repeatedly, not cached",
   "status": "open",
   "priority": "low",

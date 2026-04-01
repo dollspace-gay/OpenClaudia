@@ -1,6 +1,6 @@
 {
   "uuid": "97966b73-19bf-4af1-ba2b-61aa9d514509",
-  "display_id": null,
+  "display_id": 78,
   "title": "C-17: Hook check_blocked returns first error only",
   "status": "open",
   "priority": "critical",

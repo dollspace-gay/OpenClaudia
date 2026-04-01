@@ -1,6 +1,6 @@
 {
   "uuid": "bf780edd-5695-40ec-8e15-908ad9bb15f0",
-  "display_id": null,
+  "display_id": 124,
   "title": "W-39: Background shell mutex poison silently drops lines",
   "status": "open",
   "priority": "medium",

@@ -1,6 +1,6 @@
 {
   "uuid": "2393b05d-3938-418d-aaee-e70475fd2880",
-  "display_id": null,
+  "display_id": 104,
   "title": "W-19: OAuth credential refresh doesn't notify OAuthStore",
   "status": "open",
   "priority": "medium",

@@ -1,6 +1,6 @@
 {
   "uuid": "c4abcad5-e0ae-48fe-a67d-0c5ab275ac4b",
-  "display_id": null,
+  "display_id": 92,
   "title": "W-7: Git commands in worktree have no timeout",
   "status": "open",
   "priority": "medium",

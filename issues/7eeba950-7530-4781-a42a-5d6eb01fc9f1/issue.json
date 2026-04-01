@@ -1,6 +1,6 @@
 {
   "uuid": "7eeba950-7530-4781-a42a-5d6eb01fc9f1",
-  "display_id": null,
+  "display_id": 75,
   "title": "C-14: Task deletion returns Err instead of Ok",
   "status": "open",
   "priority": "critical",

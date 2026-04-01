@@ -1,6 +1,6 @@
 {
   "uuid": "85a80b7d-180f-41a0-a3d8-96c7ba8d537f",
-  "display_id": null,
+  "display_id": 71,
   "title": "C-10: Session directory creation failure silently ignored",
   "status": "open",
   "priority": "critical",

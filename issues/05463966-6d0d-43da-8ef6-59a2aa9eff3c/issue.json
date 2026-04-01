@@ -1,6 +1,6 @@
 {
   "uuid": "05463966-6d0d-43da-8ef6-59a2aa9eff3c",
-  "display_id": null,
+  "display_id": 107,
   "title": "W-22: Google adapter uses UUID per tool call (no correlation)",
   "status": "open",
   "priority": "medium",

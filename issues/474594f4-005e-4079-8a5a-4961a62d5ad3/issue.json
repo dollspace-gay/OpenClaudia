@@ -1,6 +1,6 @@
 {
   "uuid": "474594f4-005e-4079-8a5a-4961a62d5ad3",
-  "display_id": null,
+  "display_id": 73,
   "title": "C-12: Empty API key strings pass validation",
   "status": "open",
   "priority": "critical",

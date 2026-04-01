@@ -1,6 +1,6 @@
 {
   "uuid": "b492e957-dbb9-452f-99ae-fe7ee4b2be46",
-  "display_id": null,
+  "display_id": 65,
   "title": "C-4: OAuth token refresh race condition (TOCTOU)",
   "status": "open",
   "priority": "critical",

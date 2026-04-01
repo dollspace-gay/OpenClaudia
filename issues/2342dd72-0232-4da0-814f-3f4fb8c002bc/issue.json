@@ -1,6 +1,6 @@
 {
   "uuid": "2342dd72-0232-4da0-814f-3f4fb8c002bc",
-  "display_id": null,
+  "display_id": 59,
   "title": "Add /login /logout slash commands",
   "status": "closed",
   "priority": "medium",

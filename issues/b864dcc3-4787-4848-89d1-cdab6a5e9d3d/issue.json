@@ -1,6 +1,6 @@
 {
   "uuid": "b864dcc3-4787-4848-89d1-cdab6a5e9d3d",
-  "display_id": null,
+  "display_id": 99,
   "title": "W-14: Duplicate tool call detection bypassable",
   "status": "open",
   "priority": "medium",

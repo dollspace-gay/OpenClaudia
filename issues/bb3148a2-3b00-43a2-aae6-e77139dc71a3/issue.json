@@ -1,6 +1,6 @@
 {
   "uuid": "bb3148a2-3b00-43a2-aae6-e77139dc71a3",
-  "display_id": null,
+  "display_id": 63,
   "title": "C-2: Null content with tool_calls creates invalid Anthropic request",
   "status": "open",
   "priority": "critical",

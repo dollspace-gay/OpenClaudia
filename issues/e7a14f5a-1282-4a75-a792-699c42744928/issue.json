@@ -1,6 +1,6 @@
 {
   "uuid": "e7a14f5a-1282-4a75-a792-699c42744928",
-  "display_id": null,
+  "display_id": 146,
   "title": "N-13: ModelInfo uses i64 for timestamp instead of proper type",
   "status": "open",
   "priority": "low",

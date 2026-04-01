@@ -1,6 +1,6 @@
 {
   "uuid": "90ccf966-61b6-4f94-9cb8-bb4394ffe719",
-  "display_id": null,
+  "display_id": 66,
   "title": "C-5: Unwrap panics on editor creation",
   "status": "open",
   "priority": "critical",

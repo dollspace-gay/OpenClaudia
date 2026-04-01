@@ -1,6 +1,6 @@
 {
   "uuid": "67bb6128-fa29-4254-8d15-dffc2ab01275",
-  "display_id": null,
+  "display_id": 95,
   "title": "W-10: Hook stdin write silently ignored",
   "status": "open",
   "priority": "medium",

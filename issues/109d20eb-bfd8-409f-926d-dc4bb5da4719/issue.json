@@ -1,6 +1,6 @@
 {
   "uuid": "109d20eb-bfd8-409f-926d-dc4bb5da4719",
-  "display_id": null,
+  "display_id": 40,
   "title": "Disable proxy system, use direct OAuth as default auth",
   "status": "closed",
   "priority": "high",

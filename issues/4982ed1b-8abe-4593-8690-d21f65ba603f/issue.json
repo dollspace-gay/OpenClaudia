@@ -1,6 +1,6 @@
 {
   "uuid": "4982ed1b-8abe-4593-8690-d21f65ba603f",
-  "display_id": null,
+  "display_id": 84,
   "title": "C-23: Anthropic tool argument serialization lossy",
   "status": "open",
   "priority": "critical",

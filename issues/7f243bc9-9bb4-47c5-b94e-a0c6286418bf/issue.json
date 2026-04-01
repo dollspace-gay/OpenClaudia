@@ -1,6 +1,6 @@
 {
   "uuid": "7f243bc9-9bb4-47c5-b94e-a0c6286418bf",
-  "display_id": null,
+  "display_id": 121,
   "title": "W-36: Session compact doesn't check minimum messages",
   "status": "open",
   "priority": "medium",

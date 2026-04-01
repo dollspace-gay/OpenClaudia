@@ -1,6 +1,6 @@
 {
   "uuid": "ebae47cf-fa4d-4842-bb9b-eb942a511283",
-  "display_id": null,
+  "display_id": 41,
   "title": "Ensure all tools use Anthropic-native format for Claude compatibility",
   "status": "closed",
   "priority": "high",

@@ -1,6 +1,6 @@
 {
   "uuid": "d0e9dd34-df5e-44f4-bd08-9523aafc7c2e",
-  "display_id": null,
+  "display_id": 70,
   "title": "C-9: Audit logger silently fails",
   "status": "open",
   "priority": "critical",

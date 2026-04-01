@@ -1,6 +1,6 @@
 {
   "uuid": "7f010f0f-686a-4620-a00f-fecd2e555de8",
-  "display_id": null,
+  "display_id": 44,
   "title": "Add auto-compact triggers at 85%/95% context window",
   "status": "closed",
   "priority": "high",

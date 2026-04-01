@@ -1,6 +1,6 @@
 {
   "uuid": "1ed272be-0a2c-44cc-975d-f650004b7b1c",
-  "display_id": null,
+  "display_id": 113,
   "title": "W-28: Plan file path traversal via session ID",
   "status": "open",
   "priority": "medium",

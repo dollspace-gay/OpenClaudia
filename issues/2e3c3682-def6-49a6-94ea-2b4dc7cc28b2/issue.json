@@ -1,6 +1,6 @@
 {
   "uuid": "2e3c3682-def6-49a6-94ea-2b4dc7cc28b2",
-  "display_id": null,
+  "display_id": 60,
   "title": "Improve /sessions with timestamps and message counts",
   "status": "closed",
   "priority": "low",

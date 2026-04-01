@@ -1,6 +1,6 @@
 {
   "uuid": "e4915e09-b4b7-4cd1-8f62-39733749cf44",
-  "display_id": null,
+  "display_id": 101,
   "title": "W-16: Event handler thread death is silent",
   "status": "open",
   "priority": "medium",

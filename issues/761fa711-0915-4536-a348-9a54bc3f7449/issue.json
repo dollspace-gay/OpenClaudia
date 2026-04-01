@@ -1,6 +1,6 @@
 {
   "uuid": "761fa711-0915-4536-a348-9a54bc3f7449",
-  "display_id": null,
+  "display_id": 68,
   "title": "C-7: Plugin path traversal via marketplace source",
   "status": "open",
   "priority": "critical",

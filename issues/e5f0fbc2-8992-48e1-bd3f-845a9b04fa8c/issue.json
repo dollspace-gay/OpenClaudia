@@ -1,6 +1,6 @@
 {
   "uuid": "e5f0fbc2-8992-48e1-bd3f-845a9b04fa8c",
-  "display_id": null,
+  "display_id": 67,
   "title": "C-6: VDD config validate() never called",
   "status": "open",
   "priority": "critical",

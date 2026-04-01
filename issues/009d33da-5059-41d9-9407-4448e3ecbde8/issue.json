@@ -1,6 +1,6 @@
 {
   "uuid": "009d33da-5059-41d9-9407-4448e3ecbde8",
-  "display_id": null,
+  "display_id": 112,
   "title": "W-27: Session cleanup ignores deletion errors",
   "status": "open",
   "priority": "medium",

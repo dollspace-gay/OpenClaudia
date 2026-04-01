@@ -1,6 +1,6 @@
 {
   "uuid": "b79bae3d-199c-4fd9-825c-7bb1fcc42f46",
-  "display_id": null,
+  "display_id": 42,
   "title": "Add interactive permission prompts for tool execution",
   "status": "closed",
   "priority": "high",

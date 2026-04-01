@@ -1,6 +1,6 @@
 {
   "uuid": "ac73046d-bbed-485d-8a02-89ac9a641ddf",
-  "display_id": null,
+  "display_id": 102,
   "title": "W-17: Memory DB stale after working directory change",
   "status": "open",
   "priority": "medium",

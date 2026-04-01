@@ -1,6 +1,6 @@
 {
   "uuid": "588eade6-3433-4e57-83e4-50304fc73a46",
-  "display_id": null,
+  "display_id": 118,
   "title": "W-33: PDF page count determination silently fails",
   "status": "open",
   "priority": "medium",

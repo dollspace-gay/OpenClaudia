@@ -1,6 +1,6 @@
 {
   "uuid": "5ab41d6d-bd5d-407f-b9d2-8a5208b56d68",
-  "display_id": null,
+  "display_id": 51,
   "title": "Add /config set command for runtime config changes",
   "status": "closed",
   "priority": "medium",

@@ -1,6 +1,6 @@
 {
   "uuid": "ad750cd4-069d-4d34-9efb-3abcffd04866",
-  "display_id": null,
+  "display_id": 133,
   "title": "W-48: Chainlink output format fragile parsing",
   "status": "open",
   "priority": "medium",

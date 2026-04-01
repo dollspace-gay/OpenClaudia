@@ -1,6 +1,6 @@
 {
   "uuid": "3e1b7582-1876-4510-8faf-473a7a745a94",
-  "display_id": null,
+  "display_id": 110,
   "title": "W-25: Plugin install path not validated",
   "status": "open",
   "priority": "medium",

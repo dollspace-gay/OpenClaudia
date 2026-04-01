@@ -1,6 +1,6 @@
 {
   "uuid": "d74b18ce-b4f8-4e3d-b1eb-b9a620d54f85",
-  "display_id": null,
+  "display_id": 123,
   "title": "W-38: Permission glob patterns not validated at load",
   "status": "open",
   "priority": "medium",

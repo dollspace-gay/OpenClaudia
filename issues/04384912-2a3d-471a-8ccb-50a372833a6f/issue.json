@@ -1,6 +1,6 @@
 {
   "uuid": "04384912-2a3d-471a-8ccb-50a372833a6f",
-  "display_id": null,
+  "display_id": 127,
   "title": "W-42: Notebook cell metadata incomplete for Jupyter 4.5+",
   "status": "open",
   "priority": "medium",

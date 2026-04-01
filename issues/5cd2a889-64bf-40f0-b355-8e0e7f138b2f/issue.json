@@ -1,6 +1,6 @@
 {
   "uuid": "5cd2a889-64bf-40f0-b355-8e0e7f138b2f",
-  "display_id": null,
+  "display_id": 69,
   "title": "C-8: LSP response parser infinite loop",
   "status": "open",
   "priority": "critical",

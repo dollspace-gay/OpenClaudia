@@ -1,6 +1,6 @@
 {
   "uuid": "8915a34f-10f9-4f21-b7a4-9ec62c8b794e",
-  "display_id": null,
+  "display_id": 108,
   "title": "W-23: Floating-point comparison in VDD confabulation",
   "status": "open",
   "priority": "medium",

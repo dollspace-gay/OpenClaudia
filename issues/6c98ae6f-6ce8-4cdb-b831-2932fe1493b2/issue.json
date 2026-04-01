@@ -1,6 +1,6 @@
 {
   "uuid": "6c98ae6f-6ce8-4cdb-b831-2932fe1493b2",
-  "display_id": null,
+  "display_id": 117,
   "title": "W-32: Tool result diff block parse silently fails",
   "status": "open",
   "priority": "medium",
