@@ -1,0 +1,10 @@
+{
+  "uuid": "e5950b89-7ff2-42d8-a852-c9e6836e7540",
+  "issue_uuid": "85a80b7d-180f-41a0-a3d8-96c7ba8d537f",
+  "author": "lOrm",
+  "content": "Verified fixed: warning log on failure in session/mod.rs:360-362",
+  "created_at": "2026-04-01T22:11:23.663720088Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZQAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASgAAACEAgS8YyCVwpzVLe7d8XeMytZYyGn89h3rzwP0p9q9UfUkAAAAhAPKX0vI6Mh5NaPU5jUnRefjgy/ogteenyEe87pwfMxAa"
+}
