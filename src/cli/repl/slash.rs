@@ -88,6 +88,8 @@ pub enum SlashCommandResult {
     ToggleVim,
     /// Invoke a skill (inject its prompt as the next user message)
     Skill(String),
+    /// Set effort level for the session (low/medium/high)
+    SetEffort(String),
     /// Show help message (already printed)
     Handled,
 }
@@ -121,11 +123,11 @@ pub fn handle_slash_command(
             println!("  /redo            - Redo last undone exchange");
             println!("  /exit, /quit     - Exit the chat");
             println!("  /history         - Show conversation history");
-            println!("  /model           - Show current model");
-            println!("  /models          - List available models");
+            println!("  /model           - Show current model and provider");
+            println!("  /model list      - List available models for current provider");
             println!("  /model <name>    - Switch to a different model");
             println!("  /copy            - Copy last assistant response to clipboard");
-            println!("  /init            - Generate project rules from codebase");
+            println!("  /init            - Initialize project config with auto-detection");
             println!("  /review          - Review uncommitted git changes");
             println!("  /commit          - Stage changes and commit with auto-generated message");
             println!("  /commit-push-pr  - Commit, push, and create a pull request");
@@ -136,6 +138,7 @@ pub fn handle_slash_command(
             println!("  /theme <name>    - Switch to a color theme");
             println!("  /mode            - Toggle between Build and Plan modes");
             println!("  /vim             - Toggle vim mode (show mode indicator in prompt)");
+            println!("  /effort [level]  - Set effort level (low/medium/high)");
             println!("  /keybindings     - Show configured keyboard shortcuts");
             println!("  /rename <title>  - Rename the current session");
             println!("  /version         - Show version and system information");
@@ -165,6 +168,11 @@ pub fn handle_slash_command(
             println!("  /plugin manage   - Manage installed plugins");
             println!("  /plugin help     - Show all plugin commands");
             println!("  /<plugin>:<cmd>  - Run a plugin command");
+            println!();
+            println!("Model Control:");
+            println!("  /model           - Show current model");
+            println!("  /model list      - List available models for current provider");
+            println!("  /effort <level>  - Set effort level (low/medium/high)");
             println!();
             println!("Skill Commands:");
             println!("  /skill           - List available skills");
@@ -266,21 +274,39 @@ pub fn handle_slash_command(
             }
             Some(SlashCommandResult::Handled)
         }
-        "model" => {
-            if args.is_empty() {
-                println!("\nCurrent model: {}", current_model);
-                println!("Provider: {}\n", provider);
+        "model" | "models" => {
+            if args.is_empty() && cmd == "model" {
+                // Show current model
+                println!("\nCurrent model: \x1b[36m{}\x1b[0m", current_model);
+                println!("Provider: {}", provider);
+                println!("Use /model list to see available models, /model <name> to switch.\n");
+                Some(SlashCommandResult::Handled)
+            } else if args.is_empty() && cmd == "models" || args == "list" {
+                // List available models
+                let models = get_available_models(provider);
+                println!("\nAvailable models for \x1b[36m{}\x1b[0m:\n", provider);
+                for m in &models {
+                    let marker = if *m == current_model {
+                        " \x1b[32m\u{2190} current\x1b[0m"
+                    } else {
+                        ""
+                    };
+                    println!("  \x1b[36m{}\x1b[0m{}", m, marker);
+                }
+                println!("\nUse /model <name> to switch.\n");
+                Some(SlashCommandResult::Handled)
             } else {
+                // Switch model
                 let new_model = args.trim().to_string();
                 let available = get_available_models(provider);
                 if available.contains(&new_model.as_str()) || !available.is_empty() {
-                    println!("\nSwitching to model: {}\n", new_model);
-                    return Some(SlashCommandResult::SwitchModel(new_model));
+                    println!("\nSwitching to model: \x1b[36m{}\x1b[0m\n", new_model);
+                    Some(SlashCommandResult::SwitchModel(new_model))
+                } else {
+                    Some(SlashCommandResult::Handled)
                 }
             }
-            Some(SlashCommandResult::Handled)
         }
-        "models" => Some(SlashCommandResult::FetchModels),
         "export" => Some(SlashCommandResult::Export),
         "compact" | "summarize" => Some(SlashCommandResult::Compact),
         "editor" | "edit" | "e" => {
@@ -315,6 +341,68 @@ pub fn handle_slash_command(
             Some(SlashCommandResult::Handled)
         }
         "init" => {
+            use std::path::Path;
+            let config_exists = Path::new(".openclaudia/config.yaml").exists();
+            if config_exists {
+                println!("\n\u{26a0} Configuration already exists at .openclaudia/config.yaml");
+                println!("Use /config to view, or delete the file to reinitialize.\n");
+            } else {
+                // Create directories
+                let _ = std::fs::create_dir_all(".openclaudia/skills");
+
+                // Detect project type
+                let mut project_types = Vec::new();
+                if Path::new("Cargo.toml").exists() {
+                    project_types.push("Rust");
+                }
+                if Path::new("package.json").exists() {
+                    project_types.push("Node.js");
+                }
+                if Path::new("pyproject.toml").exists() || Path::new("setup.py").exists() {
+                    project_types.push("Python");
+                }
+                if Path::new("go.mod").exists() {
+                    project_types.push("Go");
+                }
+                if Path::new("pom.xml").exists() {
+                    project_types.push("Java");
+                }
+                if Path::new("Gemfile").exists() {
+                    project_types.push("Ruby");
+                }
+
+                if !project_types.is_empty() {
+                    println!("\nDetected: {}", project_types.join(", "));
+                }
+
+                // Create default config
+                let default_config = "\
+# OpenClaudia Configuration
+proxy:
+  port: 8080
+  host: \"127.0.0.1\"
+  target: anthropic
+
+providers:
+  anthropic:
+    base_url: https://api.anthropic.com
+
+session:
+  timeout_minutes: 30
+  persist_path: .openclaudia/session
+";
+
+                let _ = std::fs::create_dir_all(".openclaudia");
+                match std::fs::write(".openclaudia/config.yaml", default_config) {
+                    Ok(()) => {
+                        println!("\n\u{2713} Created .openclaudia/config.yaml");
+                        println!("\u{2713} Created .openclaudia/skills/");
+                        println!("\nEdit .openclaudia/config.yaml to configure providers and API keys.\n");
+                    }
+                    Err(e) => println!("\n\u{2717} Failed to create config: {}\n", e),
+                }
+            }
+            // Also run existing project rules initialization
             init_project_rules();
             Some(SlashCommandResult::Handled)
         }
@@ -336,6 +424,30 @@ pub fn handle_slash_command(
         }
         "mode" => Some(SlashCommandResult::ToggleMode),
         "vim" => Some(SlashCommandResult::ToggleVim),
+        "effort" => {
+            let level = args.trim().to_lowercase();
+            match level.as_str() {
+                "low" | "l" => {
+                    println!("\n\u{2713} Effort set to \x1b[33mlow\x1b[0m (faster, less thorough)\n");
+                    Some(SlashCommandResult::SetEffort("low".to_string()))
+                }
+                "medium" | "med" | "m" | "" => {
+                    println!("\n\u{2713} Effort set to \x1b[36mmedium\x1b[0m (balanced)\n");
+                    Some(SlashCommandResult::SetEffort("medium".to_string()))
+                }
+                "high" | "h" => {
+                    println!("\n\u{2713} Effort set to \x1b[32mhigh\x1b[0m (thorough, slower)\n");
+                    Some(SlashCommandResult::SetEffort("high".to_string()))
+                }
+                _ => {
+                    println!("\nUsage: /effort [low|medium|high]");
+                    println!("  low    - Quick answers, minimal thinking");
+                    println!("  medium - Balanced (default)");
+                    println!("  high   - Thorough, more thinking time\n");
+                    Some(SlashCommandResult::Handled)
+                }
+            }
+        }
         "keybindings" | "keys" | "bindings" => Some(SlashCommandResult::Keybindings),
         "rename" | "title" => {
             if args.is_empty() {
@@ -854,6 +966,48 @@ pub fn handle_slash_command(
                 }
             } else {
                 println!("(gh CLI not found — install it to auto-create PRs)");
+            }
+            Some(SlashCommandResult::Handled)
+        }
+        "effort" => {
+            match args.trim().to_lowercase().as_str() {
+                "low" | "l" => println!("\n✓ Effort set to \x1b[33mlow\x1b[0m (faster, less thorough)\n"),
+                "medium" | "med" | "m" | "" => println!("\n✓ Effort set to \x1b[36mmedium\x1b[0m (balanced)\n"),
+                "high" | "h" => println!("\n✓ Effort set to \x1b[32mhigh\x1b[0m (thorough, slower)\n"),
+                _ => {
+                    println!("\nUsage: /effort [low|medium|high]");
+                    println!("  low    - Quick answers, minimal thinking");
+                    println!("  medium - Balanced (default)");
+                    println!("  high   - Thorough, more thinking time\n");
+                }
+            }
+            Some(SlashCommandResult::Handled)
+        }
+        "init" => {
+            use std::path::Path;
+            if Path::new(".openclaudia/config.yaml").exists() {
+                println!("\n⚠ Configuration already exists at .openclaudia/config.yaml");
+                println!("Use /config to view, or delete the file to reinitialize.\n");
+            } else {
+                let _ = std::fs::create_dir_all(".openclaudia/skills");
+                let mut detected = Vec::new();
+                if Path::new("Cargo.toml").exists() { detected.push("Rust"); }
+                if Path::new("package.json").exists() { detected.push("Node.js"); }
+                if Path::new("pyproject.toml").exists() || Path::new("setup.py").exists() { detected.push("Python"); }
+                if Path::new("go.mod").exists() { detected.push("Go"); }
+                if Path::new("pom.xml").exists() { detected.push("Java"); }
+                if Path::new("Gemfile").exists() { detected.push("Ruby"); }
+                if !detected.is_empty() {
+                    println!("\nDetected: {}", detected.join(", "));
+                }
+                let cfg = "# OpenClaudia Configuration\nproxy:\n  port: 8080\n  host: \"127.0.0.1\"\n  target: anthropic\n\nproviders:\n  anthropic:\n    base_url: https://api.anthropic.com\n\nsession:\n  timeout_minutes: 30\n  persist_path: .openclaudia/session\n";
+                match std::fs::write(".openclaudia/config.yaml", cfg) {
+                    Ok(_) => {
+                        println!("✓ Created .openclaudia/config.yaml");
+                        println!("✓ Created .openclaudia/skills/\n");
+                    }
+                    Err(e) => println!("\n✗ Failed: {}\n", e),
+                }
             }
             Some(SlashCommandResult::Handled)
         }
