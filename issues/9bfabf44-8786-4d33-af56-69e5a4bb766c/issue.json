@@ -3,11 +3,12 @@
   "display_id": 198,
   "title": "TUI UX parity: separator lines, bottom bar, prompt style, welcome format",
   "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nMultiple UX elements missing compared to Claude Code: no separator line, no bottom status bar, wrong prompt symbol, version not above box, model info missing details",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-01T22:51:32.395561368Z",
-  "updated_at": "2026-04-01T22:51:33.734842178Z",
+  "updated_at": "2026-04-01T23:01:14.859338233Z",
+  "closed_at": "2026-04-01T23:01:14.859338233Z",
   "labels": [
     "bug"
   ]
