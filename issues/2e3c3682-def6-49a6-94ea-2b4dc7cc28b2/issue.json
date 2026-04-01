@@ -2,11 +2,12 @@
   "uuid": "2e3c3682-def6-49a6-94ea-2b4dc7cc28b2",
   "display_id": null,
   "title": "Improve /sessions with timestamps and message counts",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-01T01:00:34.597413924Z",
-  "updated_at": "2026-04-01T01:00:34.726503719Z",
+  "updated_at": "2026-04-01T01:29:26.683857061Z",
+  "closed_at": "2026-04-01T01:29:26.683857061Z",
   "labels": [
     "feature"
   ]
