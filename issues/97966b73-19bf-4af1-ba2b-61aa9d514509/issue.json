@@ -1,0 +1,10 @@
+{
+  "uuid": "97966b73-19bf-4af1-ba2b-61aa9d514509",
+  "display_id": null,
+  "title": "C-17: Hook check_blocked returns first error only",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:38:48.249451068Z",
+  "updated_at": "2026-04-01T03:38:48.249451068Z"
+}
