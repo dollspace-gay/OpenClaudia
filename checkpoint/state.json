@@ -3,6 +3,10 @@
   "next_comment_id": 1,
   "display_id_map": {},
   "locks": {
+    "-27": {
+      "agent_id": "lOrm",
+      "claimed_at": "2026-04-01T03:38:42.535144718Z"
+    },
     "-26": {
       "agent_id": "lOrm",
       "claimed_at": "2026-04-01T03:38:41.944554770Z"
@@ -26,8 +30,8 @@
   },
   "issues": {},
   "watermark": {
-    "timestamp": "2026-04-01T03:38:41.944554770Z",
+    "timestamp": "2026-04-01T03:38:42.535144718Z",
     "agent_id": "lOrm",
-    "agent_seq": 97
+    "agent_seq": 98
   }
 }
