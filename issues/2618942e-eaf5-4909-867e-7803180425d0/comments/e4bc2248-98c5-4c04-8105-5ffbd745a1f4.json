@@ -1,0 +1,10 @@
+{
+  "uuid": "e4bc2248-98c5-4c04-8105-5ffbd745a1f4",
+  "issue_uuid": "2618942e-eaf5-4909-867e-7803180425d0",
+  "author": "lOrm",
+  "content": "Verified fixed: VDD validation called on config load in config/mod.rs:189-192",
+  "created_at": "2026-04-01T22:11:33.264665974Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZQAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASgAAACEAzmy2L//gX3lH0MIq7pFkRRJLWJdnQ8XGAebsSabVRDYAAAAhAO0F4489fuYRAxjg9xc49o8j8qMMRGX8L90FUADhJf1j"
+}
