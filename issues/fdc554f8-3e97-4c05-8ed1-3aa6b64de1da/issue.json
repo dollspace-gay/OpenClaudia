@@ -3,11 +3,12 @@
   "display_id": 197,
   "title": "TUI parity with Claude Code: markdown, tool display, thinking blocks",
   "description": "Goal: \n\nAcceptance criteria:\n- \n\nTUI needs to match Claude Code: markdown rendering, collapsible thinking blocks, rich tool call display, multi-line input, virtual scrolling.",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-01T22:21:48.235905368Z",
-  "updated_at": "2026-04-01T22:21:49.624451712Z",
+  "updated_at": "2026-04-01T22:42:43.650113197Z",
+  "closed_at": "2026-04-01T22:42:43.650113197Z",
   "labels": [
     "feature"
   ]
