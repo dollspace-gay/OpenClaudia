@@ -1,0 +1,10 @@
+{
+  "uuid": "3c788b33-8135-40ac-81e8-dcaa055cc672",
+  "display_id": null,
+  "title": "N-1: Magic number 4096 max_tokens hardcoded",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:34.348032798Z",
+  "updated_at": "2026-04-01T03:39:34.348032798Z"
+}
