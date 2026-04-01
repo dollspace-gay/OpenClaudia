@@ -2,11 +2,12 @@
   "uuid": "0d1ea690-7841-4953-b010-9b394b2d76b2",
   "display_id": 167,
   "title": "Vim mode: full modal editing with 11 command states, motions (h/l/j/k/w/b/e/W/B/E/0/^/$), operators (d/c/y), 16 text object pairs, find commands (f/F/t/T)",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-01T18:13:05.993502098Z",
-  "updated_at": "2026-04-01T18:13:07.873845685Z",
+  "updated_at": "2026-04-01T18:19:19.265674598Z",
+  "closed_at": "2026-04-01T18:19:19.265674598Z",
   "labels": [
     "enhancement"
   ]
