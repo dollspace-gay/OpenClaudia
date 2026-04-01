@@ -1,0 +1,10 @@
+{
+  "uuid": "f59a6def-dba9-4fda-a7ce-06f17e6ff4dd",
+  "display_id": 169,
+  "title": "Task/Agent orchestration: support 7 task types (LocalShell, LocalAgent, RemoteAgent, InProcessTeammate, Dream, LocalWorkflow, MonitorMcp), coordinator mode for multi-agent delegation",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T18:13:19.251539809Z",
+  "updated_at": "2026-04-01T18:13:19.251539809Z"
+}
