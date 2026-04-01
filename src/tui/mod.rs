@@ -511,7 +511,7 @@ fn strip_ordered_list_prefix(s: &str) -> Option<&str> {
 /// Draw an inline status line after a response.
 ///
 /// Shows: model name, token count, cost, mode, session duration.
-/// Uses inline printing (not absolute positioning) to avoid drift.
+/// Uses `·` separator matching Claude Code's byline style.
 pub fn draw_status_bar(model: &str, tokens: usize, cost: Option<f64>, mode: &str, duration: &str) {
     let mut stdout = io::stdout();
 
@@ -523,32 +523,229 @@ pub fn draw_status_bar(model: &str, tokens: usize, cost: Option<f64>, mode: &str
 
     #[allow(clippy::cast_precision_loss)] // token counts fit comfortably in f64
     let token_str = if tokens >= 1_000_000 {
-        format!("{:.1}M tokens", tokens as f64 / 1_000_000.0)
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
     } else if tokens >= 1_000 {
-        format!("{:.1}k tokens", tokens as f64 / 1_000.0)
+        format!("{:.1}k", tokens as f64 / 1_000.0)
     } else {
-        format!("{tokens} tokens")
+        format!("{tokens}")
     };
 
-    let status = if cost_str.is_empty() {
-        format!(" {model} | {token_str} | {mode} | {duration} ")
-    } else {
-        format!(" {model} | {cost_str} | {token_str} | {mode} | {duration} ")
-    };
+    // Build parts with · separator (Claude Code style)
+    let sep = " \u{00B7} ";
+    let mut parts = vec![model.to_string()];
+    if !cost_str.is_empty() {
+        parts.push(cost_str);
+    }
+    parts.push(format!("In: {token_str}"));
+    parts.push(mode.to_string());
+    parts.push(duration.to_string());
 
-    // Print inline with dim styling — no absolute cursor positioning
+    let status = parts.join(sep);
+
+    // Print inline with dim styling
     let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
-    let _ = stdout.execute(Print(format!("[{}]\n", status.trim())));
+    let _ = stdout.execute(Print(format!("  {status}\n")));
     let _ = stdout.execute(ResetColor);
     stdout.flush().ok();
 }
 
+// ─── Streaming markdown renderer ────────────────────────────────────────────
+
+/// A streaming markdown renderer that buffers incoming text tokens and renders
+/// completed lines with markdown formatting (headings, bold, italic, code blocks,
+/// lists, links, inline code). Incomplete trailing lines are held in a buffer
+/// until a newline arrives or `flush()` is called at stream end.
+pub struct StreamingMarkdownRenderer {
+    /// Buffered text that hasn't been rendered yet (no trailing newline)
+    line_buffer: String,
+    /// Whether we're inside a fenced code block
+    in_code_block: bool,
+    /// Language for the current code block (for syntax highlighting)
+    code_lang: String,
+    /// Syntax highlighter for the current code block
+    highlighter: Option<HighlightLines<'static>>,
+    /// The theme to use for rendering
+    theme: Theme,
+}
+
+impl StreamingMarkdownRenderer {
+    /// Create a new streaming renderer with the loaded theme
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            line_buffer: String::new(),
+            in_code_block: false,
+            code_lang: String::new(),
+            highlighter: None,
+            theme: Theme::load(),
+        }
+    }
+
+    /// Feed a text chunk into the renderer. Complete lines are rendered
+    /// immediately; the trailing incomplete line stays buffered.
+    pub fn push(&mut self, text: &str) {
+        self.line_buffer.push_str(text);
+
+        // Render all complete lines
+        while let Some(newline_pos) = self.line_buffer.find('\n') {
+            let line = self.line_buffer[..newline_pos].to_string();
+            self.line_buffer = self.line_buffer[newline_pos + 1..].to_string();
+            self.render_line(&line);
+            println!();
+        }
+
+        // Flush stdout after each push so partial output appears immediately
+        io::stdout().flush().ok();
+    }
+
+    /// Flush any remaining buffered text at stream end
+    pub fn flush(&mut self) {
+        if !self.line_buffer.is_empty() {
+            let line = std::mem::take(&mut self.line_buffer);
+            self.render_line(&line);
+            io::stdout().flush().ok();
+        }
+    }
+
+    /// Render a single complete line with markdown formatting
+    fn render_line(&mut self, line: &str) {
+        let mut stdout = io::stdout();
+
+        // Code fence toggle
+        if line.starts_with("```") {
+            if self.in_code_block {
+                // End code block
+                self.in_code_block = false;
+                self.code_lang.clear();
+                self.highlighter = None;
+                let _ = stdout.execute(ResetColor);
+            } else {
+                // Start code block
+                self.in_code_block = true;
+                self.code_lang = line.trim_start_matches('`').trim().to_string();
+
+                let syntax = if self.code_lang.is_empty() {
+                    SYNTAX_SET.find_syntax_plain_text()
+                } else {
+                    SYNTAX_SET
+                        .find_syntax_by_token(&self.code_lang)
+                        .unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text())
+                };
+                let theme_name = "base16-ocean.dark";
+                if let Some(syn_theme) = THEME_SET.themes.get(theme_name) {
+                    self.highlighter = Some(HighlightLines::new(syntax, syn_theme));
+                }
+
+                if !self.code_lang.is_empty() {
+                    let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
+                    print!("  --- {} ---", self.code_lang);
+                    let _ = stdout.execute(ResetColor);
+                }
+            }
+            return;
+        }
+
+        // Inside code block: syntax highlight
+        if self.in_code_block {
+            if let Some(ref mut hl) = self.highlighter {
+                // Render with syntax highlighting (inline, no trailing newline)
+                if let Ok(ranges) = hl.highlight_line(line, &SYNTAX_SET) {
+                    let _ = stdout.execute(Print("    "));
+                    for (style, text) in ranges {
+                        let color = CtColor::Rgb {
+                            r: style.foreground.r,
+                            g: style.foreground.g,
+                            b: style.foreground.b,
+                        };
+                        let _ = stdout.execute(SetForegroundColor(color));
+                        let _ = stdout.execute(Print(text));
+                    }
+                    let _ = stdout.execute(ResetColor);
+                } else {
+                    let _ = stdout.execute(SetForegroundColor(self.theme.code_color));
+                    print!("    {line}");
+                    let _ = stdout.execute(ResetColor);
+                }
+                return;
+            }
+            let _ = stdout.execute(SetForegroundColor(self.theme.code_color));
+            print!("    {line}");
+            let _ = stdout.execute(ResetColor);
+            return;
+        }
+
+        // Heading
+        if line.starts_with('#') {
+            let level = line.chars().take_while(|c| *c == '#').count();
+            let text = line[level..].trim_start();
+            let _ = stdout.execute(SetAttribute(Attribute::Bold));
+            if level <= 2 {
+                let _ = stdout.execute(SetForegroundColor(self.theme.heading_color));
+            }
+            match level {
+                1 => print!("{}", text.to_uppercase()),
+                _ => print!("{text}"),
+            }
+            let _ = stdout.execute(SetAttribute(Attribute::Reset));
+            let _ = stdout.execute(ResetColor);
+            return;
+        }
+
+        // Blockquote
+        if line.starts_with("> ") || line == ">" {
+            let content = line.strip_prefix("> ").unwrap_or("");
+            let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
+            print!("  | ");
+            let _ = stdout.execute(SetForegroundColor(CtColor::White));
+            render_inline(&mut stdout, content, &self.theme);
+            let _ = stdout.execute(ResetColor);
+            return;
+        }
+
+        // List items
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+            let indent = line.len() - trimmed.len();
+            let content = &trimmed[2..];
+            print!("{}  \u{2022} ", " ".repeat(indent));
+            render_inline(&mut stdout, content, &self.theme);
+            return;
+        }
+        if let Some(rest) = strip_ordered_list_prefix(trimmed) {
+            let indent = line.len() - trimmed.len();
+            let num_part = &trimmed[..trimmed.len() - rest.len()];
+            print!("{}  {}", " ".repeat(indent), num_part);
+            render_inline(&mut stdout, rest, &self.theme);
+            return;
+        }
+
+        // Horizontal rule
+        if line.trim() == "---" || line.trim() == "***" || line.trim() == "___" {
+            let (cols, _) = terminal::size().unwrap_or((80, 24));
+            let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
+            print!("{}", "\u{2500}".repeat(cols as usize));
+            let _ = stdout.execute(ResetColor);
+            return;
+        }
+
+        // Regular line with inline formatting
+        render_inline(&mut stdout, line, &self.theme);
+    }
+}
+
+impl Default for StreamingMarkdownRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ─── Thinking display ───────────────────────────────────────────────────────
 
-/// Print a thinking/reasoning chunk in dim styling
+/// Print a thinking/reasoning chunk in dim styling (indented under the header)
 pub fn print_thinking_chunk(text: &str) {
     let mut stdout = io::stdout();
     let _ = stdout.execute(SetAttribute(Attribute::Dim));
+    let _ = stdout.execute(SetAttribute(Attribute::Italic));
     let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
     print!("{text}");
     let _ = stdout.execute(SetAttribute(Attribute::Reset));
@@ -556,12 +753,13 @@ pub fn print_thinking_chunk(text: &str) {
     stdout.flush().ok();
 }
 
-/// Print the thinking header when a thinking block starts
+/// Print the thinking header when a thinking block starts (matches Claude Code's ∴ symbol)
 pub fn print_thinking_start() {
     let mut stdout = io::stdout();
     let _ = stdout.execute(SetAttribute(Attribute::Dim));
+    let _ = stdout.execute(SetAttribute(Attribute::Italic));
     let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
-    print!("Thinking: ");
+    print!("\n  \u{2234} Thinking\u{2026}\n  ");
     let _ = stdout.execute(SetAttribute(Attribute::Reset));
     let _ = stdout.execute(ResetColor);
     stdout.flush().ok();
@@ -572,8 +770,8 @@ pub fn print_thinking_end(duration_secs: f64) {
     let mut stdout = io::stdout();
     let _ = stdout.execute(SetAttribute(Attribute::Dim));
     let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
-    if duration_secs > 0.0 {
-        println!("\n  (thought for {duration_secs:.1}s)");
+    if duration_secs > 0.5 {
+        println!("\n  \u{2234} Thought for {duration_secs:.1}s");
     } else {
         println!();
     }
@@ -785,11 +983,11 @@ pub fn print_turn_separator() {
     let _ = out.execute(ResetColor);
 }
 
-/// Print a role header with icon and color.
+/// Print a role header with icon and color (matches Claude Code's visual style).
 pub fn print_role_header(role: &str) {
     let (icon, color) = match role {
         "assistant" | "Assistant" => (
-            "●",
+            "\u{23BF}", // ⎿ vertical line left (Claude Code style)
             CtColor::Rgb {
                 r: 147,
                 g: 112,
@@ -797,7 +995,7 @@ pub fn print_role_header(role: &str) {
             },
         ),
         "user" | "User" => (
-            "›",
+            "\u{203A}", // › single right angle quote
             CtColor::Rgb {
                 r: 100,
                 g: 180,
@@ -805,7 +1003,7 @@ pub fn print_role_header(role: &str) {
             },
         ),
         "tool" | "Tool" => (
-            "⚙",
+            "\u{25CF}", // ● black circle
             CtColor::Rgb {
                 r: 218,
                 g: 165,
@@ -813,7 +1011,7 @@ pub fn print_role_header(role: &str) {
             },
         ),
         _ => (
-            "·",
+            "\u{00B7}", // · middle dot
             CtColor::Rgb {
                 r: 128,
                 g: 128,
@@ -830,13 +1028,17 @@ pub fn print_role_header(role: &str) {
     let _ = out.execute(Print("\n"));
 }
 
-/// Print a tool execution start indicator.
+/// Print a tool execution start indicator (matches Claude Code's ● symbol).
 pub fn print_tool_start(tool_name: &str, description: &str) {
     let mut out = stdout();
     let _ = out.execute(SetForegroundColor(CtColor::Cyan));
-    let _ = out.execute(Print(format!("\n⚡ {tool_name} ")));
-    let _ = out.execute(SetForegroundColor(CtColor::DarkGrey));
-    let _ = out.execute(Print(format!("— {description}")));
+    let _ = out.execute(SetAttribute(Attribute::Bold));
+    let _ = out.execute(Print(format!("\n  \u{25CF} {tool_name}")));
+    let _ = out.execute(SetAttribute(Attribute::Reset));
+    if !description.is_empty() {
+        let _ = out.execute(SetForegroundColor(CtColor::DarkGrey));
+        let _ = out.execute(Print(format!(" ({description})")));
+    }
     let _ = out.execute(ResetColor);
     let _ = out.execute(Print("\n"));
 }
@@ -844,16 +1046,17 @@ pub fn print_tool_start(tool_name: &str, description: &str) {
 /// Print tool completion status with duration.
 pub fn print_tool_done(tool_name: &str, success: bool, duration_ms: u64) {
     let mut out = stdout();
+    let _ = out.execute(Print("  "));
     if success {
         let _ = out.execute(SetForegroundColor(CtColor::Green));
-        let _ = out.execute(Print(format!("  ✓ {tool_name} ")));
+        let _ = out.execute(Print(format!("\u{2713} {tool_name}")));
     } else {
         let _ = out.execute(SetForegroundColor(CtColor::Red));
-        let _ = out.execute(Print(format!("  ✗ {tool_name} ")));
+        let _ = out.execute(Print(format!("\u{2717} {tool_name}")));
     }
     if duration_ms > 0 {
         let _ = out.execute(SetForegroundColor(CtColor::DarkGrey));
-        let _ = out.execute(Print(format!("({duration_ms}ms)")));
+        let _ = out.execute(Print(format!(" \u{00B7} {duration_ms}ms")));
     }
     let _ = out.execute(ResetColor);
     let _ = out.execute(Print("\n"));

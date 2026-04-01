@@ -1063,10 +1063,14 @@ async fn cmd_chat(
                     .map(std::string::ToString::to_string)
                     .reduce(|acc, s| format!("{acc}\n\n{s}"));
 
-                let mut system_prompt = prompt::build_system_prompt(
+                let cwd = std::env::current_dir()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let mut system_prompt = prompt::build_system_prompt_with_cwd(
                     hook_instructions.as_deref(),
                     None, // Custom instructions could come from config in future
                     memory_db.as_ref(),
+                    Some(&cwd),
                 );
 
                 // Inject coordinator prompt if --coordinator flag is set
@@ -1861,6 +1865,9 @@ async fn cmd_chat(
                                 let mut in_thinking_block = false;
                                 let mut thinking_start_time: Option<std::time::Instant> = None;
 
+                                // Streaming markdown renderer
+                                let mut md_renderer = tui::StreamingMarkdownRenderer::new();
+
                                 // SSE usage accumulator
                                 let mut stream_usage = openclaudia::session::TokenUsage::default();
 
@@ -2030,8 +2037,7 @@ async fn cmd_chat(
                                                         if let Some(text) = anthropic_accumulator
                                                             .process_event(&json)
                                                         {
-                                                            print!("{text}");
-                                                            std::io::stdout().flush().ok();
+                                                            md_renderer.push(&text);
                                                             full_content.push_str(&text);
                                                         }
                                                         // OpenAI format: choices[0].delta.content
@@ -2045,8 +2051,7 @@ async fn cmd_chat(
                                                                 .get("content")
                                                                 .and_then(|c| c.as_str())
                                                             {
-                                                                print!("{content}");
-                                                                std::io::stdout().flush().ok();
+                                                                md_renderer.push(content);
                                                                 full_content.push_str(content);
                                                             }
                                                             // Accumulate tool calls
@@ -2063,6 +2068,8 @@ async fn cmd_chat(
                                     }
                                 }
 
+                                // Flush any remaining buffered markdown
+                                md_renderer.flush();
                                 println!();
 
                                 // Audit: log model response

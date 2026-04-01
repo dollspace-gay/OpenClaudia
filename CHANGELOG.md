@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- TUI parity with Claude Code: markdown, tool display, thinking blocks (#197)
+- Native diff rendering: syntect syntax highlighting, word-level diff via similar crate, line numbers, grapheme-aware wrapping in TUI (#170)
+- Task/Agent orchestration: support 7 task types (LocalShell, LocalAgent, RemoteAgent, InProcessTeammate, Dream, LocalWorkflow, MonitorMcp), coordinator mode for multi-agent delegation (#169)
+- State management overhaul: richer SessionState with Store<T> pattern, field-level change detection, listener deduplication, AppState tree for UI (#175)
+- Token estimation: 3-tier fallback (API count → model-based estimation → rough heuristic), per-block estimation, thinking budget awareness (#174)
+- Skill system: workflow markdown files with YAML frontmatter, 5 sources (managed/user/project/additional/legacy), conditional activation via path patterns, bundled skill library (#173)
+- Plugin system: support builtin/marketplace/inline plugin sources, manifest validation, enable/disable state, enterprise allowlist/denylist (#172)
+- Advanced keybinding system: 17 contexts, 60+ actions, chord support (e.g. Ctrl+K+Ctrl+C), configurable per-context bindings (#171)
+- Vim mode: full modal editing with 11 command states, motions (h/l/j/k/w/b/e/W/B/E/0/^/$), operators (d/c/y), 16 text object pairs, find commands (f/F/t/T) (#167)
 - Update all documentation to reflect current implementation status (L1)
 - Replace MemGPT memory tools with auto-learning system (#67)
 - **Auto-learning memory system** — Replaces MemGPT-style tools with automatic knowledge capture from tool execution signals (#67)
@@ -34,6 +43,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Read-before-edit enforcement on edit_file tool
 
 ### Fixed
+- System prompt missing absolute path requirement and working directory (#196)
+- Streaming broken: proxy buffers entire response before returning (#195)
 - Fix plan mode blocking write_file calls to the plan file (#72)
 - MCP StdioTransport creates new BufReader per request losing data (#62)
 - MCP tool name parsing breaks on underscored server names (#61)
@@ -54,6 +65,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix missing `permissions` field in test AppConfig initializers after merge
 
 ### Changed
+- C-23: Anthropic tool argument serialization lossy (#84)
+- C-22: Stream timeout discards partial content (#83)
+- C-21: Unsafe YAML front matter parsing in plugins (#82)
+- C-20: VDD provider URL not validated (#81)
+- C-19: Plan mode path comparison inconsistent (#80)
+- C-18: Notebook edit has no symlink validation (#79)
+- C-17: Hook check_blocked returns first error only (#78)
+- C-16: Keybinding case sensitivity by accident (#77)
+- C-15: Pricing pattern order bug (#76)
+- C-13: VDD JSON schema not validated (#74)
+- C-12: Empty API key strings pass validation (#73)
+- C-11: Unsafe unwrap in session undo (#72)
+- C-10: Session directory creation failure silently ignored (#71)
+- C-9: Audit logger silently fails (#70)
+- C-8: LSP response parser infinite loop (#69)
+- C-7: Plugin path traversal via marketplace source (#68)
+- C-6: VDD config validate() never called (#67)
+- C-1: Path traversal in file/write.rs and file/edit.rs (#62)
 - Update README and CHANGELOG for auto-learning system (#68)
 - Memory system is now always-on — no `--stateful` flag needed; auto-learning activates when `.openclaudia/memory.db` opens successfully (#67)
 - `/memory` command now shows auto-learning statistics (patterns, errors, preferences, file relationships) instead of raw archival memory (#67)

@@ -1,3 +1,4 @@
+use super::resolve_path;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -10,30 +11,20 @@ pub fn execute_write_file(args: &HashMap<String, Value>) -> (String, bool) {
         return ("Missing 'path' argument".to_string(), true);
     };
 
-    // Reject path traversal attempts (relative paths with ..)
-    let p = Path::new(path);
-    if !p.is_absolute() {
-        return (
-            format!("Path must be absolute, got relative path: '{path}'"),
-            true,
-        );
-    }
-
-    // Reject path traversal attempts (../ in path)
-    if p.components().any(|c| c == std::path::Component::ParentDir) {
-        return (format!("Path traversal not allowed: '{path}'"), true);
-    }
+    let p = match resolve_path(path) {
+        Ok(p) => p,
+        Err(e) => return (e, true),
+    };
 
     // Resolve symlinks when possible; for new files use the path as-is
-    let canonical = match std::fs::canonicalize(p) {
+    let canonical = match std::fs::canonicalize(&p) {
         Ok(canon) => canon,
         Err(_) => {
             // File doesn't exist yet -- try to resolve the parent
             if let Some(parent) = p.parent() {
                 std::fs::canonicalize(parent).map_or_else(
                     // Parent doesn't exist either -- allowed (write_file creates dirs)
-                    // but only if path is absolute (no relative traversal)
-                    |_| std::path::PathBuf::from(path),
+                    |_| p.clone(),
                     |canon_parent| canon_parent.join(p.file_name().unwrap_or_default()),
                 )
             } else {

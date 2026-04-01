@@ -1,4 +1,4 @@
-use super::READ_TRACKER;
+use super::{resolve_path, READ_TRACKER};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -11,22 +11,13 @@ pub fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
         return ("Missing 'path' argument".to_string(), true);
     };
 
-    // Reject path traversal attempts (relative paths with ..)
-    let p = Path::new(path);
-    if !p.is_absolute() {
-        return (
-            format!("Path must be absolute, got relative path: '{path}'"),
-            true,
-        );
-    }
-
-    // Reject path traversal attempts
-    if p.components().any(|c| c == std::path::Component::ParentDir) {
-        return (format!("Path traversal not allowed: '{path}'"), true);
-    }
+    let p = match resolve_path(path) {
+        Ok(p) => p,
+        Err(e) => return (e, true),
+    };
 
     // Resolve symlinks to prevent symlink-based path traversal.
-    let canonical = match std::fs::canonicalize(p) {
+    let canonical = match std::fs::canonicalize(&p) {
         Ok(canon) => canon,
         Err(_) => {
             // File doesn't exist -- try to resolve the parent directory

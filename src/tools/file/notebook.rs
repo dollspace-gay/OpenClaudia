@@ -1,9 +1,8 @@
-use super::READ_TRACKER;
+use super::{resolve_path, READ_TRACKER};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::fs;
-use std::path::Path;
 
 /// Split source text into a JSON array of line strings for notebook cell source format.
 /// Each line except possibly the last ends with '\n'.
@@ -30,8 +29,13 @@ pub fn source_to_line_array(source: &str) -> Value {
 /// Edit a Jupyter notebook cell
 #[allow(clippy::too_many_lines)]
 pub fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
-    let Some(notebook_path) = args.get("notebook_path").and_then(|v| v.as_str()) else {
+    let Some(raw_path) = args.get("notebook_path").and_then(|v| v.as_str()) else {
         return ("Missing 'notebook_path' argument".to_string(), true);
+    };
+
+    let resolved = match resolve_path(raw_path) {
+        Ok(p) => p,
+        Err(e) => return (e, true),
     };
 
     let Some(cell_number) = args.get("cell_number").and_then(serde_json::Value::as_u64) else {
@@ -58,10 +62,11 @@ pub fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
     }
 
     // Enforce read-before-edit
-    if !READ_TRACKER.has_been_read(Path::new(notebook_path)) {
+    if !READ_TRACKER.has_been_read(&resolved) {
         return (
             format!(
-                "You must read '{notebook_path}' before editing it. Use read_file first to see the actual contents."
+                "You must read '{}' before editing it. Use read_file first to see the actual contents.",
+                resolved.display()
             ),
             true,
         );
@@ -69,11 +74,11 @@ pub fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
 
     // Blast radius check
     // Resolve symlinks to prevent path traversal
-    let notebook_path = match std::fs::canonicalize(notebook_path) {
+    let notebook_path = match std::fs::canonicalize(&resolved) {
         Ok(canon) => canon.to_string_lossy().to_string(),
         Err(_) => {
             return (
-                format!("Cannot resolve notebook path '{notebook_path}'"),
+                format!("Cannot resolve notebook path '{}'", resolved.display()),
                 true,
             );
         }

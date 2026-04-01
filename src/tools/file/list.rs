@@ -1,12 +1,18 @@
+use super::resolve_path;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 
 /// List files in a directory
 pub fn execute_list_files(args: &HashMap<String, Value>) -> (String, bool) {
-    let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+    let raw_path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
 
-    match fs::read_dir(path) {
+    let path = match resolve_path(raw_path) {
+        Ok(p) => p,
+        Err(e) => return (e, true),
+    };
+
+    match fs::read_dir(&path) {
         Ok(entries) => {
             let mut items: Vec<String> = Vec::new();
             for entry in entries.flatten() {
@@ -20,6 +26,6 @@ pub fn execute_list_files(args: &HashMap<String, Value>) -> (String, bool) {
             items.sort();
             (items.join("\n"), false)
         }
-        Err(e) => (format!("Failed to list directory '{path}': {e}"), true),
+        Err(e) => (format!("Failed to list directory '{}': {e}", path.display()), true),
     }
 }

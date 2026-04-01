@@ -168,7 +168,7 @@ pub fn get_tool_definitions() -> Value {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "The path to the file to read"
+                            "description": "The absolute path to the file to read (must be absolute, not relative)"
                         },
                         "offset": {
                             "type": "integer",
@@ -197,7 +197,7 @@ pub fn get_tool_definitions() -> Value {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "The path to the file to write"
+                            "description": "The absolute path to the file to write (must be absolute, not relative)"
                         },
                         "content": {
                             "type": "string",
@@ -218,7 +218,7 @@ pub fn get_tool_definitions() -> Value {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "The path to the file to edit"
+                            "description": "The absolute path to the file to edit (must be absolute, not relative)"
                         },
                         "old_string": {
                             "type": "string",
@@ -243,7 +243,7 @@ pub fn get_tool_definitions() -> Value {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "The directory path to list (defaults to current directory)"
+                            "description": "The absolute directory path to list (defaults to current working directory)"
                         }
                     },
                     "required": []

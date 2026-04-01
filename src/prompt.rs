@@ -42,24 +42,28 @@ Terminate a background shell process by its shell_id.
 
 ### `read_file` - Read File Contents
 Read the contents of a file. ALWAYS read a file before editing it.
+- The `path` parameter must be an absolute path, not a relative path
 - You must read a file before you can edit it - this is enforced
 - Use this to understand existing code before making changes
 - Can read multiple files in parallel if needed
 
 ### `write_file` - Create New Files
 Create a new file with the given contents.
+- The `path` parameter must be an absolute path, not a relative path
 - Only use for NEW files that don't exist yet
 - NEVER use to modify existing files - use edit_file instead
 - Prefer editing existing files over creating new ones
 
 ### `edit_file` - Modify Existing Files
 Make targeted edits by replacing exact string matches.
+- The `path` parameter must be an absolute path, not a relative path
 - The old_string must match EXACTLY (including whitespace/indentation)
 - If old_string isn't unique, provide more context to make it unique
 - Read the file first to see the exact text you need to match
 
 ### `list_files` - List Directory Contents
 List files and directories at a given path.
+- Use absolute paths for the `path` parameter
 - Use to explore project structure
 - Prefer this over `bash ls` for file listing
 
@@ -236,10 +240,30 @@ pub fn build_system_prompt(
     custom_instructions: Option<&str>,
     memory_db: Option<&MemoryDb>,
 ) -> String {
+    build_system_prompt_with_cwd(hook_instructions, custom_instructions, memory_db, None)
+}
+
+/// Build the complete system prompt, optionally injecting the working directory.
+#[must_use]
+pub fn build_system_prompt_with_cwd(
+    hook_instructions: Option<&str>,
+    custom_instructions: Option<&str>,
+    memory_db: Option<&MemoryDb>,
+    working_dir: Option<&str>,
+) -> String {
     let mut prompt = String::with_capacity(8192);
 
     // Start with base personality
     prompt.push_str(BASE_PROMPT);
+
+    // Inject working directory context
+    if let Some(cwd) = working_dir {
+        prompt.push_str("\n\n## Environment\n");
+        prompt.push_str(&format!("- Working directory: {cwd}\n"));
+        prompt.push_str("- All file paths (read_file, write_file, edit_file, notebook_edit) must use **absolute paths**\n");
+        prompt.push_str(&format!("- When referring to files in the project, use the full path starting with {cwd}/\n"));
+        prompt.push_str("- Relative paths will be resolved against the working directory, but prefer absolute paths\n");
+    }
 
     // Add auto-learned knowledge
     if let Some(db) = memory_db {
