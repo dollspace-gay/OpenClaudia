@@ -1,0 +1,10 @@
+{
+  "uuid": "0d517753-75e2-472e-9d93-8c2a18ee18c0",
+  "display_id": null,
+  "title": "W-37: Hook timeout fallback inconsistent",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:20.030005272Z",
+  "updated_at": "2026-04-01T03:39:20.030005272Z"
+}
