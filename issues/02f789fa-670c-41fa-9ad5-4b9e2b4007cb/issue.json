@@ -1,0 +1,10 @@
+{
+  "uuid": "02f789fa-670c-41fa-9ad5-4b9e2b4007cb",
+  "display_id": null,
+  "title": "W-26: Pricing data hardcoded with no staleness check",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:13.244082852Z",
+  "updated_at": "2026-04-01T03:39:13.244082852Z"
+}
