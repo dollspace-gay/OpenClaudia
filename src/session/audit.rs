@@ -12,13 +12,22 @@ impl AuditLogger {
     /// and opens a `.jsonl` file for appending.
     pub fn new(session_id: &str) -> Self {
         let dir = PathBuf::from(".openclaudia/logs");
-        std::fs::create_dir_all(&dir).ok();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!("[warn] Failed to create audit log directory: {}", e);
+            return Self { file: None };
+        }
         let path = dir.join(format!("{}.jsonl", session_id));
-        let file = std::fs::OpenOptions::new()
+        let file = match std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
-            .ok();
+        {
+            Ok(f) => Some(f),
+            Err(e) => {
+                eprintln!("[warn] Failed to open audit log: {}", e);
+                None
+            }
+        };
         Self { file }
     }
 
