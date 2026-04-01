@@ -1,0 +1,10 @@
+{
+  "uuid": "3db5b16b-38b1-4343-8090-a3606a0e4e43",
+  "display_id": null,
+  "title": "N-7: Session file dedup uses O(n) Vec instead of HashSet",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:37.887768218Z",
+  "updated_at": "2026-04-01T03:39:37.887768218Z"
+}
