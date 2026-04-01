@@ -1,0 +1,10 @@
+{
+  "uuid": "761fa711-0915-4536-a348-9a54bc3f7449",
+  "display_id": null,
+  "title": "C-7: Plugin path traversal via marketplace source",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:38:43.392645025Z",
+  "updated_at": "2026-04-01T03:38:43.392645025Z"
+}
