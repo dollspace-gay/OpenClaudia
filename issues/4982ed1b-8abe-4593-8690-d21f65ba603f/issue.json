@@ -1,0 +1,10 @@
+{
+  "uuid": "4982ed1b-8abe-4593-8690-d21f65ba603f",
+  "display_id": null,
+  "title": "C-23: Anthropic tool argument serialization lossy",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:38:51.138512783Z",
+  "updated_at": "2026-04-01T03:38:51.138512783Z"
+}
