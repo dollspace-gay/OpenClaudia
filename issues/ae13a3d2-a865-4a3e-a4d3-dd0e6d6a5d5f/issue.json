@@ -1,0 +1,10 @@
+{
+  "uuid": "ae13a3d2-a865-4a3e-a4d3-dd0e6d6a5d5f",
+  "display_id": null,
+  "title": "N-27: Test uses hardcoded home path",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:50.780420395Z",
+  "updated_at": "2026-04-01T03:39:50.780420395Z"
+}
