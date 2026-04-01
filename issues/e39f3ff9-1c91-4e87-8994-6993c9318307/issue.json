@@ -1,0 +1,10 @@
+{
+  "uuid": "e39f3ff9-1c91-4e87-8994-6993c9318307",
+  "display_id": 170,
+  "title": "Native diff rendering: syntect syntax highlighting, word-level diff via similar crate, line numbers, grapheme-aware wrapping in TUI",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T18:13:25.996573987Z",
+  "updated_at": "2026-04-01T18:13:25.996573987Z"
+}
