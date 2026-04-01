@@ -79,6 +79,23 @@ impl BackgroundShellManager {
             cmd.spawn()
         };
 
+        // Enforce maximum shell limit BEFORE spawning the process
+        if let Ok(mut shells) = self.shells.lock() {
+            // GC sweep: remove finished shells whose output has been retrieved at least once
+            shells.retain(|_id, s| {
+                let is_finished = s.finished.load(Ordering::SeqCst);
+                let output_retrieved = s.output_retrieved_after_finish.load(Ordering::SeqCst);
+                !is_finished || !output_retrieved
+            });
+
+            if shells.len() >= MAX_BACKGROUND_SHELLS {
+                return Err(format!(
+                    "Maximum background shell limit ({}) reached. Kill or wait for existing shells to finish.",
+                    MAX_BACKGROUND_SHELLS
+                ));
+            }
+        }
+
         let mut child = child.map_err(|e| format!("Failed to spawn background shell: {}", e))?;
 
         // Capture PID before moving the child handle into the wait thread
@@ -141,24 +158,6 @@ impl BackgroundShellManager {
         };
 
         if let Ok(mut shells) = self.shells.lock() {
-            // GC sweep: remove finished shells whose output has been retrieved at least once
-            shells.retain(|_id, s| {
-                let is_finished = s.finished.load(Ordering::SeqCst);
-                let output_retrieved = s.output_retrieved_after_finish.load(Ordering::SeqCst);
-                // Keep shells that are still running, or haven't had their output retrieved yet
-                !is_finished || !output_retrieved
-            });
-
-            // Enforce maximum shell limit
-            if shells.len() >= MAX_BACKGROUND_SHELLS {
-                // The process was already spawned, so kill it before returning the error
-                terminate_process_tree(pid);
-                return Err(format!(
-                    "Maximum background shell limit ({}) reached. Kill or wait for existing shells to finish.",
-                    MAX_BACKGROUND_SHELLS
-                ));
-            }
-
             shells.insert(shell_id.clone(), shell);
         }
 
@@ -167,7 +166,7 @@ impl BackgroundShellManager {
 
     /// Get output from a background shell (returns new output since last call)
     pub(crate) fn get_output(&self, shell_id: &str) -> Result<(String, bool, Option<i32>), String> {
-        let shells = self.shells.lock().map_err(|_| "Failed to lock shells")?;
+        let shells = self.shells.lock().unwrap_or_else(|e| e.into_inner());
         let shell = shells
             .get(shell_id)
             .ok_or_else(|| format!("Shell '{}' not found", shell_id))?;
@@ -214,7 +213,7 @@ impl BackgroundShellManager {
     /// if needed. Only removes the shell from tracking after the process has
     /// been terminated.
     pub(crate) fn kill(&self, shell_id: &str) -> Result<String, String> {
-        let mut shells = self.shells.lock().map_err(|_| "Failed to lock shells")?;
+        let mut shells = self.shells.lock().unwrap_or_else(|e| e.into_inner());
 
         if let Some(shell) = shells.remove(shell_id) {
             if !shell.finished.load(Ordering::SeqCst) {
@@ -233,20 +232,17 @@ impl BackgroundShellManager {
 
     /// List all background shells
     pub(crate) fn list(&self) -> Vec<(String, String, bool)> {
-        if let Ok(shells) = self.shells.lock() {
-            shells
-                .iter()
-                .map(|(id, shell)| {
-                    (
-                        id.clone(),
-                        shell.command.clone(),
-                        !shell.finished.load(Ordering::SeqCst),
-                    )
-                })
-                .collect()
-        } else {
-            Vec::new()
-        }
+        let shells = self.shells.lock().unwrap_or_else(|e| e.into_inner());
+        shells
+            .iter()
+            .map(|(id, shell)| {
+                (
+                    id.clone(),
+                    shell.command.clone(),
+                    !shell.finished.load(Ordering::SeqCst),
+                )
+            })
+            .collect()
     }
 }
 

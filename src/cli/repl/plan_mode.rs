@@ -11,7 +11,17 @@ pub fn handle_enter_plan_mode(chat_session: &mut ChatSession) -> String {
     }
 
     let plans_dir = std::fs::canonicalize(&plans_dir).unwrap_or(plans_dir);
-    let plan_file = plans_dir.join(format!("{}.md", chat_session.id));
+
+    // Sanitize session ID to prevent path traversal (e.g. "../../etc/evil")
+    let safe_id: String = chat_session
+        .id
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    if safe_id.is_empty() {
+        return "Invalid session ID for plan file".to_string();
+    }
+    let plan_file = plans_dir.join(format!("{}.md", safe_id));
 
     if !plan_file.exists() {
         let header = format!(

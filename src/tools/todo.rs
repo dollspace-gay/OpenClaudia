@@ -33,6 +33,12 @@ pub(crate) fn execute_todo_write(args: &HashMap<String, Value>) -> (String, bool
 
     for (i, item) in todos_array.iter().enumerate() {
         let content = match item.get("content").and_then(|v| v.as_str()) {
+            Some(c) if c.len() > 2000 => {
+                return (
+                    format!("Todo {} content exceeds maximum length of 2000 characters", i),
+                    true,
+                );
+            }
             Some(c) => c.to_string(),
             None => return (format!("Todo {} missing 'content' field", i), true),
         };

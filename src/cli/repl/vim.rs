@@ -288,7 +288,7 @@ impl VimState {
             k if k.len() == 1
                 && k.chars()
                     .next()
-                    .map_or(false, |c| c.is_ascii_digit() && c != '0') =>
+                    .is_some_and(|c| c.is_ascii_digit() && c != '0') =>
             {
                 self.command = CommandState::Count {
                     digits: k.to_string(),
@@ -304,7 +304,7 @@ impl VimState {
     }
 
     fn process_count(&mut self, key: &str, digits: &str) -> VimAction {
-        if key.len() == 1 && key.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+        if key.len() == 1 && key.chars().next().is_some_and(|c| c.is_ascii_digit()) {
             let mut new_digits = digits.to_string();
             new_digits.push_str(key);
             self.command = CommandState::Count {

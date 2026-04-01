@@ -88,7 +88,13 @@ fn extract_diff_block(content: &str) -> Option<DiffBlock> {
     let start = content.find("@@DIFF_START@@")?;
     let end = content.find("@@DIFF_END@@")?;
     let json_str = content[start + "@@DIFF_START@@".len()..end].trim();
-    let v: serde_json::Value = serde_json::from_str(json_str).ok()?;
+    let v: serde_json::Value = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("\x1b[33mWarning: failed to parse diff block JSON: {}\x1b[0m", e);
+            return None;
+        }
+    };
     Some(DiffBlock {
         path: v["path"].as_str()?.to_string(),
         old_text: v["old"].as_str()?.to_string(),

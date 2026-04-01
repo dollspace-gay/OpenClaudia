@@ -86,6 +86,17 @@ pub async fn load_credentials() -> Result<LoadedCredentials, String> {
         ));
     }
 
+    // Reject symlinks to prevent credential theft via symlink attacks
+    if path.symlink_metadata()
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(format!(
+            "Credentials file {} is a symlink — refusing to read for security",
+            path.display()
+        ));
+    }
+
     let content = std::fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
 
@@ -192,6 +203,17 @@ async fn refresh_and_load(path: &PathBuf, oauth: &ClaudeAiOauth) -> Result<Loade
 
     let json = serde_json::to_string_pretty(&updated)
         .map_err(|e| format!("Failed to serialize updated credentials: {}", e))?;
+
+    // Reject symlinks before writing refreshed tokens
+    if path.symlink_metadata()
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(format!(
+            "Credentials file {} is a symlink — refusing to write for security",
+            path.display()
+        ));
+    }
 
     std::fs::write(path, json)
         .map_err(|e| format!("Failed to write updated credentials: {}", e))?;

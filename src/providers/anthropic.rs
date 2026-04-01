@@ -117,7 +117,7 @@ impl ProviderAdapter for AnthropicAdapter {
         let mut body = json!({
             "model": &request.model,
             "messages": Self::convert_messages(&request.messages),
-            "max_tokens": request.max_tokens.unwrap_or(4096)
+            "max_tokens": request.max_tokens.unwrap_or(crate::DEFAULT_MAX_TOKENS)
         });
 
         // Add system message if present - use array format with cache_control for prompt caching

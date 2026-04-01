@@ -341,6 +341,15 @@ impl OAuthStore {
             return;
         };
 
+        // Reject symlinks to prevent credential theft
+        if path.symlink_metadata()
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            error!("OAuth session file {} is a symlink — refusing to read for security", path.display());
+            return;
+        }
+
         match fs::read_to_string(path) {
             Ok(data) => {
                 if let Ok(loaded) = serde_json::from_str::<HashMap<String, OAuthSession>>(&data) {
@@ -380,6 +389,16 @@ impl OAuthStore {
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
+        }
+
+        // Reject symlinks before writing tokens
+        if path.exists()
+            && path.symlink_metadata()
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
+        {
+            error!("OAuth session file {} is a symlink — refusing to write for security", path.display());
+            return;
         }
 
         let sessions = self.sessions.read().unwrap_or_else(|e| e.into_inner());

@@ -45,11 +45,22 @@ impl ProviderAdapter for OpenAIAdapter {
 
         // Add OpenAI o1/o3 reasoning_effort if enabled
         // See: https://platform.openai.com/docs/guides/reasoning
+        // Only valid for reasoning models (o1, o3, o4 series)
         if thinking.enabled {
-            // Use configured effort or default to "medium"
-            let effort = thinking.reasoning_effort.as_deref().unwrap_or("medium");
-            body["reasoning_effort"] = json!(effort);
-            debug!("Added OpenAI reasoning params: effort={}", effort);
+            let model = request.model.as_str();
+            let is_reasoning_model = model.starts_with("o1")
+                || model.starts_with("o3")
+                || model.starts_with("o4");
+            if is_reasoning_model {
+                let effort = thinking.reasoning_effort.as_deref().unwrap_or("medium");
+                body["reasoning_effort"] = json!(effort);
+                debug!("Added OpenAI reasoning params: effort={}", effort);
+            } else {
+                debug!(
+                    "Skipping reasoning_effort for non-reasoning model: {}",
+                    model
+                );
+            }
         }
 
         Ok(body)

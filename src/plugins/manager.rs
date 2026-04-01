@@ -450,7 +450,13 @@ impl PluginManager {
                 ))
             })?;
 
-        // Determine install path
+        // Determine install path — validate plugin name to prevent path traversal
+        if plugin_name.contains("..") || plugin_name.contains('/') || plugin_name.contains('\\') {
+            return Err(PluginError::InvalidManifest(format!(
+                "Plugin name '{}' contains invalid path characters",
+                plugin_name
+            )));
+        }
         let plugins_dir = PathBuf::from(".openclaudia/plugins");
         let dest = plugins_dir.join(plugin_name);
         if dest.exists() {

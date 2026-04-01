@@ -85,6 +85,14 @@ impl PermissionManager {
     ) -> Self {
         let persist_path = persist_path.into();
         let persisted_rules = Self::load_persisted_rules(&persist_path);
+
+        // Pre-validate default_allow patterns at load time so invalid globs fail fast
+        for pattern in &default_allow {
+            if Self::glob_to_regex_cached(pattern).is_none() {
+                warn!(pattern = %pattern, "Invalid default_allow glob pattern will never match");
+            }
+        }
+
         Self {
             persisted_rules,
             session_rules: Vec::new(),
@@ -107,7 +115,18 @@ impl PermissionManager {
 
         // Determine the canonical tool category and the target string to match against
         let (canonical_tool, target) = match Self::extract_target(tool_name, tool_args) {
-            Some(pair) => pair,
+            Some(Ok(pair)) => pair,
+            Some(Err(tool)) => {
+                // Tool requires permission but args are malformed (e.g. command=123)
+                warn!(
+                    tool = %tool,
+                    "Malformed tool args: required argument is not a string — denying"
+                );
+                return CheckResult::Denied(format!(
+                    "Denied: {} tool call has malformed arguments (expected string, got wrong type)",
+                    tool
+                ));
+            }
             None => {
                 // Tools without a matchable target are always allowed
                 return CheckResult::Allowed;
@@ -225,23 +244,38 @@ impl PermissionManager {
 
     /// Extract the canonical tool name and the target string for pattern matching.
     ///
-    /// Returns `None` for tools that don't need permission checks (e.g. read-only tools).
-    fn extract_target(tool_name: &str, tool_args: &serde_json::Value) -> Option<(String, String)> {
+    /// Returns:
+    /// - `Some(Ok((tool, target)))` for tools that need permission checks with valid args
+    /// - `Some(Err(tool))` for tools that need permission checks but have malformed args
+    /// - `None` for tools that don't need permission checks (e.g. read-only tools)
+    fn extract_target(
+        tool_name: &str,
+        tool_args: &serde_json::Value,
+    ) -> Option<Result<(String, String), String>> {
         match tool_name {
             "bash" => {
-                let cmd = tool_args
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                Some(("Bash".to_string(), cmd.to_string()))
+                let cmd = tool_args.get("command").and_then(|v| v.as_str());
+                match (cmd, tool_args.get("command")) {
+                    (Some(s), _) => Some(Ok(("Bash".to_string(), s.to_string()))),
+                    (None, Some(_)) => Some(Err("Bash".to_string())), // key present but not a string
+                    (None, None) => Some(Ok(("Bash".to_string(), String::new()))), // key absent
+                }
             }
             "edit_file" => {
-                let path = tool_args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                Some(("Edit".to_string(), path.to_string()))
+                let path = tool_args.get("path").and_then(|v| v.as_str());
+                match (path, tool_args.get("path")) {
+                    (Some(s), _) => Some(Ok(("Edit".to_string(), s.to_string()))),
+                    (None, Some(_)) => Some(Err("Edit".to_string())),
+                    (None, None) => Some(Ok(("Edit".to_string(), String::new()))),
+                }
             }
             "write_file" => {
-                let path = tool_args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                Some(("Write".to_string(), path.to_string()))
+                let path = tool_args.get("path").and_then(|v| v.as_str());
+                match (path, tool_args.get("path")) {
+                    (Some(s), _) => Some(Ok(("Write".to_string(), s.to_string()))),
+                    (None, Some(_)) => Some(Err("Write".to_string())),
+                    (None, None) => Some(Ok(("Write".to_string(), String::new()))),
+                }
             }
             // Read-only tools, task tools, and memory tools don't need permission checks
             _ => None,
@@ -536,6 +570,23 @@ mod tests {
         assert!(re.is_match("file1.txt"));
         assert!(re.is_match("fileA.txt"));
         assert!(!re.is_match("file12.txt"));
+    }
+
+    #[test]
+    fn test_malformed_tool_args_denied() {
+        let (mgr, _dir) = make_manager(true, vec!["*".to_string()]);
+        // command is an integer, not a string — must be denied, not allowed
+        let result = mgr.check("bash", &json!({"command": 123}));
+        assert!(
+            matches!(result, CheckResult::Denied(_)),
+            "Malformed bash command (non-string) must be denied, got: {:?}",
+            result
+        );
+        // path is an array, not a string
+        let result = mgr.check("edit_file", &json!({"path": ["/etc/passwd"]}));
+        assert!(matches!(result, CheckResult::Denied(_)));
+        let result = mgr.check("write_file", &json!({"path": null}));
+        assert!(matches!(result, CheckResult::Denied(_)));
     }
 
     #[test]

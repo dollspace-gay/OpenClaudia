@@ -596,7 +596,9 @@ impl HookEngine {
 
         // Write input to stdin
         if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(input_json.as_bytes()).await;
+            if let Err(e) = stdin.write_all(input_json.as_bytes()).await {
+                warn!("Failed to write hook input to stdin: {}", e);
+            }
         }
 
         // Wait for completion with timeout

@@ -117,11 +117,10 @@ impl ProviderAdapter for OllamaAdapter {
             .map(|calls| {
                 calls
                     .iter()
-                    .enumerate()
-                    .filter_map(|(i, call)| {
+                    .filter_map(|call| {
                         let func = call.get("function")?;
                         Some(json!({
-                            "id": format!("call_{}", i),
+                            "id": format!("call_{}", uuid::Uuid::new_v4()),
                             "type": "function",
                             "function": {
                                 "name": func.get("name")?,

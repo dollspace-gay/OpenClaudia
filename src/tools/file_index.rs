@@ -24,6 +24,7 @@ pub struct SearchResult {
 }
 
 /// In-memory file index for fuzzy searching.
+#[derive(Default)]
 pub struct FileIndex {
     paths: Vec<String>,
     lower_paths: Vec<String>,

@@ -13,26 +13,36 @@ use tracing::{debug, warn};
 use super::claude_compat::{ClaudeCodeHook, ClaudeCodeSettings};
 use super::HookEvent;
 
-/// Merge two HooksConfig structs, with `other` taking precedence
+/// Merge two HooksConfig structs, with `other` taking precedence.
+/// Entries from `other` with the same matcher as an entry in `base` replace the base entry.
 pub fn merge_hooks_config(base: HooksConfig, other: HooksConfig) -> HooksConfig {
     let mut merged = base;
 
-    merged.session_start.extend(other.session_start);
-    merged.session_end.extend(other.session_end);
-    merged.pre_tool_use.extend(other.pre_tool_use);
-    merged.post_tool_use.extend(other.post_tool_use);
-    merged.user_prompt_submit.extend(other.user_prompt_submit);
-    merged.stop.extend(other.stop);
-    merged
-        .pre_adversary_review
-        .extend(other.pre_adversary_review);
-    merged
-        .post_adversary_review
-        .extend(other.post_adversary_review);
-    merged.vdd_conflict.extend(other.vdd_conflict);
-    merged.vdd_converged.extend(other.vdd_converged);
+    dedup_hook_entries(&mut merged.session_start, other.session_start);
+    dedup_hook_entries(&mut merged.session_end, other.session_end);
+    dedup_hook_entries(&mut merged.pre_tool_use, other.pre_tool_use);
+    dedup_hook_entries(&mut merged.post_tool_use, other.post_tool_use);
+    dedup_hook_entries(&mut merged.user_prompt_submit, other.user_prompt_submit);
+    dedup_hook_entries(&mut merged.stop, other.stop);
+    dedup_hook_entries(&mut merged.pre_adversary_review, other.pre_adversary_review);
+    dedup_hook_entries(
+        &mut merged.post_adversary_review,
+        other.post_adversary_review,
+    );
+    dedup_hook_entries(&mut merged.vdd_conflict, other.vdd_conflict);
+    dedup_hook_entries(&mut merged.vdd_converged, other.vdd_converged);
 
     merged
+}
+
+/// Extend `base` with entries from `other`, replacing any base entry whose
+/// matcher matches an entry in `other` (later source wins).
+fn dedup_hook_entries(base: &mut Vec<HookEntry>, other: Vec<HookEntry>) {
+    for entry in other {
+        // Remove existing entries with the same matcher
+        base.retain(|existing| existing.matcher != entry.matcher);
+        base.push(entry);
+    }
 }
 
 /// Merge a settings file into the accumulator using deep merge semantics.

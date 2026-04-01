@@ -461,7 +461,17 @@ fn parse_locations(data: Option<&Value>) -> Vec<LspLocation> {
         .collect()
 }
 
+const MAX_SYMBOL_DEPTH: usize = 20;
+
 fn parse_symbols(data: Option<&Value>) -> Vec<LspSymbol> {
+    parse_symbols_inner(data, 0)
+}
+
+fn parse_symbols_inner(data: Option<&Value>, depth: usize) -> Vec<LspSymbol> {
+    if depth >= MAX_SYMBOL_DEPTH {
+        return Vec::new();
+    }
+
     let arr = match data {
         Some(Value::Array(a)) => a,
         _ => return Vec::new(),
@@ -480,7 +490,7 @@ fn parse_symbols(data: Option<&Value>) -> Vec<LspSymbol> {
             let children = sym
                 .get("children")
                 .and_then(|c| c.as_array())
-                .map(|_| parse_symbols(sym.get("children")))
+                .map(|_| parse_symbols_inner(sym.get("children"), depth + 1))
                 .unwrap_or_default();
 
             Some(LspSymbol {

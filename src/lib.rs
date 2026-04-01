@@ -7,6 +7,9 @@
 
 #![recursion_limit = "256"]
 
+/// Default max output tokens for chat completions when not specified by config.
+pub const DEFAULT_MAX_TOKENS: u32 = 4096;
+
 pub mod acp;
 pub mod auto_learn;
 pub mod claude_credentials;

@@ -159,6 +159,22 @@ impl ProviderAdapter for GoogleAdapter {
     }
 
     fn transform_response(&self, response: Value, _stream: bool) -> Result<Value, ProviderError> {
+        // Check for API error responses before extracting candidates
+        if let Some(error) = response.get("error") {
+            let message = error
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("Unknown error");
+            let code = error
+                .get("code")
+                .and_then(|c| c.as_u64())
+                .unwrap_or(0);
+            return Err(ProviderError::InvalidResponse(format!(
+                "Gemini API error ({}): {}",
+                code, message
+            )));
+        }
+
         // Extract content from Gemini response
         let candidate = response
             .get("candidates")

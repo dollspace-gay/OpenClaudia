@@ -205,6 +205,8 @@ pub fn expand_file_references(input: &str) -> String {
             }
             Err(e) => {
                 eprintln!("Warning: Could not read {}: {}", path, e);
+                let error_context = format!("[File not found or unreadable: {} ({})]", path, e);
+                replacements.push((full_match.to_string(), error_context));
             }
         }
     }

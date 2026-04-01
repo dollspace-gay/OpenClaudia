@@ -79,11 +79,10 @@ fn validate_cron(expr: &str) -> Result<(), String> {
         }
         // Handle */N step values
         if let Some(step) = field.strip_prefix("*/") {
-            if step.parse::<u32>().is_err() {
-                return Err(format!(
-                    "Invalid step value '{}' in {} field",
-                    step, field_names[i]
-                ));
+            match step.parse::<u32>() {
+                Ok(0) => return Err(format!("Step value cannot be 0 in {} field", field_names[i])),
+                Err(_) => return Err(format!("Invalid step value '{}' in {} field", step, field_names[i])),
+                _ => {}
             }
             continue;
         }

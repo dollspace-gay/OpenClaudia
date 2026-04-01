@@ -1139,7 +1139,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                     let mut req = serde_json::json!({
                         "model": model,
                         "messages": anthropic_messages,
-                        "max_tokens": 4096,
+                        "max_tokens": openclaudia::DEFAULT_MAX_TOKENS,
                         "stream": true,
                         "tools": anthropic_tools
                     });
@@ -1199,7 +1199,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                     serde_json::json!({
                         "model": model,
                         "messages": chat_session.messages,
-                        "max_tokens": 4096,
+                        "max_tokens": openclaudia::DEFAULT_MAX_TOKENS,
                         "stream": true,
                         "tools": tools::get_all_tool_definitions(true)
                     })
@@ -1464,7 +1464,8 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                 }
 
                                                 // Permission check before execution
-                                                let tool_args_val: serde_json::Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+                                                let tool_args_val: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
+                                                    .unwrap_or_else(|e| { tracing::warn!("Malformed tool arguments for '{}': {}", tool_call.function.name, e); serde_json::Value::Object(Default::default()) });
                                                 match check_tool_permission_interactive(
                                                     &tool_call.function.name,
                                                     &tool_args_val,
@@ -2174,7 +2175,8 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                 }
 
                                                 // Permission check
-                                                let tool_args_val2: serde_json::Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+                                                let tool_args_val2: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
+                                                    .unwrap_or_else(|e| { tracing::warn!("Malformed tool arguments for '{}': {}", tool_call.function.name, e); serde_json::Value::Object(Default::default()) });
                                                 match check_tool_permission_interactive(
                                                     &tool_call.function.name,
                                                     &tool_args_val2,
@@ -2356,7 +2358,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                             let mut followup_req = serde_json::json!({
                                                 "model": model,
                                                 "messages": anthropic_messages,
-                                                "max_tokens": 4096,
+                                                "max_tokens": openclaudia::DEFAULT_MAX_TOKENS,
                                                 "stream": true,
                                                 "tools": anthropic_tools
                                             });
@@ -2608,7 +2610,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                             let mut followup_req = serde_json::json!({
                                                 "model": model,
                                                 "messages": anthropic_messages,
-                                                "max_tokens": 4096,
+                                                "max_tokens": openclaudia::DEFAULT_MAX_TOKENS,
                                                 "stream": true
                                             });
                                             if let Some(sys) = system_msg {
@@ -2905,7 +2907,8 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                         }
 
                                         // Permission check
-                                        let tool_args_val3: serde_json::Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+                                        let tool_args_val3: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
+                                            .unwrap_or_else(|e| { tracing::warn!("Malformed tool arguments for '{}': {}", tool_call.function.name, e); serde_json::Value::Object(Default::default()) });
                                         match check_tool_permission_interactive(
                                             &tool_call.function.name,
                                             &tool_args_val3,
@@ -3115,7 +3118,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                         let mut req = serde_json::json!({
                                             "model": model,
                                             "messages": anthropic_messages,
-                                            "max_tokens": 4096,
+                                            "max_tokens": openclaudia::DEFAULT_MAX_TOKENS,
                                             "stream": true,
                                             "tools": anthropic_tools
                                         });
@@ -3134,7 +3137,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                         serde_json::json!({
                                             "model": model,
                                             "messages": chat_session.messages,
-                                            "max_tokens": 4096,
+                                            "max_tokens": openclaudia::DEFAULT_MAX_TOKENS,
                                             "stream": true,
                                             "tools": tools::get_all_tool_definitions(true)
                                         })
