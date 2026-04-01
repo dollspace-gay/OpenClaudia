@@ -622,10 +622,9 @@ async fn cmd_chat(
     };
 
     loop {
-        // Show separator and bottom status bar before prompt
+        // Render input area frame: top line, then prompt goes here, then bottom line + status
         let mode_str = chat_session.mode.display().to_lowercase();
         let _ = tui::render_input_prompt(&mode_str);
-        let _ = tui::render_bottom_bar(&effort_level, &mode_str);
 
         let prompt = if vim_enabled {
             // Show pending command in prompt (e.g., "d…" while waiting for motion)
@@ -647,6 +646,9 @@ async fn cmd_chat(
 
         match readline {
             Ok(line) => {
+                // Render bottom separator + status bar after input submitted
+                let _ = tui::render_bottom_bar(&effort_level, &mode_str);
+
                 let mut input = line.trim().to_string();
                 let mut editor_message_added = false;
 
