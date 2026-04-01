@@ -1,0 +1,10 @@
+{
+  "uuid": "474594f4-005e-4079-8a5a-4961a62d5ad3",
+  "display_id": null,
+  "title": "C-12: Empty API key strings pass validation",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:38:45.805874107Z",
+  "updated_at": "2026-04-01T03:38:45.805874107Z"
+}
