@@ -1,0 +1,10 @@
+{
+  "uuid": "72456e4b-c65b-4bab-a590-026dce5ef6c5",
+  "display_id": 174,
+  "title": "Token estimation: 3-tier fallback (API count → model-based estimation → rough heuristic), per-block estimation, thinking budget awareness",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T18:13:51.303155637Z",
+  "updated_at": "2026-04-01T18:13:51.303155637Z"
+}
