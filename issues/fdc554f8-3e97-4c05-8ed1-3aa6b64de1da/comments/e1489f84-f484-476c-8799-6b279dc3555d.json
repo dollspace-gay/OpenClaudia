@@ -1,0 +1,10 @@
+{
+  "uuid": "e1489f84-f484-476c-8799-6b279dc3555d",
+  "issue_uuid": "fdc554f8-3e97-4c05-8ed1-3aa6b64de1da",
+  "author": "lOrm",
+  "content": "Implemented: StreamingMarkdownRenderer for line-by-line markdown during streaming. Thinking blocks use ∴ symbol. Tool display uses ● symbol. Status bar uses · separators. All matching Claude Code patterns.",
+  "created_at": "2026-04-01T22:42:42.180244056Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZAAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASQAAACEAsOg+6TZVJZm9OtSicBl9rB8Yg1xu3TI2WlrXMYejWtAAAAAgGpNIyeDlKQxuAab/+ZNNs8we9fGvmXjZahAfLCc9Ai4="
+}
