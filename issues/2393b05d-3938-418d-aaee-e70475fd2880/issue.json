@@ -1,0 +1,10 @@
+{
+  "uuid": "2393b05d-3938-418d-aaee-e70475fd2880",
+  "display_id": null,
+  "title": "W-19: OAuth credential refresh doesn't notify OAuthStore",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:09.254166837Z",
+  "updated_at": "2026-04-01T03:39:09.254166837Z"
+}
