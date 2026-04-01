@@ -2,11 +2,12 @@
   "uuid": "631fbb46-8e45-470b-b9ce-8f10724b6633",
   "display_id": null,
   "title": "Wire /effort into actual API thinking params",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-01T01:00:31.874896745Z",
-  "updated_at": "2026-04-01T01:00:32.048024995Z",
+  "updated_at": "2026-04-01T01:29:16.924511514Z",
+  "closed_at": "2026-04-01T01:29:16.924511514Z",
   "labels": [
     "bug"
   ]
