@@ -1,0 +1,10 @@
+{
+  "uuid": "d033f947-0354-481d-8401-e8768974d9d1",
+  "display_id": null,
+  "title": "W-43: Credential path has no symlink validation",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:23.482194715Z",
+  "updated_at": "2026-04-01T03:39:23.482194715Z"
+}
