@@ -141,6 +141,9 @@ pub fn handle_slash_command(
             println!("  /version         - Show version and system information");
             println!("  /debug           - Show debug info (paths, env vars, config)");
             println!("  /find <query>    - Fuzzy-find files in the project");
+            println!("  /doctor          - Run inline diagnostics");
+            println!("  /config          - Show current configuration");
+            println!("  /config path     - Show config file locations");
             println!();
             println!("Memory Commands (auto-learning):");
             println!("  /memory          - Show auto-learning stats");
@@ -166,17 +169,6 @@ pub fn handle_slash_command(
             println!("Skill Commands:");
             println!("  /skill           - List available skills");
             println!("  /skill <name>    - Invoke a skill (inject prompt as next message)");
-            println!();
-            println!("MCP Commands:");
-            println!("  /mcp             - List configured MCP servers");
-            println!("  /mcp add <name> <cmd> - Add a stdio MCP server to .mcp.json");
-            println!("  /mcp remove <name>    - Remove an MCP server");
-            println!();
-            println!("Style Commands:");
-            println!("  /style           - Show current output style or list presets");
-            println!("  /style <preset>  - Apply a built-in style preset");
-            println!("  /style custom <text>  - Set a custom output style");
-            println!("  /style clear     - Remove output style");
             println!();
             println!("Shell Commands:");
             println!("  !<cmd>           - Execute shell command (e.g., !ls -la)");
@@ -367,7 +359,138 @@ pub fn handle_slash_command(
             println!();
             Some(SlashCommandResult::Handled)
         }
-        "debug" | "config" => {
+        "doctor" => {
+            println!("\nRunning diagnostics...\n");
+
+            // Check git
+            print!("  Git... ");
+            match std::process::Command::new("git")
+                .args(["--version"])
+                .output()
+            {
+                Ok(o) if o.status.success() => {
+                    println!(
+                        "\u{2713} {}",
+                        String::from_utf8_lossy(&o.stdout).trim()
+                    )
+                }
+                _ => println!("\u{2717} not found"),
+            }
+
+            // Check Claude Code credentials
+            print!("  Claude Code credentials... ");
+            if openclaudia::claude_credentials::has_claude_code_credentials() {
+                println!("\u{2713} found");
+            } else {
+                println!("\u{2717} not found (~/.claude/.credentials.json)");
+            }
+
+            // Check config
+            print!("  Config... ");
+            match openclaudia::config::load_config() {
+                Ok(_) => println!("\u{2713} loaded"),
+                Err(e) => println!("\u{2717} {}", e),
+            }
+
+            // Check MCP servers
+            print!("  MCP config... ");
+            let mcp_path = std::path::PathBuf::from(".mcp.json");
+            if mcp_path.exists() {
+                match std::fs::read_to_string(&mcp_path) {
+                    Ok(content) => {
+                        let count = serde_json::from_str::<serde_json::Value>(&content)
+                            .ok()
+                            .and_then(|v| {
+                                v.get("mcpServers")
+                                    .and_then(|s| s.as_object())
+                                    .map(|o| o.len())
+                            })
+                            .unwrap_or(0);
+                        println!("\u{2713} {} server(s)", count);
+                    }
+                    Err(e) => println!("\u{2717} {}", e),
+                }
+            } else {
+                println!("\u{00b7} not configured");
+            }
+
+            // Check skills
+            print!("  Skills... ");
+            let loaded_skills = skills::load_skills();
+            if loaded_skills.is_empty() {
+                println!("\u{00b7} none loaded");
+            } else {
+                println!("\u{2713} {} skill(s)", loaded_skills.len());
+            }
+
+            // Check gh CLI
+            print!("  GitHub CLI (gh)... ");
+            match std::process::Command::new("gh")
+                .args(["--version"])
+                .output()
+            {
+                Ok(o) if o.status.success() => println!(
+                    "\u{2713} {}",
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .next()
+                        .unwrap_or("installed")
+                ),
+                _ => println!("\u{00b7} not found (optional, for /commit-push-pr)"),
+            }
+
+            println!();
+            Some(SlashCommandResult::Handled)
+        }
+        "config" => {
+            let config_parts: Vec<&str> = args.splitn(3, ' ').collect();
+            match config_parts.first().copied().unwrap_or("show") {
+                "" | "show" => match openclaudia::config::load_config() {
+                    Ok(cfg) => {
+                        println!("\nConfiguration:\n");
+                        println!("  Provider: {}", cfg.proxy.target);
+                        println!("  Host: {}:{}", cfg.proxy.host, cfg.proxy.port);
+                        for (name, p) in &cfg.providers {
+                            let has_key = p.api_key.is_some();
+                            println!(
+                                "  {} \u{2192} {} (key: {})",
+                                name,
+                                p.base_url,
+                                if has_key { "\u{2713}" } else { "\u{2717}" }
+                            );
+                        }
+                        println!(
+                            "  VDD: {} ({})",
+                            if cfg.vdd.enabled { "on" } else { "off" },
+                            cfg.vdd.mode
+                        );
+                        println!(
+                            "  Session timeout: {} min",
+                            cfg.session.timeout_minutes
+                        );
+                        println!();
+                    }
+                    Err(e) => println!("\nFailed to load config: {}\n", e),
+                },
+                "path" => {
+                    println!("\nConfig locations:");
+                    println!("  Project: .openclaudia/config.yaml");
+                    if let Some(home) = dirs::home_dir() {
+                        println!(
+                            "  User: {}",
+                            home.join(".openclaudia/config.yaml").display()
+                        );
+                    }
+                    println!("  Credentials: ~/.claude/.credentials.json");
+                    println!("  MCP: .mcp.json");
+                    println!("  Skills: .openclaudia/skills/");
+                    println!();
+                }
+                _ => println!("\nUsage: /config [show|path]\n"),
+            }
+            Some(SlashCommandResult::Handled)
+        }
+        "debug" => {
             println!("\n=== Debug Information ===\n");
             println!("Provider:     {}", provider);
             println!("Model:        {}", current_model);
@@ -731,161 +854,6 @@ pub fn handle_slash_command(
                 }
             } else {
                 println!("(gh CLI not found — install it to auto-create PRs)");
-            }
-            Some(SlashCommandResult::Handled)
-        }
-        "mcp" => {
-            let mcp_path = std::path::PathBuf::from(".mcp.json");
-            let parts: Vec<&str> = args.splitn(3, ' ').collect();
-            let subcmd = parts.first().copied().unwrap_or("list");
-
-            match subcmd {
-                "" | "list" => {
-                    if mcp_path.exists() {
-                        match std::fs::read_to_string(&mcp_path) {
-                            Ok(content) => {
-                                match serde_json::from_str::<serde_json::Value>(&content) {
-                                    Ok(config) => {
-                                        if let Some(servers) = config.get("mcpServers").and_then(|s| s.as_object()) {
-                                            if servers.is_empty() {
-                                                println!("\nNo MCP servers configured.\n");
-                                            } else {
-                                                println!("\nMCP Servers ({}):\n", servers.len());
-                                                for (name, cfg) in servers {
-                                                    let cmd_str = cfg.get("command").and_then(|c| c.as_str()).unwrap_or("?");
-                                                    let args_arr = cfg.get("args").and_then(|a| a.as_array())
-                                                        .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(" "))
-                                                        .unwrap_or_default();
-                                                    println!("  \x1b[36m{}\x1b[0m: {} {}", name, cmd_str, args_arr);
-                                                }
-                                                println!();
-                                            }
-                                        } else {
-                                            println!("\nNo mcpServers section in .mcp.json\n");
-                                        }
-                                    }
-                                    Err(e) => println!("\nFailed to parse .mcp.json: {}\n", e),
-                                }
-                            }
-                            Err(e) => println!("\nFailed to read .mcp.json: {}\n", e),
-                        }
-                    } else {
-                        println!("\nNo .mcp.json found. Use /mcp add <name> <command> to create one.\n");
-                    }
-                }
-                "add" => {
-                    if parts.len() < 3 {
-                        println!("\nUsage: /mcp add <name> <command> [args...]\n");
-                    } else {
-                        let name = parts[1];
-                        let cmd_str = parts[2];
-                        let cmd_parts: Vec<&str> = cmd_str.split_whitespace().collect();
-                        let command = cmd_parts[0];
-                        let cmd_args: Vec<&str> = cmd_parts[1..].to_vec();
-
-                        let mut config = if mcp_path.exists() {
-                            std::fs::read_to_string(&mcp_path).ok()
-                                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                                .unwrap_or(serde_json::json!({"mcpServers": {}}))
-                        } else {
-                            serde_json::json!({"mcpServers": {}})
-                        };
-
-                        config["mcpServers"][name] = serde_json::json!({
-                            "command": command,
-                            "args": cmd_args,
-                        });
-
-                        match std::fs::write(&mcp_path, serde_json::to_string_pretty(&config).unwrap_or_default()) {
-                            Ok(()) => println!("\nAdded MCP server '{}': {} {}\n", name, command, cmd_args.join(" ")),
-                            Err(e) => println!("\nFailed to write .mcp.json: {}\n", e),
-                        }
-                    }
-                }
-                "remove" | "rm" => {
-                    if parts.len() < 2 {
-                        println!("\nUsage: /mcp remove <name>\n");
-                    } else {
-                        let name = parts[1];
-                        if !mcp_path.exists() {
-                            println!("\nNo .mcp.json found.\n");
-                        } else {
-                            let mut config: serde_json::Value = std::fs::read_to_string(&mcp_path).ok()
-                                .and_then(|s| serde_json::from_str(&s).ok())
-                                .unwrap_or(serde_json::json!({"mcpServers": {}}));
-
-                            if let Some(servers) = config.get_mut("mcpServers").and_then(|s| s.as_object_mut()) {
-                                if servers.remove(name).is_some() {
-                                    let _ = std::fs::write(&mcp_path, serde_json::to_string_pretty(&config).unwrap_or_default());
-                                    println!("\nRemoved MCP server '{}'\n", name);
-                                } else {
-                                    println!("\nServer '{}' not found.\n", name);
-                                }
-                            }
-                        }
-                    }
-                }
-                _ => println!("\nUsage: /mcp [list|add <name> <command>|remove <name>]\n"),
-            }
-            Some(SlashCommandResult::Handled)
-        }
-        "style" | "styles" => {
-            use openclaudia::output_style;
-
-            let parts: Vec<&str> = args.splitn(2, ' ').collect();
-            let subcmd = parts.first().copied().unwrap_or("");
-
-            match subcmd {
-                "" => {
-                    // Show current style or list presets
-                    if let Some(current) = output_style::load_output_style() {
-                        println!("\nCurrent output style:\n");
-                        println!("  \x1b[36m{}\x1b[0m\n", current);
-                    } else {
-                        println!("\nNo output style set.\n");
-                    }
-                    println!("Built-in presets:");
-                    for (name, desc) in output_style::builtin_styles() {
-                        println!("  \x1b[36m{:<14}\x1b[0m {}", name, desc);
-                    }
-                    println!("\nUsage:");
-                    println!("  /style <preset>       - Apply a preset");
-                    println!("  /style custom <text>  - Set custom style instructions");
-                    println!("  /style clear          - Remove output style");
-                    println!();
-                }
-                "clear" | "reset" | "none" => {
-                    match output_style::clear_output_style() {
-                        Ok(()) => println!("\nOutput style cleared.\n"),
-                        Err(e) => println!("\nFailed to clear style: {}\n", e),
-                    }
-                }
-                "custom" => {
-                    let custom_text = parts.get(1).copied().unwrap_or("").trim();
-                    if custom_text.is_empty() {
-                        println!("\nUsage: /style custom <your style instructions>\n");
-                    } else {
-                        match output_style::save_output_style(custom_text) {
-                            Ok(()) => println!("\nCustom output style set:\n  \x1b[36m{}\x1b[0m\n", custom_text),
-                            Err(e) => println!("\nFailed to save style: {}\n", e),
-                        }
-                    }
-                }
-                preset => {
-                    let styles = output_style::builtin_styles();
-                    if let Some((_, desc)) = styles.iter().find(|(name, _)| *name == preset) {
-                        match output_style::save_output_style(desc) {
-                            Ok(()) => println!("\nApplied '{}' style:\n  \x1b[36m{}\x1b[0m\n", preset, desc),
-                            Err(e) => println!("\nFailed to save style: {}\n", e),
-                        }
-                    } else {
-                        println!("\nUnknown style '{}'. Available presets:", preset);
-                        for (name, _) in &styles {
-                            print!(" {}", name);
-                        }
-                        println!("\n");
-                    }
-                }
             }
             Some(SlashCommandResult::Handled)
         }

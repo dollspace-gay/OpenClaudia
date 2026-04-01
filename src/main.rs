@@ -1007,11 +1007,6 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                     memory_db.as_ref(),
                 );
 
-                // Inject output style if configured
-                if let Some(style) = openclaudia::output_style::load_output_style() {
-                    system_prompt.push_str(&format!("\n\n# Output Style\n{}", style));
-                }
-
                 // Inject coordinator prompt if --coordinator flag is set
                 if coordinator {
                     system_prompt = format!(
