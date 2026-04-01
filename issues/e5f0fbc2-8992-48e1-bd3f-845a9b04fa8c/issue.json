@@ -1,0 +1,10 @@
+{
+  "uuid": "e5f0fbc2-8992-48e1-bd3f-845a9b04fa8c",
+  "display_id": null,
+  "title": "C-6: VDD config validate() never called",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:38:42.828720072Z",
+  "updated_at": "2026-04-01T03:38:42.828720072Z"
+}
