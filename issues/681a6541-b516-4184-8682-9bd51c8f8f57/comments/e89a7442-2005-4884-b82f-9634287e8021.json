@@ -1,0 +1,10 @@
+{
+  "uuid": "e89a7442-2005-4884-b82f-9634287e8021",
+  "issue_uuid": "681a6541-b516-4184-8682-9bd51c8f8f57",
+  "author": "lOrm",
+  "content": "Verified fixed: proper serde_yaml deserialization in plugins/mod.rs:108-156",
+  "created_at": "2026-04-01T22:11:54.278878200Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZAAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASQAAACAgwXSOOOv4JjN7UyPnIpbET89Dv/hEn67ZQ0FMGo/3bwAAACEA7p1Z6NQr9HcQ4v4tzOr0REaKgvBEcJLo5C/gZtxeoCo="
+}
