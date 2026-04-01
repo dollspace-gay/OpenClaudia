@@ -1430,7 +1430,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                                     .collect();
                                             chat_session.messages.push(serde_json::json!({
                                             "role": "assistant",
-                                            "content": if full_content.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(full_content.clone()) },
+                                            "content": serde_json::Value::String(full_content.clone()),
                                             "tool_calls": tool_calls_json
                                         }));
 
@@ -2135,7 +2135,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                             // to tool_use blocks for the API.
                                             chat_session.messages.push(serde_json::json!({
                                             "role": "assistant",
-                                            "content": if text.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(text.clone()) },
+                                            "content": serde_json::Value::String(text.clone()),
                                             "tool_calls": tool_calls_json
                                         }));
 
@@ -2866,7 +2866,7 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
 
                                     chat_session.messages.push(serde_json::json!({
                                     "role": "assistant",
-                                    "content": if current_content.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(current_content.clone()) },
+                                    "content": serde_json::Value::String(current_content.clone()),
                                     "tool_calls": tool_calls_json
                                 }));
 
