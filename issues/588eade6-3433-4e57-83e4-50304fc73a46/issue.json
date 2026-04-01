@@ -6,5 +6,8 @@
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:17.629017286Z",
-  "updated_at": "2026-04-01T03:39:17.629017286Z"
+  "updated_at": "2026-04-01T03:39:17.727644435Z",
+  "labels": [
+    "qa"
+  ]
 }
