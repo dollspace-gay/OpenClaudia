@@ -1,0 +1,10 @@
+{
+  "uuid": "5cd2a889-64bf-40f0-b355-8e0e7f138b2f",
+  "display_id": null,
+  "title": "C-8: LSP response parser infinite loop",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:38:43.863166731Z",
+  "updated_at": "2026-04-01T03:38:43.863166731Z"
+}
