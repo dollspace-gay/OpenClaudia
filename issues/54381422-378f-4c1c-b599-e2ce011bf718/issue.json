@@ -1,0 +1,10 @@
+{
+  "uuid": "54381422-378f-4c1c-b599-e2ce011bf718",
+  "display_id": null,
+  "title": "W-15: Vim/effort state not persisted on resume",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:06.951327118Z",
+  "updated_at": "2026-04-01T03:39:06.951327118Z"
+}
