@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Update all documentation to reflect current implementation status (L1)
 - Replace MemGPT memory tools with auto-learning system (#67)
 - **Auto-learning memory system** — Replaces MemGPT-style tools with automatic knowledge capture from tool execution signals (#67)
   - Coding patterns: conventions, pitfalls, and architecture learned from lint output and edit failures

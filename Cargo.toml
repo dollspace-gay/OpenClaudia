@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Open-source universal agent harness - Claude Code capabilities for any AI"
 license = "MIT"
-repository = "https://github.com/yourusername/openclaudia"
+repository = "https://github.com/dollspace-gay/openclaudia"
 
 [dependencies]
 # Async runtime

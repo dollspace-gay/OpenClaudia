@@ -11,7 +11,7 @@ OpenClaudia is a Rust-based CLI that transforms any LLM into an agentic coding a
 - **Multi-Provider Support** — Anthropic, OpenAI, Google Gemini, DeepSeek, Qwen, Z.AI/GLM, Ollama, and any OpenAI-compatible server
 - **Local LLM Support** — Run with Ollama, LM Studio, LocalAI, or any OpenAI-compatible endpoint
 - **Auto-Detect Provider** — Pass `-m gemini-2.5-flash` and the provider is detected automatically
-- **28 Agentic Tools** — Bash, file ops, web search, notebooks, task tracking, plan mode, MCP resources
+- **30 Agentic Tools** — Bash, file ops, LSP, web search, notebooks, task tracking, plan mode, worktrees, cron scheduling, MCP resources
 - **Tool Execution Loop** — Multi-turn tool calling with automatic result feedback (works across all providers)
 - **Web Search** — DuckDuckGo (free, no API key), Tavily, or Brave APIs
 - **Auto-Learning Memory** — Automatically captures coding patterns, error resolutions, file relationships, and user preferences across sessions
@@ -23,6 +23,12 @@ OpenClaudia is a Rust-based CLI that transforms any LLM into an agentic coding a
 - **Plan Mode** — Toggle between Build and Plan modes; plan mode restricts destructive tools
 - **Permissions** — Granular tool-level allow/deny rules with glob patterns
 - **Task Management** — Built-in task tracking with dependencies and status workflow
+- **LSP Integration** — Language Server Protocol support for go-to-definition, find-references, hover, and more
+- **Subagent System** — Spawn autonomous agents for parallel work with coordinator mode
+- **ACP Server** — Agent Control Protocol server for agent interoperability via stdin/stdout
+- **Git Worktrees** — Create, manage, and switch between isolated git worktrees
+- **Cron Scheduling** — Create, list, and delete recurring scheduled jobs
+- **Skills System** — Load and invoke reusable prompt skills from markdown files
 - **Cross-Platform** — Windows, macOS, Linux with Git Bash for consistent shell behavior
 - **Interactive TUI** — Rich terminal interface with keybindings, themes, and session management
 - **Context Compaction** — Automatic summarization when conversations get long
@@ -161,16 +167,27 @@ keybindings:
 openclaudia                    # Start interactive chat (default)
 openclaudia -m <model>         # Use specific model (auto-detects provider)
 openclaudia -v                 # Verbose logging
+openclaudia --resume           # Resume last session
+openclaudia --session-id <id>  # Resume specific session
+openclaudia --coordinator      # Multi-agent coordinator mode
+openclaudia --tui-mode         # Full-screen TUI (experimental)
 
 openclaudia init               # Initialize config in current directory
 openclaudia init --force       # Overwrite existing config
 
 openclaudia auth               # Authenticate with Claude Max (OAuth)
 openclaudia auth --status      # Check auth status
+openclaudia auth --logout      # Clear stored credentials
 
 openclaudia start              # Start as proxy server
 openclaudia start -p 9090      # Custom port
 openclaudia start -t openai    # Target specific provider
+
+openclaudia acp                # Start ACP server on stdin/stdout
+openclaudia acp -m <model>     # ACP with specific model
+
+openclaudia loop               # Start iteration mode with Stop hooks
+openclaudia loop -m 10         # Max 10 iterations
 
 openclaudia config             # Show current configuration
 openclaudia doctor             # Check connectivity and API keys
@@ -178,32 +195,86 @@ openclaudia doctor             # Check connectivity and API keys
 
 ## Slash Commands (In Chat)
 
+### Navigation & Sessions
+
 | Command | Description |
 |---------|-------------|
 | `/help`, `/?` | Show help message |
 | `/new`, `/clear` | Start new conversation |
-| `/sessions` | List saved sessions |
-| `/session <id>` | Load a saved session |
+| `/sessions`, `/list` | List saved sessions |
+| `/continue <n>`, `/load <n>`, `/resume <n>` | Load session by number |
 | `/export` | Export conversation to markdown |
-| `/compact` | Summarize old messages to save context |
+| `/history` | Show all messages in current session |
 | `/undo` | Undo last message exchange |
 | `/redo` | Redo last undone exchange |
-| `/exit`, `/quit` | Exit the chat |
+| `/exit`, `/quit`, `/q` | Exit the chat |
+
+### Model & Configuration
+
+| Command | Description |
+|---------|-------------|
 | `/model` | Show current model |
 | `/models` | List available models |
-| `/model <name>` | Switch to different model |
-| `/status` | Show session status |
+| `/model <name>` | Switch to different model mid-session |
+| `/config` | Show current configuration |
+| `/config path` | Show config file locations |
+| `/connect`, `/auth` | Configure API keys |
+| `/login` | Check authentication status |
+| `/effort [low\|medium\|high]` | Set effort level |
+| `/mode` | Toggle Build/Plan mode |
+| `/vim` | Toggle vim mode |
+
+### Session Info
+
+| Command | Description |
+|---------|-------------|
+| `/status`, `/info` | Show session status |
 | `/rename <title>` | Rename current session |
-| `/keys` | Show keybindings |
-| `/theme` | Switch color theme |
-| `/editor` | Open external editor for long messages |
-| `/review` | Review uncommitted changes |
-| `/debug` | Show internal state |
-| `/history` | Show all messages in current session |
+| `/cost` | Show session cost estimate |
+| `/context` | Show context window usage breakdown |
+| `/compact`, `/summarize` | Summarize old messages to save context |
+| `/version`, `/v`, `/about` | Show version and system info |
+| `/debug` | Show internal state (paths, env, config) |
+| `/doctor` | Run inline diagnostics |
+
+### Project & Development
+
+| Command | Description |
+|---------|-------------|
+| `/review` | Review uncommitted git changes |
+| `/commit` | Auto-commit with generated message |
+| `/commit-push-pr` | Commit, push, and create PR |
+| `/find <query>`, `/f <query>` | Fuzzy-find files in project |
+| `/init` | Initialize project config |
+| `/editor`, `/edit`, `/e` | Open external editor for long messages |
+| `/copy`, `/yank`, `/y` | Copy last response to clipboard |
+
+### Display
+
+| Command | Description |
+|---------|-------------|
+| `/theme [name]` | List or switch color themes |
+| `/keys`, `/keybindings` | Show keybindings |
+
+### Plugins & Skills
+
+| Command | Description |
+|---------|-------------|
+| `/plugin` | List installed plugins |
+| `/plugin install <name>` | Install a plugin |
+| `/plugin enable/disable <name>` | Enable or disable a plugin |
+| `/plugin marketplace list` | List marketplace sources |
+| `/skill <name>` | Load and invoke a skill |
+| `/<plugin>:<command>` | Run a plugin command |
+
+### Shell & Files
+
+| Command | Description |
+|---------|-------------|
 | `!<command>` | Run shell command directly |
 | `@<file>` | Attach file to prompt |
 
-### Memory Commands (Auto-Learning)
+### Memory & Activity Commands
 
 | Command | Description |
 |---------|-------------|
@@ -213,6 +284,9 @@ openclaudia doctor             # Check connectivity and API keys
 | `/memory prefs` | Show learned user preferences |
 | `/memory files <file>` | Show file co-edit relationships |
 | `/memory reset` | Reset all learned data (with confirmation) |
+| `/activity` | Show recent session activities |
+| `/activity files` | Show recently modified files |
+| `/activity tools` | Show recent tool usage |
 
 ## Keyboard Shortcuts
 
@@ -249,6 +323,12 @@ openclaudia doctor             # Check connectivity and API keys
 | `web_browser` | Full headless browser for JavaScript-heavy pages |
 | `chainlink` | Issue and task tracking via Chainlink CLI |
 
+### Code Intelligence
+
+| Tool | Description |
+|------|-------------|
+| `lsp` | Language Server Protocol operations (goToDefinition, findReferences, hover, documentSymbol, workspaceSymbol, goToImplementation, call hierarchy) |
+
 ### Planning and Task Tools
 
 | Tool | Description |
@@ -262,6 +342,22 @@ openclaudia doctor             # Check connectivity and API keys
 | `task_list` | List all tasks with status summary |
 | `todo_write` | Simple to-do list (fallback when Chainlink unavailable) |
 | `todo_read` | Read current to-do list |
+
+### Git Worktree Tools
+
+| Tool | Description |
+|------|-------------|
+| `enter_worktree` | Create an isolated git worktree for parallel work |
+| `exit_worktree` | Exit a worktree (keep or remove) |
+| `list_worktrees` | List all active worktrees |
+
+### Scheduling Tools
+
+| Tool | Description |
+|------|-------------|
+| `cron_create` | Create a recurring scheduled job |
+| `cron_delete` | Delete a scheduled job |
+| `cron_list` | List all scheduled jobs |
 
 ### MCP Tools
 

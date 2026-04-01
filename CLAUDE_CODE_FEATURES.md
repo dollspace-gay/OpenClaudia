@@ -17,7 +17,7 @@ This document catalogs features from Anthropic's Claude Code CLI for replication
 | **Edit** | String replacement edits with old_string/new_string | ✅ Have |
 | **Glob** | File pattern matching (`**/*.rs`) | ✅ Have |
 | **Grep** | Content search with ripgrep, supports regex | ✅ Have |
-| **NotebookEdit** | Edit Jupyter notebook cells | ❌ Missing |
+| **NotebookEdit** | Edit Jupyter notebook cells | ✅ Have |
 
 ### System Operations
 | Tool | Description | Priority |
@@ -299,25 +299,26 @@ Claude Code spawns specialized subagents for complex tasks:
 
 ---
 
-## Priority Features to Implement
+## Implementation Status
 
-### Critical (Missing)
-1. **NotebookEdit** - Jupyter notebook editing
-2. **AgentOutputTool** - Background agent result retrieval
+### Implemented (since initial analysis)
+- **NotebookEdit** - Jupyter notebook editing
+- **AgentOutputTool** - Background agent result retrieval
+- **Subagent System** - Task tool with specialized agents, model selection, background execution, resume, worktree isolation
+- **MCP Integration** - Full MCP server support (stdio + HTTP transports, tool discovery, resource browsing)
+- **Plan Mode** - EnterPlanMode/ExitPlanMode tools with destructive tool restrictions
+- **Enhanced Hooks** - PreToolUse/PostToolUse with matcher patterns
+- **Skills System** - Reusable prompt skills from markdown files with YAML frontmatter
+- **Usage Tracking** - Token/cost metrics with `/cost` command
+- **Session Resume** - Continue previous conversations with `--resume` or `/continue`
+- **Context Compaction** - Automatic summarization at 85% threshold
+- **Vim Mode** - Terminal vim keybindings toggle via `/vim`
+- **LSP Integration** - goToDefinition, findReferences, hover, documentSymbol, workspaceSymbol, call hierarchy
 
-### High Priority (Partial/Missing)
-1. **Subagent System** - Task tool with specialized agents
-2. **MCP Integration** - Full MCP server support
-3. **Plan Mode** - EnterPlanMode/ExitPlanMode tools
-4. **Enhanced Hooks** - PreToolUse/PostToolUse with model support
-
-### Medium Priority
-1. **Skills System** - PDF/XLSX/DOCX processing
-2. **Usage Tracking** - Token/cost metrics
-3. **Session Resume** - Continue previous conversations
-4. **Context Compaction** - Automatic summarization
-
-### Low Priority
-1. **IDE Integration** - VSCode extension features
-2. **Vim Mode** - Terminal vim keybindings
-3. **Enterprise Settings** - Managed configuration
+### Remaining Gaps
+1. **IDE Integration** - No VS Code, JetBrains, or Cursor extension
+2. **Enterprise Settings** - No managed/IT-deployed configuration
+3. **Sandbox Mode** - No true process isolation (guardrails exist but not full sandbox)
+4. **Desktop/Web/Mobile App** - Terminal-only
+5. **CI/CD Integration** - No GitHub Actions or GitLab CI/CD support
+6. **HTTP/Async/Prompt Hooks** - Hooks are command-only, no webhooks or LLM-evaluated prompts
