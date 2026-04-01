@@ -1,0 +1,10 @@
+{
+  "uuid": "8ccbbf95-aef7-46b5-b332-9f6148ed4f19",
+  "display_id": 172,
+  "title": "Plugin system: support builtin/marketplace/inline plugin sources, manifest validation, enable/disable state, enterprise allowlist/denylist",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T18:13:39.151096586Z",
+  "updated_at": "2026-04-01T18:13:39.151096586Z"
+}
