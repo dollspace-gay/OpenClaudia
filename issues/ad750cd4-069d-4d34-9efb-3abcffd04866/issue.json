@@ -1,0 +1,10 @@
+{
+  "uuid": "ad750cd4-069d-4d34-9efb-3abcffd04866",
+  "display_id": null,
+  "title": "W-48: Chainlink output format fragile parsing",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:26.619296025Z",
+  "updated_at": "2026-04-01T03:39:26.619296025Z"
+}
