@@ -1,0 +1,11 @@
+{
+  "uuid": "830b294d-7ae6-4a28-a214-85b18a2db586",
+  "display_id": 196,
+  "title": "System prompt missing absolute path requirement and working directory",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nThe system prompt and tool descriptions never tell the model that file paths must be absolute, and never provide the current working directory. This causes frequent 'Path must be absolute, got relative path' errors.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T22:21:45.324932914Z",
+  "updated_at": "2026-04-01T22:21:45.324932914Z"
+}
