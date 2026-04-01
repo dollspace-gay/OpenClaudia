@@ -4,5 +4,7 @@
   "author": "anon-b5959f1a",
   "content": "Fix applied: check content-type header before printing error body. HTML responses get a clean one-line message instead of raw markup. All 530 tests pass.",
   "created_at": "2026-03-23T17:18:01.758575205Z",
-  "kind": "result"
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABJjcm9zc2xpbmstYmFja2ZpbGwAAAAAAAAABnNoYTUxMgAAAGMAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAEgAAAAgSb9XfWza7bWRkx2XRE9oyIHwcJEPVWKAUoXYjJR5Gj8AAAAgEESg7ZgcXwcWFsi+3TB4gArY8SlwsW+6kIKEZt77/c0="
 }

@@ -4,5 +4,7 @@
   "author": "anon-b5959f1a",
   "content": "Root cause: TODO_LIST is a static Mutex<Vec<TodoItem>> shared by all todo tests running in parallel. clear_todo_list() in one test races with writes in another. Fix: add a TODO_LIST_LOCK (same pattern as existing READ_TRACKER_LOCK) and hold it in all todo tests.",
   "created_at": "2026-03-23T18:08:03.059785885Z",
-  "kind": "observation"
+  "kind": "observation",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABJjcm9zc2xpbmstYmFja2ZpbGwAAAAAAAAABnNoYTUxMgAAAGMAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAEgAAAAgAcdbO3T6cglzbEmAj8fpn14sU7RoVxry3OiLF9pl+hUAAAAgLzVEXoukFallnA1F03PpXCrqjEQxJJeeXI6xQTRfk48="
 }

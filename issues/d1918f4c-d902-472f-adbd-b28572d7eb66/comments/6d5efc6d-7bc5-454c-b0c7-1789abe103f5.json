@@ -4,5 +4,7 @@
   "author": "anon-b5959f1a",
   "content": "Bug confirmed: main.rs:4509-4535 builds headers from adapter.get_headers() only, never merging provider.headers. vdd.rs:1205-1207 does it correctly. Fix: extend the headers vec with provider.headers after get_headers() in both proxy and non-proxy branches.",
   "created_at": "2026-03-23T17:08:32.937169860Z",
-  "kind": "plan"
+  "kind": "plan",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABJjcm9zc2xpbmstYmFja2ZpbGwAAAAAAAAABnNoYTUxMgAAAGQAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAEkAAAAhAM5i0N4DbAV88eSH2DqI/5m4Uwf2hfbzMS7vPCPFJ+PKAAAAIBkC9+tlssXdg9Pibi1YaQLZPkUofJGQWGKfKqFNeugS"
 }

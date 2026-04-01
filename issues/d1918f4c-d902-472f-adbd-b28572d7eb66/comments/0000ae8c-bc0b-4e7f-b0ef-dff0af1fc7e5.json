@@ -4,5 +4,7 @@
   "author": "anon-b5959f1a",
   "content": "Applied fix: added provider.headers merge block after the headers construction at main.rs:4536-4540. Custom headers from config are now extended onto the adapter headers for all code paths.",
   "created_at": "2026-03-23T17:10:19.328326842Z",
-  "kind": "result"
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABJjcm9zc2xpbmstYmFja2ZpbGwAAAAAAAAABnNoYTUxMgAAAGUAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAEoAAAAhAN8xdxD9tRDDSm8xTamuCvg/QS3f5NQdeibvZcSEC5epAAAAIQC5yfoNN7yourhy5df7Rz9hujB7ITwyQB0xt3LYULkDDQ=="
 }
