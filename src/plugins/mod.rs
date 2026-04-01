@@ -106,26 +106,61 @@ pub struct PluginCommand {
 }
 
 /// Parsed YAML front matter from a command markdown file
+#[derive(Deserialize, Default)]
+#[serde(default)]
 struct CommandFrontMatter {
     description: Option<String>,
+    #[serde(
+        rename = "allowed-tools",
+        deserialize_with = "deserialize_tools_list",
+        default
+    )]
     allowed_tools: Option<Vec<String>>,
+    #[serde(rename = "argument-hint")]
     argument_hint: Option<String>,
     model: Option<String>,
-    /// Content after front matter
+    /// Content after front matter (not deserialized from YAML)
+    #[serde(skip)]
     body: String,
+}
+
+/// Deserialize allowed-tools from either a YAML array or a comma-separated string.
+fn deserialize_tools_list<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let value: Option<serde_yaml::Value> = Option::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(serde_yaml::Value::Sequence(seq)) => {
+            let tools: Vec<String> = seq
+                .into_iter()
+                .filter_map(|v| match v {
+                    serde_yaml::Value::String(s) => Some(s),
+                    _ => None,
+                })
+                .collect();
+            Ok(if tools.is_empty() { None } else { Some(tools) })
+        }
+        Some(serde_yaml::Value::String(s)) => {
+            // Comma-separated: "Bash(git add:*), Bash(git status:*)"
+            let tools: Vec<String> = s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+            Ok(if tools.is_empty() { None } else { Some(tools) })
+        }
+        _ => Ok(None),
+    }
 }
 
 /// Parse YAML front matter from a markdown command file.
 /// Front matter is delimited by `---` on its own line at the start.
+/// Uses `serde_yaml` for robust parsing of the YAML block.
 fn parse_command_front_matter(content: &str) -> CommandFrontMatter {
     let trimmed = content.trim_start();
     if !trimmed.starts_with("---") {
         return CommandFrontMatter {
-            description: None,
-            allowed_tools: None,
-            argument_hint: None,
-            model: None,
             body: content.to_string(),
+            ..Default::default()
         };
     }
 
@@ -138,58 +173,24 @@ fn parse_command_front_matter(content: &str) -> CommandFrontMatter {
             .trim_start_matches(['\r', '\n'])
             .to_string();
 
-        let mut description = None;
-        let mut allowed_tools = None;
-        let mut argument_hint = None;
-        let mut model = None;
-
-        for line in yaml_block.lines() {
-            let line = line.trim();
-            if let Some(val) = line.strip_prefix("description:") {
-                description = Some(val.trim().to_string());
-            } else if let Some(val) = line.strip_prefix("allowed-tools:") {
-                let val = val.trim();
-                // Parse as YAML array [Tool1, Tool2] or comma-separated
-                if val.starts_with('[') && val.ends_with(']') {
-                    let inner = &val[1..val.len() - 1];
-                    allowed_tools = Some(
-                        inner
-                            .split(',')
-                            .map(|s| s.trim().to_string())
-                            .filter(|s| !s.is_empty())
-                            .collect(),
-                    );
-                } else {
-                    // Comma-separated without brackets
-                    allowed_tools = Some(
-                        val.split(',')
-                            .map(|s| s.trim().to_string())
-                            .filter(|s| !s.is_empty())
-                            .collect(),
-                    );
-                }
-            } else if let Some(val) = line.strip_prefix("argument-hint:") {
-                argument_hint = Some(val.trim().to_string());
-            } else if let Some(val) = line.strip_prefix("model:") {
-                model = Some(val.trim().trim_matches('"').to_string());
+        match serde_yaml::from_str::<CommandFrontMatter>(yaml_block) {
+            Ok(mut fm) => {
+                fm.body = body;
+                fm
             }
-        }
-
-        CommandFrontMatter {
-            description,
-            allowed_tools,
-            argument_hint,
-            model,
-            body,
+            Err(e) => {
+                warn!("Failed to parse command front matter as YAML: {}", e);
+                CommandFrontMatter {
+                    body: content.to_string(),
+                    ..Default::default()
+                }
+            }
         }
     } else {
         // No closing ---, treat entire content as body
         CommandFrontMatter {
-            description: None,
-            allowed_tools: None,
-            argument_hint: None,
-            model: None,
             body: content.to_string(),
+            ..Default::default()
         }
     }
 }

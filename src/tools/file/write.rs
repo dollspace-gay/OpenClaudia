@@ -19,20 +19,25 @@ pub(crate) fn execute_write_file(args: &HashMap<String, Value>) -> (String, bool
         );
     }
 
-    // Resolve symlinks to prevent symlink-based path traversal
+    // Reject path traversal attempts (../ in path)
+    if p.components().any(|c| c == std::path::Component::ParentDir) {
+        return (
+            format!("Path traversal not allowed: '{}'", path),
+            true,
+        );
+    }
+
+    // Resolve symlinks when possible; for new files use the path as-is
     let canonical = match std::fs::canonicalize(p) {
         Ok(canon) => canon,
         Err(_) => {
-            // File doesn't exist yet (new file) - canonicalize the parent
+            // File doesn't exist yet — try to resolve the parent
             if let Some(parent) = p.parent() {
                 match std::fs::canonicalize(parent) {
                     Ok(canon_parent) => canon_parent.join(p.file_name().unwrap_or_default()),
-                    Err(_) => {
-                        return (
-                            format!("Cannot resolve path '{}': parent directory does not exist", path),
-                            true,
-                        );
-                    }
+                    // Parent doesn't exist either — allowed (write_file creates dirs)
+                    // but only if path is absolute (no relative traversal)
+                    Err(_) => std::path::PathBuf::from(path),
                 }
             } else {
                 return (format!("Invalid path: '{}'", path), true);

@@ -53,23 +53,29 @@ impl Default for KeybindingsConfig {
     fn default() -> Self {
         let mut bindings = HashMap::new();
         // Default keybindings (Ctrl+X leader key pattern)
-        bindings.insert("ctrl-x n".to_string(), KeyAction::NewSession);
-        bindings.insert("ctrl-x l".to_string(), KeyAction::ListSessions);
-        bindings.insert("ctrl-x x".to_string(), KeyAction::Export);
-        bindings.insert("ctrl-x y".to_string(), KeyAction::CopyResponse);
-        bindings.insert("ctrl-x e".to_string(), KeyAction::Editor);
-        bindings.insert("ctrl-x m".to_string(), KeyAction::Models);
-        bindings.insert("ctrl-x s".to_string(), KeyAction::Status);
-        bindings.insert("ctrl-x h".to_string(), KeyAction::Help);
-        bindings.insert("f2".to_string(), KeyAction::Models);
-        bindings.insert("tab".to_string(), KeyAction::ToggleMode);
-        bindings.insert("escape".to_string(), KeyAction::Cancel);
+        // Keys are stored lowercase for case-insensitive lookup.
+        bindings.insert("ctrl-x n".to_lowercase(), KeyAction::NewSession);
+        bindings.insert("ctrl-x l".to_lowercase(), KeyAction::ListSessions);
+        bindings.insert("ctrl-x x".to_lowercase(), KeyAction::Export);
+        bindings.insert("ctrl-x y".to_lowercase(), KeyAction::CopyResponse);
+        bindings.insert("ctrl-x e".to_lowercase(), KeyAction::Editor);
+        bindings.insert("ctrl-x m".to_lowercase(), KeyAction::Models);
+        bindings.insert("ctrl-x s".to_lowercase(), KeyAction::Status);
+        bindings.insert("ctrl-x h".to_lowercase(), KeyAction::Help);
+        bindings.insert("f2".to_lowercase(), KeyAction::Models);
+        bindings.insert("tab".to_lowercase(), KeyAction::ToggleMode);
+        bindings.insert("escape".to_lowercase(), KeyAction::Cancel);
         Self { bindings }
     }
 }
 
 impl KeybindingsConfig {
-    /// Get the action for a key combination
+    /// Get the action for a key combination.
+    ///
+    /// Lookup is case-insensitive: the `key` argument is lowercased before
+    /// searching the bindings map. Default bindings are also stored in
+    /// lowercase, so user-supplied keys like `"Ctrl-X N"` will match
+    /// `"ctrl-x n"` correctly.
     pub fn get_action(&self, key: &str) -> Option<&KeyAction> {
         self.bindings.get(&key.to_lowercase())
     }

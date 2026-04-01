@@ -121,7 +121,13 @@ pub async fn load_credentials() -> Result<LoadedCredentials, String> {
     })
 }
 
-/// Refresh the token and update the credentials file
+/// Refresh the token and update the credentials file.
+///
+/// Known limitation: this function has no locking mechanism, so concurrent
+/// processes calling `refresh_and_load` simultaneously could race. This is
+/// acceptable for single-process use (OpenClaudia only runs one instance).
+/// Claude Code itself uses a file lock (`~/.claude/.refresh_lock`) for
+/// multi-process safety, but we skip that complexity here.
 async fn refresh_and_load(path: &PathBuf, oauth: &ClaudeAiOauth) -> Result<LoadedCredentials, String> {
     let refresh_token = oauth.refresh_token.as_deref()
         .ok_or("No refresh token available — re-login with Claude Code")?;

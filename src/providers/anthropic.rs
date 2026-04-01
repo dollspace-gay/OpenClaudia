@@ -205,12 +205,21 @@ impl ProviderAdapter for AnthropicAdapter {
                 arr.iter()
                     .filter_map(|block| {
                         if block.get("type")?.as_str()? == "tool_use" {
+                            // Avoid double-serialization: if input is already a
+                            // string, use it directly; otherwise serialize the
+                            // JSON value to a string for the OpenAI format.
+                            let input = block.get("input")?;
+                            let arguments = if let Some(s) = input.as_str() {
+                                s.to_string()
+                            } else {
+                                serde_json::to_string(input).ok()?
+                            };
                             Some(json!({
                                 "id": block.get("id")?,
                                 "type": "function",
                                 "function": {
                                     "name": block.get("name")?,
-                                    "arguments": serde_json::to_string(block.get("input")?).ok()?
+                                    "arguments": arguments
                                 }
                             }))
                         } else {

@@ -472,7 +472,30 @@ impl PluginManager {
                         full.display()
                     )));
                 }
-                full
+                // Verify the canonical path is still within the marketplace directory
+                // to prevent path traversal attacks (e.g., rel_path = "../../etc/passwd")
+                let canonical = full.canonicalize().map_err(|e| {
+                    PluginError::IoError(format!(
+                        "Failed to canonicalize plugin path {}: {}",
+                        full.display(),
+                        e
+                    ))
+                })?;
+                let canonical_marketplace = marketplace_dir.canonicalize().map_err(|e| {
+                    PluginError::IoError(format!(
+                        "Failed to canonicalize marketplace dir {}: {}",
+                        marketplace_dir.display(),
+                        e
+                    ))
+                })?;
+                if !canonical.starts_with(&canonical_marketplace) {
+                    return Err(PluginError::IoError(format!(
+                        "Plugin path traversal detected: {} escapes marketplace directory {}",
+                        full.display(),
+                        marketplace_dir.display()
+                    )));
+                }
+                canonical
             }
             PluginSource::Structured(def) => {
                 // For structured sources, clone/download directly to dest

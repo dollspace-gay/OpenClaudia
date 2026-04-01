@@ -469,7 +469,9 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
 
     // Create history directory if it doesn't exist
     if let Some(parent) = history_path.parent() {
-        fs::create_dir_all(parent).ok();
+        if let Err(e) = fs::create_dir_all(parent) {
+            tracing::warn!(error = %e, path = ?parent, "Failed to create history directory");
+        }
     }
 
     // Load history (ignore errors if file doesn't exist)
@@ -1849,6 +1851,15 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
                                             "\nStream timeout: no data received for {}s",
                                             proxy::SSE_STREAM_TIMEOUT_SECS
                                         );
+                                        // Preserve any partial content accumulated before timeout
+                                        if !full_content.is_empty() {
+                                            tracing::warn!(
+                                                content_len = full_content.len(),
+                                                "Stream timed out with partial content; preserving {} bytes",
+                                                full_content.len()
+                                            );
+                                            full_content.push_str("\n\n[Response truncated: stream timeout]");
+                                        }
                                         break;
                                     }
 

@@ -665,7 +665,13 @@ impl VddEngine {
                     info!("VDD: Adversary reported no findings");
                     return Vec::new();
                 }
-                response.findings.unwrap_or_default()
+                match response.findings {
+                    Some(findings) => findings,
+                    None => {
+                        warn!("VDD: Adversary response has no 'findings' field or it is not an array");
+                        return Vec::new();
+                    }
+                }
             }
             None => {
                 warn!("VDD: Could not parse adversary response as JSON, treating as no findings");
@@ -996,6 +1002,11 @@ async fn forward_request(
     } else {
         format!("{}{}", base_url, endpoint)
     };
+
+    // Validate the constructed URL before sending the request
+    if let Err(e) = reqwest::Url::parse(&url) {
+        warn!("VDD: Invalid provider URL '{}': {}", url, e);
+    }
 
     debug!("VDD: Sending request to {}", url);
 

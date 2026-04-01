@@ -450,7 +450,13 @@ impl SessionManager {
         }
     }
 
-    /// Persist a session to disk
+    /// Persist a session to disk.
+    ///
+    /// Known limitation: this writes multiple files (session JSON, latest.json,
+    /// handoff.md) non-atomically. If the process is interrupted mid-write,
+    /// some files may be updated while others are stale. A full atomic-rename
+    /// approach (write to temp file, then rename) would fix this but is overkill
+    /// for a single-process CLI tool where the risk is minimal.
     fn persist_session(&self, session: &Session) -> anyhow::Result<()> {
         let filename = format!("{}.json", session.id);
         let path = self.persist_dir.join(&filename);

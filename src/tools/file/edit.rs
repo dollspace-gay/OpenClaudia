@@ -20,6 +20,14 @@ pub(crate) fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool)
         );
     }
 
+    // Reject path traversal attempts
+    if p.components().any(|c| c == std::path::Component::ParentDir) {
+        return (
+            format!("Path traversal not allowed: '{}'", path),
+            true,
+        );
+    }
+
     // Resolve symlinks to prevent symlink-based path traversal.
     let canonical = match std::fs::canonicalize(p) {
         Ok(canon) => canon,

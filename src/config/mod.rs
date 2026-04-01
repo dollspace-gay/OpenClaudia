@@ -181,6 +181,11 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
         provider.api_key = provider.api_key.take().filter(|k| !k.trim().is_empty());
     }
 
+    // Validate VDD config (adversary must differ from builder provider, etc.)
+    if let Err(e) = config.vdd.validate(&config.proxy.target) {
+        return Err(ConfigError::Message(e));
+    }
+
     Ok(config)
 }
 
