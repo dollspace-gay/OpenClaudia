@@ -21,10 +21,24 @@ pub(crate) fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool)
     }
 
     // Resolve symlinks to prevent symlink-based path traversal.
-    // For edit_file the file must already exist, so canonicalize should succeed directly.
     let canonical = match std::fs::canonicalize(p) {
         Ok(canon) => canon,
-        Err(_) => std::path::PathBuf::from(path),
+        Err(_) => {
+            // File doesn't exist — try to resolve the parent directory
+            if let Some(parent) = p.parent() {
+                match std::fs::canonicalize(parent) {
+                    Ok(canon_parent) => canon_parent.join(p.file_name().unwrap_or_default()),
+                    Err(_) => {
+                        return (
+                            format!("Cannot resolve path '{}': parent directory does not exist", path),
+                            true,
+                        );
+                    }
+                }
+            } else {
+                return (format!("Invalid path: '{}'", path), true);
+            }
+        }
     };
     let path = canonical.to_string_lossy().to_string();
     let path = path.as_str();

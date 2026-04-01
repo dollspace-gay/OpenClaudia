@@ -27,10 +27,15 @@ pub(crate) fn execute_write_file(args: &HashMap<String, Value>) -> (String, bool
             if let Some(parent) = p.parent() {
                 match std::fs::canonicalize(parent) {
                     Ok(canon_parent) => canon_parent.join(p.file_name().unwrap_or_default()),
-                    Err(_) => std::path::PathBuf::from(path), // Parent doesn't exist either
+                    Err(_) => {
+                        return (
+                            format!("Cannot resolve path '{}': parent directory does not exist", path),
+                            true,
+                        );
+                    }
                 }
             } else {
-                std::path::PathBuf::from(path)
+                return (format!("Invalid path: '{}'", path), true);
             }
         }
     };
