@@ -1,0 +1,10 @@
+{
+  "uuid": "4682bf6f-9850-4f51-8fd6-9de2c36c8813",
+  "display_id": null,
+  "title": "W-31: Incomplete error handling in git slash commands",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:16.323325342Z",
+  "updated_at": "2026-04-01T03:39:16.323325342Z"
+}
