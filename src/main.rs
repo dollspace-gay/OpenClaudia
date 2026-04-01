@@ -324,6 +324,19 @@ async fn cmd_chat(model_override: Option<String>, resume: bool, session_id: Opti
     use rustyline::error::ReadlineError;
     use rustyline::{Config, DefaultEditor, EditMode, Editor};
 
+    // Auto-detect project root (git root) and change to it
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+    {
+        if output.status.success() {
+            let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !root.is_empty() {
+                let _ = std::env::set_current_dir(&root);
+            }
+        }
+    }
+
     // Compile regex once for file extension extraction
     let ext_regex = regex::Regex::new(r"[\w/\\.-]+\.([a-zA-Z0-9]{1,10})\b").unwrap();
 

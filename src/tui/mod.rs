@@ -507,12 +507,12 @@ fn strip_ordered_list_prefix(s: &str) -> Option<&str> {
 
 // ─── Status bar ─────────────────────────────────────────────────────────────
 
-/// Draw a persistent status bar at the bottom of the terminal.
+/// Draw an inline status line after a response.
 ///
-/// Shows: model name, token count, cost, mode, session duration
+/// Shows: model name, token count, cost, mode, session duration.
+/// Uses inline printing (not absolute positioning) to avoid drift.
 pub fn draw_status_bar(model: &str, tokens: usize, cost: Option<f64>, mode: &str, duration: &str) {
     let mut stdout = io::stdout();
-    let (cols, rows) = terminal::size().unwrap_or((80, 24));
 
     let cost_str = match cost {
         Some(c) if c >= 0.01 => format!("${:.2}", c),
@@ -537,20 +537,10 @@ pub fn draw_status_bar(model: &str, tokens: usize, cost: Option<f64>, mode: &str
         )
     };
 
-    // Pad to fill the terminal width
-    let padded = format!("{:<width$}", status, width = cols as usize);
-
-    let _ = crossterm::execute!(
-        stdout,
-        cursor::SavePosition,
-        cursor::MoveTo(0, rows.saturating_sub(1)),
-        SetForegroundColor(CtColor::White),
-        SetAttribute(Attribute::Reverse),
-        Print(&padded),
-        SetAttribute(Attribute::Reset),
-        ResetColor,
-        cursor::RestorePosition,
-    );
+    // Print inline with dim styling — no absolute cursor positioning
+    let _ = stdout.execute(SetForegroundColor(CtColor::DarkGrey));
+    let _ = stdout.execute(Print(format!("[{}]\n", status.trim())));
+    let _ = stdout.execute(ResetColor);
     stdout.flush().ok();
 }
 
@@ -724,33 +714,21 @@ impl WelcomeScreen {
     }
 }
 
-/// Render the input prompt area with hints
+/// Render the input prompt hints inline (no absolute positioning).
 pub fn render_input_prompt(mode: &str) -> io::Result<()> {
     let mut stdout = io::stdout();
-    let (term_width, _) = terminal::size().unwrap_or((80, 24));
-
-    let left_hint = "? for shortcuts";
     let right_hint = format!(
         "Tab for {} mode",
         if mode == "build" { "Plan" } else { "Build" }
     );
 
-    // Use crossterm for simple colored text
     stdout.execute(SetForegroundColor(CtColor::Rgb {
-        r: 128,
-        g: 128,
-        b: 128,
+        r: 100,
+        g: 100,
+        b: 100,
     }))?;
-    let padding = (term_width as usize).saturating_sub(left_hint.len() + right_hint.len() + 4);
-    writeln!(
-        stdout,
-        "  {}{}  {}",
-        left_hint,
-        " ".repeat(padding),
-        right_hint
-    )?;
+    writeln!(stdout, "  /help for commands · {}", right_hint)?;
     stdout.execute(ResetColor)?;
-
     stdout.flush()?;
     Ok(())
 }
