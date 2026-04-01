@@ -1,0 +1,10 @@
+{
+  "uuid": "2e1d9d50-1bf2-4340-9bed-ff8473e5250e",
+  "display_id": null,
+  "title": "W-41: Doctor command continues after config failure",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-01T03:39:22.312306919Z",
+  "updated_at": "2026-04-01T03:39:22.312306919Z"
+}
