@@ -84,7 +84,7 @@ pub fn execute_task_update(
             add_blocked_by,
         },
     ) {
-        Ok(task) => {
+        Ok(Some(task)) => {
             let output = format!(
                 "Updated task: {}\n{}",
                 task.id,
@@ -92,14 +92,11 @@ pub fn execute_task_update(
             );
             (output, false)
         }
-        Err(msg) => {
-            // "deleted" is a special case -- it's not really an error
-            if msg.contains("deleted") {
-                (msg, false)
-            } else {
-                (msg, true)
-            }
+        Ok(None) => {
+            // Task was deleted successfully
+            (format!("Task '{task_id}' deleted"), false)
         }
+        Err(msg) => (msg, true),
     }
 }
 

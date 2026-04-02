@@ -142,7 +142,7 @@ impl TaskManager {
         &mut self,
         task_id: &str,
         params: TaskUpdateParams,
-    ) -> Result<&Task, String> {
+    ) -> Result<Option<&Task>, String> {
         // Validate the task exists
         if self.get_task(task_id).is_none() {
             return Err(format!("Task '{task_id}' not found"));
@@ -166,9 +166,7 @@ impl TaskManager {
                 "deleted" => {
                     // Remove the task entirely
                     self.tasks.retain(|t| t.id != task_id);
-                    // Return a synthetic "deleted" result -- but we can't return a ref
-                    // to a deleted task. Instead, just return an error-like message.
-                    return Err(format!("Task '{task_id}' deleted"));
+                    return Ok(None);
                 }
                 other => {
                     return Err(format!(
@@ -286,9 +284,10 @@ impl TaskManager {
             }
         }
 
-        Ok(self
-            .get_task(&task_id_owned)
-            .expect("task must exist after update"))
+        Ok(Some(
+            self.get_task(&task_id_owned)
+                .expect("task must exist after update"),
+        ))
     }
 
     /// List all tasks.
@@ -457,9 +456,9 @@ mod tests {
                 ..Default::default()
             },
         );
-        // "deleted" returns an Err with the deletion message
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("deleted"));
+        // "deleted" returns Ok(None) — task removed, no reference to return
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
         assert_eq!(tm.list_tasks().len(), 0);
     }
 
