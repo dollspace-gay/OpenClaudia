@@ -74,55 +74,139 @@ impl MessageList {
         let mut lines: Vec<Line> = Vec::new();
 
         for msg in &self.messages {
-            let (icon, style) = match msg.role.as_str() {
-                "user" => (
-                    "› ",
-                    Style::default()
-                        .fg(Color::Rgb(100, 180, 255))
-                        .add_modifier(Modifier::BOLD),
-                ),
-                "assistant" => (
-                    "● ",
-                    Style::default()
-                        .fg(Color::Rgb(147, 112, 219))
-                        .add_modifier(Modifier::BOLD),
-                ),
-                "tool" => ("⚙ ", Style::default().fg(Color::Rgb(218, 165, 32))),
-                "system" => (
-                    "  ",
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::ITALIC),
-                ),
-                _ => ("  ", Style::default().fg(Color::DarkGray)),
-            };
-
-            let header = msg.tool_name.as_ref().map_or_else(
-                || format!("{}{}", icon, msg.role),
-                |tool| format!("{icon}Tool: {tool}"),
-            );
-            lines.push(Line::from(Span::styled(header, style)));
-
-            let content_style = if msg.is_error {
-                Style::default().fg(Color::Red)
-            } else if msg.is_thinking {
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::ITALIC)
-            } else {
-                Style::default()
-            };
-
-            for line in msg.content.lines() {
-                lines.push(Line::from(Span::styled(format!("  {line}"), content_style)));
+            match msg.role.as_str() {
+                "system" => {
+                    // System messages: render with purple branding for welcome,
+                    // dim for other system messages
+                    let is_welcome = msg.content.contains("OpenClaudia v");
+                    if is_welcome {
+                        // Render welcome block with colored labels
+                        for line in msg.content.lines() {
+                            let styled = if line.starts_with("OpenClaudia v") {
+                                Line::from(vec![
+                                    Span::styled(
+                                        "OpenClaudia",
+                                        Style::default()
+                                            .fg(Color::Rgb(147, 112, 219))
+                                            .add_modifier(Modifier::BOLD),
+                                    ),
+                                    Span::styled(
+                                        &line["OpenClaudia".len()..],
+                                        Style::default().fg(Color::Rgb(218, 165, 32)),
+                                    ),
+                                ])
+                            } else if line.starts_with("Provider:") {
+                                Line::from(Span::styled(
+                                    line,
+                                    Style::default().fg(Color::Rgb(147, 112, 219)),
+                                ))
+                            } else if line.starts_with("Model:") {
+                                Line::from(Span::styled(
+                                    line,
+                                    Style::default().fg(Color::Rgb(218, 165, 32)),
+                                ))
+                            } else if line.starts_with("Welcome") {
+                                Line::from(Span::styled(
+                                    line,
+                                    Style::default()
+                                        .fg(Color::White)
+                                        .add_modifier(Modifier::BOLD),
+                                ))
+                            } else {
+                                Line::from(Span::styled(
+                                    line,
+                                    Style::default().fg(Color::DarkGray),
+                                ))
+                            };
+                            lines.push(styled);
+                        }
+                    } else {
+                        // Regular system message
+                        for line in msg.content.lines() {
+                            lines.push(Line::from(Span::styled(
+                                format!("  {line}"),
+                                Style::default()
+                                    .fg(Color::DarkGray)
+                                    .add_modifier(Modifier::ITALIC),
+                            )));
+                        }
+                    }
+                    lines.push(Line::from(""));
+                }
+                "user" => {
+                    lines.push(Line::from(Span::styled(
+                        "\u{203A} user",
+                        Style::default()
+                            .fg(Color::Rgb(100, 180, 255))
+                            .add_modifier(Modifier::BOLD),
+                    )));
+                    for line in msg.content.lines() {
+                        lines.push(Line::from(format!("  {line}")));
+                    }
+                    lines.push(Line::from(""));
+                }
+                "assistant" => {
+                    lines.push(Line::from(Span::styled(
+                        "\u{23BF} assistant",
+                        Style::default()
+                            .fg(Color::Rgb(147, 112, 219))
+                            .add_modifier(Modifier::BOLD),
+                    )));
+                    let content_style = if msg.is_thinking {
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::ITALIC)
+                    } else {
+                        Style::default()
+                    };
+                    for line in msg.content.lines() {
+                        lines.push(Line::from(Span::styled(format!("  {line}"), content_style)));
+                    }
+                    lines.push(Line::from(""));
+                }
+                "tool" => {
+                    let tool_name = msg.tool_name.as_deref().unwrap_or("tool");
+                    if msg.is_error {
+                        lines.push(Line::from(Span::styled(
+                            format!("  \u{2717} {tool_name}"),
+                            Style::default().fg(Color::Red),
+                        )));
+                    } else {
+                        lines.push(Line::from(Span::styled(
+                            format!("  \u{2713} {tool_name}"),
+                            Style::default().fg(Color::Green),
+                        )));
+                    }
+                    // Show truncated content
+                    let preview = if msg.content.len() > 200 {
+                        format!("{}...", &msg.content[..197])
+                    } else {
+                        msg.content.clone()
+                    };
+                    for line in preview.lines().take(5) {
+                        lines.push(Line::from(Span::styled(
+                            format!("    {line}"),
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                    }
+                    lines.push(Line::from(""));
+                }
+                _ => {
+                    for line in msg.content.lines() {
+                        lines.push(Line::from(Span::styled(
+                            format!("  {line}"),
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                    }
+                    lines.push(Line::from(""));
+                }
             }
-            lines.push(Line::from(""));
         }
 
         // Streaming content
         if self.is_streaming && !self.streaming_text.is_empty() {
             lines.push(Line::from(Span::styled(
-                "● assistant",
+                "\u{23BF} assistant",
                 Style::default()
                     .fg(Color::Rgb(147, 112, 219))
                     .add_modifier(Modifier::BOLD),
@@ -130,9 +214,9 @@ impl MessageList {
             for line in self.streaming_text.lines() {
                 lines.push(Line::from(format!("  {line}")));
             }
-            // Blinking cursor
+            // Cursor indicator
             lines.push(Line::from(Span::styled(
-                "  ▊",
+                "  \u{2588}",
                 Style::default().fg(Color::Rgb(147, 112, 219)),
             )));
         }

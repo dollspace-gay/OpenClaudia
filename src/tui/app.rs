@@ -131,15 +131,37 @@ impl App {
             }));
         }
 
-        // Welcome
+        // Welcome — match the old inline UI's look
+        let username = std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_default();
+        let greeting = if username.is_empty() {
+            "Welcome to OpenClaudia!".to_string()
+        } else {
+            format!("Welcome back, {username}!")
+        };
+        let cwd = std::env::current_dir()
+            .map(|p| {
+                if let Some(home) = dirs::home_dir() {
+                    if let Ok(rel) = p.strip_prefix(&home) {
+                        return format!("~/{}", rel.display());
+                    }
+                }
+                p.display().to_string()
+            })
+            .unwrap_or_else(|_| ".".to_string());
+
         self.messages.add(DisplayMessage {
             role: "system".to_string(),
             content: format!(
-                "OpenClaudia v{} — {} · {}\n\
-                 Type your message and press Enter. Ctrl+C to quit.\n\
-                 Up/Down to scroll. /help for commands.",
+                "OpenClaudia v{}\n\
+                 {greeting}\n\n\
+                 Provider: {}\n\
+                 Model: {}\n\
+                 {cwd}\n\n\
+                 /help for commands · Ctrl+C to quit",
                 env!("CARGO_PKG_VERSION"),
-                self.provider,
+                super::capitalize_first(&self.provider),
                 self.model,
             ),
             tool_name: None,
@@ -512,27 +534,30 @@ impl App {
         // ── Messages ──
         self.messages.render(frame, chunks[0]);
 
-        // ── Input ──
-        let title = if self.is_waiting {
-            format!(" {} Waiting... ", SPINNER_FRAMES[self.spinner_frame])
-        } else {
-            " Message ".to_string()
-        };
+        // ── Input area ──
+        // Top border line (separator) matching the old UI
         let input_block = Block::default()
             .borders(Borders::TOP)
-            .border_style(Style::default().fg(Color::DarkGray))
-            .title(title)
-            .title_style(Style::default().fg(Color::Rgb(147, 112, 219)));
+            .border_style(Style::default().fg(Color::Rgb(128, 128, 128)));
 
-        let input_para = Paragraph::new(self.input.content.as_str())
+        // Show spinner or prompt symbol
+        let prompt_text = if self.is_waiting {
+            format!("{} ", SPINNER_FRAMES[self.spinner_frame])
+        } else {
+            "\u{203A} ".to_string() // › prompt
+        };
+        let display_text = format!("{prompt_text}{}", self.input.content);
+
+        let input_para = Paragraph::new(display_text)
             .block(input_block)
             .style(Style::default().fg(Color::White));
         frame.render_widget(input_para, chunks[1]);
 
-        // Cursor
+        // Cursor — offset by prompt symbol width
         if !self.is_waiting {
-            #[allow(clippy::cast_possible_truncation)] // cursor_pos bounded by terminal width
-            let cx = chunks[1].x + 1 + self.input.cursor_pos as u16;
+            #[allow(clippy::cast_possible_truncation)]
+            let prompt_width = 2u16; // "› " is 2 chars wide
+            let cx = chunks[1].x + prompt_width + self.input.cursor_pos as u16;
             let cy = chunks[1].y + 1;
             frame.set_cursor_position(Position::new(
                 cx.min(chunks[1].right().saturating_sub(1)),
@@ -540,22 +565,25 @@ impl App {
             ));
         }
 
-        // ── Status bar ──
+        // ── Status bar — pinned at bottom ──
         let left_text = "? for shortcuts";
         let effort_symbol = match self.effort_level.as_str() {
-            "low" => "○",
-            "high" => "●",
-            _ => "◐",
+            "low" => "\u{25CB}",   // ○
+            "high" => "\u{25CF}",  // ●
+            _ => "\u{25D0}",       // ◐
         };
-        let right_text = format!("{effort_symbol} {} · /effort", self.effort_level);
+        let right_text = format!("{effort_symbol} {} \u{00B7} /effort", self.effort_level);
 
-        // Pad to fill the bar width
         let bar_width = chunks[2].width as usize;
-        let padding = bar_width.saturating_sub(left_text.len() + right_text.len() + 2);
-        let status_text = format!(" {left_text}{:>width$} ", right_text, width = padding + right_text.len());
+        let total = left_text.len() + right_text.len() + 2;
+        let padding = bar_width.saturating_sub(total);
+        let status_text = format!(
+            " {left_text}{}{right_text} ",
+            " ".repeat(padding)
+        );
 
         let status = Paragraph::new(status_text)
-            .style(Style::default().fg(Color::White).bg(Color::Rgb(40, 40, 60)));
+            .style(Style::default().fg(Color::Rgb(128, 128, 128)));
         frame.render_widget(status, chunks[2]);
     }
 }

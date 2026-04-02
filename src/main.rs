@@ -182,11 +182,7 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         None if cli.tui_mode => {
-            // Full-screen interactive TUI mode (--tui-mode flag)
-            cmd_tui(cli.model).await
-        }
-        None => {
-            // Default: inline REPL with pinned bottom bar
+            // Legacy rustyline REPL (--tui-mode is now the escape hatch name, kept for compat)
             cmd_chat(
                 cli.model,
                 cli.resume,
@@ -195,6 +191,10 @@ async fn main() -> anyhow::Result<()> {
                 cli.dangerously_skip_permissions,
             )
             .await
+        }
+        None => {
+            // Default: full-screen TUI
+            cmd_tui(cli.model).await
         }
         Some(Commands::Init { force }) => cli::commands::init::cmd_init(force),
         Some(Commands::Auth { status, logout }) => {
