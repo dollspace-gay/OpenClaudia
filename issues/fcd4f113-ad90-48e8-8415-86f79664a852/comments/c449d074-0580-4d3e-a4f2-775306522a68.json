@@ -1,0 +1,10 @@
+{
+  "uuid": "c449d074-0580-4d3e-a4f2-775306522a68",
+  "issue_uuid": "fcd4f113-ad90-48e8-8415-86f79664a852",
+  "author": "lOrm",
+  "content": "Scanning for all unwrap/panic calls in non-test production code. Will replace with proper error handling.",
+  "created_at": "2026-04-02T18:38:03.355355744Z",
+  "kind": "plan",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZAAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASQAAACEA8y8a88ZBRWVR9fOR2UNgG8D7zgt8j2kbuMtKgrSGJhcAAAAgfhb6lmzxVRwqIQcH5idcWljTwWIbbQb6GhLvABWlTjA="
+}
