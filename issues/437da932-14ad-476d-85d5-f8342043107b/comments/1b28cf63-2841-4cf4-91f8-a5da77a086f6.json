@@ -1,0 +1,10 @@
+{
+  "uuid": "1b28cf63-2841-4cf4-91f8-a5da77a086f6",
+  "issue_uuid": "437da932-14ad-476d-85d5-f8342043107b",
+  "author": "lOrm",
+  "content": "Implemented: session persistence (save/load/resume), Build/Plan mode toggle, undo/redo, session listing, export, shell commands, token tracking. TuiSession is JSON-compatible with CLI ChatSession format.",
+  "created_at": "2026-04-02T02:44:11.679518698Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAYwAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASAAAACAgyAuvCQT3jxZOZMd8zIXFjEQEiMveAgQNArA0BrYauAAAACARgK3hZOATL7ZXLNGjLxvFk8tcQJ7fCtCI4Q+BgHZqEw=="
+}
