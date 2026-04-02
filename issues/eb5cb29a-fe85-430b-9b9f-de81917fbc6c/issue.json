@@ -2,9 +2,10 @@
   "uuid": "eb5cb29a-fe85-430b-9b9f-de81917fbc6c",
   "display_id": 201,
   "title": "Test push: verify remote sync works",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-02T02:26:22.790916725Z",
-  "updated_at": "2026-04-02T02:26:22.790916725Z"
+  "updated_at": "2026-04-02T02:26:29.834922513Z",
+  "closed_at": "2026-04-02T02:26:29.834922513Z"
 }
