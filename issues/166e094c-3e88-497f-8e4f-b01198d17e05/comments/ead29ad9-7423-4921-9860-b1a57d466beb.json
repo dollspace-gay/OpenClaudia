@@ -1,0 +1,10 @@
+{
+  "uuid": "ead29ad9-7423-4921-9860-b1a57d466beb",
+  "issue_uuid": "166e094c-3e88-497f-8e4f-b01198d17e05",
+  "author": "lOrm",
+  "content": "Implemented: ratatui TUI is now the default mode. pipeline.rs extracts the API pipeline. Old rustyline REPL available via --legacy. Full streaming, tool execution, slash commands wired up.",
+  "created_at": "2026-04-02T00:08:06.943228311Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZQAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASgAAACEAn4rKQO7g+dlWa64RdkFEc/j5GdTr2WKDBlJ7MaqDbD0AAAAhAMTzVktY6YSKf6StCA8xkcDX3gBTWCzfAt6k8MonCY39"
+}
