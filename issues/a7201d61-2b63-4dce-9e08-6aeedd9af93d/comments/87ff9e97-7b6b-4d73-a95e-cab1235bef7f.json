@@ -1,0 +1,10 @@
+{
+  "uuid": "87ff9e97-7b6b-4d73-a95e-cab1235bef7f",
+  "issue_uuid": "a7201d61-2b63-4dce-9e08-6aeedd9af93d",
+  "author": "lOrm",
+  "content": "Verified: API keys are not logged anywhere. Empty strings are filtered at line 185. Env var loading is standard practice. No additional changes needed.",
+  "created_at": "2026-04-02T19:35:04.044855491Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZQAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASgAAACEAr7y00IiakQALokovx8sM320l7rJY6CkAipwDFdV0dWgAAAAhANL3u4it3c6RPdhDiG3Xt5CekYfXrfgYRvySMeNAbjtR"
+}
