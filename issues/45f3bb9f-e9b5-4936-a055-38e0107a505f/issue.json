@@ -2,11 +2,12 @@
   "uuid": "45f3bb9f-e9b5-4936-a055-38e0107a505f",
   "display_id": 156,
   "title": "N-23: Verbose auth banner formatting",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:48.208447540Z",
-  "updated_at": "2026-04-01T03:39:48.320951623Z",
+  "updated_at": "2026-04-02T21:01:49.575304804Z",
+  "closed_at": "2026-04-02T21:01:49.575304804Z",
   "labels": [
     "qa"
   ]
