@@ -28,6 +28,15 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+/// Write data to a file atomically: write to a temp file, then rename.
+/// If the process crashes during the write, the original file is untouched.
+fn atomic_write(path: &Path, data: &[u8]) -> anyhow::Result<()> {
+    let tmp_path = path.with_extension("tmp");
+    fs::write(&tmp_path, data)?;
+    fs::rename(&tmp_path, path)?;
+    Ok(())
+}
+
 /// Session state indicating the agent mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -478,29 +487,26 @@ impl SessionManager {
         }
     }
 
-    /// Persist a session to disk.
+    /// Persist a session to disk using atomic write-to-temp-then-rename.
     ///
-    /// Known limitation: this writes multiple files (session JSON, latest.json,
-    /// handoff.md) non-atomically. If the process is interrupted mid-write,
-    /// some files may be updated while others are stale. A full atomic-rename
-    /// approach (write to temp file, then rename) would fix this but is overkill
-    /// for a single-process CLI tool where the risk is minimal.
+    /// Each file is written to a `.tmp` file first, then atomically renamed.
+    /// If the process crashes mid-write, the original file remains intact.
     fn persist_session(&self, session: &Session) -> anyhow::Result<()> {
         let filename = format!("{}.json", session.id);
         let path = self.persist_dir.join(&filename);
 
         let json = serde_json::to_string_pretty(session)?;
-        fs::write(&path, json)?;
+        atomic_write(&path, json.as_bytes())?;
 
         debug!(path = ?path, "Persisted session");
 
         // Also update the "latest" symlink/file
         let latest_path = self.persist_dir.join("latest.json");
-        fs::write(&latest_path, serde_json::to_string_pretty(session)?)?;
+        atomic_write(&latest_path, serde_json::to_string_pretty(session)?.as_bytes())?;
 
         // Generate and save handoff document
         let handoff_path = self.persist_dir.join("handoff.md");
-        fs::write(&handoff_path, session.generate_handoff())?;
+        atomic_write(&handoff_path, session.generate_handoff().as_bytes())?;
 
         Ok(())
     }
