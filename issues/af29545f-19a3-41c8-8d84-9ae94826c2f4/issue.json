@@ -1,0 +1,11 @@
+{
+  "uuid": "af29545f-19a3-41c8-8d84-9ae94826c2f4",
+  "display_id": 230,
+  "title": "Fix symlink TOCTOU race in OAuth credential file reads",
+  "description": "oauth.rs:358-369,417-430 — symlink checked after file read in some paths. Check immediately before read in single operation.",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:41:57.247011299Z",
+  "updated_at": "2026-04-02T16:41:57.247011299Z"
+}
