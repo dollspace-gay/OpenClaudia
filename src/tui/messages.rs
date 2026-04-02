@@ -179,7 +179,7 @@ impl MessageList {
                     }
                     // Show truncated content
                     let preview = if msg.content.len() > 200 {
-                        format!("{}...", &msg.content[..197])
+                        format!("{}...", crate::tools::safe_truncate(&msg.content, 197))
                     } else {
                         msg.content.clone()
                     };

@@ -63,7 +63,7 @@ impl TuiSession {
         ) {
             if let Some(content) = first_user.get("content").and_then(|c| c.as_str()) {
                 self.title = if content.len() > 50 {
-                    format!("{}...", &content[..47])
+                    format!("{}...", crate::tools::safe_truncate(&content, 47))
                 } else {
                     content.to_string()
                 };
@@ -122,20 +122,59 @@ fn expand_file_refs(input: &str) -> String {
     let re = regex::Regex::new(r#"@"([^"]+)"|@(\S+)"#).unwrap();
     let mut result = input.to_string();
     let mut replacements = Vec::new();
+
+    // Get project root for path traversal validation
+    let cwd = std::env::current_dir().unwrap_or_default();
+
     for cap in re.captures_iter(input) {
         let full_match = cap.get(0).unwrap().as_str();
-        let path = cap.get(1).or(cap.get(2)).unwrap().as_str();
-        match std::fs::read_to_string(path) {
-            Ok(content) => {
-                replacements.push((
-                    full_match.to_string(),
-                    format!("\n<file path=\"{path}\">\n{}\n</file>\n", content.trim()),
-                ));
+        let raw_path = cap.get(1).or(cap.get(2)).unwrap().as_str();
+
+        // Resolve and validate path — reject traversal attempts
+        let resolved = if std::path::Path::new(raw_path).is_absolute() {
+            std::path::PathBuf::from(raw_path)
+        } else {
+            cwd.join(raw_path)
+        };
+
+        // Reject paths with .. components
+        if resolved.components().any(|c| c == std::path::Component::ParentDir) {
+            replacements.push((
+                full_match.to_string(),
+                format!("[Path traversal blocked: {raw_path}]"),
+            ));
+            continue;
+        }
+
+        // Canonicalize and verify it's within the project root
+        match std::fs::canonicalize(&resolved) {
+            Ok(canonical) => {
+                if !canonical.starts_with(&cwd) {
+                    replacements.push((
+                        full_match.to_string(),
+                        format!("[File outside project directory: {raw_path}]"),
+                    ));
+                    continue;
+                }
+                match std::fs::read_to_string(&canonical) {
+                    Ok(content) => {
+                        replacements.push((
+                            full_match.to_string(),
+                            format!("\n<file path=\"{}\">\n{}\n</file>\n", canonical.display(), content.trim()),
+                        ));
+                    }
+                    Err(e) => {
+                        replacements.push((
+                            full_match.to_string(),
+                            format!("[Cannot read {raw_path}: {e}]"),
+                        ));
+                    }
+                }
             }
             Err(_) => {
                 replacements.push((
                     full_match.to_string(),
-                    format!("[File not found: {path}]"),
+                    format!("[File not found: {raw_path}]"),
                 ));
             }
         }
@@ -1170,7 +1209,7 @@ impl App {
             frame.render_widget(clear, dialog_area);
 
             let args_preview = if perm.tool_args.len() > 50 {
-                format!("{}...", &perm.tool_args[..47])
+                format!("{}...", crate::tools::safe_truncate(&perm.tool_args, 47))
             } else {
                 perm.tool_args.clone()
             };

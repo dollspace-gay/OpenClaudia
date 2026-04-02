@@ -17,6 +17,27 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::sync::mpsc;
 
+/// Send an event to the TUI, logging and returning early if the channel is closed.
+macro_rules! send_event {
+    ($tx:expr, $event:expr) => {
+        if $tx.send($event).is_err() {
+            tracing::warn!("TUI channel closed, stopping pipeline");
+            return Err("TUI channel closed".to_string());
+        }
+    };
+}
+
+/// Send an event to the TUI from a non-Result context (tool execution loop).
+/// Returns from the enclosing function with current results if channel is dead.
+macro_rules! send_event_or_break {
+    ($tx:expr, $event:expr) => {
+        if $tx.send($event).is_err() {
+            tracing::warn!("TUI channel closed during tool execution");
+            break;
+        }
+    };
+}
+
 /// Outcome of a single conversation turn (one API round-trip + tool execution).
 #[derive(Debug)]
 pub struct TurnResult {
@@ -265,7 +286,7 @@ async fn handle_google_response(
         .unwrap_or_default();
 
     if !text.is_empty() {
-        let _ = tx.send(AppEvent::StreamText(text.clone()));
+        send_event!(tx, AppEvent::StreamText(text.clone()));
     }
 
     // Extract tool calls
@@ -315,7 +336,7 @@ async fn handle_google_response(
         execute_tool_calls_for_tui(&tool_calls, memory_db, tx).await;
 
     if !needs_followup {
-        let _ = tx.send(AppEvent::ResponseDone);
+        send_event!(tx, AppEvent::ResponseDone);
     }
 
     Ok(TurnResult {
@@ -392,7 +413,7 @@ async fn stream_sse_response(
                                     {
                                         if block_type == "thinking" {
                                             in_thinking_block = true;
-                                            let _ = tx.send(AppEvent::StreamThinking(
+                                            send_event!(tx, AppEvent::StreamThinking(
                                                 "[thinking...]\n".to_string(),
                                             ));
                                             continue;
@@ -425,7 +446,7 @@ async fn stream_sse_response(
 
                             // Anthropic format: process through accumulator
                             if let Some(text) = anthropic_accumulator.process_event(&json) {
-                                let _ = tx.send(AppEvent::StreamText(text.clone()));
+                                send_event!(tx, AppEvent::StreamText(text.clone()));
                                 full_content.push_str(&text);
                             }
                             // OpenAI format: choices[0].delta.content
@@ -436,7 +457,7 @@ async fn stream_sse_response(
                             {
                                 if let Some(content) = delta.get("content").and_then(|c| c.as_str())
                                 {
-                                    let _ = tx.send(AppEvent::StreamText(content.to_string()));
+                                    send_event!(tx, AppEvent::StreamText(content.to_string()));
                                     full_content.push_str(content);
                                 }
                                 tool_accumulator.process_delta(delta);
@@ -446,7 +467,7 @@ async fn stream_sse_response(
                 }
             }
             Err(e) => {
-                let _ = tx.send(AppEvent::ApiError(format!("Stream error: {e}")));
+                send_event!(tx, AppEvent::ApiError(format!("Stream error: {e}")));
                 break;
             }
         }
@@ -468,7 +489,7 @@ async fn stream_sse_response(
     // When there are tool calls, the caller (app.rs agentic loop) handles
     // the followup requests and sends ResponseDone when truly finished.
     if !has_tools {
-        let _ = tx.send(AppEvent::ResponseDone);
+        send_event!(tx, AppEvent::ResponseDone);
     }
 
     Ok(TurnResult {
@@ -539,7 +560,7 @@ async fn execute_tool_calls_for_tui(
         if let Err(msg) = crate::guardrails::check_file_access(
             &tool_call.function.arguments,
         ) {
-            let _ = tx.send(AppEvent::ToolDone {
+            send_event_or_break!(tx, AppEvent::ToolDone {
                 name: tool_name.clone(),
                 success: false,
                 content: format!("Blocked by guardrails: {msg}"),
@@ -556,7 +577,7 @@ async fn execute_tool_calls_for_tui(
         // Permission check for write/destructive tools
         if tool_needs_permission(tool_name) {
             if always_denied.contains(tool_name) {
-                let _ = tx.send(AppEvent::ToolDone {
+                send_event_or_break!(tx, AppEvent::ToolDone {
                     name: tool_name.clone(),
                     success: false,
                     content: "Denied (always deny for this session)".to_string(),
@@ -574,11 +595,11 @@ async fn execute_tool_calls_for_tui(
                 // Send permission request and wait for response
                 let (reply_tx, reply_rx) = mpsc::channel();
                 let args_preview = if tool_call.function.arguments.len() > 200 {
-                    format!("{}...", &tool_call.function.arguments[..197])
+                    format!("{}...", crate::tools::safe_truncate(&tool_call.function.arguments, 197))
                 } else {
                     tool_call.function.arguments.clone()
                 };
-                let _ = tx.send(AppEvent::PermissionRequest {
+                send_event_or_break!(tx, AppEvent::PermissionRequest {
                     tool_name: tool_name.clone(),
                     tool_args: args_preview,
                     reply: reply_tx,
@@ -592,7 +613,7 @@ async fn execute_tool_calls_for_tui(
                     }
                     Ok(PermissionResponse::AlwaysDeny) => {
                         always_denied.insert(tool_name.clone());
-                        let _ = tx.send(AppEvent::ToolDone {
+                        send_event_or_break!(tx, AppEvent::ToolDone {
                             name: tool_name.clone(),
                             success: false,
                             content: "Denied (always deny)".to_string(),
@@ -606,7 +627,7 @@ async fn execute_tool_calls_for_tui(
                         continue;
                     }
                     Ok(PermissionResponse::Deny) | Err(_) => {
-                        let _ = tx.send(AppEvent::ToolDone {
+                        send_event_or_break!(tx, AppEvent::ToolDone {
                             name: tool_name.clone(),
                             success: false,
                             content: "Denied by user".to_string(),
@@ -639,7 +660,7 @@ async fn execute_tool_calls_for_tui(
                     .unwrap_or_else(|| "Editing file".to_string()),
                 "bash" => args.get("command").and_then(|v| v.as_str())
                     .map(|c| {
-                        let truncated = if c.len() > 80 { &c[..77] } else { c };
+                        let truncated = if c.len() > 80 { crate::tools::safe_truncate(c, 77) } else { c };
                         format!("$ {truncated}")
                     })
                     .unwrap_or_else(|| "Running command".to_string()),
@@ -659,7 +680,7 @@ async fn execute_tool_calls_for_tui(
             }
         };
 
-        let _ = tx.send(AppEvent::ToolStart {
+        send_event_or_break!(tx, AppEvent::ToolStart {
             name: tool_name.clone(),
             description: args_desc,
         });
@@ -683,7 +704,7 @@ async fn execute_tool_calls_for_tui(
             is_error: true,
         });
 
-        let _ = tx.send(AppEvent::ToolDone {
+        send_event_or_break!(tx, AppEvent::ToolDone {
             name: tool_name.clone(),
             success: !result.is_error,
             content: result.content.clone(),
@@ -706,7 +727,7 @@ async fn execute_tool_calls_for_tui(
     let gates = crate::guardrails::run_quality_gates();
     for gate in &gates {
         if !gate.passed {
-            let _ = tx.send(AppEvent::StreamText(format!(
+            send_event_or_break!(tx, AppEvent::StreamText(format!(
                 "\n⚠ Quality gate '{}': {}\n",
                 gate.name, gate.stdout.lines().next().unwrap_or("failed")
             )));
