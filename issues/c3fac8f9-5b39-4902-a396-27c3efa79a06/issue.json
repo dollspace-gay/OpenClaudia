@@ -3,11 +3,12 @@
   "display_id": 225,
   "title": "Error on unknown provider name instead of silent OpenAI fallback",
   "description": "providers/mod.rs:117-129 — typos in provider name silently use OpenAI adapter. Return error or log warning.",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-02T16:41:42.384425754Z",
-  "updated_at": "2026-04-02T16:45:24.264548479Z",
+  "updated_at": "2026-04-02T18:51:43.164142918Z",
+  "closed_at": "2026-04-02T18:51:43.164142918Z",
   "labels": [
     "bug"
   ],
