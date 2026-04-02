@@ -122,10 +122,18 @@ pub fn get_adapter(provider: &str) -> Box<dyn ProviderAdapter> {
         "deepseek" => Box::new(DeepSeekAdapter::new()),
         "qwen" | "alibaba" => Box::new(QwenAdapter::new()),
         "ollama" => Box::new(OllamaAdapter::new()),
-        // OpenAI-compatible providers (default)
-        // Includes: openai, local, lmstudio, localai, text-generation-webui, etc.
-        // OpenAI-compatible providers and default fallback
-        _ => Box::new(OpenAIAdapter::new()),
+        // OpenAI-compatible providers: explicitly named
+        "openai" | "local" | "lmstudio" | "localai" | "text-generation-webui" => {
+            Box::new(OpenAIAdapter::new())
+        }
+        // Unknown provider: warn and fall back to OpenAI-compatible
+        other => {
+            tracing::warn!(
+                provider = other,
+                "Unknown provider — falling back to OpenAI-compatible adapter. Check config if this is a typo."
+            );
+            Box::new(OpenAIAdapter::new())
+        }
     }
 }
 

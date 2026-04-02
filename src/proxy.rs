@@ -1112,9 +1112,18 @@ async fn proxy_passthrough(
 
     let mut req_builder = state.client.request(request.method().clone(), &url);
 
-    // Copy relevant headers
+    // Whitelist safe headers to forward — prevents credential leaks from
+    // custom X-* headers or Authorization headers meant for other services.
+    const SAFE_PASSTHROUGH_HEADERS: &[&str] = &[
+        "accept",
+        "accept-encoding",
+        "accept-language",
+        "user-agent",
+        "content-type",
+    ];
     for (key, value) in &headers {
-        if key != header::HOST && key != header::CONTENT_LENGTH {
+        let key_lower = key.as_str().to_lowercase();
+        if SAFE_PASSTHROUGH_HEADERS.contains(&key_lower.as_str()) {
             if let Ok(v) = value.to_str() {
                 req_builder = req_builder.header(key.as_str(), v);
             }
