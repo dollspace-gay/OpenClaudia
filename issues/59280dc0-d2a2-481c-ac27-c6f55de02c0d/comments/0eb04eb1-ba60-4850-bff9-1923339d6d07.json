@@ -1,0 +1,10 @@
+{
+  "uuid": "0eb04eb1-ba60-4850-bff9-1923339d6d07",
+  "issue_uuid": "59280dc0-d2a2-481c-ac27-c6f55de02c0d",
+  "author": "lOrm",
+  "content": "Implemented: channel-based permission handshake between pipeline and TUI, gold-bordered dialog overlay, y/n/a/d responses, session-level caching.",
+  "created_at": "2026-04-02T04:28:27.920029460Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZQAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASgAAACEAo/O64I7TR3PsfzzLPWjO7dhdZFArNwmw8i8JuEOeLroAAAAhALZmQZh2+WNUubYXW0bOhBtXE6/79O24/xp5dbp0lWZ7"
+}
