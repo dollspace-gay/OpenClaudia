@@ -1,0 +1,10 @@
+{
+  "uuid": "195e0cde-e88e-4837-99d7-9c5aeb00a57e",
+  "issue_uuid": "02f789fa-670c-41fa-9ad5-4b9e2b4007cb",
+  "author": "lOrm",
+  "content": "Pricing data is intentionally hardcoded for offline operation. Staleness is acceptable — costs are estimates, not billing. Model pricing changes infrequently.",
+  "created_at": "2026-04-02T20:32:01.499976615Z",
+  "kind": "decision",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAYwAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASAAAACB0PBBK2UdD+CZ23S13TmumKp7WQ28OYv4EooupDod4nwAAACAvPQOr4mv/FCR06rke0sDmTqRTONCYaC9vKj0/2r/2sw=="
+}
