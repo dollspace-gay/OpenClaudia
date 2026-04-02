@@ -1,0 +1,10 @@
+{
+  "uuid": "c5a13716-6cc7-4f69-923b-dff1ffd21503",
+  "issue_uuid": "7f0125e0-a203-47a3-8aa7-41141927db20",
+  "author": "lOrm",
+  "content": "Speculation engine is a major architectural feature requiring overlay filesystems and prediction pipeline. Keeping open as future roadmap item.",
+  "created_at": "2026-04-02T20:57:06.671420804Z",
+  "kind": "decision",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAYgAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAARwAAACA6+W2CNJaZDQCYCqPozH/Keof0k4uSjNkAB2qTbPPlkwAAAB8cEjOPjkIisJXAwDQR7zE2THKLzaq31GoaeYUlG0D8"
+}
