@@ -1,6 +1,6 @@
 {
   "uuid": "050b750d-c346-4214-8287-088d2e80041e",
-  "display_id": null,
+  "display_id": 202,
   "title": "Test issue: verify crosslink after lock cleanup",
   "description": "Smoke test to confirm issue lifecycle works after clearing 105 stale locks",
   "status": "closed",
