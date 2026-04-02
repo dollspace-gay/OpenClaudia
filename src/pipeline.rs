@@ -398,69 +398,32 @@ async fn stream_sse_response(
                         }
 
                         if let Ok(json) = serde_json::from_str::<Value>(data) {
-                            // Extract usage
-                            if let Some(usage) = proxy::extract_usage_from_sse_event(&json) {
-                                stream_usage.accumulate(&usage);
-                            }
-
-                            // Thinking block detection (Anthropic)
-                            if let Some(event_type) = json.get("type").and_then(|t| t.as_str()) {
-                                if event_type == "content_block_start" {
-                                    if let Some(block_type) = json
-                                        .get("content_block")
-                                        .and_then(|b| b.get("type"))
-                                        .and_then(|t| t.as_str())
-                                    {
-                                        if block_type == "thinking" {
-                                            in_thinking_block = true;
-                                            send_event!(tx, AppEvent::StreamThinking(
-                                                "[thinking...]\n".to_string(),
-                                            ));
-                                            continue;
-                                        }
-                                    }
+                            match process_sse_event(
+                                &json,
+                                in_thinking_block,
+                                &mut anthropic_accumulator,
+                                &mut tool_accumulator,
+                            ) {
+                                SseAction::Text(text) => {
+                                    send_event!(tx, AppEvent::StreamText(text.clone()));
+                                    full_content.push_str(&text);
                                 }
-                                if event_type == "content_block_stop" && in_thinking_block {
+                                SseAction::Thinking(text) => {
+                                    send_event!(tx, AppEvent::StreamThinking(text));
+                                }
+                                SseAction::ThinkingStart => {
+                                    in_thinking_block = true;
+                                    send_event!(tx, AppEvent::StreamThinking(
+                                        "[thinking...]\n".to_string(),
+                                    ));
+                                }
+                                SseAction::ThinkingEnd => {
                                     in_thinking_block = false;
-                                    continue;
                                 }
-                                if event_type == "content_block_delta" && in_thinking_block {
-                                    if let Some(text) = json
-                                        .get("delta")
-                                        .and_then(|d| d.get("thinking"))
-                                        .and_then(|t| t.as_str())
-                                    {
-                                        let _ =
-                                            tx.send(AppEvent::StreamThinking(text.to_string()));
-                                    } else if let Some(text) = json
-                                        .get("delta")
-                                        .and_then(|d| d.get("text"))
-                                        .and_then(|t| t.as_str())
-                                    {
-                                        let _ =
-                                            tx.send(AppEvent::StreamThinking(text.to_string()));
-                                    }
-                                    continue;
+                                SseAction::Usage(usage) => {
+                                    stream_usage.accumulate(&usage);
                                 }
-                            }
-
-                            // Anthropic format: process through accumulator
-                            if let Some(text) = anthropic_accumulator.process_event(&json) {
-                                send_event!(tx, AppEvent::StreamText(text.clone()));
-                                full_content.push_str(&text);
-                            }
-                            // OpenAI format: choices[0].delta.content
-                            else if let Some(delta) = json
-                                .get("choices")
-                                .and_then(|c| c.get(0))
-                                .and_then(|c| c.get("delta"))
-                            {
-                                if let Some(content) = delta.get("content").and_then(|c| c.as_str())
-                                {
-                                    send_event!(tx, AppEvent::StreamText(content.to_string()));
-                                    full_content.push_str(content);
-                                }
-                                tool_accumulator.process_delta(delta);
+                                SseAction::None => {}
                             }
                         }
                     }
@@ -499,6 +462,91 @@ async fn stream_sse_response(
         usage: stream_usage,
         needs_followup: has_tools,
     })
+}
+
+/// Result of processing a single SSE event — testable without channels.
+#[derive(Debug)]
+pub enum SseAction {
+    /// Emit text to the streaming output
+    Text(String),
+    /// Emit thinking text
+    Thinking(String),
+    /// Start a thinking block
+    ThinkingStart,
+    /// End a thinking block
+    ThinkingEnd,
+    /// Accumulate token usage
+    Usage(TokenUsage),
+    /// No action needed (event consumed internally by accumulators)
+    None,
+}
+
+/// Process a single SSE JSON event and return the action to take.
+/// Pure function — no channels, no I/O, fully testable.
+#[must_use]
+pub fn process_sse_event(
+    json: &Value,
+    in_thinking_block: bool,
+    anthropic_accumulator: &mut AnthropicToolAccumulator,
+    tool_accumulator: &mut ToolCallAccumulator,
+) -> SseAction {
+    // Extract usage
+    if let Some(usage) = proxy::extract_usage_from_sse_event(json) {
+        if usage.total() > 0 {
+            return SseAction::Usage(usage);
+        }
+    }
+
+    // Thinking block detection (Anthropic)
+    if let Some(event_type) = json.get("type").and_then(|t| t.as_str()) {
+        if event_type == "content_block_start" {
+            if let Some("thinking") = json
+                .get("content_block")
+                .and_then(|b| b.get("type"))
+                .and_then(|t| t.as_str())
+            {
+                return SseAction::ThinkingStart;
+            }
+        }
+        if event_type == "content_block_stop" && in_thinking_block {
+            return SseAction::ThinkingEnd;
+        }
+        if event_type == "content_block_delta" && in_thinking_block {
+            if let Some(text) = json
+                .get("delta")
+                .and_then(|d| d.get("thinking"))
+                .and_then(|t| t.as_str())
+            {
+                return SseAction::Thinking(text.to_string());
+            }
+            if let Some(text) = json
+                .get("delta")
+                .and_then(|d| d.get("text"))
+                .and_then(|t| t.as_str())
+            {
+                return SseAction::Thinking(text.to_string());
+            }
+        }
+    }
+
+    // Anthropic format: process through accumulator
+    if let Some(text) = anthropic_accumulator.process_event(json) {
+        return SseAction::Text(text);
+    }
+
+    // OpenAI format: choices[0].delta.content
+    if let Some(delta) = json
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("delta"))
+    {
+        if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
+            return SseAction::Text(content.to_string());
+        }
+        tool_accumulator.process_delta(delta);
+    }
+
+    SseAction::None
 }
 
 /// Tools that are safe to execute without permission (read-only / informational).
