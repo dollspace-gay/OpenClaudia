@@ -43,6 +43,8 @@ pub enum AppEvent {
     ApiError(String),
     /// Tool results require a follow-up API call
     FollowUp,
+    /// Sync updated session messages back to the App after an agentic loop.
+    SyncMessages(Vec<serde_json::Value>),
     /// Pipeline requesting permission to run a tool.
     /// Includes a oneshot sender to reply with the user's decision.
     PermissionRequest {

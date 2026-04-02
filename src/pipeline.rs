@@ -314,7 +314,9 @@ async fn handle_google_response(
     let (tool_results, needs_followup) =
         execute_tool_calls_for_tui(&tool_calls, memory_db, tx).await;
 
-    let _ = tx.send(AppEvent::ResponseDone);
+    if !needs_followup {
+        let _ = tx.send(AppEvent::ResponseDone);
+    }
 
     Ok(TurnResult {
         content: text,
@@ -462,7 +464,12 @@ async fn stream_sse_response(
     // Execute tool calls if any
     let (tool_results, has_tools) = execute_tool_calls_for_tui(&tool_calls, memory_db, tx).await;
 
-    let _ = tx.send(AppEvent::ResponseDone);
+    // Only send ResponseDone if there are NO tool calls needing followup.
+    // When there are tool calls, the caller (app.rs agentic loop) handles
+    // the followup requests and sends ResponseDone when truly finished.
+    if !has_tools {
+        let _ = tx.send(AppEvent::ResponseDone);
+    }
 
     Ok(TurnResult {
         content: full_content,

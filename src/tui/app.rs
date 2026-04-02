@@ -378,6 +378,10 @@ impl App {
                 Ok(AppEvent::FollowUp) => {
                     self.spawn_api_turn();
                 }
+                // Sync updated session messages after agentic loop
+                Ok(AppEvent::SyncMessages(messages)) => {
+                    self.session_messages = messages;
+                }
                 // Pipeline asking permission for a write/destructive tool
                 Ok(AppEvent::PermissionRequest {
                     tool_name,
@@ -1045,7 +1049,13 @@ impl App {
                                         );
                                         // continue loop
                                     } else {
-                                        // Done — final text response
+                                        // Done — add final assistant message
+                                        if !followup.content.is_empty() {
+                                            current_messages.push(serde_json::json!({
+                                                "role": "assistant",
+                                                "content": followup.content
+                                            }));
+                                        }
                                         break;
                                     }
                                 }
@@ -1055,8 +1065,20 @@ impl App {
                                 }
                             }
                         }
+                        // Sync updated messages back to the App
+                        let _ = tx.send(AppEvent::SyncMessages(current_messages));
+                        let _ = tx.send(AppEvent::ResponseDone);
+                    } else {
+                        // No tool calls — add assistant text to session
+                        if !turn_result.content.is_empty() {
+                            session_messages.push(serde_json::json!({
+                                "role": "assistant",
+                                "content": turn_result.content
+                            }));
+                            let _ = tx.send(AppEvent::SyncMessages(session_messages));
+                        }
+                        // ResponseDone already sent by run_turn
                     }
-                    // else: no tool calls, ResponseDone already sent by run_turn
                 }
                 Err(e) => {
                     let _ = tx.send(AppEvent::ApiError(e));
