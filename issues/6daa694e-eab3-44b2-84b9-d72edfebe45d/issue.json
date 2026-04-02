@@ -3,11 +3,12 @@
   "display_id": 231,
   "title": "Add path validation to CLI @file expansion",
   "description": "cli/repl/input.rs:182-213 — expand_file_references accepts any path including ../../etc/passwd. Needs canonicalization.",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-02T16:42:00.214600093Z",
-  "updated_at": "2026-04-02T16:45:37.050786750Z",
+  "updated_at": "2026-04-02T18:51:38.142228287Z",
+  "closed_at": "2026-04-02T18:51:38.142228287Z",
   "labels": [
     "security"
   ],
