@@ -1,0 +1,11 @@
+{
+  "uuid": "1a9a7d50-9654-46c4-b6c4-1c0337445a7b",
+  "display_id": 222,
+  "title": "Standardize error handling — Result vs tuple vs anyhow inconsistency",
+  "description": "tools/ uses (String, bool) tuples, web.rs uses Result<T,String>, others use anyhow. Standardize on one pattern per layer.",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:41:33.223149170Z",
+  "updated_at": "2026-04-02T16:41:33.223149170Z"
+}
