@@ -1,0 +1,11 @@
+{
+  "uuid": "d882369e-1457-40e8-b0c6-91b6c518bc41",
+  "display_id": 238,
+  "title": "Replace arbitrary HashSet eviction with LRU in file read tracker",
+  "description": "tools/file/mod.rs:72-85 — enforce_size_cap removes random half of entries. Use LRU eviction for better behavior.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:42:46.141069014Z",
+  "updated_at": "2026-04-02T16:42:46.141069014Z"
+}
