@@ -1,0 +1,10 @@
+{
+  "uuid": "a626191e-4eb6-4eb3-adc1-8fd92a11c094",
+  "issue_uuid": "1a9a7d50-9654-46c4-b6c4-1c0337445a7b",
+  "author": "lOrm",
+  "content": "Error type standardization requires touching every tool file and all callers. Keeping open for a dedicated cleanup pass.",
+  "created_at": "2026-04-02T20:57:15.484174611Z",
+  "kind": "decision",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZAAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASQAAACEA3NYhrfI7elxZAwGCFdeJP+XCIAQVRHcWXR0pMn5jLd8AAAAgb/X8c0avukKcLjtf0gaToyfrQOb/SthJL5s4XzK76gI="
+}
