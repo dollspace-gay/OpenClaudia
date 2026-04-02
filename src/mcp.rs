@@ -215,7 +215,9 @@ impl McpTransport for StdioTransport {
         // Release the child lock before reading, since stdout is stored separately
         drop(child);
 
-        // Read response from the persistent BufReader
+        // Read response from the persistent BufReader with size limit.
+        // Prevents memory exhaustion from malicious MCP servers.
+        const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10MB
         let line = {
             let mut reader = self.reader.lock().await;
             let mut buf = String::new();
@@ -224,6 +226,13 @@ impl McpTransport for StdioTransport {
                 .await
                 .map_err(|e| McpError::Transport(format!("Failed to read from stdout: {e}")))?;
             drop(reader);
+            if buf.len() > MAX_RESPONSE_SIZE {
+                return Err(McpError::Transport(format!(
+                    "MCP response too large ({} bytes, max {})",
+                    buf.len(),
+                    MAX_RESPONSE_SIZE
+                )));
+            }
             buf
         };
 

@@ -464,13 +464,27 @@ impl HookEngine {
     }
 
     /// Validate regex pattern and check for match
+    /// Maximum pattern length to prevent ReDoS via complex expressions.
+    const MAX_PATTERN_LEN: usize = 1024;
+    /// Maximum compiled regex size (bytes) to limit pathological backtracking.
+    const MAX_REGEX_SIZE: usize = 10 * 1024; // 10KB
+
     fn validate_and_match(pattern: &str, context: &str) -> Result<bool, HookError> {
-        // Check for invalid patterns
         if pattern.is_empty() {
             return Err(HookError::InvalidMatcher("Empty pattern".to_string()));
         }
+        if pattern.len() > Self::MAX_PATTERN_LEN {
+            return Err(HookError::InvalidMatcher(format!(
+                "Pattern too long ({} chars, max {})",
+                pattern.len(),
+                Self::MAX_PATTERN_LEN
+            )));
+        }
 
-        match Regex::new(pattern) {
+        match regex::RegexBuilder::new(pattern)
+            .size_limit(Self::MAX_REGEX_SIZE)
+            .build()
+        {
             Ok(re) => Ok(re.is_match(context)),
             Err(e) => Err(HookError::InvalidMatcher(e.to_string())),
         }

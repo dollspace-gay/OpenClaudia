@@ -817,7 +817,9 @@ fn glob_to_regex(pattern: &str) -> Result<Regex, regex::Error> {
     }
 
     regex.push('$');
-    Regex::new(&regex)
+    regex::RegexBuilder::new(&regex)
+        .size_limit(10 * 1024) // 10KB limit to prevent ReDoS
+        .build()
 }
 
 /// Normalize a file path for matching (forward slashes, no leading ./).
