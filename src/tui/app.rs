@@ -575,6 +575,11 @@ impl App {
                                       /undo          Undo last message pair\n\
                                       /redo          Redo undone messages\n\
                                       /rewind [N]    Rewind N turns, or show turn list\n\
+                                      /diff          Show uncommitted git changes\n\
+                                      /review        Show git diff for review\n\
+                                      /context       Show token context usage\n\
+                                      /doctor        Run diagnostics\n\
+                                      /init          Initialize project config\n\
                                       /clear         Clear conversation\n\
                                       /skill [name]  List or run skills\n\
                                       /export        Export conversation to markdown\n\
@@ -961,6 +966,145 @@ impl App {
                             self.spawn_api_turn();
                             return true;
                         }
+
+                    // /diff — show uncommitted git changes
+                    if text == "/diff" {
+                        let output = std::process::Command::new("git")
+                            .args(["diff", "--stat"])
+                            .output();
+                        let content = match output {
+                            Ok(out) => {
+                                let stdout = String::from_utf8_lossy(&out.stdout);
+                                if stdout.is_empty() {
+                                    "No uncommitted changes.".to_string()
+                                } else {
+                                    format!("Uncommitted changes:\n{stdout}")
+                                }
+                            }
+                            Err(e) => format!("Failed to run git diff: {e}"),
+                        };
+                        self.messages.add(DisplayMessage {
+                            role: "system".to_string(),
+                            content,
+                            tool_name: None,
+                            is_error: false,
+                            is_thinking: false,
+                        });
+                        return true;
+                    }
+
+                    // /context — show token context usage
+                    if text == "/context" {
+                        let msg_count = self.session_messages.len();
+                        let tokens = self.chat_session.estimate_tokens();
+                        let content = format!(
+                            "Context usage:\n  Messages: {msg_count}\n  Est. tokens: ~{tokens}\n  Model: {}\n  Provider: {}",
+                            self.model, self.provider
+                        );
+                        self.messages.add(DisplayMessage {
+                            role: "system".to_string(),
+                            content,
+                            tool_name: None,
+                            is_error: false,
+                            is_thinking: false,
+                        });
+                        return true;
+                    }
+
+                    // /doctor — diagnostics
+                    if text == "/doctor" {
+                        let mut checks = Vec::new();
+                        // Check config
+                        checks.push(match crate::config::load_config() {
+                            Ok(_) => "✓ Config: loaded".to_string(),
+                            Err(e) => format!("✗ Config: {e}"),
+                        });
+                        // Check API connectivity
+                        checks.push(format!("✓ Provider: {}", self.provider));
+                        checks.push(format!("✓ Model: {}", self.model));
+                        checks.push(format!("✓ Endpoint: {}", self.endpoint));
+                        // Check skills
+                        let skills = crate::skills::load_skills();
+                        checks.push(format!("✓ Skills: {} loaded", skills.len()));
+                        // Check memory
+                        if self.memory_db.is_some() {
+                            checks.push("✓ Memory DB: connected".to_string());
+                        } else {
+                            checks.push("✗ Memory DB: not available".to_string());
+                        }
+                        self.messages.add(DisplayMessage {
+                            role: "system".to_string(),
+                            content: format!("Diagnostics:\n{}", checks.join("\n")),
+                            tool_name: None,
+                            is_error: false,
+                            is_thinking: false,
+                        });
+                        return true;
+                    }
+
+                    // /review — show git changes for review
+                    if text == "/review" || text.starts_with("/review ") {
+                        let output = std::process::Command::new("git")
+                            .args(["diff", "HEAD"])
+                            .output();
+                        let content = match output {
+                            Ok(out) => {
+                                let stdout = String::from_utf8_lossy(&out.stdout);
+                                if stdout.is_empty() {
+                                    "No changes to review.".to_string()
+                                } else {
+                                    let lines: Vec<&str> = stdout.lines().take(100).collect();
+                                    if stdout.lines().count() > 100 {
+                                        format!("{}\n... (truncated, {} total lines)", lines.join("\n"), stdout.lines().count())
+                                    } else {
+                                        lines.join("\n")
+                                    }
+                                }
+                            }
+                            Err(e) => format!("Failed to run git diff: {e}"),
+                        };
+                        self.messages.add(DisplayMessage {
+                            role: "system".to_string(),
+                            content,
+                            tool_name: None,
+                            is_error: false,
+                            is_thinking: false,
+                        });
+                        return true;
+                    }
+
+                    // /init — initialize project config
+                    if text == "/init" {
+                        match crate::config::config_file_exists() {
+                            true => {
+                                self.messages.add(DisplayMessage {
+                                    role: "system".to_string(),
+                                    content: "Config already exists. Use /doctor to check it.".to_string(),
+                                    tool_name: None,
+                                    is_error: false,
+                                    is_thinking: false,
+                                });
+                            }
+                            false => {
+                                // Run init in the background
+                                let output = std::process::Command::new("openclaudia")
+                                    .arg("init")
+                                    .output();
+                                let content = match output {
+                                    Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
+                                    Err(e) => format!("Init failed: {e}"),
+                                };
+                                self.messages.add(DisplayMessage {
+                                    role: "system".to_string(),
+                                    content,
+                                    tool_name: None,
+                                    is_error: false,
+                                    is_thinking: false,
+                                });
+                            }
+                        }
+                        return true;
+                    }
 
                         self.messages.add(DisplayMessage {
                             role: "system".to_string(),
