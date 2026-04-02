@@ -50,12 +50,20 @@ pub fn build_anthropic_request(
     let openai_tools = tools::get_all_tool_definitions(true);
     let anthropic_tools = convert_tools_to_anthropic(openai_tools.as_array().unwrap_or(&vec![]));
 
+    // Generate a stable device ID for metadata (matches Claude Code's pattern)
+    let device_id = crate::claude_credentials::get_device_id();
+
     let mut req = serde_json::json!({
         "model": model,
         "messages": anthropic_messages,
         "max_tokens": crate::DEFAULT_MAX_TOKENS,
         "stream": true,
-        "tools": anthropic_tools
+        "tools": anthropic_tools,
+        "metadata": {
+            "user_id": serde_json::to_string(&serde_json::json!({
+                "device_id": device_id
+            })).unwrap_or_default()
+        }
     });
 
     // Build system prompt as multiple blocks (matching Claude Code's pattern).

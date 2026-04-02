@@ -279,6 +279,25 @@ pub fn get_oauth_endpoint(_model: &str) -> String {
     "https://api.anthropic.com/v1/messages".to_string()
 }
 
+/// Get the device ID from Claude Code's global config (~/.claude.json).
+/// Falls back to a generated UUID if unavailable.
+#[must_use]
+pub fn get_device_id() -> String {
+    // Try to read from Claude Code's config
+    if let Some(home) = dirs::home_dir() {
+        let config_path = home.join(".claude.json");
+        if let Ok(content) = std::fs::read_to_string(&config_path) {
+            if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(id) = config.get("userID").and_then(|v| v.as_str()) {
+                    return id.to_string();
+                }
+            }
+        }
+    }
+    // Fallback: generate a stable ID
+    uuid::Uuid::new_v4().to_string()
+}
+
 /// The full system prompt sent when using Claude Code OAuth authentication.
 ///
 /// Structure:
