@@ -3,11 +3,12 @@
   "display_id": 242,
   "title": "Clarify 0-indexed vs 1-indexed cell numbering in notebook tool",
   "description": "tools/file/notebook.rs:119,147,175 — error messages mix 0-indexed semantics with user-facing messaging.",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-02T16:43:39.564365598Z",
-  "updated_at": "2026-04-02T16:46:18.016077662Z",
+  "updated_at": "2026-04-02T20:01:43.666636216Z",
+  "closed_at": "2026-04-02T20:01:43.666636216Z",
   "labels": [
     "enhancement"
   ],
