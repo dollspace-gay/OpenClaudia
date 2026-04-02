@@ -58,16 +58,31 @@ pub fn build_anthropic_request(
         "tools": anthropic_tools
     });
 
-    if let Some(sys) = system_msg {
+    // Build system prompt as multiple blocks (matching Claude Code's pattern).
+    // Block 1: Claude Code prefix + behavioral prompt (static, cached)
+    // Block 2: Claudia persona + project-specific context (dynamic, not cached)
+    if claude_code_token.is_some() {
+        // OAuth mode: send full Claude Code prompt as cached block,
+        // then our Claudia/project prompt as uncached dynamic block
+        let mut blocks = vec![serde_json::json!({
+            "type": "text",
+            "text": crate::claude_credentials::CLAUDE_CODE_SYSTEM_PROMPT,
+            "cache_control": {"type": "ephemeral"}
+        })];
+        if let Some(ref sys) = system_msg {
+            blocks.push(serde_json::json!({
+                "type": "text",
+                "text": sys
+            }));
+        }
+        req["system"] = Value::Array(blocks);
+    } else if let Some(sys) = system_msg {
+        // API key mode: just our prompt, cached
         req["system"] = serde_json::json!([{
             "type": "text",
             "text": sys,
             "cache_control": {"type": "ephemeral"}
         }]);
-    }
-
-    if claude_code_token.is_some() {
-        crate::claude_credentials::inject_system_prompt(&mut req);
     }
 
     // Apply effort level
