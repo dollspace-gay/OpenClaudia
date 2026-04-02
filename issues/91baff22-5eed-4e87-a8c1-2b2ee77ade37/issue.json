@@ -2,11 +2,12 @@
   "uuid": "91baff22-5eed-4e87-a8c1-2b2ee77ade37",
   "display_id": 85,
   "title": "C-24: Session persist writes multiple files non-atomically",
-  "status": "open",
+  "status": "closed",
   "priority": "critical",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:38:51.662304145Z",
-  "updated_at": "2026-04-01T03:38:51.732711678Z",
+  "updated_at": "2026-04-02T18:33:02.202346094Z",
+  "closed_at": "2026-04-02T18:33:02.202346094Z",
   "labels": [
     "qa"
   ]
