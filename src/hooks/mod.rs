@@ -22,7 +22,7 @@ pub use claude_compat::{
 pub use merge::merge_hooks_config;
 
 use crate::config::{Hook, HookEntry, HooksConfig};
-use regex::Regex;
+use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -481,7 +481,7 @@ impl HookEngine {
             )));
         }
 
-        match regex::RegexBuilder::new(pattern)
+        match RegexBuilder::new(pattern)
             .size_limit(Self::MAX_REGEX_SIZE)
             .build()
         {

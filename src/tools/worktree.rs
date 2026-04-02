@@ -66,19 +66,13 @@ pub fn execute_enter_worktree(args: &HashMap<String, Value>) -> (String, bool) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     // Check if we're in a git repo
-    let git_check = Command::new("git")
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .output();
-
-    match git_check {
+    match git_with_timeout(&["rev-parse", "--is-inside-work-tree"]) {
         Ok(output) if output.status.success() => {}
         _ => return ("Error: not inside a git repository".to_string(), true),
     }
 
     // Get git root
-    let git_root = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
+    let git_root = git_with_timeout(&["rev-parse", "--show-toplevel"])
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map_or_else(|| cwd.clone(), |s| PathBuf::from(s.trim()));
@@ -89,16 +83,14 @@ pub fn execute_enter_worktree(args: &HashMap<String, Value>) -> (String, bool) {
     let base_branch = get_current_branch().unwrap_or_else(|| "HEAD".to_string());
 
     // Try to create a new branch, or use existing
-    let result = Command::new("git")
-        .args([
-            "worktree",
-            "add",
-            "-b",
-            &branch,
-            worktree_dir.to_str().unwrap_or(""),
-            &base_branch,
-        ])
-        .output();
+    let result = git_with_timeout(&[
+        "worktree",
+        "add",
+        "-b",
+        &branch,
+        worktree_dir.to_str().unwrap_or(""),
+        &base_branch,
+    ]);
 
     match result {
         Ok(output) if output.status.success() => {
@@ -127,14 +119,12 @@ pub fn execute_enter_worktree(args: &HashMap<String, Value>) -> (String, bool) {
             let stderr = String::from_utf8_lossy(&output.stderr);
             // Branch might already exist -- try without -b
             if stderr.contains("already exists") {
-                let retry = Command::new("git")
-                    .args([
-                        "worktree",
-                        "add",
-                        worktree_dir.to_str().unwrap_or(""),
-                        &branch,
-                    ])
-                    .output();
+                let retry = git_with_timeout(&[
+                    "worktree",
+                    "add",
+                    worktree_dir.to_str().unwrap_or(""),
+                    &branch,
+                ]);
                 match retry {
                     Ok(o) if o.status.success() => {
                         let _ = std::env::set_current_dir(&worktree_dir);
@@ -175,9 +165,7 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
         .unwrap_or(false);
 
     // Check if we're in a worktree
-    let wt_check = Command::new("git")
-        .args(["rev-parse", "--git-common-dir"])
-        .output();
+    let wt_check = git_with_timeout(&["rev-parse", "--git-common-dir"]);
 
     let common_dir = match wt_check {
         Ok(output) if output.status.success() => {
@@ -186,9 +174,7 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
         _ => return ("Error: not in a git worktree".to_string(), true),
     };
 
-    let git_dir = Command::new("git")
-        .args(["rev-parse", "--git-dir"])
-        .output()
+    let git_dir = git_with_timeout(&["rev-parse", "--git-dir"])
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
@@ -210,14 +196,12 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
 
     if apply_changes {
         // Commit any uncommitted changes
-        let _ = Command::new("git").args(["add", "-A"]).output();
-        let commit = Command::new("git")
-            .args([
-                "commit",
-                "-m",
-                &format!("Worktree changes from branch '{current_branch}'"),
-            ])
-            .output();
+        let _ = git_with_timeout(&["add", "-A"]);
+        let commit = git_with_timeout(&[
+            "commit",
+            "-m",
+            &format!("Worktree changes from branch '{current_branch}'"),
+        ]);
 
         let committed = commit.map(|o| o.status.success()).unwrap_or(false);
 
@@ -226,9 +210,7 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
 
         // Merge the branch
         if committed {
-            let merge = Command::new("git")
-                .args(["merge", &current_branch, "--no-edit"])
-                .output();
+            let merge = git_with_timeout(&["merge", &current_branch, "--no-edit"]);
 
             let merge_result = match merge {
                 Ok(o) if o.status.success() => {
@@ -242,9 +224,7 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
             };
 
             // Clean up worktree
-            let _ = Command::new("git")
-                .args(["worktree", "remove", cwd.to_str().unwrap_or(""), "--force"])
-                .output();
+            let _ = git_with_timeout(&["worktree", "remove", cwd.to_str().unwrap_or(""), "--force"]);
 
             (
                 format!(
@@ -255,9 +235,7 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
                 false,
             )
         } else {
-            let _ = Command::new("git")
-                .args(["worktree", "remove", cwd.to_str().unwrap_or(""), "--force"])
-                .output();
+            let _ = git_with_timeout(&["worktree", "remove", cwd.to_str().unwrap_or(""), "--force"]);
             (
                 format!(
                     "No changes to commit. Removed worktree.\nReturned to: {}",
@@ -269,9 +247,7 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
     } else {
         // Discard and return
         let _ = std::env::set_current_dir(main_path);
-        let _ = Command::new("git")
-            .args(["worktree", "remove", cwd.to_str().unwrap_or(""), "--force"])
-            .output();
+        let _ = git_with_timeout(&["worktree", "remove", cwd.to_str().unwrap_or(""), "--force"]);
         (
             format!(
                 "Discarded worktree on branch '{}'. Returned to: {}",
@@ -286,9 +262,7 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
 /// List active worktrees
 #[must_use]
 pub fn execute_list_worktrees() -> (String, bool) {
-    let output = Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .output();
+    let output = git_with_timeout(&["worktree", "list", "--porcelain"]);
 
     match output {
         Ok(o) if o.status.success() => {
@@ -351,9 +325,7 @@ pub fn execute_list_worktrees() -> (String, bool) {
 }
 
 fn get_current_branch() -> Option<String> {
-    Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .output()
+    git_with_timeout(&["rev-parse", "--abbrev-ref", "HEAD"])
         .ok()
         .filter(|o| o.status.success())
         .and_then(|o| String::from_utf8(o.stdout).ok())

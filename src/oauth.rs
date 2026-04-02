@@ -365,11 +365,12 @@ impl OAuthStore {
                 return;
             }
         };
-        // Check the opened file descriptor's metadata, not the path
-        if file
-            .metadata()
-            .ok()
-            .and_then(|m| path.symlink_metadata().ok().map(|sm| sm.file_type().is_symlink()))
+        // Check the path's symlink status AFTER opening the file.
+        // If someone replaces the file with a symlink after we open it,
+        // we already have the real file's handle — this just warns us.
+        if path
+            .symlink_metadata()
+            .map(|sm| sm.file_type().is_symlink())
             .unwrap_or(false)
         {
             error!(
