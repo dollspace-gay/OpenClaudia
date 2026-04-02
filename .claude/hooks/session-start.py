@@ -126,6 +126,90 @@ def auto_comment_on_resume(session_status):
     run_crosslink(["comment", issue_id, comment])
 
 
+def get_working_issue_id(session_status):
+    """Extract the working issue ID from session status text."""
+    if not session_status:
+        return None
+    match = re.search(r'Working on: #(\d+)', session_status)
+    return match.group(1) if match else None
+
+
+def get_issue_labels(issue_id):
+    """Get labels for an issue via crosslink issue show --json."""
+    output = run_crosslink(["show", issue_id, "--json"])
+    if not output:
+        return []
+    try:
+        data = json.loads(output)
+        return data.get("labels", [])
+    except (json.JSONDecodeError, KeyError):
+        return []
+
+
+def extract_design_doc_slugs(labels):
+    """Extract knowledge page slugs from design-doc:<slug> labels."""
+    prefix = "design-doc:"
+    return [label[len(prefix):] for label in labels if label.startswith(prefix)]
+
+
+def build_design_context(session_status):
+    """Build auto-injected design context from issue labels.
+
+    Returns a formatted string block, or None if no design docs found.
+    """
+    issue_id = get_working_issue_id(session_status)
+    if not issue_id:
+        return None
+
+    labels = get_issue_labels(issue_id)
+    slugs = extract_design_doc_slugs(labels)
+    if not slugs:
+        return None
+
+    parts = ["## Design Context (auto-injected)"]
+
+    # Limit to 3 pages to respect hook timeout
+    for slug in slugs[:3]:
+        content = run_crosslink(["knowledge", "show", slug])
+        if not content:
+            parts.append(f"### {slug}\n*Page not found. Run `crosslink knowledge show {slug}` to check.*")
+            continue
+
+        if len(content) <= 8000:
+            parts.append(f"### {slug}\n{content}")
+        else:
+            # Too large — inject summary only
+            meta = run_crosslink(["knowledge", "show", slug, "--json"])
+            if meta:
+                try:
+                    data = json.loads(meta)
+                    title = data.get("title", slug)
+                    tags = ", ".join(data.get("tags", []))
+                    parts.append(
+                        f"### {slug}\n"
+                        f"**{title}** (tags: {tags})\n"
+                        f"*Content too large for auto-injection ({len(content)} chars). "
+                        f"View with: `crosslink knowledge show {slug}`*"
+                    )
+                except json.JSONDecodeError:
+                    parts.append(
+                        f"### {slug}\n"
+                        f"*Content too large ({len(content)} chars). "
+                        f"View with: `crosslink knowledge show {slug}`*"
+                    )
+            else:
+                parts.append(
+                    f"### {slug}\n"
+                    f"*Content too large ({len(content)} chars). "
+                    f"View with: `crosslink knowledge show {slug}`*"
+                )
+
+    if len(parts) == 1:
+        return None
+
+    return "\n\n".join(parts)
+
+
 def main():
     if not check_crosslink_initialized():
         # No crosslink repo, skip
@@ -196,6 +280,22 @@ def main():
     if locks_result and "No locks" not in locks_result:
         context_parts.append(f"## Active Locks\n{locks_result}")
 
+    # Show knowledge repo summary
+    knowledge_list = run_crosslink(["knowledge", "list", "--quiet"])
+    if knowledge_list is not None:
+        # --quiet outputs one slug per line; count non-empty lines
+        page_count = len([line for line in knowledge_list.splitlines() if line.strip()])
+        if page_count > 0:
+            context_parts.append(
+                f"## Knowledge Repo\n{page_count} page(s) available. "
+                "Search with `crosslink knowledge search '<query>'` before researching a topic."
+            )
+
+    # Auto-inject design docs from issue labels
+    design_context = build_design_context(session_status)
+    if design_context:
+        context_parts.append(design_context)
+
     # Get ready issues (unblocked work)
     ready_issues = run_crosslink(["ready"])
     if ready_issues:
@@ -211,7 +311,7 @@ def main():
 - Use `crosslink session start` at the beginning of work
 - Use `crosslink session work <id>` to mark current focus
 - Use `crosslink session action "..."` to record breadcrumbs before context compression
-- Add comments as you discover things: `crosslink comment <id> "..."`
+- Add comments as you discover things: `crosslink issue comment <id> "..."`
 - End with handoff notes: `crosslink session end --notes "..."`
 - Use `crosslink locks list` to see which issues are claimed by agents
 - Use `crosslink sync` to refresh lock state from the coordination branch

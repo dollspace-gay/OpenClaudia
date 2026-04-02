@@ -9,19 +9,28 @@
       {
         "hooks": [
           {
-            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/post-edit-check.py\"",
+            "command": "HOOK=\"$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/post-edit-check.py\"; if [ -f \"$HOOK\" ]; then python3 \"$HOOK\"; else exit 0; fi",
             "timeout": 5,
             "type": "command"
           }
         ],
         "matcher": "Write|Edit"
+      },
+      {
+        "hooks": [
+          {
+            "command": "HOOK=\"$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/heartbeat.py\"; if [ -f \"$HOOK\" ]; then python3 \"$HOOK\"; else exit 0; fi",
+            "timeout": 3,
+            "type": "command"
+          }
+        ]
       }
     ],
     "PreToolUse": [
       {
         "hooks": [
           {
-            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/pre-web-check.py\"",
+            "command": "HOOK=\"$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/pre-web-check.py\"; if [ -f \"$HOOK\" ]; then python3 \"$HOOK\"; else exit 0; fi",
             "timeout": 5,
             "type": "command"
           }
@@ -31,7 +40,7 @@
       {
         "hooks": [
           {
-            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/work-check.py\"",
+            "command": "HOOK=\"$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/work-check.py\"; if [ -f \"$HOOK\" ]; then python3 \"$HOOK\"; else exit 0; fi",
             "timeout": 3,
             "type": "command"
           }
@@ -43,7 +52,7 @@
       {
         "hooks": [
           {
-            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/session-start.py\"",
+            "command": "HOOK=\"$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/session-start.py\"; if [ -f \"$HOOK\" ]; then python3 \"$HOOK\"; else exit 0; fi",
             "timeout": 10,
             "type": "command"
           }
@@ -55,7 +64,7 @@
       {
         "hooks": [
           {
-            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/prompt-guard.py\"",
+            "command": "HOOK=\"$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/prompt-guard.py\"; if [ -f \"$HOOK\" ]; then python3 \"$HOOK\"; else exit 0; fi",
             "timeout": 5,
             "type": "command"
           }

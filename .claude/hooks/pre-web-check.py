@@ -47,10 +47,19 @@ def find_crosslink_dir():
 
 
 def load_web_rules(crosslink_dir):
-    """Load web.md rules from .crosslink/rules/."""
+    """Load web.md rules, preferring .crosslink/rules.local/ override."""
     if not crosslink_dir:
         return get_fallback_rules()
 
+    # Check rules.local/ first for a local override
+    local_path = os.path.join(crosslink_dir, 'rules.local', 'web.md')
+    try:
+        with open(local_path, 'r', encoding='utf-8') as f:
+            return f.read().strip()
+    except (OSError, IOError):
+        pass
+
+    # Fall back to rules/
     rules_path = os.path.join(crosslink_dir, 'rules', 'web.md')
     try:
         with open(rules_path, 'r', encoding='utf-8') as f:
@@ -106,8 +115,9 @@ def main():
         # Read input from stdin (Claude Code passes tool info)
         input_data = json.load(sys.stdin)
         tool_name = input_data.get('tool_name', '')
-    except (json.JSONDecodeError, Exception):
-        tool_name = ''
+    except (json.JSONDecodeError, ValueError, TypeError):
+        print("pre-web-check: failed to parse stdin — blocking tool call (fail-closed)")
+        sys.exit(2)
 
     # Find crosslink directory and load web rules
     crosslink_dir = find_crosslink_dir()

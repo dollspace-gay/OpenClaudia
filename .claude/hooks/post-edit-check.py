@@ -12,6 +12,10 @@ import subprocess
 import glob
 import time
 
+# Add hooks directory to path for shared module import
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from crosslink_config import find_crosslink_dir, is_agent_context
+
 # Stub patterns to detect (compiled regex for performance)
 STUB_PATTERNS = [
     (r'\bTODO\b', 'TODO comment'),
@@ -158,6 +162,68 @@ def run_linter(file_path, max_errors=10):
                             if len(errors) >= max_errors:
                                 break
 
+        elif ext in ('.sh', '.bash'):
+            # Shell: run shellcheck
+            try:
+                result = subprocess.run(
+                    ['shellcheck', '-f', 'gcc', file_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                for line in result.stdout.split('\n'):
+                    if line.strip():
+                        errors.append(line.strip()[:100])
+                        if len(errors) >= max_errors:
+                            break
+            except FileNotFoundError:
+                pass  # shellcheck not installed
+
+        elif ext in ('.ex', '.exs', '.heex'):
+            # Elixir: run mix format --check-formatted, then mix credo --strict if available
+            project_root = find_project_root(file_path, ['mix.exs'])
+            if project_root:
+                # mix format --check-formatted on the specific file
+                result = subprocess.run(
+                    ['mix', 'format', '--check-formatted', file_path],
+                    cwd=project_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                if result.returncode != 0:
+                    for line in result.stderr.split('\n'):
+                        if line.strip():
+                            errors.append(line.strip()[:100])
+                            if len(errors) >= max_errors:
+                                break
+
+                # Run mix credo --strict only if credo is in deps
+                if len(errors) < max_errors:
+                    mix_exs_path = os.path.join(project_root, 'mix.exs')
+                    has_credo = False
+                    try:
+                        with open(mix_exs_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            if ':credo' in f.read():
+                                has_credo = True
+                    except OSError:
+                        pass
+
+                    if has_credo:
+                        result = subprocess.run(
+                            ['mix', 'credo', '--strict', '--format', 'oneline', file_path],
+                            cwd=project_root,
+                            capture_output=True,
+                            text=True,
+                            timeout=30
+                        )
+                        if result.stdout:
+                            for line in result.stdout.split('\n'):
+                                if line.strip() and ':' in line:
+                                    errors.append(line.strip()[:100])
+                                    if len(errors) >= max_errors:
+                                        break
+
     except subprocess.TimeoutExpired:
         errors.append("(linter timed out)")
     except (OSError, Exception) as e:
@@ -174,7 +240,7 @@ def is_test_file(file_path):
     # Common test file patterns
     test_patterns = [
         'test_', '_test.', '.test.', 'spec.', '_spec.',
-        'tests.', 'testing.', 'mock.', '_mock.'
+        'tests.', 'testing.', 'mock.', '_mock.', '_test.exs'
     ]
     # Common test directories
     test_dirs = ['test', 'tests', '__tests__', 'spec', 'specs', 'testing']
@@ -225,6 +291,18 @@ def find_test_files(file_path, project_root):
         test_patterns = [
             os.path.join(os.path.dirname(file_path), f'{name_without_ext}_test.go'),
         ]
+    elif ext in ('.sh', '.bash'):
+        test_patterns = [
+            os.path.join(project_root, 'test', '**', f'{name_without_ext}.bats'),
+            os.path.join(project_root, 'tests', '**', f'{name_without_ext}.bats'),
+            os.path.join(project_root, 'test', '**', f'test_{name_without_ext}.sh'),
+            os.path.join(project_root, 'tests', '**', f'test_{name_without_ext}.sh'),
+        ]
+    elif ext in ('.ex', '.exs'):
+        test_patterns = [
+            os.path.join(project_root, 'test', '**', f'{name_without_ext}_test.exs'),
+            os.path.join(project_root, 'test', '**', f'*{name_without_ext}*_test.exs'),
+        ]
 
     found = []
     for pattern in test_patterns:
@@ -239,7 +317,7 @@ def get_test_reminder(file_path, project_root):
         return None  # Editing a test file, no reminder needed
 
     ext = os.path.splitext(file_path)[1]
-    code_extensions = ('.rs', '.py', '.js', '.ts', '.tsx', '.jsx', '.go')
+    code_extensions = ('.rs', '.py', '.js', '.ts', '.tsx', '.jsx', '.go', '.sh', '.bash', '.ex', '.exs', '.heex')
 
     if ext not in code_extensions:
         return None
@@ -282,6 +360,14 @@ def get_test_reminder(file_path, project_root):
             test_cmd = 'npm test'
     elif ext == '.go' and project_root:
         test_cmd = 'go test ./...'
+    elif ext in ('.sh', '.bash') and project_root:
+        # Check for bats test framework
+        bats_dir = os.path.join(project_root, 'test')
+        if os.path.isdir(bats_dir) and any(f.endswith('.bats') for f in os.listdir(bats_dir)):
+            test_cmd = 'bats test/'
+    elif ext in ('.ex', '.exs', '.heex') and project_root:
+        if os.path.exists(os.path.join(project_root, 'mix.exs')):
+            test_cmd = 'mix test'
 
     if test_files or test_cmd:
         msg = "🧪 TEST REMINDER: Code modified since last test run."
@@ -311,7 +397,7 @@ def main():
     code_extensions = (
         '.rs', '.py', '.js', '.ts', '.tsx', '.jsx', '.go', '.java',
         '.c', '.cpp', '.h', '.hpp', '.cs', '.rb', '.php', '.swift',
-        '.kt', '.scala', '.zig', '.odin'
+        '.kt', '.scala', '.zig', '.odin', '.sh', '.bash', '.ex', '.exs', '.heex'
     )
 
     if not any(file_path.endswith(ext) for ext in code_extensions):
@@ -323,41 +409,47 @@ def main():
     # Find project root for linter and test detection
     project_root = find_project_root(file_path, [
         'Cargo.toml', 'package.json', 'go.mod', 'setup.py',
-        'pyproject.toml', '.git'
+        'pyproject.toml', 'mix.exs', '.git'
     ])
 
-    # Check for stubs (always - instant regex check)
+    # Detect agent context — agents skip linting and test reminders
+    # (they run their own CI checks), but stub detection stays active
+    crosslink_dir = find_crosslink_dir()
+    is_agent = is_agent_context(crosslink_dir)
+
+    # Check for stubs (always - instant regex check, even for agents)
     stub_findings = check_for_stubs(file_path)
 
-    # Debounced linting: only run linter if no edits in last 10 seconds
-    # Track last edit time via marker file
+    # Skip linting and test reminders for agents (too slow, agents have CI)
     linter_errors = []
-    lint_marker = None
-    if project_root:
-        crosslink_cache = os.path.join(project_root, '.crosslink', '.cache')
-        lint_marker = os.path.join(crosslink_cache, 'last-edit-time')
+    test_reminder = None
 
-    should_lint = True
-    if lint_marker:
-        try:
-            os.makedirs(os.path.dirname(lint_marker), exist_ok=True)
-            if os.path.exists(lint_marker):
-                last_edit = os.path.getmtime(lint_marker)
-                elapsed = time.time() - last_edit
-                # If last edit was < 10 seconds ago, skip linting (rapid edits)
-                if elapsed < 10:
-                    should_lint = False
-            # Update the marker to current time
-            with open(lint_marker, 'w') as f:
-                f.write(str(time.time()))
-        except OSError:
-            pass
+    if not is_agent:
+        # Debounced linting: only run linter if no edits in last 10 seconds
+        lint_marker = None
+        if project_root:
+            crosslink_cache = os.path.join(project_root, '.crosslink', '.cache')
+            lint_marker = os.path.join(crosslink_cache, 'last-edit-time')
 
-    if should_lint:
-        linter_errors = run_linter(file_path)
+        should_lint = True
+        if lint_marker:
+            try:
+                os.makedirs(os.path.dirname(lint_marker), exist_ok=True)
+                if os.path.exists(lint_marker):
+                    last_edit = os.path.getmtime(lint_marker)
+                    elapsed = time.time() - last_edit
+                    if elapsed < 10:
+                        should_lint = False
+                with open(lint_marker, 'w') as f:
+                    f.write(str(time.time()))
+            except OSError:
+                pass
 
-    # Check for test reminder
-    test_reminder = get_test_reminder(file_path, project_root)
+        if should_lint:
+            linter_errors = run_linter(file_path)
+
+        # Check for test reminder
+        test_reminder = get_test_reminder(file_path, project_root)
 
     # Build output
     messages = []

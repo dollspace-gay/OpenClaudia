@@ -204,6 +204,118 @@ def find_crosslink_binary(crosslink_dir):
     return "crosslink"  # fallback to PATH lookup
 
 
+def load_guard_state(crosslink_dir):
+    """Read drift tracking state from .crosslink/.cache/guard-state.json.
+
+    Returns a dict with keys:
+      prompts_since_crosslink (int)
+      total_prompts (int)
+      last_crosslink_at (str ISO timestamp or None)
+      last_reminder_at (str ISO timestamp or None)
+    """
+    if not crosslink_dir:
+        return {"prompts_since_crosslink": 0, "total_prompts": 0,
+                "last_crosslink_at": None, "last_reminder_at": None}
+    state_path = os.path.join(crosslink_dir, ".cache", "guard-state.json")
+    try:
+        with open(state_path, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        # Ensure required keys exist
+        state.setdefault("prompts_since_crosslink", 0)
+        state.setdefault("total_prompts", 0)
+        state.setdefault("last_crosslink_at", None)
+        state.setdefault("last_reminder_at", None)
+        return state
+    except (OSError, json.JSONDecodeError):
+        return {"prompts_since_crosslink": 0, "total_prompts": 0,
+                "last_crosslink_at": None, "last_reminder_at": None}
+
+
+def save_guard_state(crosslink_dir, state):
+    """Write drift tracking state to .crosslink/.cache/guard-state.json."""
+    if not crosslink_dir:
+        return
+    cache_dir = os.path.join(crosslink_dir, ".cache")
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        state_path = os.path.join(cache_dir, "guard-state.json")
+        with open(state_path, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+    except OSError:
+        pass
+
+
+def reset_drift_counter(crosslink_dir):
+    """Reset the drift counter (agent just used crosslink)."""
+    if not crosslink_dir:
+        return
+    from datetime import datetime
+    state = load_guard_state(crosslink_dir)
+    state["prompts_since_crosslink"] = 0
+    state["last_crosslink_at"] = datetime.now().isoformat()
+    save_guard_state(crosslink_dir, state)
+
+
+def is_agent_context(crosslink_dir):
+    """Check if we're running inside an agent worktree.
+
+    Returns True if:
+    1. .crosslink/agent.json exists (crosslink kickoff agent), OR
+    2. CWD is inside a .claude/worktrees/ path (Claude Code sub-agent)
+
+    Both types of agent get relaxed tracking mode so they can operate
+    autonomously without active crosslink issues or gated git commits.
+    """
+    if not crosslink_dir:
+        return False
+    if os.path.isfile(os.path.join(crosslink_dir, "agent.json")):
+        return True
+    # Detect Claude Code sub-agent worktrees (Agent tool with isolation: "worktree")
+    try:
+        cwd = os.getcwd()
+        if "/.claude/worktrees/" in cwd:
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def normalize_git_command(command):
+    """Strip git global flags to extract the actual subcommand for matching.
+
+    Git accepts flags like -C, --git-dir, --work-tree, -c before the
+    subcommand. This normalizes 'git -C /path push' to 'git push' so
+    that blocked/gated command matching can't be bypassed.
+    """
+    import shlex
+
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return command
+
+    if not parts or parts[0] != "git":
+        return command
+
+    i = 1
+    while i < len(parts):
+        # Flags that take a separate next argument
+        if parts[i] in ("-C", "--git-dir", "--work-tree", "-c") and i + 1 < len(parts):
+            i += 2
+        # Flags with =value syntax
+        elif (
+            parts[i].startswith("--git-dir=")
+            or parts[i].startswith("--work-tree=")
+        ):
+            i += 1
+        else:
+            break
+
+    if i < len(parts):
+        return "git " + " ".join(parts[i:])
+    return command
+
+
 _crosslink_bin = None
 
 
