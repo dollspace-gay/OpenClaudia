@@ -119,9 +119,10 @@ pub fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
             if cell_number >= cells.len() {
                 return (
                     format!(
-                        "Cell number {} is out of bounds. Notebook has {} cells (0-indexed).",
+                        "Cell number {} is out of bounds. Notebook has {} cells (0-indexed, valid range: 0-{}).",
                         cell_number,
-                        cells.len()
+                        cells.len(),
+                        cells.len().saturating_sub(1)
                     ),
                     true,
                 );
@@ -175,9 +176,10 @@ pub fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
             if cell_number >= cells.len() {
                 return (
                     format!(
-                        "Cell number {} is out of bounds. Notebook has {} cells (0-indexed).",
+                        "Cell number {} is out of bounds. Notebook has {} cells (0-indexed, valid range: 0-{}).",
                         cell_number,
-                        cells.len()
+                        cells.len(),
+                        cells.len().saturating_sub(1)
                     ),
                     true,
                 );

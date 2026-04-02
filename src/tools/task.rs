@@ -76,7 +76,7 @@ pub fn execute_task_update(
     match task_mgr.update_task(
         task_id,
         crate::session::TaskUpdateParams {
-            status: status.map(String::from),
+            status: status.and_then(crate::session::TaskUpdateStatus::parse),
             subject,
             description,
             active_form,

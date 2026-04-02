@@ -44,10 +44,33 @@ pub struct Task {
     pub created_at: DateTime<Utc>,
 }
 
+/// Status values accepted by task updates (includes Deleted which removes the task).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskUpdateStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Deleted,
+}
+
+impl TaskUpdateStatus {
+    /// Parse from string. Returns None for unrecognized values.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "pending" => Some(Self::Pending),
+            "in_progress" => Some(Self::InProgress),
+            "completed" => Some(Self::Completed),
+            "deleted" => Some(Self::Deleted),
+            _ => None,
+        }
+    }
+}
+
 /// Parameters for updating an existing task.
 #[derive(Default)]
 pub struct TaskUpdateParams {
-    pub status: Option<String>,
+    pub status: Option<TaskUpdateStatus>,
     pub subject: Option<String>,
     pub description: Option<String>,
     pub active_form: Option<String>,
@@ -179,25 +202,16 @@ impl TaskManager {
             add_blocked_by,
         } = params;
 
-        // Parse and validate the new status
-        let new_status = if let Some(s) = status.as_deref() {
-            match s {
-                "pending" => Some(TaskStatus::Pending),
-                "in_progress" => Some(TaskStatus::InProgress),
-                "completed" => Some(TaskStatus::Completed),
-                "deleted" => {
-                    // Remove the task entirely
-                    self.tasks.retain(|t| t.id != task_id);
-                    return Ok(None);
-                }
-                other => {
-                    return Err(format!(
-                    "Invalid status '{other}'. Must be: pending, in_progress, completed, deleted"
-                ))
-                }
+        // Handle status update
+        let new_status = match status {
+            Some(TaskUpdateStatus::Deleted) => {
+                self.tasks.retain(|t| t.id != task_id);
+                return Ok(None);
             }
-        } else {
-            None
+            Some(TaskUpdateStatus::Pending) => Some(TaskStatus::Pending),
+            Some(TaskUpdateStatus::InProgress) => Some(TaskStatus::InProgress),
+            Some(TaskUpdateStatus::Completed) => Some(TaskStatus::Completed),
+            None => None,
         };
 
         // If setting to InProgress, demote any currently in-progress task
@@ -434,7 +448,7 @@ mod tests {
         let result = tm.update_task(
             "task-1",
             TaskUpdateParams {
-                status: Some("in_progress".into()),
+                status: Some(TaskUpdateStatus::InProgress),
                 ..Default::default()
             },
         );
@@ -454,7 +468,7 @@ mod tests {
         tm.update_task(
             "task-1",
             TaskUpdateParams {
-                status: Some("in_progress".into()),
+                status: Some(TaskUpdateStatus::InProgress),
                 ..Default::default()
             },
         )
@@ -467,7 +481,7 @@ mod tests {
         tm.update_task(
             "task-2",
             TaskUpdateParams {
-                status: Some("in_progress".into()),
+                status: Some(TaskUpdateStatus::InProgress),
                 ..Default::default()
             },
         )
@@ -488,7 +502,7 @@ mod tests {
         let result = tm.update_task(
             "task-1",
             TaskUpdateParams {
-                status: Some("deleted".into()),
+                status: Some(TaskUpdateStatus::Deleted),
                 ..Default::default()
             },
         );
@@ -499,19 +513,13 @@ mod tests {
     }
 
     #[test]
-    fn test_task_manager_invalid_status() {
-        let mut tm = TaskManager::new();
-        tm.create_task("Task".to_string(), "Desc".to_string(), None);
-
-        let result = tm.update_task(
-            "task-1",
-            TaskUpdateParams {
-                status: Some("invalid".into()),
-                ..Default::default()
-            },
-        );
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Invalid status"));
+    fn test_task_update_status_parse() {
+        assert_eq!(TaskUpdateStatus::parse("pending"), Some(TaskUpdateStatus::Pending));
+        assert_eq!(TaskUpdateStatus::parse("in_progress"), Some(TaskUpdateStatus::InProgress));
+        assert_eq!(TaskUpdateStatus::parse("completed"), Some(TaskUpdateStatus::Completed));
+        assert_eq!(TaskUpdateStatus::parse("deleted"), Some(TaskUpdateStatus::Deleted));
+        assert_eq!(TaskUpdateStatus::parse("invalid"), None);
+        assert_eq!(TaskUpdateStatus::parse(""), None);
     }
 
     #[test]
@@ -520,7 +528,7 @@ mod tests {
         let result = tm.update_task(
             "task-999",
             TaskUpdateParams {
-                status: Some("completed".into()),
+                status: Some(TaskUpdateStatus::Completed),
                 ..Default::default()
             },
         );
@@ -577,7 +585,7 @@ mod tests {
         tm.update_task(
             "task-1",
             TaskUpdateParams {
-                status: Some("in_progress".into()),
+                status: Some(TaskUpdateStatus::InProgress),
                 ..Default::default()
             },
         )

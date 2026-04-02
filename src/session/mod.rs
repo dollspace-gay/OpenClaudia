@@ -18,7 +18,7 @@ pub use state::{
     get_session_context, is_tool_allowed_in_plan_mode, AllowedPrompt, PlanModeState, TokenUsage,
     TurnMetrics, PLAN_MODE_ALLOWED_TOOLS, PLAN_MODE_BLOCKED_TOOLS,
 };
-pub use task::{Task, TaskManager, TaskStatus, TaskUpdateParams};
+pub use task::{Task, TaskManager, TaskStatus, TaskUpdateParams, TaskUpdateStatus};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
