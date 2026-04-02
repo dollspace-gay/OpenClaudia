@@ -2,11 +2,12 @@
   "uuid": "44fe98de-ca02-4457-8afb-aa1da6a8a9f7",
   "display_id": 148,
   "title": "N-15: ZAI thinking config redundant",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:42.881511149Z",
-  "updated_at": "2026-04-01T03:39:42.984213294Z",
+  "updated_at": "2026-04-02T21:01:37.925381054Z",
+  "closed_at": "2026-04-02T21:01:37.925381054Z",
   "labels": [
     "qa"
   ]
