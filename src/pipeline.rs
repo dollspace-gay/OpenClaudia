@@ -97,19 +97,9 @@ pub fn build_anthropic_request(
     }))
     .unwrap_or_default();
 
-    // ── Betas ──
-    // Claude Code: getAllModelBetas() — top-level body parameter, NOT a header
-    let betas = if claude_code_token.is_some() {
-        Some(serde_json::json!([
-            "claude-code-20250219",
-            "oauth-2025-04-20",
-            "interleaved-thinking-2025-05-14",
-            "context-1m-2025-08-07",
-            "prompt-caching-scope-2026-01-05"
-        ]))
-    } else {
-        None
-    };
+    // Betas are sent via the anthropic-beta HTTP header (set in get_oauth_headers),
+    // NOT as a body parameter. The SDK accepts betas in the body and converts
+    // them to a header internally, but the raw HTTP API rejects them in the body.
 
     // ── Assemble request ──
     // Matching Claude Code's paramsFromContext() return (claude.ts:1699-1728)
@@ -129,10 +119,6 @@ pub fn build_anthropic_request(
     } else {
         // Temperature only when thinking disabled (claude.ts:1693)
         req["temperature"] = serde_json::json!(1);
-    }
-
-    if let Some(betas_arr) = betas {
-        req["betas"] = betas_arr;
     }
 
     req
