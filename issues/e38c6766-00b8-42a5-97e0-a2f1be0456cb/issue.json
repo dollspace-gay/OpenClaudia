@@ -3,11 +3,12 @@
   "display_id": 240,
   "title": "Return &str instead of String from determine_provider to avoid allocations",
   "description": "proxy.rs:1130-1157 — returns String from static literals. Use &'static str or Cow.",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-02T16:42:59.047866453Z",
-  "updated_at": "2026-04-02T16:46:15.013354226Z",
+  "updated_at": "2026-04-02T19:54:20.784840700Z",
+  "closed_at": "2026-04-02T19:54:20.784840700Z",
   "labels": [
     "enhancement"
   ],
