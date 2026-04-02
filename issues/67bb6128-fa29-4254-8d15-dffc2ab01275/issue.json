@@ -2,11 +2,12 @@
   "uuid": "67bb6128-fa29-4254-8d15-dffc2ab01275",
   "display_id": 95,
   "title": "W-10: Hook stdin write silently ignored",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:04.178906637Z",
-  "updated_at": "2026-04-01T03:39:04.276175254Z",
+  "updated_at": "2026-04-02T20:31:55.070586502Z",
+  "closed_at": "2026-04-02T20:31:55.070586502Z",
   "labels": [
     "qa"
   ]
