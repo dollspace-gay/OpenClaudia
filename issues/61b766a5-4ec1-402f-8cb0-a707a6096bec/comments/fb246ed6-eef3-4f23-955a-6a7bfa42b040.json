@@ -1,0 +1,10 @@
+{
+  "uuid": "fb246ed6-eef3-4f23-955a-6a7bfa42b040",
+  "issue_uuid": "61b766a5-4ec1-402f-8cb0-a707a6096bec",
+  "author": "lOrm",
+  "content": "render_markdown_themed uses crossterm ExecutableCommand which requires a real terminal (Write + IsTerminal). Accepting &mut dyn Write would require replacing all crossterm execute! calls with raw ANSI escape writes. Deferring — the streaming markdown renderer (StreamingMarkdownRenderer) is already the primary rendering path for the TUI.",
+  "created_at": "2026-04-02T20:04:38.439940292Z",
+  "kind": "decision",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAYwAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASAAAACBMbkelip4d63wh6Y8/vrJGJWa325dQey+papsyXv81DAAAACAlANtrCl9CwX+TafULlkqXVj2bvJbUQ/t4A8iqJHWcdw=="
+}
