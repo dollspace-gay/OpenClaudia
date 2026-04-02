@@ -273,10 +273,13 @@ pub fn get_oauth_endpoint(_model: &str) -> String {
     "https://api.anthropic.com/v1/messages".to_string()
 }
 
-/// The system prompt prefix that must be present for OAuth tokens to access
-/// premium models (Sonnet, Opus). The Anthropic API validates this string.
-pub const CLAUDE_CODE_SYSTEM_PROMPT: &str =
-    "You are Claude Code, Anthropic's official CLI for Claude.";
+/// The full system prompt sent when using Claude Code OAuth authentication.
+///
+/// Structure:
+/// 1. The required Claude Code prefix (API routing)
+/// 2. Full behavioral instructions (from Claude Code source)
+/// 3. Claudia persona overlay (at the end, where it has the most influence)
+pub const CLAUDE_CODE_SYSTEM_PROMPT: &str = include_str!("claude_code_prompt.txt");
 
 /// Inject the Claude Code system prompt into a request body.
 /// This must be the first element in the system array for OAuth model access.
