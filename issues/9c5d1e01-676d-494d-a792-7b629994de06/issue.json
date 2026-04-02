@@ -2,11 +2,12 @@
   "uuid": "9c5d1e01-676d-494d-a792-7b629994de06",
   "display_id": 158,
   "title": "N-25: Vim process_find/process_replace incomplete (returns None)",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:49.474755774Z",
-  "updated_at": "2026-04-01T03:39:49.601759159Z",
+  "updated_at": "2026-04-02T21:01:52.776143564Z",
+  "closed_at": "2026-04-02T21:01:52.776143564Z",
   "labels": [
     "qa"
   ]
