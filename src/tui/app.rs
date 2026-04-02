@@ -43,7 +43,8 @@ pub struct App {
     pub should_quit: bool,
     pub is_waiting: bool,
     spinner_frame: usize,
-    event_handler: Option<EventHandler>,
+    /// Sender for pushing API events into the event loop's channel.
+    api_event_tx: Option<std::sync::mpsc::Sender<AppEvent>>,
 
     // ── API pipeline fields ──
     pub client: reqwest::Client,
@@ -71,7 +72,7 @@ impl App {
             should_quit: false,
             is_waiting: false,
             spinner_frame: 0,
-            event_handler: None,
+            api_event_tx: None,
             client: reqwest::Client::new(),
             endpoint: String::new(),
             headers: Vec::new(),
@@ -100,9 +101,7 @@ impl App {
     /// Get an event sender for pushing async API events into the TUI loop.
     #[must_use]
     pub fn event_sender(&self) -> Option<std::sync::mpsc::Sender<AppEvent>> {
-        self.event_handler
-            .as_ref()
-            .map(super::events::EventHandler::sender)
+        self.api_event_tx.clone()
     }
 
     /// Run the interactive TUI event loop.
@@ -120,8 +119,10 @@ impl App {
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
+        // Single event handler — MUST NOT create two, or they steal each other's keypresses
         let events = EventHandler::new(Duration::from_millis(100));
-        self.event_handler = Some(EventHandler::new(Duration::from_millis(100)));
+        // Store a sender clone so spawn_api_turn can push events into the same channel
+        self.api_event_tx = Some(events.sender());
 
         // Inject system prompt as the first message
         if !self.system_prompt.is_empty() {
