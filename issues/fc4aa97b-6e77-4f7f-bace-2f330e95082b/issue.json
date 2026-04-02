@@ -2,11 +2,12 @@
   "uuid": "fc4aa97b-6e77-4f7f-bace-2f330e95082b",
   "display_id": 159,
   "title": "N-26: Markdown parser missing edge cases",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:50.105785419Z",
-  "updated_at": "2026-04-01T03:39:50.221883273Z",
+  "updated_at": "2026-04-02T21:01:54.217628837Z",
+  "closed_at": "2026-04-02T21:01:54.217628837Z",
   "labels": [
     "qa"
   ]
