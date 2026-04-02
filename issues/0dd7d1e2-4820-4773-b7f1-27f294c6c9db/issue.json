@@ -2,11 +2,12 @@
   "uuid": "0dd7d1e2-4820-4773-b7f1-27f294c6c9db",
   "display_id": 151,
   "title": "N-18: VDD confabulation CWE case-sensitive",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:44.898505195Z",
-  "updated_at": "2026-04-01T03:39:45.019962975Z",
+  "updated_at": "2026-04-02T21:01:42.297552080Z",
+  "closed_at": "2026-04-02T21:01:42.297552080Z",
   "labels": [
     "qa"
   ]
