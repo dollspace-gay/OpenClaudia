@@ -3,11 +3,12 @@
   "display_id": 244,
   "title": "Accept &mut dyn Write in render_markdown for testability",
   "description": "tui/mod.rs:217-328 — writes directly to stdout. Accept writer parameter for unit testing.",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-02T16:44:21.218772841Z",
-  "updated_at": "2026-04-02T16:46:20.921190529Z",
+  "updated_at": "2026-04-02T20:05:30.691955402Z",
+  "closed_at": "2026-04-02T20:05:30.691955402Z",
   "labels": [
     "enhancement"
   ],
