@@ -258,6 +258,8 @@ async fn refresh_and_load(
 /// These headers replace the `x-api-key` header used with API keys.
 #[must_use]
 pub fn get_oauth_headers(access_token: &str) -> Vec<(String, String)> {
+    // Matching Claude Code's client.ts:104-129 default headers
+    // Betas are now sent as a body parameter, NOT in the anthropic-beta header
     vec![
         (
             "Authorization".to_string(),
@@ -265,10 +267,15 @@ pub fn get_oauth_headers(access_token: &str) -> Vec<(String, String)> {
         ),
         ("anthropic-version".to_string(), "2023-06-01".to_string()),
         ("content-type".to_string(), "application/json".to_string()),
-        // Beta headers matching what Claude Code sends (required for OAuth model access)
+        // Claude Code sends these default headers (client.ts:104-129)
+        ("x-app".to_string(), "cli".to_string()),
         (
-            "anthropic-beta".to_string(),
-            format!("{CLAUDE_CODE_BETA_HEADER},{OAUTH_BETA_HEADER},{INTERLEAVED_THINKING_BETA},{CONTEXT_1M_BETA},{PROMPT_CACHING_SCOPE_BETA}"),
+            "User-Agent".to_string(),
+            format!("openclaudia/{}", env!("CARGO_PKG_VERSION")),
+        ),
+        (
+            "X-Claude-Code-Session-Id".to_string(),
+            uuid::Uuid::new_v4().to_string(),
         ),
     ]
 }
@@ -379,10 +386,13 @@ mod tests {
             .any(|(k, v)| k == "Authorization" && v == "Bearer test-token-123"));
         assert!(headers
             .iter()
-            .any(|(k, v)| k == "anthropic-beta" && v.contains("oauth-2025-04-20")));
+            .any(|(k, v)| k == "anthropic-version" && v == "2023-06-01"));
+        // Betas are now sent as body parameter, not header
+        assert!(headers.iter().any(|(k, _)| k == "x-app"));
+        assert!(headers.iter().any(|(k, _)| k == "User-Agent"));
         assert!(headers
             .iter()
-            .any(|(k, v)| k == "anthropic-version" && v == "2023-06-01"));
+            .any(|(k, _)| k == "X-Claude-Code-Session-Id"));
     }
 
     #[test]

@@ -50,28 +50,9 @@ pub fn build_anthropic_request(
     let openai_tools = tools::get_all_tool_definitions(true);
     let anthropic_tools = convert_tools_to_anthropic(openai_tools.as_array().unwrap_or(&vec![]));
 
-    // Generate a stable device ID for metadata (matches Claude Code's pattern)
-    let device_id = crate::claude_credentials::get_device_id();
-
-    let mut req = serde_json::json!({
-        "model": model,
-        "messages": anthropic_messages,
-        "max_tokens": crate::DEFAULT_MAX_TOKENS,
-        "stream": true,
-        "tools": anthropic_tools,
-        "metadata": {
-            "user_id": serde_json::to_string(&serde_json::json!({
-                "device_id": device_id
-            })).unwrap_or_default()
-        }
-    });
-
-    // Build system prompt as multiple blocks (matching Claude Code's pattern).
-    // Block 1: Claude Code prefix + behavioral prompt (static, cached)
-    // Block 2: Claudia persona + project-specific context (dynamic, not cached)
-    if claude_code_token.is_some() {
-        // OAuth mode: send full Claude Code prompt as cached block,
-        // then our Claudia/project prompt as uncached dynamic block
+    // ── System prompt blocks ──
+    // Matching Claude Code's splitSysPromptPrefix + buildSystemPromptBlocks
+    let system_blocks = if claude_code_token.is_some() {
         let mut blocks = vec![serde_json::json!({
             "type": "text",
             "text": crate::claude_credentials::CLAUDE_CODE_SYSTEM_PROMPT,
@@ -83,26 +64,75 @@ pub fn build_anthropic_request(
                 "text": sys
             }));
         }
-        req["system"] = Value::Array(blocks);
-    } else if let Some(sys) = system_msg {
-        // API key mode: just our prompt, cached
-        req["system"] = serde_json::json!([{
+        Value::Array(blocks)
+    } else if let Some(ref sys) = system_msg {
+        serde_json::json!([{
             "type": "text",
             "text": sys,
             "cache_control": {"type": "ephemeral"}
-        }]);
+        }])
+    } else {
+        Value::Array(vec![])
+    };
+
+    // ── Thinking config ──
+    // Claude Code: line 1596-1630 in claude.ts
+    let (thinking, max_tokens) = match effort_level {
+        "high" => (
+            Some(serde_json::json!({"type": "enabled", "budget_tokens": 10000})),
+            16000u64,
+        ),
+        "low" => (None, 2048),
+        _ => (None, crate::DEFAULT_MAX_TOKENS as u64),
+    };
+
+    // ── Metadata ──
+    // Claude Code: getAPIMetadata() — user_id is a JSON-stringified object
+    let device_id = crate::claude_credentials::get_device_id();
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let metadata_user_id = serde_json::to_string(&serde_json::json!({
+        "device_id": device_id,
+        "account_uuid": "",
+        "session_id": session_id
+    }))
+    .unwrap_or_default();
+
+    // ── Betas ──
+    // Claude Code: getAllModelBetas() — top-level body parameter, NOT a header
+    let betas = if claude_code_token.is_some() {
+        Some(serde_json::json!([
+            "claude-code-20250219",
+            "oauth-2025-04-20",
+            "interleaved-thinking-2025-05-14",
+            "context-1m-2025-08-07",
+            "prompt-caching-scope-2026-01-05"
+        ]))
+    } else {
+        None
+    };
+
+    // ── Assemble request ──
+    // Matching Claude Code's paramsFromContext() return (claude.ts:1699-1728)
+    let mut req = serde_json::json!({
+        "model": model,
+        "messages": anthropic_messages,
+        "system": system_blocks,
+        "tools": anthropic_tools,
+        "tool_choice": {"type": "auto"},
+        "metadata": {"user_id": metadata_user_id},
+        "max_tokens": max_tokens,
+        "stream": true
+    });
+
+    if let Some(thinking_config) = thinking {
+        req["thinking"] = thinking_config;
+    } else {
+        // Temperature only when thinking disabled (claude.ts:1693)
+        req["temperature"] = serde_json::json!(1);
     }
 
-    // Apply effort level
-    match effort_level {
-        "high" => {
-            req["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": 10000});
-            req["max_tokens"] = serde_json::json!(16000);
-        }
-        "low" => {
-            req["max_tokens"] = serde_json::json!(2048);
-        }
-        _ => {} // medium = default
+    if let Some(betas_arr) = betas {
+        req["betas"] = betas_arr;
     }
 
     req
