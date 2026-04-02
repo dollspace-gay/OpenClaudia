@@ -225,11 +225,23 @@ impl MessageList {
     }
 
     /// Render the message list into a frame area.
+    /// Content is anchored to the bottom — empty space is at the top, not below.
     pub fn render(&self, frame: &mut Frame, area: Rect) {
-        let lines = self.build_lines();
+        let mut lines = self.build_lines();
         #[allow(clippy::cast_possible_truncation)] // line count bounded by terminal height
         let total = lines.len() as u16;
         let visible = area.height;
+
+        // Pad the top with empty lines so content anchors to the bottom
+        if total < visible {
+            let pad = (visible - total) as usize;
+            let mut padded = vec![Line::from(""); pad];
+            padded.append(&mut lines);
+            lines = padded;
+        }
+
+        #[allow(clippy::cast_possible_truncation)]
+        let total = lines.len() as u16;
         let scroll = if total > visible {
             (total - visible).saturating_sub(self.scroll_offset)
         } else {

@@ -132,43 +132,8 @@ impl App {
             }));
         }
 
-        // Welcome — match the old inline UI's look
-        let username = std::env::var("USER")
-            .or_else(|_| std::env::var("USERNAME"))
-            .unwrap_or_default();
-        let greeting = if username.is_empty() {
-            "Welcome to OpenClaudia!".to_string()
-        } else {
-            format!("Welcome back, {username}!")
-        };
-        let cwd = std::env::current_dir()
-            .map(|p| {
-                if let Some(home) = dirs::home_dir() {
-                    if let Ok(rel) = p.strip_prefix(&home) {
-                        return format!("~/{}", rel.display());
-                    }
-                }
-                p.display().to_string()
-            })
-            .unwrap_or_else(|_| ".".to_string());
-
-        self.messages.add(DisplayMessage {
-            role: "system".to_string(),
-            content: format!(
-                "OpenClaudia v{}\n\
-                 {greeting}\n\n\
-                 Provider: {}\n\
-                 Model: {}\n\
-                 {cwd}\n\n\
-                 /help for commands · Ctrl+C to quit",
-                env!("CARGO_PKG_VERSION"),
-                super::capitalize_first(&self.provider),
-                self.model,
-            ),
-            tool_name: None,
-            is_error: false,
-            is_thinking: false,
-        });
+        // No welcome message added to the message list — the welcome
+        // box is rendered directly in draw() as a ratatui widget.
 
         loop {
             terminal.draw(|frame| self.draw(frame))?;
@@ -526,58 +491,60 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
+                Constraint::Length(8), // Welcome box
                 Constraint::Min(3),    // Messages
                 Constraint::Length(3), // Input
                 Constraint::Length(1), // Status
             ])
             .split(frame.area());
 
+        // ── Welcome box (two-column, bordered) ──
+        self.draw_welcome_box(frame, chunks[0]);
+
         // ── Messages ──
-        self.messages.render(frame, chunks[0]);
+        self.messages.render(frame, chunks[1]);
 
         // ── Input area ──
-        // Top border line (separator) matching the old UI
         let input_block = Block::default()
             .borders(Borders::TOP)
             .border_style(Style::default().fg(Color::Rgb(128, 128, 128)));
 
-        // Show spinner or prompt symbol
         let prompt_text = if self.is_waiting {
             format!("{} ", SPINNER_FRAMES[self.spinner_frame])
         } else {
-            "\u{203A} ".to_string() // › prompt
+            "\u{203A} ".to_string()
         };
         let display_text = format!("{prompt_text}{}", self.input.content);
 
         let input_para = Paragraph::new(display_text)
             .block(input_block)
             .style(Style::default().fg(Color::White));
-        frame.render_widget(input_para, chunks[1]);
+        frame.render_widget(input_para, chunks[2]);
 
-        // Cursor — offset by prompt symbol width
+        // Cursor
         if !self.is_waiting {
             #[allow(clippy::cast_possible_truncation)]
-            let prompt_width = 2u16; // "› " is 2 chars wide
-            let cx = chunks[1].x + prompt_width + self.input.cursor_pos as u16;
-            let cy = chunks[1].y + 1;
+            let prompt_width = 2u16;
+            let cx = chunks[2].x + prompt_width + self.input.cursor_pos as u16;
+            let cy = chunks[2].y + 1;
             frame.set_cursor_position(Position::new(
-                cx.min(chunks[1].right().saturating_sub(1)),
+                cx.min(chunks[2].right().saturating_sub(1)),
                 cy,
             ));
         }
 
-        // ── Status bar — pinned at bottom ──
+        // ── Status bar ──
         let left_text = "? for shortcuts";
         let effort_symbol = match self.effort_level.as_str() {
-            "low" => "\u{25CB}",   // ○
-            "high" => "\u{25CF}",  // ●
-            _ => "\u{25D0}",       // ◐
+            "low" => "\u{25CB}",
+            "high" => "\u{25CF}",
+            _ => "\u{25D0}",
         };
         let right_text = format!("{effort_symbol} {} \u{00B7} /effort", self.effort_level);
 
-        let bar_width = chunks[2].width as usize;
-        let total = left_text.len() + right_text.len() + 2;
-        let padding = bar_width.saturating_sub(total);
+        let bar_width = chunks[3].width as usize;
+        let content_len = left_text.len() + right_text.len() + 2;
+        let padding = bar_width.saturating_sub(content_len);
         let status_text = format!(
             " {left_text}{}{right_text} ",
             " ".repeat(padding)
@@ -585,6 +552,102 @@ impl App {
 
         let status = Paragraph::new(status_text)
             .style(Style::default().fg(Color::Rgb(128, 128, 128)));
-        frame.render_widget(status, chunks[2]);
+        frame.render_widget(status, chunks[3]);
+    }
+
+    /// Render the welcome box — two-column bordered widget matching the old inline UI.
+    fn draw_welcome_box(&self, frame: &mut Frame, area: Rect) {
+        use ratatui::widgets::Wrap;
+
+        // Title in the border
+        let title = Line::from(vec![
+            Span::styled(
+                "OpenClaudia",
+                Style::default()
+                    .fg(Color::Rgb(147, 112, 219))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(" v{}", env!("CARGO_PKG_VERSION")),
+                Style::default().fg(Color::Rgb(218, 165, 32)),
+            ),
+        ]);
+
+        let block = Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Rgb(147, 112, 219)));
+
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        // Two-column layout
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(inner);
+
+        // Left column: greeting, provider, model, cwd
+        let username = std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_default();
+        let greeting = if username.is_empty() {
+            "Welcome to OpenClaudia!".to_string()
+        } else {
+            format!("Welcome back, {username}!")
+        };
+        let cwd = std::env::current_dir()
+            .map(|p| {
+                if let Some(home) = dirs::home_dir() {
+                    if let Ok(rel) = p.strip_prefix(&home) {
+                        return format!("~/{}", rel.display());
+                    }
+                }
+                p.display().to_string()
+            })
+            .unwrap_or_else(|_| ".".to_string());
+
+        let left = Paragraph::new(vec![
+            Line::from(Span::styled(
+                greeting,
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                format!("Provider: {}", super::capitalize_first(&self.provider)),
+                Style::default().fg(Color::Rgb(147, 112, 219)),
+            )),
+            Line::from(Span::styled(
+                format!("Model: {}", self.model),
+                Style::default().fg(Color::Rgb(218, 165, 32)),
+            )),
+            Line::from(Span::styled(cwd, Style::default().fg(Color::DarkGray))),
+        ])
+        .wrap(Wrap { trim: true });
+        frame.render_widget(left, cols[0]);
+
+        // Right column: tips and recent activity
+        let tips = super::get_tips();
+        let right = Paragraph::new(vec![
+            Line::from(Span::styled(
+                "Tips",
+                Style::default().fg(Color::Rgb(218, 165, 32)),
+            )),
+            Line::from(Span::styled(
+                tips[0].to_string(),
+                Style::default().fg(Color::White),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Recent activity",
+                Style::default().fg(Color::Rgb(218, 165, 32)),
+            )),
+            Line::from(Span::styled(
+                "No recent activity",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ])
+        .wrap(Wrap { trim: true });
+        frame.render_widget(right, cols[1]);
     }
 }
