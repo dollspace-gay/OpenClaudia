@@ -1,0 +1,11 @@
+{
+  "uuid": "945f612e-8551-4eac-901b-6e0ed7502443",
+  "display_id": 211,
+  "title": "Fix path traversal vulnerability in @file expansion",
+  "description": "tui/app.rs:118-146 — expand_file_refs allows reading arbitrary files via @../../etc/passwd. Needs path canonicalization and project root validation.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:40:27.981419224Z",
+  "updated_at": "2026-04-02T16:40:27.981419224Z"
+}
