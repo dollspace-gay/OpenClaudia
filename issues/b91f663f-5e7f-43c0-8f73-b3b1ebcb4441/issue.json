@@ -1,0 +1,11 @@
+{
+  "uuid": "b91f663f-5e7f-43c0-8f73-b3b1ebcb4441",
+  "display_id": 223,
+  "title": "Propagate auto-learning errors instead of silent warn-and-continue",
+  "description": "auto_learn.rs:88-97,174-181,219-226 — all db errors logged with warn!() but not propagated. Users don't know learning system isn't working.",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:41:36.266300242Z",
+  "updated_at": "2026-04-02T16:41:36.266300242Z"
+}
