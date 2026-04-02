@@ -214,19 +214,45 @@ pub async fn run_turn(
     memory_db: Option<&MemoryDb>,
     tx: mpsc::Sender<AppEvent>,
 ) -> Result<TurnResult, String> {
-    // Send request
-    let mut req = client.post(endpoint).json(request_body);
-    for (key, value) in headers {
-        req = req.header(key, value);
-    }
+    // Send request with retry on 429/529 (rate limit / overloaded)
+    let max_retries = 3u32;
+    let mut response = None;
+    for attempt in 0..=max_retries {
+        let mut req = client.post(endpoint).json(request_body);
+        for (key, value) in headers {
+            req = req.header(key, value);
+        }
 
-    let response = req.send().await.map_err(|e| format!("Request failed: {e}"))?;
+        let resp = req.send().await.map_err(|e| format!("Request failed: {e}"))?;
+        let status = resp.status().as_u16();
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("API error {status}: {body}"));
+        if status == 429 || status == 529 {
+            if attempt < max_retries {
+                // Check Retry-After header, default to exponential backoff
+                let wait_secs = resp
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(2u64.pow(attempt + 1));
+                let _ = tx.send(AppEvent::StreamText(format!(
+                    "\n(Rate limited, retrying in {wait_secs}s...)\n"
+                )));
+                tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
+                continue;
+            }
+        }
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("API error {status}: {body}"));
+        }
+
+        response = Some(resp);
+        break;
     }
+    let response = response.ok_or_else(|| "Max retries exceeded".to_string())?;
 
     // For Google, handle non-streaming JSON response
     if provider == "google" {
