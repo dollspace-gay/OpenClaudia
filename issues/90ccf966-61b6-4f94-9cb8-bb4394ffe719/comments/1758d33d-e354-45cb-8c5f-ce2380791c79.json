@@ -1,0 +1,10 @@
+{
+  "uuid": "1758d33d-e354-45cb-8c5f-ce2380791c79",
+  "issue_uuid": "90ccf966-61b6-4f94-9cb8-bb4394ffe719",
+  "author": "lOrm",
+  "content": "These already use .expect() with descriptive messages, not bare .unwrap(). Terminal editor creation is fatal and unrecoverable — expect() is the correct pattern here. The original C-5 finding was addressed in commit 0af7809.",
+  "created_at": "2026-04-02T18:42:53.068508029Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZQAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASgAAACEA9RRlfxeDWDn6P7i9aUeoH+naynNFagOsg1VPxUkwnrQAAAAhAMqee4aDyiYri+J2TPkvUaekeFsEYa7NUbmg6XSugMMe"
+}
