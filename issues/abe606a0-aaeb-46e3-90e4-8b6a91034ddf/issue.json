@@ -1,0 +1,11 @@
+{
+  "uuid": "abe606a0-aaeb-46e3-90e4-8b6a91034ddf",
+  "display_id": 210,
+  "title": "Fix unsafe UTF-8 string slicing that panics on multi-byte chars",
+  "description": "messages.rs:182, app.rs:1173, pipeline.rs:577, app.rs:574 — byte-level string slicing without UTF-8 boundary checks. Panics on emoji/accented chars. Use char-based truncation.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:40:25.041939347Z",
+  "updated_at": "2026-04-02T16:40:25.041939347Z"
+}
