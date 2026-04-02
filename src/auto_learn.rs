@@ -5,7 +5,7 @@
 
 use crate::memory::MemoryDb;
 use std::collections::HashSet;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Tracks pending error context for resolution matching
 struct PendingError {
@@ -20,6 +20,8 @@ pub struct AutoLearner<'a> {
     session_files_modified: HashSet<String>,
     /// Last error seen (for resolution matching on subsequent success)
     pending_error: Option<PendingError>,
+    /// Count of database errors — indicates degraded auto-learning
+    db_error_count: std::sync::atomic::AtomicU32,
 }
 
 impl<'a> AutoLearner<'a> {
@@ -28,7 +30,26 @@ impl<'a> AutoLearner<'a> {
             db,
             session_files_modified: HashSet::new(),
             pending_error: None,
+            db_error_count: std::sync::atomic::AtomicU32::new(0),
         }
+    }
+
+    /// Number of database errors encountered during this session.
+    /// If non-zero, the auto-learning system is degraded.
+    #[must_use]
+    pub fn error_count(&self) -> u32 {
+        self.db_error_count.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Log a database error and increment the failure counter.
+    fn log_db_error(&self, operation: &str, err: &impl std::fmt::Display) {
+        let count = self.db_error_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        tracing::warn!(
+            operation,
+            error = %err,
+            total_errors = count,
+            "Auto-learning database error (system degraded)"
+        );
     }
 
     /// Called after a tool executes successfully
@@ -91,7 +112,7 @@ impl<'a> AutoLearner<'a> {
                     pending.file_context.as_deref(),
                     resolution,
                 ) {
-                    warn!("Failed to resolve error pattern: {}", e);
+                    self.log_db_error("resolve_error_pattern", &e);
                 }
                 self.pending_error = None;
             }
@@ -111,7 +132,7 @@ impl<'a> AutoLearner<'a> {
                 pending.file_context.as_deref(),
                 &resolution,
             ) {
-                warn!("Failed to resolve error pattern: {}", e);
+                self.log_db_error("resolve_error_pattern", &e);
             }
         }
 
@@ -146,7 +167,7 @@ impl<'a> AutoLearner<'a> {
             file_context.as_deref(),
             None, // No resolution yet
         ) {
-            warn!("Failed to save error pattern: {}", e);
+            self.log_db_error("save_error_pattern", &e);
         }
 
         // Store as pending so we can match resolution later
@@ -176,7 +197,7 @@ impl<'a> AutoLearner<'a> {
                 "pitfall",
                 "File content changes frequently; always re-read before editing",
             ) {
-                warn!("Failed to save coding pattern: {}", e);
+                self.log_db_error("save_coding_pattern", &e);
             }
         }
     }
@@ -191,7 +212,7 @@ impl<'a> AutoLearner<'a> {
                     self.db
                         .save_coding_pattern(&pattern.file, "convention", &pattern.description)
                 {
-                    warn!("Failed to save lint pattern: {}", e);
+                    self.log_db_error("save_lint_pattern", &e);
                 }
             }
         }
@@ -219,7 +240,7 @@ impl<'a> AutoLearner<'a> {
                     self.db
                         .save_learned_preference(category, message.trim(), Some("user_message"))
                 {
-                    warn!("Failed to save preference: {}", e);
+                    self.log_db_error("save_preference", &e);
                 }
                 return;
             }
@@ -234,7 +255,7 @@ impl<'a> AutoLearner<'a> {
                     message.trim(),
                     Some("user_correction"),
                 ) {
-                    warn!("Failed to save correction: {}", e);
+                    self.log_db_error("save_correction", &e);
                 }
                 return;
             }
@@ -253,7 +274,7 @@ impl<'a> AutoLearner<'a> {
         for i in 0..files.len() {
             for j in (i + 1)..files.len() {
                 if let Err(e) = self.db.save_file_relationship(files[i], files[j]) {
-                    warn!("Failed to save file relationship: {}", e);
+                    self.log_db_error("save_file_relationship", &e);
                 }
             }
         }

@@ -718,7 +718,7 @@ async fn proxy_chat_completions(
                 let context_window = crate::compaction::get_context_window(&request.model);
                 // Compute utilization percentage via integer-safe path
                 let utilization_pct_x10 = if context_window > 0 {
-                    estimated_input * 1000 / context_window
+                    estimated_input.saturating_mul(1000) / context_window
                 } else {
                     0
                 };
