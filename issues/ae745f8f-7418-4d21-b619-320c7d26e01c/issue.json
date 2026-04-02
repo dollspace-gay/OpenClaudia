@@ -2,11 +2,12 @@
   "uuid": "ae745f8f-7418-4d21-b619-320c7d26e01c",
   "display_id": 150,
   "title": "N-17: VDD finding iteration not used in dedup",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:44.215305099Z",
-  "updated_at": "2026-04-01T03:39:44.337021668Z",
+  "updated_at": "2026-04-02T21:01:40.856601728Z",
+  "closed_at": "2026-04-02T21:01:40.856601728Z",
   "labels": [
     "qa"
   ]
