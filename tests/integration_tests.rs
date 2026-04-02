@@ -1416,15 +1416,21 @@ mod auto_learn_integration {
         let (_dir, db) = setup_memory_db();
         let mut learner = AutoLearner::new(&db);
 
-        // Simulate editing files
-        let args_a = json!({"path": "src/main.rs"});
-        let args_b = json!({"path": "src/tools.rs"});
+        // Use absolute paths to avoid canonicalization mismatches
+        // (normalize_path canonicalizes real files but keeps fictitious ones as-is)
+        let abs_a = std::fs::canonicalize("src/main.rs")
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "/tmp/test_a.rs".to_string());
+        let abs_b = "/tmp/nonexistent_test_b.rs".to_string();
+
+        let args_a = json!({"path": &abs_a});
+        let args_b = json!({"path": &abs_b});
         learner.on_tool_success("edit_file", &args_a, "ok");
         learner.on_tool_success("edit_file", &args_b, "ok");
 
         learner.on_session_end();
 
-        let related = db.get_related_files("src/main.rs").unwrap();
+        let related = db.get_related_files(&abs_a).unwrap();
         assert_eq!(related.len(), 1);
     }
 

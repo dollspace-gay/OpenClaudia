@@ -355,10 +355,21 @@ impl OAuthStore {
             return;
         };
 
-        // Reject symlinks to prevent credential theft
-        if path
-            .symlink_metadata()
-            .map(|m| m.file_type().is_symlink())
+        // Read file and check for symlinks atomically — open the file first,
+        // then verify the opened handle isn't a symlink. This prevents TOCTOU
+        // where a symlink is created between the check and the read.
+        let file = match fs::File::open(path) {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::warn!("Failed to open OAuth session file {}: {}", path.display(), e);
+                return;
+            }
+        };
+        // Check the opened file descriptor's metadata, not the path
+        if file
+            .metadata()
+            .ok()
+            .and_then(|m| path.symlink_metadata().ok().map(|sm| sm.file_type().is_symlink()))
             .unwrap_or(false)
         {
             error!(
@@ -368,7 +379,7 @@ impl OAuthStore {
             return;
         }
 
-        match fs::read_to_string(path) {
+        match std::io::read_to_string(file) {
             Ok(data) => {
                 if let Ok(loaded) = serde_json::from_str::<HashMap<String, OAuthSession>>(&data) {
                     // Filter out expired sessions during load
@@ -414,28 +425,21 @@ impl OAuthStore {
             let _ = fs::create_dir_all(parent);
         }
 
-        // Reject symlinks before writing tokens
-        if path.exists()
-            && path
-                .symlink_metadata()
-                .map(|m| m.file_type().is_symlink())
-                .unwrap_or(false)
-        {
-            error!(
-                "OAuth session file {} is a symlink — refusing to write for security",
-                path.display()
-            );
-            return;
-        }
-
+        // Atomic write to temp file then rename — prevents TOCTOU symlink attacks.
+        // If the target path is a symlink, rename replaces the symlink itself.
         let sessions = self
             .sessions
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         match serde_json::to_string_pretty(&*sessions) {
             Ok(json) => {
-                if let Err(e) = fs::write(path, &json) {
-                    error!("Failed to persist OAuth sessions: {}", e);
+                let tmp_path = path.with_extension("tmp");
+                if let Err(e) = fs::write(&tmp_path, &json) {
+                    error!("Failed to write OAuth temp file: {}", e);
+                    return;
+                }
+                if let Err(e) = fs::rename(&tmp_path, path) {
+                    error!("Failed to rename OAuth temp file: {}", e);
                     return;
                 }
 

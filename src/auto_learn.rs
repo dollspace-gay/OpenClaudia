@@ -88,24 +88,42 @@ impl<'a> AutoLearner<'a> {
         self.compute_file_relationships();
     }
 
+    /// Normalize a file path from tool arguments — canonicalize if possible,
+    /// reject paths with `..` components to prevent path traversal in DB.
+    fn normalize_path(raw: &str) -> Option<String> {
+        if raw.is_empty() {
+            return None;
+        }
+        let path = std::path::Path::new(raw);
+        // Reject path traversal
+        if path.components().any(|c| c == std::path::Component::ParentDir) {
+            return None;
+        }
+        // Canonicalize if file exists, otherwise use as-is
+        std::fs::canonicalize(path)
+            .map(|p| p.to_string_lossy().to_string())
+            .ok()
+            .or_else(|| Some(raw.to_string()))
+    }
+
     // === Internal: File Write Success ===
 
     fn handle_file_write_success(&mut self, args: &serde_json::Value, _result: &str) {
-        let file_path = args
+        let raw_path = args
             .get("path")
             .or_else(|| args.get("file_path"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        if file_path.is_empty() {
+        let Some(file_path) = Self::normalize_path(raw_path) else {
             return;
-        }
+        };
 
-        self.session_files_modified.insert(file_path.to_string());
+        self.session_files_modified.insert(file_path.clone());
 
         // If there was a pending error for this file, the edit might be the resolution
         if let Some(ref pending) = self.pending_error {
-            if pending.file_context.as_deref() == Some(file_path) {
+            if pending.file_context.as_deref() == Some(file_path.as_str()) {
                 let resolution = "File was edited after error";
                 if let Err(e) = self.db.resolve_error_pattern(
                     &pending.error_signature,
@@ -180,20 +198,20 @@ impl<'a> AutoLearner<'a> {
     // === Internal: Edit Failure ===
 
     fn handle_edit_failure(&self, args: &serde_json::Value, error: &str) {
-        let file_path = args
+        let raw_path = args
             .get("path")
             .or_else(|| args.get("file_path"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        if file_path.is_empty() {
+        let Some(file_path) = Self::normalize_path(raw_path) else {
             return;
-        }
+        };
 
         // Record as a pitfall for this file
         if error.contains("not found") || error.contains("no match") {
             if let Err(e) = self.db.save_coding_pattern(
-                file_path,
+                &file_path,
                 "pitfall",
                 "File content changes frequently; always re-read before editing",
             ) {
@@ -455,7 +473,11 @@ mod tests {
         let args = serde_json::json!({"path": "src/main.rs"});
         learner.on_tool_success("edit_file", &args, "success");
 
-        assert!(learner.session_files_modified.contains("src/main.rs"));
+        // normalize_path canonicalizes if file exists, keeps as-is otherwise
+        let expected = std::fs::canonicalize("src/main.rs")
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "src/main.rs".to_string());
+        assert!(learner.session_files_modified.contains(&expected));
     }
 
     #[test]
