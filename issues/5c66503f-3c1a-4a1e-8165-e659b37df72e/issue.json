@@ -1,0 +1,11 @@
+{
+  "uuid": "5c66503f-3c1a-4a1e-8165-e659b37df72e",
+  "display_id": 245,
+  "title": "Finish incomplete features: git_with_timeout, hook regex, oauth metadata check",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n4 warnings from unfinished work: git_with_timeout not wired to worktree commands, Regex import unused after refactor, oauth symlink check metadata variable unused.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T21:14:25.189403331Z",
+  "updated_at": "2026-04-02T21:14:25.189403331Z"
+}
