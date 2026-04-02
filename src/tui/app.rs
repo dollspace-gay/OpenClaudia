@@ -574,6 +574,7 @@ impl App {
                                       /load <id>     Load a saved session\n\
                                       /undo          Undo last message pair\n\
                                       /redo          Redo undone messages\n\
+                                      /rewind [N]    Rewind N turns, or show turn list\n\
                                       /clear         Clear conversation\n\
                                       /skill [name]  List or run skills\n\
                                       /export        Export conversation to markdown\n\
@@ -704,6 +705,92 @@ impl App {
                                 content: format!("Session not found: {id}"),
                                 tool_name: None,
                                 is_error: true,
+                                is_thinking: false,
+                            });
+                        }
+                        return true;
+                    }
+
+                    if text == "/rewind" || text.starts_with("/rewind ") {
+                        let arg = text.strip_prefix("/rewind").unwrap_or("").trim();
+                        if arg.is_empty() {
+                            // Show conversation turns for the user to see what they can rewind to
+                            let mut turn_list = String::new();
+                            let mut turn_num = 0;
+                            for msg in &self.chat_session.messages {
+                                let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("?");
+                                if role == "user" {
+                                    turn_num += 1;
+                                    let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                                    let preview = if content.len() > 60 {
+                                        format!("{}...", crate::tools::safe_truncate(content, 57))
+                                    } else {
+                                        content.to_string()
+                                    };
+                                    turn_list.push_str(&format!("  {turn_num}. {preview}\n"));
+                                }
+                            }
+                            if turn_list.is_empty() {
+                                turn_list = "  (no conversation turns yet)\n".to_string();
+                            }
+                            self.messages.add(DisplayMessage {
+                                role: "system".to_string(),
+                                content: format!(
+                                    "Conversation has {turn_num} turn(s):\n{turn_list}\nUse /rewind N to undo the last N turns."
+                                ),
+                                tool_name: None,
+                                is_error: false,
+                                is_thinking: false,
+                            });
+                        } else if let Ok(n) = arg.parse::<usize>() {
+                            if n == 0 {
+                                self.messages.add(DisplayMessage {
+                                    role: "system".to_string(),
+                                    content: "Nothing to rewind (0 turns).".to_string(),
+                                    tool_name: None,
+                                    is_error: false,
+                                    is_thinking: false,
+                                });
+                            } else {
+                                let mut rewound = 0;
+                                for _ in 0..n {
+                                    if self.chat_session.undo() {
+                                        rewound += 1;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                if rewound > 0 {
+                                    self.session_messages = self.chat_session.messages.clone();
+                                    // Remove display messages for rewound turns
+                                    let to_remove = rewound * 2; // user + assistant per turn
+                                    if self.messages.len() >= to_remove {
+                                        self.messages.pop_last(to_remove);
+                                    }
+                                    self.messages.add(DisplayMessage {
+                                        role: "system".to_string(),
+                                        content: format!("Rewound {rewound} turn(s)."),
+                                        tool_name: None,
+                                        is_error: false,
+                                        is_thinking: false,
+                                    });
+                                    let _ = save_session(&self.chat_session);
+                                } else {
+                                    self.messages.add(DisplayMessage {
+                                        role: "system".to_string(),
+                                        content: "Nothing to rewind.".to_string(),
+                                        tool_name: None,
+                                        is_error: false,
+                                        is_thinking: false,
+                                    });
+                                }
+                            }
+                        } else {
+                            self.messages.add(DisplayMessage {
+                                role: "system".to_string(),
+                                content: "Usage: /rewind [N] — rewind N turns, or show turn list".to_string(),
+                                tool_name: None,
+                                is_error: false,
                                 is_thinking: false,
                             });
                         }
