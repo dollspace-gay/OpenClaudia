@@ -3,11 +3,12 @@
   "display_id": 200,
   "title": "Skill system not wired into TUI or model awareness",
   "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nSkills (/qa, /commit, etc.) only work in legacy REPL via /skill command. TUI doesn't support them. Model has no awareness of available skills in system prompt. Need: 1) Add /skill to TUI slash handler, 2) Inject skill list into system prompt, 3) Optionally add skill tool for model invocation.",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-02T02:16:21.107417443Z",
-  "updated_at": "2026-04-02T02:16:21.268559909Z",
+  "updated_at": "2026-04-02T19:46:52.495467273Z",
+  "closed_at": "2026-04-02T19:46:52.495467273Z",
   "labels": [
     "bug"
   ]
