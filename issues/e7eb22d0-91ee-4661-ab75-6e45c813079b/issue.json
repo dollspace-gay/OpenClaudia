@@ -2,11 +2,12 @@
   "uuid": "e7eb22d0-91ee-4661-ab75-6e45c813079b",
   "display_id": 96,
   "title": "W-11: Settings file load order inverted",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:04.703345889Z",
-  "updated_at": "2026-04-01T03:39:04.793761525Z",
+  "updated_at": "2026-04-02T20:23:06.573523685Z",
+  "closed_at": "2026-04-02T20:23:06.573523685Z",
   "labels": [
     "qa"
   ]
