@@ -86,30 +86,15 @@ pub fn build_anthropic_request(
         _ => (None, crate::DEFAULT_MAX_TOKENS as u64),
     };
 
-    // ── Metadata ──
-    // Claude Code: getAPIMetadata() — user_id is a JSON-stringified object
-    let device_id = crate::claude_credentials::get_device_id();
-    let session_id = uuid::Uuid::new_v4().to_string();
-    let metadata_user_id = serde_json::to_string(&serde_json::json!({
-        "device_id": device_id,
-        "account_uuid": "",
-        "session_id": session_id
-    }))
-    .unwrap_or_default();
-
     // Betas are sent via the anthropic-beta HTTP header (set in get_oauth_headers),
-    // NOT as a body parameter. The SDK accepts betas in the body and converts
-    // them to a header internally, but the raw HTTP API rejects them in the body.
+    // NOT as a body parameter. The SDK converts body betas to header internally.
 
     // ── Assemble request ──
-    // Matching Claude Code's paramsFromContext() return (claude.ts:1699-1728)
     let mut req = serde_json::json!({
         "model": model,
         "messages": anthropic_messages,
         "system": system_blocks,
         "tools": anthropic_tools,
-        "tool_choice": {"type": "auto"},
-        "metadata": {"user_id": metadata_user_id},
         "max_tokens": max_tokens,
         "stream": true
     });
