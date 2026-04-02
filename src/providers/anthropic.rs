@@ -373,6 +373,10 @@ pub fn convert_messages_to_anthropic(messages: &[Value]) -> Vec<Value> {
                     }));
                 }
 
+                // Anthropic requires non-empty content array
+                if content_blocks.is_empty() {
+                    content_blocks.push(json!({"type": "text", "text": ""}));
+                }
                 result.push(json!({
                     "role": "assistant",
                     "content": content_blocks
