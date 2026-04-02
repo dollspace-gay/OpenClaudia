@@ -1,0 +1,10 @@
+{
+  "uuid": "acfc2694-833c-4991-9ac7-25a9d63372d8",
+  "issue_uuid": "b2c3aa05-2d81-45d3-97ce-86e0e1e47540",
+  "author": "lOrm",
+  "content": "Plan: /rewind in the TUI restores conversation to a previous point. Two modes: 1) /rewind N — remove last N message pairs (like multiple /undo). 2) /rewind — show conversation turns and let user pick a restore point. Internally uses the undo stack or message truncation.",
+  "created_at": "2026-04-02T20:10:33.140867501Z",
+  "kind": "plan",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZAAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASQAAACEAzV0E2icGvW6YGHWasQLAVowdKgCpBagiDZpeHR4aa1cAAAAgUQhRQzhR8mB1+p5bzJ9tgC1GvPKAU336M2eS0lAkSNs="
+}
