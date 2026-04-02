@@ -3,11 +3,12 @@
   "display_id": 219,
   "title": "Improve credential handling — sanitize before config override, mask in logs",
   "description": "config/mod.rs:163-180, oauth.rs:319, claude_credentials.rs:268 — API keys loaded without sanitization, tokens potentially logged. Implement token redaction utility.",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-02T16:41:24.538066737Z",
-  "updated_at": "2026-04-02T16:44:57.611725016Z",
+  "updated_at": "2026-04-02T19:37:03.191614761Z",
+  "closed_at": "2026-04-02T19:37:03.191614761Z",
   "labels": [
     "security"
   ],
