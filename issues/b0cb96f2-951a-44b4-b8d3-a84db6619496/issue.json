@@ -1,0 +1,11 @@
+{
+  "uuid": "b0cb96f2-951a-44b4-b8d3-a84db6619496",
+  "display_id": 226,
+  "title": "Harden dangerous command detection — missing dd, chmod -R, pipe chains",
+  "description": "cli/repl/permissions.rs:59 — blacklist only checks rm -rf, del /f, format, mkfs. Missing many dangerous patterns. Consider allowlist approach.",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:41:45.385152836Z",
+  "updated_at": "2026-04-02T16:41:45.385152836Z"
+}
