@@ -2,11 +2,12 @@
   "uuid": "c4abcad5-e0ae-48fe-a67d-0c5ab275ac4b",
   "display_id": 92,
   "title": "W-7: Git commands in worktree have no timeout",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:02.461767928Z",
-  "updated_at": "2026-04-01T03:39:02.565195109Z",
+  "updated_at": "2026-04-02T20:31:21.111411504Z",
+  "closed_at": "2026-04-02T20:31:21.111411504Z",
   "labels": [
     "qa"
   ]
