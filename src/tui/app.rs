@@ -976,7 +976,7 @@ impl App {
 
             // Run the turn (may include tool execution)
             match crate::pipeline::run_turn(
-                &client, &endpoint, &headers, &request_body, &provider, None, tx.clone(),
+                &client, &endpoint, &headers, &request_body, &provider, tx.clone(),
             )
             .await
             {
@@ -1022,7 +1022,6 @@ impl App {
                                 &headers,
                                 &followup_body,
                                 &provider,
-                                None,
                                 tx.clone(),
                             )
                             .await
