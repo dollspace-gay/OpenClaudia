@@ -2,11 +2,12 @@
   "uuid": "bd31b987-7a4a-475a-967e-d606f949f115",
   "display_id": 105,
   "title": "W-20: Qwen thinking config dead code",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:09.750760702Z",
-  "updated_at": "2026-04-01T03:39:09.870644780Z",
+  "updated_at": "2026-04-02T20:23:11.241231032Z",
+  "closed_at": "2026-04-02T20:23:11.241231032Z",
   "labels": [
     "qa"
   ]
