@@ -3,11 +3,12 @@
   "display_id": 233,
   "title": "Extract magic numbers to named constants across codebase",
   "description": "Multiple files: PDF page limit (10), session limit (5), default timeouts (60/30), complexity threshold (15), truncation lengths (200/197/80). Define as module-level constants.",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-02T16:42:31.065982168Z",
-  "updated_at": "2026-04-02T16:45:46.943876615Z",
+  "updated_at": "2026-04-02T19:54:15.141636294Z",
+  "closed_at": "2026-04-02T19:54:15.141636294Z",
   "labels": [
     "enhancement"
   ],
