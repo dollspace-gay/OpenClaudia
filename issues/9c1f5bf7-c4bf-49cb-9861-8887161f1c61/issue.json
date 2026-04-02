@@ -1,0 +1,11 @@
+{
+  "uuid": "9c1f5bf7-c4bf-49cb-9861-8887161f1c61",
+  "display_id": 224,
+  "title": "Implement header whitelist in proxy passthrough — blocks credential leaks",
+  "description": "proxy.rs:1113-1118 — copies all headers except HOST/CONTENT_LENGTH. Should whitelist safe headers only.",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:41:39.263853263Z",
+  "updated_at": "2026-04-02T16:41:39.263853263Z"
+}
