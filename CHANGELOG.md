@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- TUI permission dialog: interactive y/n/a prompt for write tools (#206)
+- TUI phase 3: permission prompts, hook engine, VDD, rules engine (#205)
+- TUI phase 2: hooks, permissions, memory, rules, guardrails, @file, VDD (#204)
+- TUI missing critical features: sessions, permissions, hooks, mode toggle (#203)
 - Replace rustyline REPL with ratatui full-screen TUI as default mode (#199)
 - TUI parity with Claude Code: markdown, tool display, thinking blocks (#197)
 - Native diff rendering: syntect syntax highlighting, word-level diff via similar crate, line numbers, grapheme-aware wrapping in TUI (#170)
@@ -67,6 +71,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix missing `permissions` field in test AppConfig initializers after merge
 
 ### Changed
+- Test push: verify remote sync works (#201)
+- Test issue: verify crosslink after lock cleanup (L1)
 - C-23: Anthropic tool argument serialization lossy (#84)
 - C-22: Stream timeout discards partial content (#83)
 - C-21: Unsafe YAML front matter parsing in plugins (#82)
