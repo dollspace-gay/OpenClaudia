@@ -3,11 +3,12 @@
   "display_id": 234,
   "title": "Standardize logging format — use structured key-value pairs consistently",
   "description": "main.rs, acp.rs, mcp.rs, guardrails.rs — mix of format!() pre-formatting and structured tracing. Use info!(key=%value) consistently.",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-02T16:42:34.006312065Z",
-  "updated_at": "2026-04-02T16:45:50.987587056Z",
+  "updated_at": "2026-04-02T20:05:22.733014240Z",
+  "closed_at": "2026-04-02T20:05:22.733014240Z",
   "labels": [
     "enhancement"
   ],
