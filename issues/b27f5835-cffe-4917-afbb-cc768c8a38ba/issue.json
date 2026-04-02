@@ -2,11 +2,12 @@
   "uuid": "b27f5835-cffe-4917-afbb-cc768c8a38ba",
   "display_id": 145,
   "title": "N-12: Hook decision logic scattered across three mechanisms",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:40.968989701Z",
-  "updated_at": "2026-04-01T03:39:41.106663210Z",
+  "updated_at": "2026-04-02T21:01:33.603481696Z",
+  "closed_at": "2026-04-02T21:01:33.603481696Z",
   "labels": [
     "qa"
   ]
