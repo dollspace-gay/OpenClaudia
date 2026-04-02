@@ -275,30 +275,52 @@ pub fn get_oauth_endpoint(_model: &str) -> String {
 
 /// The system prompt prefix that must be present for OAuth tokens to access
 /// premium models (Sonnet, Opus). The Anthropic API validates this string.
+/// The exact prefix string the API validates for OAuth access.
+/// Must be in its own system block — do NOT append to this.
 pub const CLAUDE_CODE_SYSTEM_PROMPT: &str =
     "You are Claude Code, Anthropic's official CLI for Claude.";
 
+/// Additional system prompt content sent as a separate block after the prefix.
+/// This is where behavioral instructions and persona go.
+pub const CLAUDIA_SYSTEM_PROMPT: &str = include_str!("claude_code_prompt.txt");
+
 /// Inject the Claude Code system prompt into a request body.
-/// This must be the first element in the system array for OAuth model access.
+///
+/// Block 0: The exact one-liner prefix (API validates this string for OAuth)
+/// Block 1: Full behavioral instructions + Claudia persona (from claude_code_prompt.txt)
+/// Block 2+: Whatever was already in the system array (our per-session prompt)
+///
+/// This matches Claude Code's multi-block system array structure.
 pub fn inject_system_prompt(request: &mut serde_json::Value) {
-    let claude_code_obj = serde_json::json!({
+    // Block 0: exact prefix — API validates this for OAuth access
+    let prefix_block = serde_json::json!({
         "type": "text",
         "text": CLAUDE_CODE_SYSTEM_PROMPT,
     });
 
+    // Block 1: behavioral instructions + Claudia persona (cached)
+    let behavioral_block = serde_json::json!({
+        "type": "text",
+        "text": CLAUDIA_SYSTEM_PROMPT,
+        "cache_control": {"type": "ephemeral"}
+    });
+
     match request.get_mut("system") {
         Some(serde_json::Value::Array(arr)) => {
-            arr.insert(0, claude_code_obj);
+            // Existing blocks become block 2+
+            arr.insert(0, behavioral_block);
+            arr.insert(0, prefix_block);
         }
         Some(serde_json::Value::String(existing)) => {
             let existing_obj = serde_json::json!({
                 "type": "text",
                 "text": existing.clone(),
             });
-            request["system"] = serde_json::json!([claude_code_obj, existing_obj]);
+            request["system"] =
+                serde_json::json!([prefix_block, behavioral_block, existing_obj]);
         }
         _ => {
-            request["system"] = serde_json::json!([claude_code_obj]);
+            request["system"] = serde_json::json!([prefix_block, behavioral_block]);
         }
     }
 }
