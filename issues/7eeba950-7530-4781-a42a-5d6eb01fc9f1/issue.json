@@ -2,11 +2,12 @@
   "uuid": "7eeba950-7530-4781-a42a-5d6eb01fc9f1",
   "display_id": 75,
   "title": "C-14: Task deletion returns Err instead of Ok",
-  "status": "open",
+  "status": "closed",
   "priority": "critical",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:38:46.825515759Z",
-  "updated_at": "2026-04-01T03:38:46.891657051Z",
+  "updated_at": "2026-04-02T18:29:57.407153193Z",
+  "closed_at": "2026-04-02T18:29:57.407153193Z",
   "labels": [
     "qa"
   ]
