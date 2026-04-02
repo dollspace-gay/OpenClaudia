@@ -3,11 +3,12 @@
   "display_id": 217,
   "title": "Fix API key exposure passed to VDD engine",
   "description": "proxy.rs:825 — raw API key passed to VDD process_response(). Use masked identifier instead.",
-  "status": "open",
+  "status": "closed",
   "priority": "critical",
   "created_by": "lOrm",
   "created_at": "2026-04-02T16:40:47.395232702Z",
-  "updated_at": "2026-04-02T16:44:54.483878066Z",
+  "updated_at": "2026-04-02T18:23:18.144544710Z",
+  "closed_at": "2026-04-02T18:23:18.144544710Z",
   "labels": [
     "security"
   ],
