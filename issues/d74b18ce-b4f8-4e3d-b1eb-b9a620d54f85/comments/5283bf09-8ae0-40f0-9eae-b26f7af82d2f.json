@@ -1,0 +1,10 @@
+{
+  "uuid": "5283bf09-8ae0-40f0-9eae-b26f7af82d2f",
+  "issue_uuid": "d74b18ce-b4f8-4e3d-b1eb-b9a620d54f85",
+  "author": "lOrm",
+  "content": "Already fixed: permissions.rs:89-94 validates default_allow patterns at load time via glob_to_regex_cached(), logs warning for invalid patterns.",
+  "created_at": "2026-04-02T20:37:27.656718874Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZQAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASgAAACEAipRw45+Wn4eH5uMRuU4gxOrCH28u73y8KdVLjuPpHKAAAAAhAPspz2bIySkdOgSO3LBjV4Rk9xmtZPrCH6udyXysP+eL"
+}
