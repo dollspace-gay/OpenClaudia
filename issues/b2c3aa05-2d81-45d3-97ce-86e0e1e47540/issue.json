@@ -2,11 +2,12 @@
   "uuid": "b2c3aa05-2d81-45d3-97ce-86e0e1e47540",
   "display_id": 190,
   "title": "/rewind command: restore code and/or conversation to a previous checkpoint",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-01T18:27:11.734394347Z",
-  "updated_at": "2026-04-01T18:27:13.364884528Z",
+  "updated_at": "2026-04-02T20:13:10.551077900Z",
+  "closed_at": "2026-04-02T20:13:10.551077900Z",
   "labels": [
     "enhancement"
   ]
