@@ -10,7 +10,7 @@ use crate::providers::{
 use crate::proxy::{self, normalize_base_url};
 use crate::session::TokenUsage;
 use crate::tools::{self, AnthropicToolAccumulator, ToolCall, ToolCallAccumulator};
-use crate::tui::events::AppEvent;
+use crate::tui::events::{AppEvent, PermissionResponse};
 use futures::StreamExt;
 use serde_json::Value;
 use std::sync::mpsc;
@@ -499,8 +499,9 @@ pub fn tool_needs_permission(tool_name: &str) -> bool {
 
 /// Execute tool calls and send progress events to the TUI.
 ///
-/// Checks permissions for write/destructive tools. In Plan mode,
-/// write tools are blocked entirely.
+/// Checks permissions for write/destructive tools via a channel-based
+/// handshake: sends `PermissionRequest` to the TUI and blocks until
+/// the user responds with y/n/a/d.
 ///
 /// Returns the tool result messages (for appending to conversation history)
 /// and a boolean indicating whether there were any tool calls.
@@ -509,6 +510,9 @@ fn execute_tool_calls_for_tui(
     memory_db: Option<&MemoryDb>,
     tx: &mpsc::Sender<AppEvent>,
 ) -> (Vec<Value>, bool) {
+    // Session-level "always allow/deny" cache (lives for this agentic loop)
+    let mut always_allowed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut always_denied: std::collections::HashSet<String> = std::collections::HashSet::new();
     if tool_calls.is_empty() {
         return (vec![], false);
     }
@@ -536,13 +540,79 @@ fn execute_tool_calls_for_tui(
             continue;
         }
 
+        // Permission check for write/destructive tools
+        if tool_needs_permission(tool_name) {
+            if always_denied.contains(tool_name) {
+                let _ = tx.send(AppEvent::ToolDone {
+                    name: tool_name.clone(),
+                    success: false,
+                    content: "Denied (always deny for this session)".to_string(),
+                });
+                results.push(serde_json::json!({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": "[DENIED] User denied permission for this tool.",
+                    "is_error": true
+                }));
+                continue;
+            }
+
+            if !always_allowed.contains(tool_name) {
+                // Send permission request and wait for response
+                let (reply_tx, reply_rx) = mpsc::channel();
+                let args_preview = if tool_call.function.arguments.len() > 200 {
+                    format!("{}...", &tool_call.function.arguments[..197])
+                } else {
+                    tool_call.function.arguments.clone()
+                };
+                let _ = tx.send(AppEvent::PermissionRequest {
+                    tool_name: tool_name.clone(),
+                    tool_args: args_preview,
+                    reply: reply_tx,
+                });
+
+                // Block until user responds (TUI sends back the decision)
+                match reply_rx.recv() {
+                    Ok(PermissionResponse::Allow) => {}
+                    Ok(PermissionResponse::AlwaysAllow) => {
+                        always_allowed.insert(tool_name.clone());
+                    }
+                    Ok(PermissionResponse::AlwaysDeny) => {
+                        always_denied.insert(tool_name.clone());
+                        let _ = tx.send(AppEvent::ToolDone {
+                            name: tool_name.clone(),
+                            success: false,
+                            content: "Denied (always deny)".to_string(),
+                        });
+                        results.push(serde_json::json!({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": "[DENIED] User denied permission.",
+                            "is_error": true
+                        }));
+                        continue;
+                    }
+                    Ok(PermissionResponse::Deny) | Err(_) => {
+                        let _ = tx.send(AppEvent::ToolDone {
+                            name: tool_name.clone(),
+                            success: false,
+                            content: "Denied by user".to_string(),
+                        });
+                        results.push(serde_json::json!({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": "[DENIED] User denied permission.",
+                            "is_error": true
+                        }));
+                        continue;
+                    }
+                }
+            }
+        }
+
         let _ = tx.send(AppEvent::ToolStart {
             name: tool_name.clone(),
-            description: if tool_needs_permission(tool_name) {
-                format!("Running {tool_name} (write)")
-            } else {
-                format!("Running {tool_name}")
-            },
+            description: format!("Running {tool_name}"),
         });
 
         let result = if let Some(db) = memory_db {

@@ -180,6 +180,13 @@ fn list_sessions() -> Vec<TuiSession> {
     sessions
 }
 
+/// A pending permission prompt waiting for user input.
+struct PendingPermission {
+    tool_name: String,
+    tool_args: String,
+    reply: std::sync::mpsc::Sender<super::events::PermissionResponse>,
+}
+
 /// Main TUI application state.
 pub struct App {
     pub messages: MessageList,
@@ -207,6 +214,8 @@ pub struct App {
     runtime_handle: Option<tokio::runtime::Handle>,
     /// Persistent chat session (for save/load/resume)
     pub chat_session: TuiSession,
+    /// Active permission prompt (if any). Tool execution blocks until resolved.
+    pending_permission: Option<PendingPermission>,
     /// Hook engine for running lifecycle hooks.
     pub hook_engine: Option<std::sync::Arc<crate::hooks::HookEngine>>,
     /// Rules content injected as system message (loaded once at startup).
@@ -238,6 +247,7 @@ impl App {
             session_messages: Vec::new(),
             runtime_handle: None,
             chat_session: TuiSession::new(model, provider),
+            pending_permission: None,
             hook_engine: None,
             rules_content: None,
             rules_injected: false,
@@ -365,6 +375,18 @@ impl App {
                 Ok(AppEvent::FollowUp) => {
                     self.spawn_api_turn();
                 }
+                // Pipeline asking permission for a write/destructive tool
+                Ok(AppEvent::PermissionRequest {
+                    tool_name,
+                    tool_args,
+                    reply,
+                }) => {
+                    self.pending_permission = Some(PendingPermission {
+                        tool_name,
+                        tool_args,
+                        reply,
+                    });
+                }
                 Err(_) => break,
             }
 
@@ -387,7 +409,44 @@ impl App {
     fn handle_key(&mut self, key: crossterm::event::KeyEvent) {
         // Ctrl+C always quits
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            // If permission prompt is active, deny and dismiss
+            if let Some(perm) = self.pending_permission.take() {
+                let _ = perm.reply.send(super::events::PermissionResponse::Deny);
+                return;
+            }
             self.should_quit = true;
+            return;
+        }
+
+        // Handle permission prompt keystrokes
+        if self.pending_permission.is_some() {
+            use super::events::PermissionResponse;
+            let response = match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => Some(PermissionResponse::Allow),
+                KeyCode::Char('n') | KeyCode::Char('N') => Some(PermissionResponse::Deny),
+                KeyCode::Char('a') | KeyCode::Char('A') => Some(PermissionResponse::AlwaysAllow),
+                KeyCode::Char('d') | KeyCode::Char('D') => Some(PermissionResponse::AlwaysDeny),
+                KeyCode::Esc => Some(PermissionResponse::Deny),
+                _ => None,
+            };
+            if let Some(resp) = response {
+                if let Some(perm) = self.pending_permission.take() {
+                    let label = match resp {
+                        PermissionResponse::Allow => "Allowed",
+                        PermissionResponse::AlwaysAllow => "Always allowed",
+                        PermissionResponse::Deny => "Denied",
+                        PermissionResponse::AlwaysDeny => "Always denied",
+                    };
+                    self.messages.add(DisplayMessage {
+                        role: "system".to_string(),
+                        content: format!("{label}: {}", perm.tool_name),
+                        tool_name: None,
+                        is_error: matches!(resp, PermissionResponse::Deny | PermissionResponse::AlwaysDeny),
+                        is_thinking: false,
+                    });
+                    let _ = perm.reply.send(resp);
+                }
+            }
             return;
         }
 
@@ -1068,6 +1127,61 @@ impl App {
         let status = Paragraph::new(status_text)
             .style(Style::default().fg(Color::Rgb(128, 128, 128)));
         frame.render_widget(status, chunks[3]);
+
+        // ── Permission prompt overlay ──
+        if let Some(ref perm) = self.pending_permission {
+            let area = frame.area();
+            // Center a dialog box
+            let dialog_width = area.width.min(70);
+            let dialog_height = 7u16;
+            let x = (area.width.saturating_sub(dialog_width)) / 2;
+            let y = area.height.saturating_sub(dialog_height + 4);
+            let dialog_area = Rect::new(x, y, dialog_width, dialog_height);
+
+            // Clear the area behind the dialog
+            let clear = Paragraph::new("")
+                .style(Style::default().bg(Color::Black));
+            frame.render_widget(clear, dialog_area);
+
+            let args_preview = if perm.tool_args.len() > 50 {
+                format!("{}...", &perm.tool_args[..47])
+            } else {
+                perm.tool_args.clone()
+            };
+
+            let prompt_text = vec![
+                Line::from(Span::styled(
+                    format!("  Tool: {}", perm.tool_name),
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                )),
+                Line::from(Span::styled(
+                    format!("  Args: {args_preview}"),
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  [y] ", Style::default().fg(Color::Green)),
+                    Span::raw("Allow  "),
+                    Span::styled("[n] ", Style::default().fg(Color::Red)),
+                    Span::raw("Deny  "),
+                    Span::styled("[a] ", Style::default().fg(Color::Cyan)),
+                    Span::raw("Always  "),
+                    Span::styled("[d] ", Style::default().fg(Color::Yellow)),
+                    Span::raw("Never"),
+                ]),
+            ];
+
+            let dialog = Paragraph::new(prompt_text)
+                .block(
+                    Block::default()
+                        .title(" Permission Required ")
+                        .title_style(Style::default().fg(Color::Rgb(218, 165, 32)).add_modifier(Modifier::BOLD))
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Rgb(218, 165, 32))),
+                )
+                .style(Style::default().bg(Color::Black));
+            frame.render_widget(dialog, dialog_area);
+        }
     }
 
     /// Render the welcome box — two-column bordered widget matching the old inline UI.

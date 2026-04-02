@@ -4,6 +4,19 @@ use crossterm::event::{self, Event as CEvent, KeyEvent};
 use std::sync::mpsc;
 use std::time::Duration;
 
+/// User's response to a permission prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionResponse {
+    /// Allow this one time
+    Allow,
+    /// Deny this one time
+    Deny,
+    /// Always allow this tool in this session
+    AlwaysAllow,
+    /// Always deny this tool in this session
+    AlwaysDeny,
+}
+
 /// Application events from multiple sources.
 pub enum AppEvent {
     /// Terminal key event
@@ -30,6 +43,13 @@ pub enum AppEvent {
     ApiError(String),
     /// Tool results require a follow-up API call
     FollowUp,
+    /// Pipeline requesting permission to run a tool.
+    /// Includes a oneshot sender to reply with the user's decision.
+    PermissionRequest {
+        tool_name: String,
+        tool_args: String,
+        reply: std::sync::mpsc::Sender<PermissionResponse>,
+    },
 }
 
 /// Handles terminal events in a background thread, merges with async events.
