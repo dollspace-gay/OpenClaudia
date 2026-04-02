@@ -2,11 +2,12 @@
   "uuid": "9c10ef72-1fab-4004-b54a-3f44d2d0a8da",
   "display_id": 137,
   "title": "N-4: Output truncation limits inconsistent (50000 vs 100000)",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:36.163556348Z",
-  "updated_at": "2026-04-01T03:39:36.260460006Z",
+  "updated_at": "2026-04-02T21:01:21.960940492Z",
+  "closed_at": "2026-04-02T21:01:21.960940492Z",
   "labels": [
     "qa"
   ]
