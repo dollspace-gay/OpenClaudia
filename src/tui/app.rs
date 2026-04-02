@@ -17,19 +17,135 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 use std::io;
+use std::path::PathBuf;
 use std::time::Duration;
 
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// Chat session state managed inside the TUI.
-///
-/// Mirrors the essential fields from `cli::repl::ChatSession` without
-/// pulling in the rustyline-specific types.
-pub struct TuiChatSession {
-    pub messages: Vec<serde_json::Value>,
+/// Chat session state — compatible with the CLI's ChatSession JSON format
+/// so sessions saved by one can be loaded by the other.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TuiSession {
+    pub id: String,
+    pub title: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
     pub model: String,
     pub provider: String,
-    pub system_prompt: String,
+    #[serde(default)]
+    pub mode: String,
+    pub messages: Vec<serde_json::Value>,
+    #[serde(default)]
+    undo_stack: Vec<(serde_json::Value, serde_json::Value)>,
+}
+
+impl TuiSession {
+    fn new(model: &str, provider: &str) -> Self {
+        let now = chrono::Utc::now();
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            title: "New conversation".to_string(),
+            created_at: now,
+            updated_at: now,
+            model: model.to_string(),
+            provider: provider.to_string(),
+            mode: "Build".to_string(),
+            messages: Vec::new(),
+            undo_stack: Vec::new(),
+        }
+    }
+
+    fn touch(&mut self) { self.updated_at = chrono::Utc::now(); }
+
+    fn update_title(&mut self) {
+        if let Some(first_user) = self.messages.iter().find(|m|
+            m.get("role").and_then(|r| r.as_str()) == Some("user")
+        ) {
+            if let Some(content) = first_user.get("content").and_then(|c| c.as_str()) {
+                self.title = if content.len() > 50 {
+                    format!("{}...", &content[..47])
+                } else {
+                    content.to_string()
+                };
+            }
+        }
+    }
+
+    fn toggle_mode(&mut self) {
+        self.mode = match self.mode.as_str() {
+            "Build" => "Plan".to_string(),
+            _ => "Build".to_string(),
+        };
+    }
+
+    fn mode_description(&self) -> &str {
+        match self.mode.as_str() {
+            "Plan" => "Read-only — suggestions only",
+            _ => "Full access — can make changes",
+        }
+    }
+
+    fn undo(&mut self) -> bool {
+        if self.messages.len() >= 2 {
+            if let (Some(assistant), Some(user)) = (self.messages.pop(), self.messages.pop()) {
+                self.undo_stack.push((user, assistant));
+                self.touch();
+                return true;
+            }
+        }
+        false
+    }
+
+    fn redo(&mut self) -> bool {
+        if let Some((user, assistant)) = self.undo_stack.pop() {
+            self.messages.push(user);
+            self.messages.push(assistant);
+            self.touch();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn estimate_tokens(&self) -> usize {
+        self.messages.iter().map(|m| {
+            m.get("content").and_then(|c| c.as_str()).unwrap_or("").len() / 4 + 4
+        }).sum()
+    }
+}
+
+fn sessions_dir() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("openclaudia")
+        .join("chat_sessions")
+}
+
+fn save_session(session: &TuiSession) -> Result<(), String> {
+    let dir = sessions_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{}.json", session.id));
+    let json = serde_json::to_string_pretty(session).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())
+}
+
+fn list_sessions() -> Vec<TuiSession> {
+    let dir = sessions_dir();
+    let mut sessions = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "json") {
+                if let Ok(json) = std::fs::read_to_string(&path) {
+                    if let Ok(session) = serde_json::from_str::<TuiSession>(&json) {
+                        sessions.push(session);
+                    }
+                }
+            }
+        }
+    }
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions
 }
 
 /// Main TUI application state.
@@ -57,6 +173,8 @@ pub struct App {
     pub session_messages: Vec<serde_json::Value>,
     /// Async runtime handle for spawning API tasks from the sync event loop.
     runtime_handle: Option<tokio::runtime::Handle>,
+    /// Persistent chat session (for save/load/resume)
+    pub chat_session: TuiSession,
 }
 
 impl App {
@@ -81,6 +199,7 @@ impl App {
             claude_code_token: None,
             session_messages: Vec::new(),
             runtime_handle: None,
+            chat_session: TuiSession::new(model, provider),
         }
     }
 
@@ -181,6 +300,13 @@ impl App {
                 Ok(AppEvent::ResponseDone) => {
                     self.messages.finish_streaming();
                     self.is_waiting = false;
+                    // Sync session messages and auto-save
+                    self.chat_session.messages = self.session_messages.clone();
+                    self.chat_session.update_title();
+                    self.chat_session.touch();
+                    let _ = save_session(&self.chat_session);
+                    // Update token estimate
+                    self.tokens = self.chat_session.estimate_tokens();
                 }
                 Ok(AppEvent::ApiError(msg)) => {
                     self.messages.finish_streaming();
@@ -208,6 +334,12 @@ impl App {
 
         disable_raw_mode()?;
         execute!(io::stdout(), LeaveAlternateScreen)?;
+
+        // Save session on exit
+        self.chat_session.messages = self.session_messages.clone();
+        self.chat_session.touch();
+        let _ = save_session(&self.chat_session);
+
         Ok(())
     }
 
@@ -248,11 +380,21 @@ impl App {
                     if text == "/help" || text == "?" {
                         self.messages.add(DisplayMessage {
                             role: "system".to_string(),
-                            content: "Commands: /quit, /exit, /clear, /help, /effort, /status, /skill\n\
-                                      Skills: /skill <name> to run, /skill to list\n\
-                                      Scroll: Up/Down/PageUp/PageDown\n\
-                                      Cancel: Escape (during streaming)\n\
-                                      Quit: Ctrl+C"
+                            content: "Commands:\n\
+                                      /help          Show this help\n\
+                                      /mode          Toggle Build/Plan mode\n\
+                                      /effort [lvl]  Set effort (low/medium/high) or cycle\n\
+                                      /status        Show session info\n\
+                                      /sessions      List saved sessions\n\
+                                      /load <id>     Load a saved session\n\
+                                      /undo          Undo last message pair\n\
+                                      /redo          Redo undone messages\n\
+                                      /clear         Clear conversation\n\
+                                      /skill [name]  List or run skills\n\
+                                      /export        Export conversation to markdown\n\
+                                      !<cmd>         Run shell command\n\
+                                      /quit          Exit\n\n\
+                                      Scroll: Up/Down/PageUp/PageDown · Cancel: Esc · Quit: Ctrl+C"
                                 .to_string(),
                             tool_name: None,
                             is_error: false,
@@ -285,6 +427,233 @@ impl App {
                             is_error: false,
                             is_thinking: false,
                         });
+                        return;
+                    }
+
+                    if text == "/mode" {
+                        self.chat_session.toggle_mode();
+                        self.mode = self.chat_session.mode.clone();
+                        self.messages.add(DisplayMessage {
+                            role: "system".to_string(),
+                            content: format!(
+                                "Mode: {} — {}",
+                                self.chat_session.mode,
+                                self.chat_session.mode_description()
+                            ),
+                            tool_name: None,
+                            is_error: false,
+                            is_thinking: false,
+                        });
+                        return;
+                    }
+
+                    if text == "/sessions" || text == "/list" {
+                        let sessions = list_sessions();
+                        if sessions.is_empty() {
+                            self.messages.add(DisplayMessage {
+                                role: "system".to_string(),
+                                content: "No saved sessions.".to_string(),
+                                tool_name: None,
+                                is_error: false,
+                                is_thinking: false,
+                            });
+                        } else {
+                            let list = sessions
+                                .iter()
+                                .take(10)
+                                .map(|s| {
+                                    format!(
+                                        "  {} — {} ({})",
+                                        &s.id[..8],
+                                        s.title,
+                                        s.updated_at.format("%Y-%m-%d %H:%M")
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            self.messages.add(DisplayMessage {
+                                role: "system".to_string(),
+                                content: format!("Saved sessions:\n{list}\n\nUse /load <id> to resume."),
+                                tool_name: None,
+                                is_error: false,
+                                is_thinking: false,
+                            });
+                        }
+                        return;
+                    }
+
+                    if text.starts_with("/load ") || text.starts_with("/continue ") {
+                        let id = text.split_whitespace().nth(1).unwrap_or("");
+                        let sessions = list_sessions();
+                        if let Some(loaded) = sessions.iter().find(|s| s.id.starts_with(id)) {
+                            self.chat_session = loaded.clone();
+                            self.session_messages = loaded.messages.clone();
+                            self.model = loaded.model.clone();
+                            self.provider = loaded.provider.clone();
+                            self.mode = loaded.mode.clone();
+                            self.tokens = self.chat_session.estimate_tokens();
+                            // Show loaded messages in the display
+                            self.messages = super::messages::MessageList::new();
+                            for msg in &loaded.messages {
+                                let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("system");
+                                let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                                if role == "system" { continue; }
+                                self.messages.add(DisplayMessage {
+                                    role: role.to_string(),
+                                    content: content.to_string(),
+                                    tool_name: None,
+                                    is_error: false,
+                                    is_thinking: false,
+                                });
+                            }
+                            self.messages.add(DisplayMessage {
+                                role: "system".to_string(),
+                                content: format!("Resumed session: {} ({})", loaded.title, &loaded.id[..8]),
+                                tool_name: None,
+                                is_error: false,
+                                is_thinking: false,
+                            });
+                        } else {
+                            self.messages.add(DisplayMessage {
+                                role: "system".to_string(),
+                                content: format!("Session not found: {id}"),
+                                tool_name: None,
+                                is_error: true,
+                                is_thinking: false,
+                            });
+                        }
+                        return;
+                    }
+
+                    if text == "/undo" {
+                        if self.chat_session.undo() {
+                            self.session_messages = self.chat_session.messages.clone();
+                            // Remove last two display messages (user + assistant)
+                            if self.messages.messages.len() >= 2 {
+                                self.messages.messages.pop();
+                                self.messages.messages.pop();
+                            }
+                            self.messages.add(DisplayMessage {
+                                role: "system".to_string(),
+                                content: "Undone last message pair.".to_string(),
+                                tool_name: None,
+                                is_error: false,
+                                is_thinking: false,
+                            });
+                            let _ = save_session(&self.chat_session);
+                        } else {
+                            self.messages.add(DisplayMessage {
+                                role: "system".to_string(),
+                                content: "Nothing to undo.".to_string(),
+                                tool_name: None,
+                                is_error: false,
+                                is_thinking: false,
+                            });
+                        }
+                        return;
+                    }
+
+                    if text == "/redo" {
+                        if self.chat_session.redo() {
+                            self.session_messages = self.chat_session.messages.clone();
+                            self.messages.add(DisplayMessage {
+                                role: "system".to_string(),
+                                content: "Redone last undone messages.".to_string(),
+                                tool_name: None,
+                                is_error: false,
+                                is_thinking: false,
+                            });
+                            let _ = save_session(&self.chat_session);
+                        } else {
+                            self.messages.add(DisplayMessage {
+                                role: "system".to_string(),
+                                content: "Nothing to redo.".to_string(),
+                                tool_name: None,
+                                is_error: false,
+                                is_thinking: false,
+                            });
+                        }
+                        return;
+                    }
+
+                    if text == "/export" {
+                        let mut md = format!("# {}\n\n", self.chat_session.title);
+                        md.push_str(&format!(
+                            "Model: {} · Provider: {} · {}\n\n---\n\n",
+                            self.model, self.provider, self.chat_session.created_at.format("%Y-%m-%d %H:%M")
+                        ));
+                        for msg in &self.session_messages {
+                            let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("?");
+                            let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                            if role == "system" { continue; }
+                            md.push_str(&format!("**{role}:**\n{content}\n\n"));
+                        }
+                        let export_path = format!("conversation-{}.md", &self.chat_session.id[..8]);
+                        match std::fs::write(&export_path, &md) {
+                            Ok(()) => {
+                                self.messages.add(DisplayMessage {
+                                    role: "system".to_string(),
+                                    content: format!("Exported to {export_path}"),
+                                    tool_name: None,
+                                    is_error: false,
+                                    is_thinking: false,
+                                });
+                            }
+                            Err(e) => {
+                                self.messages.add(DisplayMessage {
+                                    role: "system".to_string(),
+                                    content: format!("Export failed: {e}"),
+                                    tool_name: None,
+                                    is_error: true,
+                                    is_thinking: false,
+                                });
+                            }
+                        }
+                        return;
+                    }
+
+                    // Shell commands: !command
+                    if let Some(cmd) = text.strip_prefix('!') {
+                        let cmd = cmd.trim();
+                        if !cmd.is_empty() {
+                            let output = std::process::Command::new("bash")
+                                .arg("-c")
+                                .arg(cmd)
+                                .output();
+                            match output {
+                                Ok(out) => {
+                                    let stdout = String::from_utf8_lossy(&out.stdout);
+                                    let stderr = String::from_utf8_lossy(&out.stderr);
+                                    let mut result = String::new();
+                                    if !stdout.is_empty() {
+                                        result.push_str(&stdout);
+                                    }
+                                    if !stderr.is_empty() {
+                                        if !result.is_empty() { result.push('\n'); }
+                                        result.push_str(&stderr);
+                                    }
+                                    if result.is_empty() {
+                                        result = "(no output)".to_string();
+                                    }
+                                    self.messages.add(DisplayMessage {
+                                        role: "tool".to_string(),
+                                        content: result,
+                                        tool_name: Some(format!("$ {cmd}")),
+                                        is_error: !out.status.success(),
+                                        is_thinking: false,
+                                    });
+                                }
+                                Err(e) => {
+                                    self.messages.add(DisplayMessage {
+                                        role: "tool".to_string(),
+                                        content: format!("Failed: {e}"),
+                                        tool_name: Some(format!("$ {cmd}")),
+                                        is_error: true,
+                                        is_thinking: false,
+                                    });
+                                }
+                            }
+                        }
                         return;
                     }
 
