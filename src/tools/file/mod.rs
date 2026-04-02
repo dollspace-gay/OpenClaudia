@@ -27,61 +27,46 @@ pub static READ_TRACKER: std::sync::LazyLock<ReadFileTracker> =
     std::sync::LazyLock::new(ReadFileTracker::new);
 
 pub struct ReadFileTracker {
-    read_files: Mutex<std::collections::HashSet<std::path::PathBuf>>,
+    /// LRU-ordered list: most recently read files at the end.
+    /// When capacity is exceeded, oldest entries (front) are evicted.
+    read_files: Mutex<Vec<PathBuf>>,
 }
 
 impl ReadFileTracker {
     fn new() -> Self {
         Self {
-            read_files: Mutex::new(std::collections::HashSet::new()),
+            read_files: Mutex::new(Vec::new()),
         }
     }
 
-    /// Mark a file as having been read
+    /// Mark a file as having been read. Moves to end (most recent) if already tracked.
     pub(crate) fn mark_read(&self, path: &Path) {
-        if let Ok(canonical) = std::fs::canonicalize(path) {
-            if let Ok(mut set) = self.read_files.lock() {
-                set.insert(canonical);
-            }
-        } else {
-            // If we can't canonicalize, use the path as-is
-            if let Ok(mut set) = self.read_files.lock() {
-                set.insert(path.to_path_buf());
+        let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if let Ok(mut files) = self.read_files.lock() {
+            // Remove existing entry (if any) so we can re-add at the end
+            files.retain(|p| p != &resolved);
+            files.push(resolved);
+            // Evict oldest entries if over capacity
+            if files.len() > READ_TRACKER_MAX_ENTRIES {
+                let excess = files.len() - READ_TRACKER_MAX_ENTRIES;
+                files.drain(..excess);
             }
         }
-        self.enforce_size_cap(READ_TRACKER_MAX_ENTRIES);
     }
+
     /// Check if a file has been read
     pub(crate) fn has_been_read(&self, path: &Path) -> bool {
         let check_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         self.read_files
             .lock()
             .ok()
-            .is_some_and(|set| set.contains(&check_path))
+            .is_some_and(|files| files.contains(&check_path))
     }
 
     /// Clear tracking (called on new session)
     pub(crate) fn clear(&self) {
-        if let Ok(mut set) = self.read_files.lock() {
-            set.clear();
-        }
-    }
-
-    /// Enforce a size cap on tracked files to prevent unbounded memory growth.
-    /// If the tracker exceeds `max_entries`, the oldest half of entries are removed.
-    fn enforce_size_cap(&self, max_entries: usize) {
-        if let Ok(mut set) = self.read_files.lock() {
-            if set.len() > max_entries {
-                // HashSet has no ordering, so we drain half arbitrarily.
-                // This is acceptable because the tracker is advisory (for the
-                // "you must read before editing" guard) and losing some entries
-                // only means the user may be asked to re-read a file.
-                let to_remove = set.len() / 2;
-                let keys: Vec<_> = set.iter().take(to_remove).cloned().collect();
-                for k in keys {
-                    set.remove(&k);
-                }
-            }
+        if let Ok(mut files) = self.read_files.lock() {
+            files.clear();
         }
     }
 }
