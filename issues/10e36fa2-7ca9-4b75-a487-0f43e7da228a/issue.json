@@ -1,0 +1,11 @@
+{
+  "uuid": "10e36fa2-7ca9-4b75-a487-0f43e7da228a",
+  "display_id": 205,
+  "title": "TUI phase 3: permission prompts, hook engine, VDD, rules engine",
+  "description": "Goal: \n\nAcceptance criteria:\n- \n\nWire remaining REPL features: TUI permission overlay for tool calls, per-turn hook execution, VDD post-response review, rules engine file-extension injection.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T04:11:50.522248821Z",
+  "updated_at": "2026-04-02T04:11:50.522248821Z"
+}
