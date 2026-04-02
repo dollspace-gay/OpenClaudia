@@ -1,0 +1,11 @@
+{
+  "uuid": "59280dc0-d2a2-481c-ac27-c6f55de02c0d",
+  "display_id": 206,
+  "title": "TUI permission dialog: interactive y/n/a prompt for write tools",
+  "description": "Goal: \n\nAcceptance criteria:\n- \n\nAdd a modal permission prompt in the ratatui TUI that pauses tool execution and asks y/n/a/d before running write/destructive tools (bash, write_file, edit_file, etc.).",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T04:22:59.912943519Z",
+  "updated_at": "2026-04-02T04:22:59.912943519Z"
+}
