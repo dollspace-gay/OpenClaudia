@@ -1,0 +1,11 @@
+{
+  "uuid": "fda3220c-a6f5-4cc4-afcd-960aa866cd91",
+  "display_id": 243,
+  "title": "Use TaskStatus enum instead of String in TaskUpdateParams",
+  "description": "session/task.rs:47-56 — status field is Option<String> requiring runtime parsing. Use Option<TaskStatus>.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:44:16.997457753Z",
+  "updated_at": "2026-04-02T16:44:16.997457753Z"
+}
