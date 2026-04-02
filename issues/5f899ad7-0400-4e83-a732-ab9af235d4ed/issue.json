@@ -2,11 +2,12 @@
   "uuid": "5f899ad7-0400-4e83-a732-ab9af235d4ed",
   "display_id": 143,
   "title": "N-10: Glob pattern semantics undocumented",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:39.733437626Z",
-  "updated_at": "2026-04-01T03:39:39.846240664Z",
+  "updated_at": "2026-04-02T21:01:30.617273182Z",
+  "closed_at": "2026-04-02T21:01:30.617273182Z",
   "labels": [
     "qa"
   ]
