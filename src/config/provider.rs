@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 /// Thinking/reasoning mode configuration
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct ThinkingConfig {
     /// Enable thinking mode (default: true for supported providers)
     #[serde(default = "default_thinking_enabled")]
@@ -25,6 +25,17 @@ const fn default_thinking_enabled() -> bool {
     true
 }
 
+impl Default for ThinkingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_thinking_enabled(),
+            budget_tokens: None,
+            preserve_across_turns: false,
+            reasoning_effort: None,
+        }
+    }
+}
+
 /// Provider configuration (Anthropic, `OpenAI`, Google, etc.)
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProviderConfig {
@@ -44,10 +55,9 @@ mod tests {
 
     #[test]
     fn test_thinking_config_default() {
-        // Note: #[derive(Default)] uses bool::default() = false
-        // The serde default only applies during deserialization
+        // Default and serde deserialization now both return enabled=true
         let config = ThinkingConfig::default();
-        assert!(!config.enabled); // derive(Default) uses bool default = false
+        assert!(config.enabled);
         assert!(config.budget_tokens.is_none());
         assert!(!config.preserve_across_turns);
         assert!(config.reasoning_effort.is_none());

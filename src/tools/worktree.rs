@@ -8,6 +8,39 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Maximum time to wait for a git command (seconds).
+const GIT_TIMEOUT_SECS: u64 = 30;
+
+/// Run a git command with a timeout. Returns the output or an error.
+fn git_with_timeout(args: &[&str]) -> Result<std::process::Output, String> {
+    let mut child = Command::new("git")
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+    // Poll for completion with timeout
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(GIT_TIMEOUT_SECS);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().map_err(|e| format!("Git wait failed: {e}")),
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait(); // reap
+                    return Err(format!(
+                        "Git command timed out after {GIT_TIMEOUT_SECS}s: git {}",
+                        args.join(" ")
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => return Err(format!("Git wait error: {e}")),
+        }
+    }
+}
+
 /// State of an active worktree
 #[derive(Debug, Clone)]
 pub struct WorktreeState {
