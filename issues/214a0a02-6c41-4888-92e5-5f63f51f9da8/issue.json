@@ -2,11 +2,12 @@
   "uuid": "214a0a02-6c41-4888-92e5-5f63f51f9da8",
   "display_id": 152,
   "title": "N-19: VDD skip threshold arbitrary (100 chars)",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:45.607502074Z",
-  "updated_at": "2026-04-01T03:39:45.720435614Z",
+  "updated_at": "2026-04-02T21:01:43.750325479Z",
+  "closed_at": "2026-04-02T21:01:43.750325479Z",
   "labels": [
     "qa"
   ]
