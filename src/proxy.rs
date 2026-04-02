@@ -441,6 +441,146 @@ fn extract_extensions_from_messages(messages: &[ChatMessage]) -> Vec<String> {
 
 /// Proxy chat completions (`OpenAI` format)
 #[allow(clippy::too_many_lines)]
+/// Prepare a chat completion request: run hooks, inject context, rules, MCP tools, plugins, VDD.
+async fn prepare_request_context(
+    request: &mut ChatCompletionRequest,
+    state: &ProxyState,
+) -> Result<(), ProxyError> {
+    // Run UserPromptSubmit hooks
+    let last_user_message = request
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| match &m.content {
+            MessageContent::Text(t) => t.clone(),
+            MessageContent::Parts(parts) => parts
+                .iter()
+                .filter_map(|p| p.text.clone())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        });
+
+    let hook_input = HookInput::new(HookEvent::UserPromptSubmit)
+        .with_prompt(last_user_message.unwrap_or_default());
+
+    let hook_result = state
+        .hook_engine
+        .run(HookEvent::UserPromptSubmit, &hook_input)
+        .await;
+
+    if !hook_result.allowed {
+        let reason = hook_result
+            .outputs
+            .first()
+            .and_then(|o| o.reason.clone())
+            .unwrap_or_else(|| "Request blocked by hook".to_string());
+        return Err(ProxyError::HookBlocked(reason));
+    }
+
+    ContextInjector::apply_prompt_modification(request, &hook_result);
+    ContextInjector::inject(request, &hook_result);
+
+    // Inject rules based on file extensions
+    let extensions = extract_extensions_from_messages(&request.messages);
+    if !extensions.is_empty() {
+        let rules_content = state.rules_engine.get_combined_rules(
+            &extensions
+                .iter()
+                .map(std::string::String::as_str)
+                .collect::<Vec<_>>(),
+        );
+        if !rules_content.is_empty() {
+            ContextInjector::inject_system_prefix(request, &rules_content);
+        }
+    }
+
+    // Add MCP tools
+    let mcp_tools = state.mcp_manager.read().await.tools_as_openai_functions();
+    if !mcp_tools.is_empty() {
+        let mut tools = request.tools.take().unwrap_or_default();
+        tools.extend(mcp_tools);
+        request.tools = Some(tools);
+    }
+
+    // Add plugin commands as context
+    let plugin_commands: Vec<String> = state
+        .plugin_manager
+        .all_commands()
+        .iter()
+        .map(|(plugin, cmd)| format!("/{}:{} (from {})", plugin.name(), cmd.name, plugin.name()))
+        .collect();
+    if !plugin_commands.is_empty() {
+        let commands_context = format!("Available plugin commands: {}", plugin_commands.join(", "));
+        ContextInjector::inject_system_suffix(request, &commands_context);
+    }
+
+    // Inject session context
+    let session_context = {
+        let sm = state.session_manager.read().await;
+        sm.get_session().map(get_session_context)
+    };
+    if let Some(context) = session_context {
+        ContextInjector::inject_all(request, &[context]);
+    }
+
+    // Inject VDD advisory from previous turn
+    {
+        let mut sm = state.session_manager.write().await;
+        if let Some(vdd_context) = sm.take_vdd_context() {
+            if !vdd_context.is_empty() {
+                ContextInjector::inject_system_suffix(request, &vdd_context);
+                debug!("Injected VDD advisory context from previous turn");
+            }
+        }
+    }
+
+    // Run PreToolUse hooks for tool calls in previous messages
+    for msg in &request.messages {
+        if let Some(tool_calls) = &msg.tool_calls {
+            for tool_call in tool_calls {
+                if let (Some(name), Some(args)) = (
+                    tool_call
+                        .get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|n| n.as_str()),
+                    tool_call.get("function").and_then(|f| f.get("arguments")),
+                ) {
+                    let session_id = {
+                        let sm = state.session_manager.read().await;
+                        sm.get_session().map(|s| s.id.clone())
+                    };
+                    let hook_result = run_pre_tool_use_hooks(
+                        &state.hook_engine,
+                        session_id.as_deref(),
+                        name,
+                        args,
+                    )
+                    .await;
+
+                    for output in &hook_result.outputs {
+                        if let Some(extra_data) = output.extra.get("metadata") {
+                            debug!(metadata = %extra_data, "Hook provided extra metadata");
+                        }
+                    }
+
+                    if let Err(hook_err) = HookEngine::check_blocked(&hook_result) {
+                        let reason = match hook_err {
+                            HookError::Blocked(r) => r,
+                            _ => "PreToolUse hook blocked".to_string(),
+                        };
+                        return Err(ProxyError::HookBlocked(format!(
+                            "Tool '{name}' blocked: {reason}"
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn proxy_chat_completions(
     State(state): State<ProxyState>,
     headers: HeaderMap,
@@ -475,143 +615,9 @@ async fn proxy_chat_completions(
         }
     }
 
-    // Run UserPromptSubmit hooks
-    let last_user_message = request
-        .messages
-        .iter()
-        .rev()
-        .find(|m| m.role == "user")
-        .map(|m| match &m.content {
-            MessageContent::Text(t) => t.clone(),
-            MessageContent::Parts(parts) => parts
-                .iter()
-                .filter_map(|p| p.text.clone())
-                .collect::<Vec<_>>()
-                .join("\n"),
-        });
-
-    let hook_input = HookInput::new(HookEvent::UserPromptSubmit)
-        .with_prompt(last_user_message.unwrap_or_default());
-
-    let hook_result = state
-        .hook_engine
-        .run(HookEvent::UserPromptSubmit, &hook_input)
-        .await;
-
-    if !hook_result.allowed {
-        let reason = hook_result
-            .outputs
-            .first()
-            .and_then(|o| o.reason.clone())
-            .unwrap_or_else(|| "Request blocked by hook".to_string());
-        return Err(ProxyError::HookBlocked(reason));
-    }
-
-    // Inject context from hook results
+    // Prepare request: run hooks, inject context, rules, MCP tools, VDD
     let mut request = request;
-    ContextInjector::apply_prompt_modification(&mut request, &hook_result);
-    ContextInjector::inject(&mut request, &hook_result);
-
-    // Inject rules based on file extensions mentioned in messages
-    let extensions = extract_extensions_from_messages(&request.messages);
-    if !extensions.is_empty() {
-        let rules_content = state.rules_engine.get_combined_rules(
-            &extensions
-                .iter()
-                .map(std::string::String::as_str)
-                .collect::<Vec<_>>(),
-        );
-        if !rules_content.is_empty() {
-            ContextInjector::inject_system_prefix(&mut request, &rules_content);
-        }
-    }
-
-    // Add MCP tools to request if available
-    let mcp_tools = state.mcp_manager.read().await.tools_as_openai_functions();
-    if !mcp_tools.is_empty() {
-        let mut tools = request.tools.unwrap_or_default();
-        tools.extend(mcp_tools);
-        request.tools = Some(tools);
-    }
-
-    // Add plugin commands as available context
-    let plugin_commands: Vec<String> = state
-        .plugin_manager
-        .all_commands()
-        .iter()
-        .map(|(plugin, cmd)| format!("/{}:{} (from {})", plugin.name(), cmd.name, plugin.name()))
-        .collect();
-    if !plugin_commands.is_empty() {
-        let commands_context = format!("Available plugin commands: {}", plugin_commands.join(", "));
-        ContextInjector::inject_system_suffix(&mut request, &commands_context);
-    }
-
-    // Inject session context
-    let session_context = {
-        let sm = state.session_manager.read().await;
-        sm.get_session().map(get_session_context)
-    };
-    if let Some(context) = session_context {
-        // Use inject_all for multiple context items
-        ContextInjector::inject_all(&mut request, &[context]);
-    }
-
-    // Inject VDD advisory context from previous turn (if any)
-    {
-        let mut sm = state.session_manager.write().await;
-        if let Some(vdd_context) = sm.take_vdd_context() {
-            if !vdd_context.is_empty() {
-                ContextInjector::inject_system_suffix(&mut request, &vdd_context);
-                debug!("Injected VDD advisory context from previous turn");
-            }
-        }
-    }
-
-    // Run PreToolUse hooks if there are tool calls in previous messages
-    // This validates tool usage before the model responds
-    for msg in &request.messages {
-        if let Some(tool_calls) = &msg.tool_calls {
-            for tool_call in tool_calls {
-                if let (Some(name), Some(args)) = (
-                    tool_call
-                        .get("function")
-                        .and_then(|f| f.get("name"))
-                        .and_then(|n| n.as_str()),
-                    tool_call.get("function").and_then(|f| f.get("arguments")),
-                ) {
-                    let session_id = {
-                        let sm = state.session_manager.read().await;
-                        sm.get_session().map(|s| s.id.clone())
-                    };
-                    let hook_result = run_pre_tool_use_hooks(
-                        &state.hook_engine,
-                        session_id.as_deref(),
-                        name,
-                        args,
-                    )
-                    .await;
-
-                    // Check hook extra data for any additional processing
-                    for output in &hook_result.outputs {
-                        if let Some(extra_data) = output.extra.get("metadata") {
-                            debug!(metadata = %extra_data, "Hook provided extra metadata");
-                        }
-                    }
-
-                    // Use check_blocked to validate and get proper error
-                    if let Err(hook_err) = HookEngine::check_blocked(&hook_result) {
-                        let reason = match hook_err {
-                            HookError::Blocked(r) => r,
-                            _ => "PreToolUse hook blocked".to_string(),
-                        };
-                        return Err(ProxyError::HookBlocked(format!(
-                            "Tool '{name}' blocked: {reason}"
-                        )));
-                    }
-                }
-            }
-        }
-    }
+    prepare_request_context(&mut request, &state).await?;
 
     // Create model-specific compactor for accurate context limits
     let mut compactor = crate::compaction::ContextCompactor::for_model(&request.model);
