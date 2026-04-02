@@ -422,10 +422,6 @@
     "-1": {
       "agent_id": "lOrm",
       "claimed_at": "2026-04-02T02:16:30.175609102Z"
-    },
-    "179": {
-      "agent_id": "lOrm",
-      "claimed_at": "2026-04-01T18:25:48.602218562Z"
     }
   },
   "issues": {},
@@ -589,11 +585,16 @@
       "agent_id": "lOrm",
       "agent_seq": 266,
       "timestamp": "2026-04-02T02:21:49.536767457Z"
+    },
+    {
+      "agent_id": "lOrm",
+      "agent_seq": 267,
+      "timestamp": "2026-04-02T02:21:50.173541475Z"
     }
   ],
   "watermark": {
-    "timestamp": "2026-04-02T02:21:49.536767457Z",
+    "timestamp": "2026-04-02T02:21:50.173541475Z",
     "agent_id": "lOrm",
-    "agent_seq": 266
+    "agent_seq": 267
   }
 }
