@@ -2,11 +2,12 @@
   "uuid": "ae836ad0-5bd0-4319-878a-d02cc0e6a605",
   "display_id": 188,
   "title": "/rename command: rename the current conversation session",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-01T18:26:58.090699264Z",
-  "updated_at": "2026-04-01T18:26:59.672530130Z",
+  "updated_at": "2026-04-02T21:00:14.495412083Z",
+  "closed_at": "2026-04-02T21:00:14.495412083Z",
   "labels": [
     "enhancement"
   ]
