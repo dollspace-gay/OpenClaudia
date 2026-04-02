@@ -1,0 +1,11 @@
+{
+  "uuid": "f0d12bc0-8efa-4a9c-8773-3bcc683dab49",
+  "display_id": 216,
+  "title": "Fix non-atomic session file persistence — data loss on crash",
+  "description": "session/mod.rs:488-506 — writes multiple files non-atomically. Use write-to-temp + atomic rename.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:40:44.082228077Z",
+  "updated_at": "2026-04-02T16:40:44.082228077Z"
+}
