@@ -1,0 +1,11 @@
+{
+  "uuid": "262bc433-e4b0-4450-ba72-a788146e25bb",
+  "display_id": 213,
+  "title": "Refactor god functions: handle_key (491 lines), proxy_chat_completions (443 lines), handle_slash_command (1072 lines)",
+  "description": "Three functions far exceed cyclomatic complexity 15. handle_key has ~79 branch points. Extract into testable sub-functions by responsibility.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:40:34.164771378Z",
+  "updated_at": "2026-04-02T16:40:34.164771378Z"
+}
