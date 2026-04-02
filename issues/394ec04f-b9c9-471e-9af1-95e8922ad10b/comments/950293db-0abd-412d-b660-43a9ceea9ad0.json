@@ -1,0 +1,10 @@
+{
+  "uuid": "950293db-0abd-412d-b660-43a9ceea9ad0",
+  "issue_uuid": "394ec04f-b9c9-471e-9af1-95e8922ad10b",
+  "author": "lOrm",
+  "content": "Plan mode correctly blocks disallowed tools with a descriptive error message. The 'infinite retry' is model behavior (model keeps trying blocked tool). The error message clearly states which tools are allowed and where the plan file is. Model instruction quality, not a code bug.",
+  "created_at": "2026-04-02T20:38:10.999968847Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAYwAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASAAAACArsPOIoPPvWRd5o1k0j71eq6SwkHnNCtw7Xz+WJX37UQAAACBMT6vng781BYXyx4G4OeZ2wI4NGzwr9So06ib4yZgZ+Q=="
+}
