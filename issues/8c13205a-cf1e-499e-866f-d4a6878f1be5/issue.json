@@ -1,0 +1,11 @@
+{
+  "uuid": "8c13205a-cf1e-499e-866f-d4a6878f1be5",
+  "display_id": 218,
+  "title": "Extract testable pure functions from untestable async code",
+  "description": "app.rs spawn_api_turn and pipeline.rs permission handshake are untestable without real tokio runtime. Extract core logic into pure functions with trait-based mocking.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:40:50.873141522Z",
+  "updated_at": "2026-04-02T16:40:50.873141522Z"
+}
