@@ -2,11 +2,12 @@
   "uuid": "7f243bc9-9bb4-47c5-b94e-a0c6286418bf",
   "display_id": 121,
   "title": "W-36: Session compact doesn't check minimum messages",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:19.382015966Z",
-  "updated_at": "2026-04-01T03:39:19.537835688Z",
+  "updated_at": "2026-04-02T20:23:31.243200720Z",
+  "closed_at": "2026-04-02T20:23:31.243200720Z",
   "labels": [
     "qa"
   ]
