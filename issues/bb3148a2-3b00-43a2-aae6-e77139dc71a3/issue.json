@@ -2,11 +2,12 @@
   "uuid": "bb3148a2-3b00-43a2-aae6-e77139dc71a3",
   "display_id": 63,
   "title": "C-2: Null content with tool_calls creates invalid Anthropic request",
-  "status": "open",
+  "status": "closed",
   "priority": "critical",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:38:40.690519947Z",
-  "updated_at": "2026-04-01T03:38:40.797340630Z",
+  "updated_at": "2026-04-02T18:45:59.795094672Z",
+  "closed_at": "2026-04-02T18:45:59.795094672Z",
   "labels": [
     "qa"
   ]
