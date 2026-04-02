@@ -1,0 +1,11 @@
+{
+  "uuid": "f027c012-1642-4192-94cf-c953933d6243",
+  "display_id": 237,
+  "title": "Encapsulate MessageList internals — add pop_last() method",
+  "description": "tui/app.rs:640 accesses self.messages.messages.pop() directly. Add methods to MessageList instead.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:42:43.163192136Z",
+  "updated_at": "2026-04-02T16:42:43.163192136Z"
+}
