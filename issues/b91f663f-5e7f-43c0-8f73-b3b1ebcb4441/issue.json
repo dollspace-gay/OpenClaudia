@@ -3,11 +3,12 @@
   "display_id": 223,
   "title": "Propagate auto-learning errors instead of silent warn-and-continue",
   "description": "auto_learn.rs:88-97,174-181,219-226 — all db errors logged with warn!() but not propagated. Users don't know learning system isn't working.",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-02T16:41:36.266300242Z",
-  "updated_at": "2026-04-02T16:45:09.406814214Z",
+  "updated_at": "2026-04-02T18:56:51.913870943Z",
+  "closed_at": "2026-04-02T18:56:51.913870943Z",
   "labels": [
     "bug"
   ],
