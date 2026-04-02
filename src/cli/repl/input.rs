@@ -182,14 +182,18 @@ pub fn open_external_editor() -> Option<String> {
 pub fn expand_file_references(input: &str) -> String {
     use regex::Regex;
 
-    let re = Regex::new(r#"@"([^"]+)"|@(\S+)"#).unwrap();
+    let Ok(re) = Regex::new(r#"@"([^"]+)"|@(\S+)"#) else {
+        return input.to_string();
+    };
 
     let mut result = input.to_string();
     let mut replacements = Vec::new();
 
     for cap in re.captures_iter(input) {
-        let full_match = cap.get(0).unwrap().as_str();
-        let path = cap.get(1).or(cap.get(2)).unwrap().as_str();
+        let Some(full_match) = cap.get(0) else { continue };
+        let full_match = full_match.as_str();
+        let Some(path) = cap.get(1).or(cap.get(2)) else { continue };
+        let path = path.as_str();
 
         match fs::read_to_string(path) {
             Ok(content) => {

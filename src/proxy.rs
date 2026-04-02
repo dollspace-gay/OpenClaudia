@@ -407,7 +407,10 @@ async fn run_pre_tool_use_hooks(
 
 /// Lazily-compiled regex for extracting file extensions from message text.
 static EXTENSION_PATTERN: std::sync::LazyLock<regex::Regex> =
-    std::sync::LazyLock::new(|| regex::Regex::new(r"[\w/\\.-]+\.([a-zA-Z0-9]{1,10})\b").unwrap());
+    std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"[\w/\\.-]+\.([a-zA-Z0-9]{1,10})\b")
+            .expect("EXTENSION_PATTERN is a valid static regex")
+    });
 
 /// Extract file extensions from message content (looks for file paths)
 fn extract_extensions_from_messages(messages: &[ChatMessage]) -> Vec<String> {
@@ -1219,7 +1222,10 @@ async fn convert_response_with_usage(
         .map(|json| extract_usage_from_response(&json))
         .filter(|u| u.total() > 0);
 
-    Ok((builder.body(Body::from(body)).unwrap(), usage))
+    let response = builder
+        .body(Body::from(body))
+        .map_err(|e| ProxyError::InvalidBody(format!("Failed to build response body: {e}")))?;
+    Ok((response, usage))
 }
 
 /// Extract token usage from a provider's JSON response
@@ -1440,7 +1446,9 @@ async fn convert_response(response: reqwest::Response) -> Result<Response, Proxy
     }
 
     let body = response.bytes().await?;
-    Ok(builder.body(Body::from(body)).unwrap())
+    builder
+        .body(Body::from(body))
+        .map_err(|e| ProxyError::InvalidBody(format!("Failed to build response body: {e}")))
 }
 
 /// Build a `ProxyState` from the given config, initializing all subsystems.
