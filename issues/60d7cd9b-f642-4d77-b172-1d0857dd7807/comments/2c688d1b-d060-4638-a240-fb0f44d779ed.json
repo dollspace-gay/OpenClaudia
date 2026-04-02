@@ -1,0 +1,10 @@
+{
+  "uuid": "2c688d1b-d060-4638-a240-fb0f44d779ed",
+  "issue_uuid": "60d7cd9b-f642-4d77-b172-1d0857dd7807",
+  "author": "lOrm",
+  "content": "Slash command registry pattern requires defining trait + dispatcher. Keeping open for future refactor.",
+  "created_at": "2026-04-02T20:57:16.952594778Z",
+  "kind": "decision",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAYwAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASAAAACBpBliWNAtF4X5xkdufMS4UZi2PoCxsu3mAUx9OhGKHwAAAACA2Dda2z83uX/CMe6wLQ6ej+6XU9Hgs7SHUsJ1nrOR3iA=="
+}
