@@ -967,6 +967,81 @@ impl App {
                             return true;
                         }
 
+                    // /rename — rename the current session
+                    if text.starts_with("/rename ") {
+                        let new_title = text.strip_prefix("/rename ").unwrap_or("").trim();
+                        if new_title.is_empty() {
+                            self.messages.add(DisplayMessage {
+                                role: "system".to_string(),
+                                content: "Usage: /rename <new title>".to_string(),
+                                tool_name: None, is_error: false, is_thinking: false,
+                            });
+                        } else {
+                            self.chat_session.title = new_title.to_string();
+                            self.chat_session.touch();
+                            let _ = save_session(&self.chat_session);
+                            self.messages.add(DisplayMessage {
+                                role: "system".to_string(),
+                                content: format!("Session renamed to: {new_title}"),
+                                tool_name: None, is_error: false, is_thinking: false,
+                            });
+                        }
+                        return true;
+                    }
+
+                    // /cost — show estimated session cost
+                    if text == "/cost" {
+                        let tokens = self.chat_session.estimate_tokens();
+                        // Rough cost estimate based on model
+                        #[allow(clippy::cast_precision_loss)]
+                        let cost = match self.model.as_str() {
+                            m if m.contains("opus") => tokens as f64 * 0.000015 + tokens as f64 * 0.000075,
+                            m if m.contains("sonnet") => tokens as f64 * 0.000003 + tokens as f64 * 0.000015,
+                            m if m.contains("haiku") => tokens as f64 * 0.00000025 + tokens as f64 * 0.00000125,
+                            _ => 0.0,
+                        };
+                        self.messages.add(DisplayMessage {
+                            role: "system".to_string(),
+                            content: format!(
+                                "Session cost estimate:\n  ~{tokens} tokens\n  ~${cost:.4}",
+                            ),
+                            tool_name: None, is_error: false, is_thinking: false,
+                        });
+                        return true;
+                    }
+
+                    // /files — list files in current directory
+                    if text == "/files" || text.starts_with("/files ") {
+                        let dir = text.strip_prefix("/files").unwrap_or("").trim();
+                        let dir = if dir.is_empty() { "." } else { dir };
+                        match std::fs::read_dir(dir) {
+                            Ok(entries) => {
+                                let mut items: Vec<String> = entries
+                                    .flatten()
+                                    .map(|e| {
+                                        let name = e.file_name().to_string_lossy().to_string();
+                                        let suffix = if e.file_type().map(|t| t.is_dir()).unwrap_or(false) { "/" } else { "" };
+                                        format!("  {name}{suffix}")
+                                    })
+                                    .collect();
+                                items.sort();
+                                self.messages.add(DisplayMessage {
+                                    role: "system".to_string(),
+                                    content: format!("Files in {dir}:\n{}", items.join("\n")),
+                                    tool_name: None, is_error: false, is_thinking: false,
+                                });
+                            }
+                            Err(e) => {
+                                self.messages.add(DisplayMessage {
+                                    role: "system".to_string(),
+                                    content: format!("Failed to list {dir}: {e}"),
+                                    tool_name: None, is_error: true, is_thinking: false,
+                                });
+                            }
+                        }
+                        return true;
+                    }
+
                     // /diff — show uncommitted git changes
                     if text == "/diff" {
                         let output = std::process::Command::new("git")
