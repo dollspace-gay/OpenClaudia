@@ -89,13 +89,9 @@ struct Cli {
     #[arg(long)]
     dangerously_skip_permissions: bool,
 
-    /// Launch full-screen interactive TUI (default when no subcommand)
+    /// Launch full-screen interactive TUI (experimental)
     #[arg(long)]
     tui_mode: bool,
-
-    /// Use legacy rustyline REPL instead of full-screen TUI
-    #[arg(long)]
-    legacy: bool,
 }
 
 #[derive(Subcommand)]
@@ -185,8 +181,12 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
-        None if cli.legacy => {
-            // Legacy rustyline REPL mode (--legacy flag)
+        None if cli.tui_mode => {
+            // Full-screen interactive TUI mode (--tui-mode flag)
+            cmd_tui(cli.model).await
+        }
+        None => {
+            // Default: inline REPL with pinned bottom bar
             cmd_chat(
                 cli.model,
                 cli.resume,
@@ -195,10 +195,6 @@ async fn main() -> anyhow::Result<()> {
                 cli.dangerously_skip_permissions,
             )
             .await
-        }
-        None => {
-            // Default: full-screen interactive TUI mode
-            cmd_tui(cli.model).await
         }
         Some(Commands::Init { force }) => cli::commands::init::cmd_init(force),
         Some(Commands::Auth { status, logout }) => {
