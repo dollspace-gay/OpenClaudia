@@ -280,10 +280,9 @@ pub fn get_oauth_endpoint(_model: &str) -> String {
 }
 
 /// Get the device ID from Claude Code's global config (~/.claude.json).
-/// Falls back to a generated UUID if unavailable.
+/// Returns empty string if unavailable — callers should check.
 #[must_use]
 pub fn get_device_id() -> String {
-    // Try to read from Claude Code's config
     if let Some(home) = dirs::home_dir() {
         let config_path = home.join(".claude.json");
         if let Ok(content) = std::fs::read_to_string(&config_path) {
@@ -294,8 +293,8 @@ pub fn get_device_id() -> String {
             }
         }
     }
-    // Fallback: generate a stable ID
-    uuid::Uuid::new_v4().to_string()
+    tracing::warn!("Could not read device_id from ~/.claude.json — metadata will be empty");
+    String::new()
 }
 
 /// The full system prompt sent when using Claude Code OAuth authentication.

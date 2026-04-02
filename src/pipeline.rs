@@ -250,20 +250,32 @@ pub async fn run_turn(
         let status = resp.status().as_u16();
 
         if status == 429 || status == 529 {
+            // Log full error details for debugging
+            let retry_after = resp.headers().get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .map(String::from);
+            let error_body = resp.text().await.unwrap_or_default();
+            tracing::warn!(
+                status,
+                attempt,
+                retry_after = retry_after.as_deref().unwrap_or("none"),
+                body = &error_body[..error_body.len().min(500)],
+                "Rate limited by API"
+            );
+
             if attempt < max_retries {
-                // Check Retry-After header, default to exponential backoff
-                let wait_secs = resp
-                    .headers()
-                    .get("retry-after")
-                    .and_then(|v| v.to_str().ok())
+                let wait_secs = retry_after
+                    .as_deref()
                     .and_then(|v| v.parse::<u64>().ok())
                     .unwrap_or(2u64.pow(attempt + 1));
                 let _ = tx.send(AppEvent::StreamText(format!(
-                    "\n(Rate limited, retrying in {wait_secs}s...)\n"
+                    "\n(Rate limited [{status}], retrying in {wait_secs}s... attempt {}/{})\n",
+                    attempt + 1, max_retries
                 )));
                 tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
                 continue;
             }
+            return Err(format!("Rate limited after {max_retries} retries: {error_body}"));
         }
 
         if !resp.status().is_success() {
