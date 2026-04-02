@@ -7,8 +7,11 @@
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-02T16:42:40.130691725Z",
-  "updated_at": "2026-04-02T16:42:41.522954444Z",
+  "updated_at": "2026-04-02T16:45:58.387528316Z",
   "labels": [
     "enhancement"
+  ],
+  "blockers": [
+    "f1b949bd-be55-457c-8d4d-b7c5d4ad88cc"
   ]
 }
