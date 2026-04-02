@@ -1,0 +1,11 @@
+{
+  "uuid": "4cf0cc49-df34-44e1-bb89-e7661802ea85",
+  "display_id": 239,
+  "title": "Add compile-time const assertions for cron field array lengths",
+  "description": "tools/cron.rs:68-75 — field_ranges and field_names arrays must match length. Add static assert.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:42:52.498319487Z",
+  "updated_at": "2026-04-02T16:42:52.498319487Z"
+}
