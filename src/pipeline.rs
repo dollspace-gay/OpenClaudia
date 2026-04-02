@@ -237,6 +237,15 @@ pub async fn run_turn(
     memory_db: Option<&MemoryDb>,
     tx: mpsc::Sender<AppEvent>,
 ) -> Result<TurnResult, String> {
+    // Log request details for debugging (only when RUST_LOG=debug)
+    tracing::debug!(
+        endpoint,
+        model = request_body.get("model").and_then(|v| v.as_str()).unwrap_or("?"),
+        system_blocks = request_body.get("system").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
+        message_count = request_body.get("messages").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
+        "Sending API request"
+    );
+
     // Send request with retry on 429/529 (rate limit / overloaded)
     let max_retries = 3u32;
     let mut response = None;
