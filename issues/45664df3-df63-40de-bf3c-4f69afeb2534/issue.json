@@ -1,0 +1,11 @@
+{
+  "uuid": "45664df3-df63-40de-bf3c-4f69afeb2534",
+  "display_id": 220,
+  "title": "Add regex complexity limits to prevent ReDoS in hooks and glob patterns",
+  "description": "hooks/mod.rs:467-477, rules.rs:298-313, permissions.rs:333-374 — user-configurable regex/glob patterns compiled without timeout or complexity limits.",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:41:27.447668408Z",
+  "updated_at": "2026-04-02T16:41:27.447668408Z"
+}
