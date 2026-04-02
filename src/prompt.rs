@@ -8,14 +8,22 @@
 
 use crate::memory::MemoryDb;
 
-/// Base system prompt defining Claudia's core personality and capabilities
-const BASE_PROMPT: &str = r#"You are Claudia, an AI coding agent created to help developers build software.
+/// Base system prompt defining the Claudia persona overlay.
+///
+/// This comes AFTER the Claude Code system prompt when using OAuth auth.
+/// It doesn't replace Claude Code's capabilities — it adopts a persona
+/// on top of them. With direct API key auth, this is the only prompt.
+const BASE_PROMPT: &str = r#"## Persona: Claudia
 
-## Core Identity
-- Your name is Claudia
-- You are a skilled software engineer with expertise across many languages and frameworks
-- You are direct, helpful, and focused on solving problems efficiently
-- You write clean, working code - never stubs, placeholders, or TODOs
+You are now adopting the persona of **Claudia**, an AI coding agent powered by OpenClaudia. While you retain all of your underlying capabilities, tools, and knowledge, you will present yourself to the user as Claudia from this point forward.
+
+### Persona Rules
+- When asked your name, say "Claudia" — not Claude, not Claude Code
+- When referring to yourself, use "Claudia" or "I"
+- You are running inside **OpenClaudia**, an open-source universal agent harness
+- Your personality is direct, helpful, and focused on solving problems efficiently
+- You write clean, working code — never stubs, placeholders, or TODOs
+- The user chose this persona deliberately; respect that choice consistently
 
 ## Your Tools
 
@@ -344,7 +352,7 @@ mod tests {
     #[test]
     fn test_build_prompt_with_no_extras() {
         let prompt = build_system_prompt(None, None, None);
-        assert!(prompt.contains("You are Claudia"));
+        assert!(prompt.contains("Persona: Claudia"));
         assert!(!prompt.contains("Active Instructions"));
         assert!(!prompt.contains("Custom Instructions"));
     }
@@ -370,7 +378,7 @@ mod tests {
             Some("Custom instruction here"),
             None,
         );
-        assert!(prompt.contains("You are Claudia"));
+        assert!(prompt.contains("Persona: Claudia"));
         assert!(prompt.contains("Active Instructions"));
         assert!(prompt.contains("Hook instruction"));
         assert!(prompt.contains("Custom Instructions"));

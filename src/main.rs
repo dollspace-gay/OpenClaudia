@@ -1210,7 +1210,7 @@ async fn cmd_chat(
                     .iter()
                     .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
                     .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
-                    .filter(|c| !c.contains("You are Claudia")) // Don't include our own prompt
+                    .filter(|c| !c.contains("Persona: Claudia")) // Don't include our own prompt
                     .map(std::string::ToString::to_string)
                     .reduce(|acc, s| format!("{acc}\n\n{s}"));
 
@@ -1297,7 +1297,7 @@ async fn cmd_chat(
                 if !chat_session.messages.iter().any(|m| {
                     m.get("content")
                         .and_then(|c| c.as_str())
-                        .is_some_and(|s| s.contains("You are Claudia"))
+                        .is_some_and(|s| s.contains("Persona: Claudia"))
                 }) {
                     chat_session.messages.insert(
                         0,
