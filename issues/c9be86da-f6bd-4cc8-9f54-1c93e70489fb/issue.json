@@ -2,11 +2,12 @@
   "uuid": "c9be86da-f6bd-4cc8-9f54-1c93e70489fb",
   "display_id": 193,
   "title": "/status command: show version, model, account, and API connectivity info",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-01T18:27:29.527184642Z",
-  "updated_at": "2026-04-01T18:27:31.015635343Z",
+  "updated_at": "2026-04-02T20:57:56.400863805Z",
+  "closed_at": "2026-04-02T20:57:56.400863805Z",
   "labels": [
     "enhancement"
   ]
