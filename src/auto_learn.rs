@@ -83,9 +83,36 @@ impl<'a> AutoLearner<'a> {
         self.detect_preferences(message);
     }
 
-    /// Called at session end to finalize learnings
+    /// Called at session end to finalize learnings and prune old data.
     pub fn on_session_end(&mut self) {
         self.compute_file_relationships();
+        self.prune_old_data();
+    }
+
+    /// Prune auto-learned data to prevent unbounded growth.
+    /// Keeps the most recent entries in each table.
+    fn prune_old_data(&self) {
+        const MAX_CODING_PATTERNS: u32 = 500;
+        const MAX_ERROR_PATTERNS: u32 = 200;
+        const MAX_PREFERENCES: u32 = 100;
+        const MAX_FILE_RELATIONSHIPS: u32 = 500;
+
+        // Each prune query keeps the N most recent rows by rowid
+        let prune_queries = [
+            ("coding_patterns", MAX_CODING_PATTERNS),
+            ("error_patterns", MAX_ERROR_PATTERNS),
+            ("learned_preferences", MAX_PREFERENCES),
+            ("file_relationships", MAX_FILE_RELATIONSHIPS),
+        ];
+
+        for (table, max_rows) in prune_queries {
+            let sql = format!(
+                "DELETE FROM {table} WHERE rowid NOT IN (SELECT rowid FROM {table} ORDER BY rowid DESC LIMIT {max_rows})"
+            );
+            if let Err(e) = self.db.execute_raw(&sql) {
+                self.log_db_error(&format!("prune_{table}"), &e);
+            }
+        }
     }
 
     /// Normalize a file path from tool arguments — canonicalize if possible,

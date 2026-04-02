@@ -150,6 +150,17 @@ impl MemoryDb {
         &self.path
     }
 
+    /// Execute a raw SQL statement (for maintenance operations like pruning).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the SQL execution fails.
+    pub fn execute_raw(&self, sql: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch(sql)
+            .with_context(|| format!("Failed to execute: {}", crate::tools::safe_truncate(sql, 100)))
+    }
+
     /// Ensure database schema exists and run migrations (operates on bare `Connection`).
     fn ensure_schema_on(conn: &Connection) -> Result<()> {
         // Create version tracking table first
