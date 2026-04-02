@@ -7,8 +7,11 @@
   "priority": "critical",
   "created_by": "lOrm",
   "created_at": "2026-04-02T16:40:47.395232702Z",
-  "updated_at": "2026-04-02T16:40:49.123683066Z",
+  "updated_at": "2026-04-02T16:44:54.483878066Z",
   "labels": [
     "security"
+  ],
+  "blockers": [
+    "f1b949bd-be55-457c-8d4d-b7c5d4ad88cc"
   ]
 }
