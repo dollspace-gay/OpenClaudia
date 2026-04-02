@@ -1,0 +1,11 @@
+{
+  "uuid": "f1b949bd-be55-457c-8d4d-b7c5d4ad88cc",
+  "display_id": 209,
+  "title": "QA Report: Full codebase review — 135 findings across 6 modules",
+  "description": "Combined QA review of entire src/ tree. 30 critical, 59 warning, 46 nitpick findings. Sub-issues track each finding category.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:39:55.386514509Z",
+  "updated_at": "2026-04-02T16:39:55.386514509Z"
+}
