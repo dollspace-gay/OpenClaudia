@@ -3,11 +3,12 @@
   "display_id": 199,
   "title": "Replace rustyline REPL with ratatui full-screen TUI as default mode",
   "description": "Goal: \n\nAcceptance criteria:\n- \n\nThe rustyline REPL cannot support pinned bottom bars or fixed UI elements. Replace it with the ratatui-based TUI (src/tui/app.rs) as the default mode. This requires: wiring API calls, streaming, tool execution, slash commands, and all REPL features into the ratatui event loop.",
-  "status": "open",
+  "status": "closed",
   "priority": "critical",
   "created_by": "lOrm",
   "created_at": "2026-04-01T23:47:45.884749308Z",
-  "updated_at": "2026-04-01T23:47:47.198991441Z",
+  "updated_at": "2026-04-02T00:08:08.515926007Z",
+  "closed_at": "2026-04-02T00:08:08.515926007Z",
   "labels": [
     "feature"
   ]
