@@ -3,9 +3,10 @@
   "display_id": null,
   "title": "Test issue: verify crosslink after lock cleanup",
   "description": "Smoke test to confirm issue lifecycle works after clearing 105 stale locks",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-02T02:25:16.261233433Z",
-  "updated_at": "2026-04-02T02:25:16.261233433Z"
+  "updated_at": "2026-04-02T02:25:32.568976497Z",
+  "closed_at": "2026-04-02T02:25:32.568976497Z"
 }
