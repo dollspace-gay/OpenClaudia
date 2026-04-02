@@ -2,11 +2,12 @@
   "uuid": "8ea62b4d-468c-4d61-bf8f-b69d261b2756",
   "display_id": 26,
   "title": "Add color diff rendering for edit_file tool and centralized tool result display",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-03-31T16:57:32.490089096Z",
-  "updated_at": "2026-03-31T16:57:32.562874269Z",
+  "updated_at": "2026-04-02T20:10:02.518083314Z",
+  "closed_at": "2026-04-02T20:10:02.518083314Z",
   "labels": [
     "enhancement"
   ]
