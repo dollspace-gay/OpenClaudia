@@ -43,6 +43,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Read-before-edit enforcement on edit_file tool
 
 ### Fixed
+- TUI UX parity: separator lines, bottom bar, prompt style, welcome format (#198)
 - System prompt missing absolute path requirement and working directory (#196)
 - Streaming broken: proxy buffers entire response before returning (#195)
 - Fix plan mode blocking write_file calls to the plan file (#72)

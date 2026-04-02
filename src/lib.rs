@@ -23,6 +23,7 @@ pub mod memory;
 pub mod oauth;
 pub mod output_style;
 pub mod permissions;
+pub mod pipeline;
 pub mod plugins;
 pub mod prompt;
 pub mod providers;

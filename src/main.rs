@@ -89,9 +89,13 @@ struct Cli {
     #[arg(long)]
     dangerously_skip_permissions: bool,
 
-    /// Launch full-screen interactive TUI (experimental)
+    /// Launch full-screen interactive TUI (default when no subcommand)
     #[arg(long)]
     tui_mode: bool,
+
+    /// Use legacy rustyline REPL instead of full-screen TUI
+    #[arg(long)]
+    legacy: bool,
 }
 
 #[derive(Subcommand)]
@@ -181,27 +185,8 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
-        None if cli.tui_mode => {
-            // Full-screen interactive TUI mode
-            let config = match config::load_config() {
-                Ok(c) => c,
-                Err(e) => {
-                    if config::config_file_exists() {
-                        eprintln!("Failed to parse configuration: {e}");
-                    } else {
-                        eprintln!("No configuration found. Run 'openclaudia init' first.");
-                    }
-                    return Ok(());
-                }
-            };
-            let model = cli
-                .model
-                .or_else(|| config.active_provider().and_then(|p| p.model.clone()))
-                .unwrap_or_else(|| "claude-sonnet-4-6".to_string());
-            let mut app = tui::app::App::new(&model, &config.proxy.target);
-            app.run().map_err(|e| anyhow::anyhow!("TUI error: {e}"))
-        }
-        None => {
+        None if cli.legacy => {
+            // Legacy rustyline REPL mode (--legacy flag)
             cmd_chat(
                 cli.model,
                 cli.resume,
@@ -210,6 +195,10 @@ async fn main() -> anyhow::Result<()> {
                 cli.dangerously_skip_permissions,
             )
             .await
+        }
+        None => {
+            // Default: full-screen interactive TUI mode
+            cmd_tui(cli.model).await
         }
         Some(Commands::Init { force }) => cli::commands::init::cmd_init(force),
         Some(Commands::Auth { status, logout }) => {
@@ -233,6 +222,127 @@ async fn main() -> anyhow::Result<()> {
             target,
         }) => cli::commands::loop_cmd::cmd_loop(max_iterations, port, target).await,
     }
+}
+
+/// Full-screen TUI mode (default when no subcommand).
+///
+/// Loads config, resolves the provider/model/API key, builds the system prompt,
+/// then launches the ratatui interactive TUI with the API pipeline wired up.
+async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
+    let config = match config::load_config() {
+        Ok(c) => c,
+        Err(e) => {
+            if config::config_file_exists() {
+                eprintln!("Failed to parse configuration: {e}");
+            } else {
+                eprintln!("No configuration found. Run 'openclaudia init' first.");
+            }
+            return Ok(());
+        }
+    };
+
+    // Auto-detect provider from model name
+    let mut config = config;
+    if let Some(ref model) = model_override {
+        let detected = openclaudia::proxy::determine_provider(model, &config);
+        if detected != config.proxy.target {
+            config.proxy.target = detected;
+        }
+    }
+
+    let provider = if let Some(p) = config.active_provider() {
+        p
+    } else {
+        eprintln!(
+            "No provider configured for target '{}'",
+            config.proxy.target
+        );
+        return Ok(());
+    };
+
+    // Resolve API key (same logic as cmd_chat)
+    let mut claude_code_token: Option<String> = None;
+
+    let api_key = if config.proxy.target == "anthropic" && provider.api_key.is_none() {
+        if openclaudia::claude_credentials::has_claude_code_credentials() {
+            match openclaudia::claude_credentials::load_credentials().await {
+                Ok(creds) => {
+                    claude_code_token = Some(creds.access_token);
+                    "claude-code-oauth".to_string()
+                }
+                Err(e) => {
+                    eprintln!("Error: Claude Code credentials unusable: {e}");
+                    eprintln!(
+                        "Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY."
+                    );
+                    return Ok(());
+                }
+            }
+        } else {
+            eprintln!("No API key configured for Anthropic.");
+            eprintln!("Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY.");
+            return Ok(());
+        }
+    } else if let Some(k) = &provider.api_key {
+        k.clone()
+    } else {
+        let env_var = match config.proxy.target.as_str() {
+            "openai" => "OPENAI_API_KEY",
+            "google" => "GOOGLE_API_KEY",
+            "zai" => "ZAI_API_KEY",
+            "deepseek" => "DEEPSEEK_API_KEY",
+            "qwen" => "QWEN_API_KEY",
+            _ => "API_KEY",
+        };
+        eprintln!(
+            "No API key configured for '{}'. Set {} or add to config.",
+            config.proxy.target, env_var
+        );
+        return Ok(());
+    };
+
+    let model = model_override
+        .or_else(|| provider.model.clone())
+        .unwrap_or_else(|| match config.proxy.target.as_str() {
+            "anthropic" => "claude-sonnet-4-6".to_string(),
+            "openai" => "gpt-5.2".to_string(),
+            "google" => "gemini-2.5-flash".to_string(),
+            "zai" => "glm-5".to_string(),
+            "deepseek" => "deepseek-chat".to_string(),
+            "qwen" => "qwen3.5-plus".to_string(),
+            _ => "gpt-5.2".to_string(),
+        });
+
+    // Resolve endpoint
+    let endpoint = openclaudia::pipeline::resolve_endpoint(
+        &config.proxy.target,
+        &model,
+        &provider.base_url,
+        claude_code_token.as_deref(),
+    );
+
+    // Resolve headers
+    let headers = openclaudia::pipeline::resolve_headers(
+        &config.proxy.target,
+        &api_key,
+        claude_code_token.as_deref(),
+        &provider
+            .headers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<Vec<_>>(),
+    );
+
+    // Build system prompt
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let system_prompt = prompt::build_system_prompt_with_cwd(None, None, None, Some(&cwd));
+
+    // Build and launch the TUI
+    let mut app = tui::app::App::new(&model, &config.proxy.target);
+    app.set_api_config(endpoint, headers, system_prompt, claude_code_token);
+    app.run().map_err(|e| anyhow::anyhow!("TUI error: {e}"))
 }
 
 /// Result of an interactive permission prompt for a tool call.
@@ -527,6 +637,9 @@ async fn cmd_chat(
         println!("Type /help for commands, /sessions to list saved chats");
         println!("Tip: {}\n", get_random_tip());
     }
+
+    // Set up pinned bottom bar using ANSI scroll region
+    let _ = tui::setup_pinned_bar();
 
     // Initialize chat session
     let mut chat_session = ChatSession::new(&model, &config.proxy.target);
@@ -3510,6 +3623,9 @@ async fn cmd_chat(
     if let Err(e) = rl.save_history(&history_path) {
         tracing::warn!("Failed to save history: {}", e);
     }
+
+    // Restore full scroll region before exit
+    let _ = tui::teardown_pinned_bar();
 
     println!("\nGoodbye!");
     Ok(())

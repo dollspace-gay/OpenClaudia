@@ -28,6 +28,8 @@ pub enum AppEvent {
     ResponseDone,
     /// API error
     ApiError(String),
+    /// Tool results require a follow-up API call
+    FollowUp,
 }
 
 /// Handles terminal events in a background thread, merges with async events.

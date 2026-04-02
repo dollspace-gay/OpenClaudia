@@ -951,66 +951,119 @@ impl WelcomeScreen {
     }
 }
 
-/// Render a horizontal separator line across the terminal width.
-/// Uses a light color to match Claude Code's white separator bars.
+/// Number of rows reserved at the bottom of the terminal for the pinned bar.
+const PINNED_ROWS: u16 = 2;
+
+/// Set up ANSI scroll region to reserve the bottom rows for the pinned status bar.
+/// All normal output (including rustyline) scrolls within the top region,
+/// while the bottom rows stay fixed.
 ///
 /// # Errors
 ///
-/// Returns an error if writing to stdout fails.
-pub fn render_separator() -> io::Result<()> {
+/// Returns an error if terminal operations fail.
+pub fn setup_pinned_bar() -> io::Result<()> {
+    let (_, rows) = terminal::size().unwrap_or((80, 24));
+    let scroll_end = rows.saturating_sub(PINNED_ROWS);
+    if scroll_end < 3 {
+        return Ok(()); // Terminal too small
+    }
+
     let mut stdout = io::stdout();
-    let (cols, _) = terminal::size().unwrap_or((80, 24));
+    // Set scroll region: rows 1 through (rows - PINNED_ROWS)
+    write!(stdout, "\x1b[1;{scroll_end}r")?;
+    // Move cursor into the scroll region
+    write!(stdout, "\x1b[{scroll_end};1H")?;
+    stdout.flush()?;
+
+    Ok(())
+}
+
+/// Restore the full terminal scroll region (called on exit).
+///
+/// # Errors
+///
+/// Returns an error if terminal operations fail.
+pub fn teardown_pinned_bar() -> io::Result<()> {
+    let mut stdout = io::stdout();
+    // Reset scroll region to full terminal
+    write!(stdout, "\x1b[r")?;
+    stdout.flush()?;
+    Ok(())
+}
+
+/// Redraw the pinned bottom bar (separator line + status).
+/// Saves and restores cursor position so it doesn't disrupt the main content.
+///
+/// # Errors
+///
+/// Returns an error if terminal operations fail.
+pub fn redraw_pinned_bar(effort: &str) -> io::Result<()> {
+    let (cols, rows) = terminal::size().unwrap_or((80, 24));
+    let bar_row = rows.saturating_sub(PINNED_ROWS) + 1;
+    if bar_row < 3 {
+        return Ok(());
+    }
+
+    let mut stdout = io::stdout();
+
+    // Save cursor position
+    write!(stdout, "\x1b[s")?;
+
+    // Draw separator line on the bar row
+    write!(stdout, "\x1b[{bar_row};1H")?;
     stdout.execute(SetForegroundColor(CtColor::Rgb {
         r: 128,
         g: 128,
         b: 128,
     }))?;
-    writeln!(stdout, "{}", "\u{2500}".repeat(cols as usize))?;
+    let line = "\u{2500}".repeat(cols as usize);
+    write!(stdout, "{line}")?;
     stdout.execute(ResetColor)?;
+
+    // Draw status text on the row below
+    let status_row = bar_row + 1;
+    write!(stdout, "\x1b[{status_row};1H")?;
+    let left = "? for shortcuts";
+    let right = format!("\u{25CF} {} \u{00B7} /effort", effort);
+    let total = left.len() + right.len();
+    let pad = if cols as usize > total {
+        " ".repeat(cols as usize - total)
+    } else {
+        " ".to_string()
+    };
+    stdout.execute(SetForegroundColor(CtColor::Rgb {
+        r: 128,
+        g: 128,
+        b: 128,
+    }))?;
+    write!(stdout, "{left}{pad}{right}")?;
+    stdout.execute(ResetColor)?;
+
+    // Restore cursor position
+    write!(stdout, "\x1b[u")?;
     stdout.flush()?;
+
     Ok(())
 }
 
-/// Render the input prompt area framed by separator lines with a bottom status bar.
-/// Matches Claude Code's layout: line, prompt area, line + status bar.
+/// Render the input prompt area (called before each readline).
+/// No longer prints inline — the pinned bar handles the bottom display.
 ///
 /// # Errors
 ///
 /// Returns an error if writing to stdout fails.
 pub fn render_input_prompt(_mode: &str) -> io::Result<()> {
-    render_separator()?;
     Ok(())
 }
 
-/// Render the bottom status bar below the separator.
-/// Shows "? for shortcuts" on left, effort level on right.
+/// Render the bottom status bar.
+/// Delegates to redraw_pinned_bar which uses absolute positioning.
 ///
 /// # Errors
 ///
 /// Returns an error if writing to stdout fails.
 pub fn render_bottom_bar(effort: &str, _mode: &str) -> io::Result<()> {
-    let mut stdout = io::stdout();
-    let (cols, _) = terminal::size().unwrap_or((80, 24));
-
-    let left = "? for shortcuts";
-    let right = format!("\u{25CF} {} \u{00B7} /effort", effort);
-
-    let total_content = left.len() + right.len();
-    let padding = if cols as usize > total_content {
-        " ".repeat(cols as usize - total_content)
-    } else {
-        " ".to_string()
-    };
-
-    stdout.execute(SetForegroundColor(CtColor::Rgb {
-        r: 128,
-        g: 128,
-        b: 128,
-    }))?;
-    writeln!(stdout, "{left}{padding}{right}")?;
-    stdout.execute(ResetColor)?;
-    stdout.flush()?;
-    Ok(())
+    redraw_pinned_bar(effort)
 }
 
 /// Get the current username from environment
