@@ -1,0 +1,10 @@
+{
+  "uuid": "83188df1-498e-4539-b30d-5c1130aa2480",
+  "issue_uuid": "21371662-2722-4f5e-b80a-0fe8fcc1b6d4",
+  "author": "lOrm",
+  "content": "Already implemented — TUI supports /load <id> to resume sessions, /sessions to list them.",
+  "created_at": "2026-04-02T19:46:57.150556631Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAYwAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASAAAACAGAl++ujtauM3IIahP/N3WIaAij6cXonq1reRs3lRVCgAAACBLfP6uoEpNi0leKI3bL8KwJeIXOtLSSexGYfwx2wdLzQ=="
+}
