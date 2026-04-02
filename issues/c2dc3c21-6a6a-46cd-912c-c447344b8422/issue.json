@@ -3,11 +3,12 @@
   "display_id": 241,
   "title": "Create consistent error/warning message formatting helper for CLI",
   "description": "review.rs, input.rs, slash.rs — inconsistent ANSI codes, println vs eprintln. Create shared formatting module.",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-02T16:43:05.226095544Z",
-  "updated_at": "2026-04-02T16:46:16.474983452Z",
+  "updated_at": "2026-04-02T20:05:29.014565936Z",
+  "closed_at": "2026-04-02T20:05:29.014565936Z",
   "labels": [
     "enhancement"
   ],
