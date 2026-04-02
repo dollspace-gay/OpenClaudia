@@ -3,11 +3,12 @@
   "display_id": 235,
   "title": "Add missing doc comments to public API functions",
   "description": "memory.rs:116-327, oauth.rs:201-250, tools/mod.rs — public functions lack docstrings explaining args, returns, errors.",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-02T16:42:37.076883611Z",
-  "updated_at": "2026-04-02T16:45:54.941161688Z",
+  "updated_at": "2026-04-02T20:05:25.791475659Z",
+  "closed_at": "2026-04-02T20:05:25.791475659Z",
   "labels": [
     "enhancement"
   ],
