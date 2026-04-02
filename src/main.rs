@@ -364,6 +364,7 @@ async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
     let mut app = tui::app::App::new(&model, &config.proxy.target);
     app.set_api_config(endpoint, headers, system_prompt, claude_code_token);
     app.hook_engine = Some(hook_engine);
+    app.memory_db = memory_db.map(std::sync::Arc::new);
     app.rules_content = rules_content;
     app.run().map_err(|e| anyhow::anyhow!("TUI error: {e}"))
 }

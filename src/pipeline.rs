@@ -4,6 +4,7 @@
 //! from both the rustyline REPL and the ratatui TUI.
 
 
+use crate::memory::MemoryDb;
 use crate::providers::{
     convert_messages_to_anthropic, convert_tools_to_anthropic, get_adapter,
 };
@@ -13,6 +14,7 @@ use crate::tools::{self, AnthropicToolAccumulator, ToolCall, ToolCallAccumulator
 use crate::tui::events::{AppEvent, PermissionResponse};
 use futures::StreamExt;
 use serde_json::Value;
+use std::sync::Arc;
 use std::sync::mpsc;
 
 /// Outcome of a single conversation turn (one API round-trip + tool execution).
@@ -211,6 +213,7 @@ pub async fn run_turn(
     headers: &[(String, String)],
     request_body: &Value,
     provider: &str,
+    memory_db: Option<Arc<MemoryDb>>,
     tx: mpsc::Sender<AppEvent>,
 ) -> Result<TurnResult, String> {
     // Send request
@@ -229,16 +232,17 @@ pub async fn run_turn(
 
     // For Google, handle non-streaming JSON response
     if provider == "google" {
-        return handle_google_response(response, &tx).await;
+        return handle_google_response(response, memory_db, &tx).await;
     }
 
     // Stream SSE response (Anthropic / OpenAI format)
-    stream_sse_response(response, provider, &tx).await
+    stream_sse_response(response, provider, memory_db, &tx).await
 }
 
 /// Handle a non-streaming Google Gemini response.
 async fn handle_google_response(
     response: reqwest::Response,
+    memory_db: Option<Arc<MemoryDb>>,
     tx: &mpsc::Sender<AppEvent>,
 ) -> Result<TurnResult, String> {
     let body = response.text().await.unwrap_or_default();
@@ -308,7 +312,7 @@ async fn handle_google_response(
 
     // Execute tool calls if any
     let (tool_results, needs_followup) =
-        execute_tool_calls_for_tui(&tool_calls, tx).await;
+        execute_tool_calls_for_tui(&tool_calls, memory_db, tx).await;
 
     let _ = tx.send(AppEvent::ResponseDone);
 
@@ -330,6 +334,7 @@ async fn handle_google_response(
 async fn stream_sse_response(
     response: reqwest::Response,
     provider: &str,
+    memory_db: Option<Arc<MemoryDb>>,
     tx: &mpsc::Sender<AppEvent>,
 ) -> Result<TurnResult, String> {
     let mut stream = response.bytes_stream();
@@ -455,7 +460,7 @@ async fn stream_sse_response(
     };
 
     // Execute tool calls if any
-    let (tool_results, has_tools) = execute_tool_calls_for_tui(&tool_calls, tx).await;
+    let (tool_results, has_tools) = execute_tool_calls_for_tui(&tool_calls, memory_db, tx).await;
 
     let _ = tx.send(AppEvent::ResponseDone);
 
@@ -508,6 +513,7 @@ pub fn tool_needs_permission(tool_name: &str) -> bool {
 /// and a boolean indicating whether there were any tool calls.
 async fn execute_tool_calls_for_tui(
     tool_calls: &[ToolCall],
+    memory_db: Option<Arc<MemoryDb>>,
     tx: &mpsc::Sender<AppEvent>,
 ) -> (Vec<Value>, bool) {
     // Session-level "always allow/deny" cache (lives for this agentic loop)
@@ -655,8 +661,13 @@ async fn execute_tool_calls_for_tui(
         // responsive — TUI can redraw and show the spinner/progress while
         // the tool executes.
         let tool_call_clone = tool_call.clone();
+        let mem_db = memory_db.clone();
         let result = tokio::task::spawn_blocking(move || {
-            tools::execute_tool(&tool_call_clone)
+            if let Some(ref db) = mem_db {
+                tools::execute_tool_with_memory(&tool_call_clone, Some(db))
+            } else {
+                tools::execute_tool(&tool_call_clone)
+            }
         })
         .await
         .unwrap_or_else(|e| tools::ToolResult {

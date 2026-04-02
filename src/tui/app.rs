@@ -208,6 +208,8 @@ pub struct App {
     pub effort_level: String,
     pub system_prompt: String,
     pub claude_code_token: Option<String>,
+    /// Memory database for auto-learning from tool execution.
+    pub memory_db: Option<std::sync::Arc<crate::memory::MemoryDb>>,
     /// Conversation messages in the provider's wire format.
     pub session_messages: Vec<serde_json::Value>,
     /// Async runtime handle for spawning API tasks from the sync event loop.
@@ -244,6 +246,7 @@ impl App {
             effort_level: "medium".to_string(),
             system_prompt: String::new(),
             claude_code_token: None,
+            memory_db: None,
             session_messages: Vec::new(),
             runtime_handle: None,
             chat_session: TuiSession::new(model, provider),
@@ -938,6 +941,7 @@ impl App {
         let effort_level = self.effort_level.clone();
         let claude_code_token = self.claude_code_token.clone();
         let hook_engine = self.hook_engine.clone();
+        let memory_db = self.memory_db.clone();
         // Clone session messages so the async task can build follow-up requests
         let mut session_messages = self.session_messages.clone();
 
@@ -976,7 +980,7 @@ impl App {
 
             // Run the turn (may include tool execution)
             match crate::pipeline::run_turn(
-                &client, &endpoint, &headers, &request_body, &provider, tx.clone(),
+                &client, &endpoint, &headers, &request_body, &provider, memory_db.clone(), tx.clone(),
             )
             .await
             {
@@ -1022,6 +1026,7 @@ impl App {
                                 &headers,
                                 &followup_body,
                                 &provider,
+                                memory_db.clone(),
                                 tx.clone(),
                             )
                             .await
