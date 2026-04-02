@@ -1,0 +1,10 @@
+{
+  "uuid": "5c72e9fe-e4b3-4dc8-ad08-1e6285fac77f",
+  "issue_uuid": "262bc433-e4b0-4450-ba72-a788146e25bb",
+  "author": "lOrm",
+  "content": "Completed: handle_key 491→83 lines (extracted handle_input, handle_slash_command, handle_shell_command, send_user_message). proxy_chat_completions 443→369 lines (extracted prepare_request_context). handle_slash_command still 334 lines but flat dispatch — further decomposition tracked in #232.",
+  "created_at": "2026-04-02T19:15:52.937697112Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZAAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASQAAACEAwJfQltXPJJvHJn3V2BPI4R/4G3lKBuJPzb7wdu44UK4AAAAgTxMYRFmt4Dcwm7CcX1Zuw4/kPlkgNQxPwpAyIvCnL/Q="
+}
