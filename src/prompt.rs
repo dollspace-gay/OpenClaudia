@@ -265,6 +265,16 @@ pub fn build_system_prompt_with_cwd(
         prompt.push_str("- Relative paths will be resolved against the working directory, but prefer absolute paths\n");
     }
 
+    // Inject available skills so the model knows about them
+    let skills = crate::skills::load_skills();
+    if !skills.is_empty() {
+        prompt.push_str("\n\n## Available Skills\n");
+        prompt.push_str("The following skills are available. When the user asks you to run a skill or mentions a /<skill-name>, inject the skill's prompt as your next action.\n\n");
+        for skill in &skills {
+            prompt.push_str(&format!("- `/{name}` — {desc}\n", name = skill.name, desc = skill.description));
+        }
+    }
+
     // Add auto-learned knowledge
     if let Some(db) = memory_db {
         // Inject learned user preferences (always relevant)

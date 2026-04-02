@@ -248,7 +248,8 @@ impl App {
                     if text == "/help" || text == "?" {
                         self.messages.add(DisplayMessage {
                             role: "system".to_string(),
-                            content: "Commands: /quit, /exit, /clear, /help, /effort, /status\n\
+                            content: "Commands: /quit, /exit, /clear, /help, /effort, /status, /skill\n\
+                                      Skills: /skill <name> to run, /skill to list\n\
                                       Scroll: Up/Down/PageUp/PageDown\n\
                                       Cancel: Escape (during streaming)\n\
                                       Quit: Ctrl+C"
@@ -312,7 +313,60 @@ impl App {
                         return;
                     }
 
+                    if text == "/skill" || text == "/skills" {
+                        let skills = crate::skills::load_skills();
+                        if skills.is_empty() {
+                            self.messages.add(DisplayMessage {
+                                role: "system".to_string(),
+                                content: "No skills found. Add .md files to .openclaudia/skills/".to_string(),
+                                tool_name: None,
+                                is_error: false,
+                                is_thinking: false,
+                            });
+                        } else {
+                            let list = skills
+                                .iter()
+                                .map(|s| format!("  /{} — {}", s.name, s.description))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            self.messages.add(DisplayMessage {
+                                role: "system".to_string(),
+                                content: format!("Available skills:\n{list}"),
+                                tool_name: None,
+                                is_error: false,
+                                is_thinking: false,
+                            });
+                        }
+                        return;
+                    }
+
+                    // Check if it's a skill invocation: /skillname or /skill skillname
                     if text.starts_with('/') {
+                        let skill_name = if text.starts_with("/skill ") {
+                            text.strip_prefix("/skill ").unwrap_or("").trim()
+                        } else {
+                            text.strip_prefix('/').unwrap_or("")
+                        };
+
+                        if let Some(skill) = crate::skills::get_skill(skill_name) {
+                            self.messages.add(DisplayMessage {
+                                role: "system".to_string(),
+                                content: format!("Running skill: /{}", skill.name),
+                                tool_name: None,
+                                is_error: false,
+                                is_thinking: false,
+                            });
+
+                            // Inject skill prompt as user message and send to API
+                            self.session_messages.push(serde_json::json!({
+                                "role": "user",
+                                "content": skill.prompt
+                            }));
+                            self.is_waiting = true;
+                            self.spawn_api_turn();
+                            return;
+                        }
+
                         self.messages.add(DisplayMessage {
                             role: "system".to_string(),
                             content: format!("Unknown command: {text}. Type /help for commands."),
