@@ -2,11 +2,12 @@
   "uuid": "c754298b-fc5a-471b-a051-82b23fcb6f15",
   "display_id": 93,
   "title": "W-8: ThinkingConfig default inconsistency",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:03.026265213Z",
-  "updated_at": "2026-04-01T03:39:03.138180614Z",
+  "updated_at": "2026-04-02T20:31:19.449895004Z",
+  "closed_at": "2026-04-02T20:31:19.449895004Z",
   "labels": [
     "qa"
   ]
