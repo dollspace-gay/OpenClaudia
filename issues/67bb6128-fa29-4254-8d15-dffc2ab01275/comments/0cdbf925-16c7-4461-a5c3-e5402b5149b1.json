@@ -1,0 +1,10 @@
+{
+  "uuid": "0cdbf925-16c7-4461-a5c3-e5402b5149b1",
+  "issue_uuid": "67bb6128-fa29-4254-8d15-dffc2ab01275",
+  "author": "lOrm",
+  "content": "Hook stdin write failure is logged with warn!(). The hook continues executing because it may work via other means (env vars, args). Acceptable design.",
+  "created_at": "2026-04-02T20:31:53.455535857Z",
+  "kind": "decision",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAZQAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASgAAACEAy23SFftrKNZzIyNhVZjQQ8LLlrxi+mrSRYTpoqnJXb0AAAAhAN8gRkjRHhKhlMQVcd4WInf2pXCzDLa1zujbSzZBnJu4"
+}
