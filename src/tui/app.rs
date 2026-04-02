@@ -516,11 +516,50 @@ impl App {
             KeyCode::Enter => {
                 if !self.input.is_empty() {
                     let text = self.input.take();
+                    self.handle_input(text);
+                }
+            }
+            KeyCode::Char(c) => self.input.insert(c),
+            KeyCode::Backspace => self.input.backspace(),
+            KeyCode::Delete => self.input.delete(),
+            KeyCode::Left => self.input.move_left(),
+            KeyCode::Right => self.input.move_right(),
+            KeyCode::Home => self.input.home(),
+            KeyCode::End => self.input.end(),
+            KeyCode::Up => self.messages.scroll_up(3),
+            KeyCode::Down => self.messages.scroll_down(3),
+            KeyCode::PageUp => self.messages.scroll_up(15),
+            KeyCode::PageDown => self.messages.scroll_down(15),
+            _ => {}
+        }
+    }
 
-                    // ── Slash commands ──
+    /// Handle user input: dispatch to slash commands, shell commands, or API.
+    fn handle_input(&mut self, text: String) {
+        // Shell commands: !command
+        if let Some(cmd) = text.strip_prefix('!') {
+            self.handle_shell_command(cmd.trim());
+            return;
+        }
+
+        // Slash commands: /command
+        if text.starts_with('/') || text == "?" {
+            if self.handle_slash_command(&text) {
+                return;
+            }
+            // Unknown command — fall through handled inside handle_slash_command
+            return;
+        }
+
+        // Normal message → send to API
+        self.send_user_message(text);
+    }
+
+    /// Handle slash commands. Returns true if the command was recognized.
+    fn handle_slash_command(&mut self, text: &str) -> bool {
                     if text == "/quit" || text == "/exit" {
                         self.should_quit = true;
-                        return;
+                        return true;
                     }
 
                     if text == "/help" || text == "?" {
@@ -546,7 +585,7 @@ impl App {
                             is_error: false,
                             is_thinking: false,
                         });
-                        return;
+                        return true;
                     }
 
                     if text == "/clear" {
@@ -555,7 +594,7 @@ impl App {
                         self.session_messages.retain(|m| {
                             m.get("role").and_then(|r| r.as_str()) == Some("system")
                         });
-                        return;
+                        return true;
                     }
 
                     if text == "/status" {
@@ -573,7 +612,7 @@ impl App {
                             is_error: false,
                             is_thinking: false,
                         });
-                        return;
+                        return true;
                     }
 
                     if text == "/mode" {
@@ -590,7 +629,7 @@ impl App {
                             is_error: false,
                             is_thinking: false,
                         });
-                        return;
+                        return true;
                     }
 
                     if text == "/sessions" || text == "/list" {
@@ -625,7 +664,7 @@ impl App {
                                 is_thinking: false,
                             });
                         }
-                        return;
+                        return true;
                     }
 
                     if text.starts_with("/load ") || text.starts_with("/continue ") {
@@ -668,7 +707,7 @@ impl App {
                                 is_thinking: false,
                             });
                         }
-                        return;
+                        return true;
                     }
 
                     if text == "/undo" {
@@ -696,7 +735,7 @@ impl App {
                                 is_thinking: false,
                             });
                         }
-                        return;
+                        return true;
                     }
 
                     if text == "/redo" {
@@ -719,7 +758,7 @@ impl App {
                                 is_thinking: false,
                             });
                         }
-                        return;
+                        return true;
                     }
 
                     if text == "/export" {
@@ -755,52 +794,7 @@ impl App {
                                 });
                             }
                         }
-                        return;
-                    }
-
-                    // Shell commands: !command
-                    if let Some(cmd) = text.strip_prefix('!') {
-                        let cmd = cmd.trim();
-                        if !cmd.is_empty() {
-                            let output = std::process::Command::new("bash")
-                                .arg("-c")
-                                .arg(cmd)
-                                .output();
-                            match output {
-                                Ok(out) => {
-                                    let stdout = String::from_utf8_lossy(&out.stdout);
-                                    let stderr = String::from_utf8_lossy(&out.stderr);
-                                    let mut result = String::new();
-                                    if !stdout.is_empty() {
-                                        result.push_str(&stdout);
-                                    }
-                                    if !stderr.is_empty() {
-                                        if !result.is_empty() { result.push('\n'); }
-                                        result.push_str(&stderr);
-                                    }
-                                    if result.is_empty() {
-                                        result = "(no output)".to_string();
-                                    }
-                                    self.messages.add(DisplayMessage {
-                                        role: "tool".to_string(),
-                                        content: result,
-                                        tool_name: Some(format!("$ {cmd}")),
-                                        is_error: !out.status.success(),
-                                        is_thinking: false,
-                                    });
-                                }
-                                Err(e) => {
-                                    self.messages.add(DisplayMessage {
-                                        role: "tool".to_string(),
-                                        content: format!("Failed: {e}"),
-                                        tool_name: Some(format!("$ {cmd}")),
-                                        is_error: true,
-                                        is_thinking: false,
-                                    });
-                                }
-                            }
-                        }
-                        return;
+                        return true;
                     }
 
                     if text.starts_with("/effort") {
@@ -825,7 +819,7 @@ impl App {
                             is_error: false,
                             is_thinking: false,
                         });
-                        return;
+                        return true;
                     }
 
                     if text == "/skill" || text == "/skills" {
@@ -852,7 +846,7 @@ impl App {
                                 is_thinking: false,
                             });
                         }
-                        return;
+                        return true;
                     }
 
                     // Check if it's a skill invocation: /skillname or /skill skillname
@@ -879,7 +873,7 @@ impl App {
                             }));
                             self.is_waiting = true;
                             self.spawn_api_turn();
-                            return;
+                            return true;
                         }
 
                         self.messages.add(DisplayMessage {
@@ -889,59 +883,87 @@ impl App {
                             is_error: false,
                             is_thinking: false,
                         });
-                        return;
+                        return true;
                     }
 
-                    // ── Normal message: send to API ──
+        false
+    }
 
-                    // Expand @file references (inline file contents)
-                    let expanded = expand_file_refs(&text);
-
-                    self.messages.add(DisplayMessage {
-                        role: "user".to_string(),
-                        content: text.clone(), // Show original to user
-                        tool_name: None,
-                        is_error: false,
-                        is_thinking: false,
-                    });
-
-                    // Add expanded version to session history (model sees file contents)
-                    self.session_messages.push(serde_json::json!({
-                        "role": "user",
-                        "content": expanded
-                    }));
-
-                    // Inject rules as system message on first turn
-                    if !self.rules_injected {
-                        if let Some(ref rules) = self.rules_content {
-                            self.session_messages.insert(0, serde_json::json!({
-                                "role": "system",
-                                "content": rules
-                            }));
-                        }
-                        self.rules_injected = true;
-                    }
-
-                    // Reset guardrails for this turn
-                    crate::guardrails::reset_turn();
-
-                    self.is_waiting = true;
-                    self.spawn_api_turn();
-                }
-            }
-            KeyCode::Char(c) => self.input.insert(c),
-            KeyCode::Backspace => self.input.backspace(),
-            KeyCode::Delete => self.input.delete(),
-            KeyCode::Left => self.input.move_left(),
-            KeyCode::Right => self.input.move_right(),
-            KeyCode::Home => self.input.home(),
-            KeyCode::End => self.input.end(),
-            KeyCode::Up => self.messages.scroll_up(3),
-            KeyCode::Down => self.messages.scroll_down(3),
-            KeyCode::PageUp => self.messages.scroll_up(15),
-            KeyCode::PageDown => self.messages.scroll_down(15),
-            _ => {}
+    /// Execute a shell command and display its output.
+    fn handle_shell_command(&mut self, cmd: &str) {
+        if cmd.is_empty() {
+            return;
         }
+        let output = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(cmd)
+            .output();
+        match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let mut result = String::new();
+                if !stdout.is_empty() {
+                    result.push_str(&stdout);
+                }
+                if !stderr.is_empty() {
+                    if !result.is_empty() { result.push('\n'); }
+                    result.push_str(&stderr);
+                }
+                if result.is_empty() {
+                    result = "(no output)".to_string();
+                }
+                self.messages.add(DisplayMessage {
+                    role: "tool".to_string(),
+                    content: result,
+                    tool_name: Some(format!("$ {cmd}")),
+                    is_error: !out.status.success(),
+                    is_thinking: false,
+                });
+            }
+            Err(e) => {
+                self.messages.add(DisplayMessage {
+                    role: "tool".to_string(),
+                    content: format!("Failed: {e}"),
+                    tool_name: Some(format!("$ {cmd}")),
+                    is_error: true,
+                    is_thinking: false,
+                });
+            }
+        }
+    }
+
+    /// Send a user message to the API.
+    fn send_user_message(&mut self, text: String) {
+        let expanded = expand_file_refs(&text);
+
+        self.messages.add(DisplayMessage {
+            role: "user".to_string(),
+            content: text,
+            tool_name: None,
+            is_error: false,
+            is_thinking: false,
+        });
+
+        self.session_messages.push(serde_json::json!({
+            "role": "user",
+            "content": expanded
+        }));
+
+        // Inject rules as system message on first turn
+        if !self.rules_injected {
+            if let Some(ref rules) = self.rules_content {
+                self.session_messages.insert(0, serde_json::json!({
+                    "role": "system",
+                    "content": rules
+                }));
+            }
+            self.rules_injected = true;
+        }
+
+        crate::guardrails::reset_turn();
+        self.is_waiting = true;
+        self.spawn_api_turn();
     }
 
     /// Spawn an async API turn on the tokio runtime.
