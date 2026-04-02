@@ -147,7 +147,7 @@ impl MessageList {
                 }
                 "assistant" => {
                     lines.push(Line::from(Span::styled(
-                        "\u{23BF} assistant",
+                        "\u{23BF} Claudia",
                         Style::default()
                             .fg(Color::Rgb(147, 112, 219))
                             .add_modifier(Modifier::BOLD),
@@ -206,7 +206,7 @@ impl MessageList {
         // Streaming content
         if self.is_streaming && !self.streaming_text.is_empty() {
             lines.push(Line::from(Span::styled(
-                "\u{23BF} assistant",
+                "\u{23BF} Claudia",
                 Style::default()
                     .fg(Color::Rgb(147, 112, 219))
                     .add_modifier(Modifier::BOLD),
