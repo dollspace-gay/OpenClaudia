@@ -259,7 +259,9 @@ async fn refresh_and_load(
 #[must_use]
 pub fn get_oauth_headers(access_token: &str) -> Vec<(String, String)> {
     // Matching Claude Code's client.ts:104-129 default headers
-    // Betas are now sent as a body parameter, NOT in the anthropic-beta header
+    // The anthropic-beta header is REQUIRED for OAuth auth — the SDK sets it
+    // from the betas body param internally, but since we use raw HTTP we must
+    // send it as both a header AND a body param.
     vec![
         (
             "Authorization".to_string(),
@@ -267,7 +269,12 @@ pub fn get_oauth_headers(access_token: &str) -> Vec<(String, String)> {
         ),
         ("anthropic-version".to_string(), "2023-06-01".to_string()),
         ("content-type".to_string(), "application/json".to_string()),
-        // Claude Code sends these default headers (client.ts:104-129)
+        (
+            "anthropic-beta".to_string(),
+            format!(
+                "{CLAUDE_CODE_BETA_HEADER},{OAUTH_BETA_HEADER},{INTERLEAVED_THINKING_BETA},{CONTEXT_1M_BETA},{PROMPT_CACHING_SCOPE_BETA}"
+            ),
+        ),
         ("x-app".to_string(), "cli".to_string()),
         (
             "User-Agent".to_string(),
@@ -387,7 +394,10 @@ mod tests {
         assert!(headers
             .iter()
             .any(|(k, v)| k == "anthropic-version" && v == "2023-06-01"));
-        // Betas are now sent as body parameter, not header
+        // Betas sent as both header (for OAuth auth) and body param
+        assert!(headers
+            .iter()
+            .any(|(k, v)| k == "anthropic-beta" && v.contains("oauth-2025-04-20")));
         assert!(headers.iter().any(|(k, _)| k == "x-app"));
         assert!(headers.iter().any(|(k, _)| k == "User-Agent"));
         assert!(headers
