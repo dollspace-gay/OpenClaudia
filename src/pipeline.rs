@@ -310,7 +310,7 @@ async fn handle_google_response(
 
     // Execute tool calls if any
     let (tool_results, needs_followup) =
-        execute_tool_calls_for_tui(&tool_calls, memory_db, tx);
+        execute_tool_calls_for_tui(&tool_calls, memory_db, tx).await;
 
     let _ = tx.send(AppEvent::ResponseDone);
 
@@ -458,7 +458,7 @@ async fn stream_sse_response(
     };
 
     // Execute tool calls if any
-    let (tool_results, has_tools) = execute_tool_calls_for_tui(&tool_calls, memory_db, tx);
+    let (tool_results, has_tools) = execute_tool_calls_for_tui(&tool_calls, memory_db, tx).await;
 
     let _ = tx.send(AppEvent::ResponseDone);
 
@@ -499,13 +499,17 @@ pub fn tool_needs_permission(tool_name: &str) -> bool {
 
 /// Execute tool calls and send progress events to the TUI.
 ///
+/// Each tool runs on a blocking thread via `spawn_blocking` so the async
+/// event channel stays responsive — the TUI can redraw and show progress
+/// while tools execute.
+///
 /// Checks permissions for write/destructive tools via a channel-based
 /// handshake: sends `PermissionRequest` to the TUI and blocks until
 /// the user responds with y/n/a/d.
 ///
 /// Returns the tool result messages (for appending to conversation history)
 /// and a boolean indicating whether there were any tool calls.
-fn execute_tool_calls_for_tui(
+async fn execute_tool_calls_for_tui(
     tool_calls: &[ToolCall],
     memory_db: Option<&MemoryDb>,
     tx: &mpsc::Sender<AppEvent>,
@@ -651,11 +655,19 @@ fn execute_tool_calls_for_tui(
             description: args_desc,
         });
 
-        let result = if let Some(db) = memory_db {
-            tools::execute_tool_with_memory(tool_call, Some(db))
-        } else {
-            tools::execute_tool(tool_call)
-        };
+        // Run tool on a blocking thread so the async event channel stays
+        // responsive — TUI can redraw and show the spinner/progress while
+        // the tool executes.
+        let tool_call_clone = tool_call.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            tools::execute_tool(&tool_call_clone)
+        })
+        .await
+        .unwrap_or_else(|e| tools::ToolResult {
+            tool_call_id: tool_call.id.clone(),
+            content: format!("Tool execution panicked: {e}"),
+            is_error: true,
+        });
 
         let _ = tx.send(AppEvent::ToolDone {
             name: tool_name.clone(),
