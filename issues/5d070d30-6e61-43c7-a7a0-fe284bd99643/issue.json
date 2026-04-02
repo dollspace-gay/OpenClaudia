@@ -2,11 +2,12 @@
   "uuid": "5d070d30-6e61-43c7-a7a0-fe284bd99643",
   "display_id": 4,
   "title": "Fix flaky test_todo_list_persistence integration test",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "anon-b5959f1a",
   "created_at": "2026-03-23T18:06:51.021505565Z",
-  "updated_at": "2026-03-23T18:06:56.370182599Z",
+  "updated_at": "2026-04-02T20:56:45.716466612Z",
+  "closed_at": "2026-04-02T20:56:45.716466612Z",
   "labels": [
     "bug"
   ]
