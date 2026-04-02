@@ -1,0 +1,11 @@
+{
+  "uuid": "6a54f84d-3012-49ec-a1f1-0ec1cd4a8e5a",
+  "display_id": 212,
+  "title": "Fix silent channel send failures in pipeline — tools run without TUI feedback",
+  "description": "pipeline.rs — 17 instances of let _ = tx.send(...) silently discarding errors. If TUI crashes, pipeline continues running tools with no feedback. Check send results and stop on failure.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:40:30.963938708Z",
+  "updated_at": "2026-04-02T16:40:30.963938708Z"
+}
