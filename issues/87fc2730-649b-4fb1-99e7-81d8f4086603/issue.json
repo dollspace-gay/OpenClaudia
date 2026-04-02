@@ -3,11 +3,12 @@
   "display_id": 228,
   "title": "Validate file paths before storing in auto_learn database",
   "description": "auto_learn.rs:73-77, guardrails.rs:316-323 — tool argument file paths used directly in DB queries without normalization.",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-02T16:41:51.341265032Z",
-  "updated_at": "2026-04-02T16:45:32.395171318Z",
+  "updated_at": "2026-04-02T19:32:27.176467584Z",
+  "closed_at": "2026-04-02T19:32:27.176467584Z",
   "labels": [
     "security"
   ],
