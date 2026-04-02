@@ -1,0 +1,11 @@
+{
+  "uuid": "ec430c74-a4e4-4785-aaf9-63e90dad5793",
+  "display_id": 215,
+  "title": "Fix race condition in background shell stdout/stderr buffer access",
+  "description": "tools/bash/mod.rs:168-210 — get_output() clears buffers while background thread may still write. Use channel-based architecture or atomic swap.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T16:40:40.879188553Z",
+  "updated_at": "2026-04-02T16:40:40.879188553Z"
+}
