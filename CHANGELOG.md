@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Replace rustyline REPL with ratatui full-screen TUI as default mode (#199)
 - TUI parity with Claude Code: markdown, tool display, thinking blocks (#197)
 - Native diff rendering: syntect syntax highlighting, word-level diff via similar crate, line numbers, grapheme-aware wrapping in TUI (#170)
 - Task/Agent orchestration: support 7 task types (LocalShell, LocalAgent, RemoteAgent, InProcessTeammate, Dream, LocalWorkflow, MonitorMcp), coordinator mode for multi-agent delegation (#169)
