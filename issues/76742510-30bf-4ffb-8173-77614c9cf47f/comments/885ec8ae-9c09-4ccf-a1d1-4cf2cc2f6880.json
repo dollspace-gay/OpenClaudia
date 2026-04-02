@@ -1,0 +1,10 @@
+{
+  "uuid": "885ec8ae-9c09-4ccf-a1d1-4cf2cc2f6880",
+  "issue_uuid": "76742510-30bf-4ffb-8173-77614c9cf47f",
+  "author": "lOrm",
+  "content": "Shipped full Claude Code behavioral prompt (7 sections, 85 lines) with Claudia persona appended. Loaded via include_str! from src/claude_code_prompt.txt.",
+  "created_at": "2026-04-02T12:58:47.039860169Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAYwAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASAAAACBMrfIx/LEu8WdW8OiNz+uQhQk5xsHBmtn+iCSsAy1VmwAAACARFaeLxP86ap6P4i4/iiZVJ7Utx3C9c8bDV1OA0HUaZw=="
+}
