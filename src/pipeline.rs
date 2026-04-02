@@ -610,9 +610,45 @@ fn execute_tool_calls_for_tui(
             }
         }
 
+        // Build a descriptive preview of what the tool is doing
+        let args_desc = {
+            let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
+                .unwrap_or_default();
+            match tool_name.as_str() {
+                "read_file" => args.get("path").and_then(|v| v.as_str())
+                    .map(|p| format!("Reading {p}"))
+                    .unwrap_or_else(|| "Reading file".to_string()),
+                "write_file" => args.get("path").and_then(|v| v.as_str())
+                    .map(|p| format!("Writing {p}"))
+                    .unwrap_or_else(|| "Writing file".to_string()),
+                "edit_file" => args.get("path").and_then(|v| v.as_str())
+                    .map(|p| format!("Editing {p}"))
+                    .unwrap_or_else(|| "Editing file".to_string()),
+                "bash" => args.get("command").and_then(|v| v.as_str())
+                    .map(|c| {
+                        let truncated = if c.len() > 80 { &c[..77] } else { c };
+                        format!("$ {truncated}")
+                    })
+                    .unwrap_or_else(|| "Running command".to_string()),
+                "list_files" => args.get("path").and_then(|v| v.as_str())
+                    .map(|p| format!("Listing {p}"))
+                    .unwrap_or_else(|| "Listing files".to_string()),
+                "web_search" => args.get("query").and_then(|v| v.as_str())
+                    .map(|q| format!("Searching: {q}"))
+                    .unwrap_or_else(|| "Searching web".to_string()),
+                "web_fetch" => args.get("url").and_then(|v| v.as_str())
+                    .map(|u| format!("Fetching {u}"))
+                    .unwrap_or_else(|| "Fetching URL".to_string()),
+                "chainlink" => args.get("args").and_then(|v| v.as_str())
+                    .map(|a| format!("crosslink {a}"))
+                    .unwrap_or_else(|| "Running crosslink".to_string()),
+                _ => format!("Running {tool_name}"),
+            }
+        };
+
         let _ = tx.send(AppEvent::ToolStart {
             name: tool_name.clone(),
-            description: format!("Running {tool_name}"),
+            description: args_desc,
         });
 
         let result = if let Some(db) = memory_db {
