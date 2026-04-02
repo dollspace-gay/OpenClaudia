@@ -207,6 +207,12 @@ pub struct App {
     runtime_handle: Option<tokio::runtime::Handle>,
     /// Persistent chat session (for save/load/resume)
     pub chat_session: TuiSession,
+    /// Hook engine for running lifecycle hooks.
+    pub hook_engine: Option<std::sync::Arc<crate::hooks::HookEngine>>,
+    /// Rules content injected as system message (loaded once at startup).
+    pub rules_content: Option<String>,
+    /// Whether rules have been injected into session messages.
+    rules_injected: bool,
 }
 
 impl App {
@@ -232,6 +238,9 @@ impl App {
             session_messages: Vec::new(),
             runtime_handle: None,
             chat_session: TuiSession::new(model, provider),
+            hook_engine: None,
+            rules_content: None,
+            rules_injected: false,
         }
     }
 
@@ -797,6 +806,17 @@ impl App {
                         "content": expanded
                     }));
 
+                    // Inject rules as system message on first turn
+                    if !self.rules_injected {
+                        if let Some(ref rules) = self.rules_content {
+                            self.session_messages.insert(0, serde_json::json!({
+                                "role": "system",
+                                "content": rules
+                            }));
+                        }
+                        self.rules_injected = true;
+                    }
+
                     // Reset guardrails for this turn
                     crate::guardrails::reset_turn();
 
@@ -858,10 +878,43 @@ impl App {
         let model = self.model.clone();
         let effort_level = self.effort_level.clone();
         let claude_code_token = self.claude_code_token.clone();
+        let hook_engine = self.hook_engine.clone();
         // Clone session messages so the async task can build follow-up requests
         let mut session_messages = self.session_messages.clone();
 
         handle.spawn(async move {
+            // Run UserPromptSubmit hooks before the API call
+            if let Some(ref engine) = hook_engine {
+                // Get the last user message as the prompt
+                let user_prompt = session_messages.last()
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                let hook_input = crate::hooks::HookInput::new(crate::hooks::HookEvent::UserPromptSubmit)
+                    .with_prompt(&user_prompt);
+                let hook_result = engine.run(crate::hooks::HookEvent::UserPromptSubmit, &hook_input).await;
+
+                if !hook_result.allowed {
+                    let reason = hook_result.errors.first()
+                        .map(|e| e.to_string())
+                        .unwrap_or_else(|| "Hook blocked the request".to_string());
+                    let _ = tx.send(AppEvent::ApiError(format!("Blocked by hook: {reason}")));
+                    return;
+                }
+
+                // Inject any system messages from hooks
+                for output in &hook_result.outputs {
+                    if let Some(ref sys_msg) = output.system_message {
+                        session_messages.push(serde_json::json!({
+                            "role": "system",
+                            "content": sys_msg
+                        }));
+                    }
+                }
+            }
+
             // Run the turn (may include tool execution)
             match crate::pipeline::run_turn(
                 &client, &endpoint, &headers, &request_body, &provider, None, tx.clone(),

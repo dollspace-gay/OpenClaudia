@@ -225,6 +225,8 @@ async fn main() -> anyhow::Result<()> {
 /// Loads config, resolves the provider/model/API key, builds the system prompt,
 /// then launches the ratatui interactive TUI with the API pipeline wired up.
 async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
+    use openclaudia::hooks::{load_claude_code_hooks, merge_hooks_config, HookEngine};
+    use openclaudia::rules::RulesEngine;
     let config = match config::load_config() {
         Ok(c) => c,
         Err(e) => {
@@ -345,9 +347,24 @@ async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
         Some(&cwd),
     );
 
+    // Initialize hook engine
+    let claude_hooks = load_claude_code_hooks();
+    let merged_hooks = merge_hooks_config(config.hooks.clone(), claude_hooks);
+    let hook_engine = std::sync::Arc::new(HookEngine::new(merged_hooks));
+
+    // Initialize rules engine and load rules
+    let rules_engine = RulesEngine::new(".openclaudia/rules");
+    let rules_content = {
+        let extensions: Vec<&str> = vec!["rs", "py", "ts", "js", "go", "java", "rb", "md"];
+        let content = rules_engine.get_combined_rules(&extensions);
+        if content.is_empty() { None } else { Some(content) }
+    };
+
     // Build and launch the TUI
     let mut app = tui::app::App::new(&model, &config.proxy.target);
     app.set_api_config(endpoint, headers, system_prompt, claude_code_token);
+    app.hook_engine = Some(hook_engine);
+    app.rules_content = rules_content;
     app.run().map_err(|e| anyhow::anyhow!("TUI error: {e}"))
 }
 

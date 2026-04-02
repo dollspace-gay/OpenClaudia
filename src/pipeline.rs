@@ -471,7 +471,36 @@ async fn stream_sse_response(
     })
 }
 
+/// Tools that are safe to execute without permission (read-only / informational).
+const SAFE_TOOLS: &[&str] = &[
+    "read_file",
+    "list_files",
+    "grep",
+    "glob",
+    "web_fetch",
+    "web_search",
+    "ask_user_question",
+    "todo_read",
+    "task",
+    "agent_output",
+    "enter_plan_mode",
+    "exit_plan_mode",
+    "lsp",
+    "memory_search",
+    "core_memory_get",
+    "chainlink",
+];
+
+/// Check if a tool needs permission before execution.
+#[must_use]
+pub fn tool_needs_permission(tool_name: &str) -> bool {
+    !SAFE_TOOLS.contains(&tool_name)
+}
+
 /// Execute tool calls and send progress events to the TUI.
+///
+/// Checks permissions for write/destructive tools. In Plan mode,
+/// write tools are blocked entirely.
 ///
 /// Returns the tool result messages (for appending to conversation history)
 /// and a boolean indicating whether there were any tool calls.
@@ -487,9 +516,33 @@ fn execute_tool_calls_for_tui(
     let mut results = Vec::new();
 
     for tool_call in tool_calls {
+        let tool_name = &tool_call.function.name;
+
+        // Check blast radius guardrails
+        if let Err(msg) = crate::guardrails::check_file_access(
+            &tool_call.function.arguments,
+        ) {
+            let _ = tx.send(AppEvent::ToolDone {
+                name: tool_name.clone(),
+                success: false,
+                content: format!("Blocked by guardrails: {msg}"),
+            });
+            results.push(serde_json::json!({
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": format!("[BLOCKED] {msg}"),
+                "is_error": true
+            }));
+            continue;
+        }
+
         let _ = tx.send(AppEvent::ToolStart {
-            name: tool_call.function.name.clone(),
-            description: format!("Running {}...", tool_call.function.name),
+            name: tool_name.clone(),
+            description: if tool_needs_permission(tool_name) {
+                format!("Running {tool_name} (write)")
+            } else {
+                format!("Running {tool_name}")
+            },
         });
 
         let result = if let Some(db) = memory_db {
@@ -499,12 +552,11 @@ fn execute_tool_calls_for_tui(
         };
 
         let _ = tx.send(AppEvent::ToolDone {
-            name: tool_call.function.name.clone(),
+            name: tool_name.clone(),
             success: !result.is_error,
             content: result.content.clone(),
         });
 
-        // Build tool result message for conversation history
         let result_content = if result.is_error {
             format!("[ERROR] {}", result.content)
         } else {
@@ -516,6 +568,17 @@ fn execute_tool_calls_for_tui(
             "content": result_content,
             "is_error": result.is_error
         }));
+    }
+
+    // Run quality gates after tool execution
+    let gates = crate::guardrails::run_quality_gates();
+    for gate in &gates {
+        if !gate.passed {
+            let _ = tx.send(AppEvent::StreamText(format!(
+                "\n⚠ Quality gate '{}': {}\n",
+                gate.name, gate.stdout.lines().next().unwrap_or("failed")
+            )));
+        }
     }
 
     (results, true)
