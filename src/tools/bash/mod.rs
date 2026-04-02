@@ -176,24 +176,31 @@ impl BackgroundShellManager {
 
         let mut output = String::new();
 
-        // Get stdout lines
-        if let Ok(mut buf) = shell.stdout_buffer.lock() {
-            if !buf.is_empty() {
-                output.push_str(&buf.join("\n"));
-                buf.clear();
-            }
-        }
+        // Swap buffers atomically — take all lines, leave empty vec.
+        // This minimizes lock hold time and prevents data loss from
+        // concurrent writer threads.
+        let stdout_lines: Vec<String> = shell
+            .stdout_buffer
+            .lock()
+            .map(|mut buf| std::mem::take(&mut *buf))
+            .unwrap_or_default();
 
-        // Get stderr lines
-        if let Ok(mut buf) = shell.stderr_buffer.lock() {
-            if !buf.is_empty() {
-                if !output.is_empty() {
-                    output.push('\n');
-                }
-                output.push_str("stderr:\n");
-                output.push_str(&buf.join("\n"));
-                buf.clear();
+        let stderr_lines: Vec<String> = shell
+            .stderr_buffer
+            .lock()
+            .map(|mut buf| std::mem::take(&mut *buf))
+            .unwrap_or_default();
+
+        // Join outside the lock
+        if !stdout_lines.is_empty() {
+            output.push_str(&stdout_lines.join("\n"));
+        }
+        if !stderr_lines.is_empty() {
+            if !output.is_empty() {
+                output.push('\n');
             }
+            output.push_str("stderr:\n");
+            output.push_str(&stderr_lines.join("\n"));
         }
 
         let is_finished = shell.finished.load(Ordering::SeqCst);
