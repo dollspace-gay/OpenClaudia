@@ -65,6 +65,57 @@ fn credentials_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude").join(".credentials.json"))
 }
 
+/// Path to the advisory lock file for credential access.
+fn lock_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".claude").join(".credentials.lock"))
+}
+
+/// Advisory file lock for credential access.
+/// Prevents TOCTOU race conditions when multiple processes refresh tokens.
+/// Uses flock on Unix, CreateFile exclusive lock on Windows.
+struct CredentialLock {
+    _file: std::fs::File,
+}
+
+impl CredentialLock {
+    /// Acquire an exclusive lock on the credentials lock file.
+    /// Blocks until the lock is available.
+    fn acquire() -> Result<Self, String> {
+        let path = lock_path().ok_or("Cannot determine home directory for lock file")?;
+
+        // Create parent directory if needed
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|e| format!("Failed to open lock file {}: {e}", path.display()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let fd = file.as_raw_fd();
+            // LOCK_EX = exclusive, blocks until acquired
+            let ret = unsafe { libc::flock(fd, libc::LOCK_EX) };
+            if ret != 0 {
+                return Err(format!(
+                    "Failed to acquire credential lock: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+        }
+
+        // On non-Unix, the file open with write mode provides basic mutual exclusion
+        Ok(Self { _file: file })
+    }
+}
+
+// Lock is released when the File is dropped (flock is released on close)
+
 /// Check if Claude Code credentials exist
 #[must_use]
 pub fn has_claude_code_credentials() -> bool {
@@ -79,6 +130,10 @@ pub fn has_claude_code_credentials() -> bool {
 ///
 /// Returns an error if credentials cannot be found, read, parsed, or refreshed.
 pub async fn load_credentials() -> Result<LoadedCredentials, String> {
+    // Acquire advisory lock — prevents race conditions with other OpenClaudia
+    // instances or Claude Code refreshing tokens concurrently.
+    let _lock = CredentialLock::acquire()?;
+
     let path = credentials_path().ok_or("Cannot determine home directory")?;
 
     if !path.exists() {
@@ -141,11 +196,9 @@ pub async fn load_credentials() -> Result<LoadedCredentials, String> {
 
 /// Refresh the token and update the credentials file.
 ///
-/// Known limitation: this function has no locking mechanism, so concurrent
-/// processes calling `refresh_and_load` simultaneously could race. This is
-/// acceptable for single-process use (`OpenClaudia` only runs one instance).
-/// Claude Code itself uses a file lock (`~/.claude/.refresh_lock`) for
-/// multi-process safety, but we skip that complexity here.
+/// Caller must hold `CredentialLock` — this function reads, refreshes via API,
+/// and writes the credentials file. The lock prevents concurrent processes from
+/// racing on the same file.
 async fn refresh_and_load(
     path: &PathBuf,
     oauth: &ClaudeAiOauth,

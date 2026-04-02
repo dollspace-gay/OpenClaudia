@@ -6,6 +6,9 @@ description = "Open-source universal agent harness - Claude Code capabilities fo
 license = "MIT"
 repository = "https://github.com/dollspace-gay/openclaudia"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }

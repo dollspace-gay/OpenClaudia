@@ -2386,6 +2386,7 @@ dependencies = [
  "futures",
  "headless_chrome",
  "indicatif",
+ "libc",
  "predicates",
  "rand 0.10.0",
  "ratatui",
