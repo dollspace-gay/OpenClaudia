@@ -26,6 +26,12 @@ pub const CLAUDE_CODE_BETA_HEADER: &str = "claude-code-20250219";
 /// Interleaved thinking beta
 pub const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
 
+/// Beta header for 1M context window support
+pub const CONTEXT_1M_BETA: &str = "context-1m-2025-08-07";
+
+/// Beta header for prompt caching scope control
+pub const PROMPT_CACHING_SCOPE_BETA: &str = "prompt-caching-scope-2026-01-05";
+
 /// 5 minute buffer before expiry to trigger refresh
 const REFRESH_BUFFER_MS: i64 = 5 * 60 * 1000;
 
@@ -262,7 +268,7 @@ pub fn get_oauth_headers(access_token: &str) -> Vec<(String, String)> {
         // Beta headers matching what Claude Code sends (required for OAuth model access)
         (
             "anthropic-beta".to_string(),
-            format!("{CLAUDE_CODE_BETA_HEADER},{OAUTH_BETA_HEADER},{INTERLEAVED_THINKING_BETA}",),
+            format!("{CLAUDE_CODE_BETA_HEADER},{OAUTH_BETA_HEADER},{INTERLEAVED_THINKING_BETA},{CONTEXT_1M_BETA},{PROMPT_CACHING_SCOPE_BETA}"),
         ),
     ]
 }
