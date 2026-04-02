@@ -2,11 +2,12 @@
   "uuid": "a4827d35-0632-4fab-9c15-8f017fd0e194",
   "display_id": 38,
   "title": "Add skills system: load user-defined skills from .openclaudia/skills/ directories",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "anon-be460709",
   "created_at": "2026-03-31T22:00:50.427057235Z",
-  "updated_at": "2026-03-31T22:00:53.613621414Z",
+  "updated_at": "2026-04-02T19:46:55.643919033Z",
+  "closed_at": "2026-04-02T19:46:55.643919033Z",
   "labels": [
     "feature"
   ]
