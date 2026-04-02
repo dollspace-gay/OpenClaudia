@@ -329,11 +329,21 @@ async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
             .collect::<Vec<_>>(),
     );
 
-    // Build system prompt
-    let cwd = std::env::current_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let system_prompt = prompt::build_system_prompt_with_cwd(None, None, None, Some(&cwd));
+    // Initialize guardrails
+    guardrails::configure(&config.guardrails);
+
+    // Initialize memory database
+    let cwd_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let memory_db: Option<memory::MemoryDb> = memory::MemoryDb::open_for_project(&cwd_path).ok();
+
+    // Build system prompt (with memory and CWD)
+    let cwd = cwd_path.to_string_lossy().to_string();
+    let system_prompt = prompt::build_system_prompt_with_cwd(
+        None, // Hook instructions injected per-turn, not at init
+        None,
+        memory_db.as_ref(),
+        Some(&cwd),
+    );
 
     // Build and launch the TUI
     let mut app = tui::app::App::new(&model, &config.proxy.target);

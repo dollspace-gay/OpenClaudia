@@ -114,6 +114,38 @@ impl TuiSession {
     }
 }
 
+/// Expand @filename references in user input by inlining file contents.
+fn expand_file_refs(input: &str) -> String {
+    if !input.contains('@') {
+        return input.to_string();
+    }
+    let re = regex::Regex::new(r#"@"([^"]+)"|@(\S+)"#).unwrap();
+    let mut result = input.to_string();
+    let mut replacements = Vec::new();
+    for cap in re.captures_iter(input) {
+        let full_match = cap.get(0).unwrap().as_str();
+        let path = cap.get(1).or(cap.get(2)).unwrap().as_str();
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                replacements.push((
+                    full_match.to_string(),
+                    format!("\n<file path=\"{path}\">\n{}\n</file>\n", content.trim()),
+                ));
+            }
+            Err(_) => {
+                replacements.push((
+                    full_match.to_string(),
+                    format!("[File not found: {path}]"),
+                ));
+            }
+        }
+    }
+    for (from, to) in replacements {
+        result = result.replace(&from, &to);
+    }
+    result
+}
+
 fn sessions_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -747,19 +779,26 @@ impl App {
                     }
 
                     // ── Normal message: send to API ──
+
+                    // Expand @file references (inline file contents)
+                    let expanded = expand_file_refs(&text);
+
                     self.messages.add(DisplayMessage {
                         role: "user".to_string(),
-                        content: text.clone(),
+                        content: text.clone(), // Show original to user
                         tool_name: None,
                         is_error: false,
                         is_thinking: false,
                     });
 
-                    // Add to session history
+                    // Add expanded version to session history (model sees file contents)
                     self.session_messages.push(serde_json::json!({
                         "role": "user",
-                        "content": text
+                        "content": expanded
                     }));
+
+                    // Reset guardrails for this turn
+                    crate::guardrails::reset_turn();
 
                     self.is_waiting = true;
                     self.spawn_api_turn();
