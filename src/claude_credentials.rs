@@ -26,12 +26,6 @@ pub const CLAUDE_CODE_BETA_HEADER: &str = "claude-code-20250219";
 /// Interleaved thinking beta
 pub const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
 
-/// Beta header for 1M context window support
-pub const CONTEXT_1M_BETA: &str = "context-1m-2025-08-07";
-
-/// Beta header for prompt caching scope control
-pub const PROMPT_CACHING_SCOPE_BETA: &str = "prompt-caching-scope-2026-01-05";
-
 /// 5 minute buffer before expiry to trigger refresh
 const REFRESH_BUFFER_MS: i64 = 5 * 60 * 1000;
 
@@ -258,10 +252,6 @@ async fn refresh_and_load(
 /// These headers replace the `x-api-key` header used with API keys.
 #[must_use]
 pub fn get_oauth_headers(access_token: &str) -> Vec<(String, String)> {
-    // Matching Claude Code's client.ts:104-129 default headers
-    // The anthropic-beta header is REQUIRED for OAuth auth — the SDK sets it
-    // from the betas body param internally, but since we use raw HTTP we must
-    // send it as both a header AND a body param.
     vec![
         (
             "Authorization".to_string(),
@@ -269,20 +259,10 @@ pub fn get_oauth_headers(access_token: &str) -> Vec<(String, String)> {
         ),
         ("anthropic-version".to_string(), "2023-06-01".to_string()),
         ("content-type".to_string(), "application/json".to_string()),
+        // Beta headers matching what Claude Code sends (required for OAuth model access)
         (
             "anthropic-beta".to_string(),
-            format!(
-                "{CLAUDE_CODE_BETA_HEADER},{OAUTH_BETA_HEADER},{INTERLEAVED_THINKING_BETA},{CONTEXT_1M_BETA},{PROMPT_CACHING_SCOPE_BETA}"
-            ),
-        ),
-        ("x-app".to_string(), "cli".to_string()),
-        (
-            "User-Agent".to_string(),
-            format!("openclaudia/{}", env!("CARGO_PKG_VERSION")),
-        ),
-        (
-            "X-Claude-Code-Session-Id".to_string(),
-            uuid::Uuid::new_v4().to_string(),
+            format!("{CLAUDE_CODE_BETA_HEADER},{OAUTH_BETA_HEADER},{INTERLEAVED_THINKING_BETA}",),
         ),
     ]
 }
@@ -293,31 +273,10 @@ pub fn get_oauth_endpoint(_model: &str) -> String {
     "https://api.anthropic.com/v1/messages".to_string()
 }
 
-/// Get the device ID from Claude Code's global config (~/.claude.json).
-/// Returns empty string if unavailable — callers should check.
-#[must_use]
-pub fn get_device_id() -> String {
-    if let Some(home) = dirs::home_dir() {
-        let config_path = home.join(".claude.json");
-        if let Ok(content) = std::fs::read_to_string(&config_path) {
-            if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(id) = config.get("userID").and_then(|v| v.as_str()) {
-                    return id.to_string();
-                }
-            }
-        }
-    }
-    tracing::warn!("Could not read device_id from ~/.claude.json — metadata will be empty");
-    String::new()
-}
-
-/// The full system prompt sent when using Claude Code OAuth authentication.
-///
-/// Structure:
-/// 1. The required Claude Code prefix (API routing)
-/// 2. Full behavioral instructions (from Claude Code source)
-/// 3. Claudia persona overlay (at the end, where it has the most influence)
-pub const CLAUDE_CODE_SYSTEM_PROMPT: &str = include_str!("claude_code_prompt.txt");
+/// The system prompt prefix that must be present for OAuth tokens to access
+/// premium models (Sonnet, Opus). The Anthropic API validates this string.
+pub const CLAUDE_CODE_SYSTEM_PROMPT: &str =
+    "You are Claude Code, Anthropic's official CLI for Claude.";
 
 /// Inject the Claude Code system prompt into a request body.
 /// This must be the first element in the system array for OAuth model access.
@@ -393,16 +352,10 @@ mod tests {
             .any(|(k, v)| k == "Authorization" && v == "Bearer test-token-123"));
         assert!(headers
             .iter()
-            .any(|(k, v)| k == "anthropic-version" && v == "2023-06-01"));
-        // Betas sent as both header (for OAuth auth) and body param
-        assert!(headers
-            .iter()
             .any(|(k, v)| k == "anthropic-beta" && v.contains("oauth-2025-04-20")));
-        assert!(headers.iter().any(|(k, _)| k == "x-app"));
-        assert!(headers.iter().any(|(k, _)| k == "User-Agent"));
         assert!(headers
             .iter()
-            .any(|(k, _)| k == "X-Claude-Code-Session-Id"));
+            .any(|(k, v)| k == "anthropic-version" && v == "2023-06-01"));
     }
 
     #[test]

@@ -50,60 +50,36 @@ pub fn build_anthropic_request(
     let openai_tools = tools::get_all_tool_definitions(true);
     let anthropic_tools = convert_tools_to_anthropic(openai_tools.as_array().unwrap_or(&vec![]));
 
-    // ── System prompt blocks ──
-    // Matching Claude Code's splitSysPromptPrefix + buildSystemPromptBlocks
-    let system_blocks = if claude_code_token.is_some() {
-        let mut blocks = vec![serde_json::json!({
-            "type": "text",
-            "text": crate::claude_credentials::CLAUDE_CODE_SYSTEM_PROMPT,
-            "cache_control": {"type": "ephemeral"}
-        })];
-        if let Some(ref sys) = system_msg {
-            blocks.push(serde_json::json!({
-                "type": "text",
-                "text": sys
-            }));
-        }
-        Value::Array(blocks)
-    } else if let Some(ref sys) = system_msg {
-        serde_json::json!([{
-            "type": "text",
-            "text": sys,
-            "cache_control": {"type": "ephemeral"}
-        }])
-    } else {
-        Value::Array(vec![])
-    };
-
-    // ── Thinking config ──
-    // Claude Code: line 1596-1630 in claude.ts
-    let (thinking, max_tokens) = match effort_level {
-        "high" => (
-            Some(serde_json::json!({"type": "enabled", "budget_tokens": 10000})),
-            16000u64,
-        ),
-        "low" => (None, 2048),
-        _ => (None, crate::DEFAULT_MAX_TOKENS as u64),
-    };
-
-    // Betas are sent via the anthropic-beta HTTP header (set in get_oauth_headers),
-    // NOT as a body parameter. The SDK converts body betas to header internally.
-
-    // ── Assemble request ──
     let mut req = serde_json::json!({
         "model": model,
         "messages": anthropic_messages,
-        "system": system_blocks,
-        "tools": anthropic_tools,
-        "max_tokens": max_tokens,
-        "stream": true
+        "max_tokens": crate::DEFAULT_MAX_TOKENS,
+        "stream": true,
+        "tools": anthropic_tools
     });
 
-    if let Some(thinking_config) = thinking {
-        req["thinking"] = thinking_config;
-    } else {
-        // Temperature only when thinking disabled (claude.ts:1693)
-        req["temperature"] = serde_json::json!(1);
+    if let Some(sys) = system_msg {
+        req["system"] = serde_json::json!([{
+            "type": "text",
+            "text": sys,
+            "cache_control": {"type": "ephemeral"}
+        }]);
+    }
+
+    if claude_code_token.is_some() {
+        crate::claude_credentials::inject_system_prompt(&mut req);
+    }
+
+    // Apply effort level
+    match effort_level {
+        "high" => {
+            req["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": 10000});
+            req["max_tokens"] = serde_json::json!(16000);
+        }
+        "low" => {
+            req["max_tokens"] = serde_json::json!(2048);
+        }
+        _ => {} // medium = default
     }
 
     req
@@ -238,66 +214,19 @@ pub async fn run_turn(
     memory_db: Option<&MemoryDb>,
     tx: mpsc::Sender<AppEvent>,
 ) -> Result<TurnResult, String> {
-    // Log request details for debugging (only when RUST_LOG=debug)
-    tracing::debug!(
-        endpoint,
-        model = request_body.get("model").and_then(|v| v.as_str()).unwrap_or("?"),
-        system_blocks = request_body.get("system").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
-        message_count = request_body.get("messages").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
-        "Sending API request"
-    );
-
-    // Send request with retry on 429/529 (rate limit / overloaded)
-    let max_retries = 3u32;
-    let mut response = None;
-    for attempt in 0..=max_retries {
-        let mut req = client.post(endpoint).json(request_body);
-        for (key, value) in headers {
-            req = req.header(key, value);
-        }
-
-        let resp = req.send().await.map_err(|e| format!("Request failed: {e}"))?;
-        let status = resp.status().as_u16();
-
-        if status == 429 || status == 529 {
-            // Log full error details for debugging
-            let retry_after = resp.headers().get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .map(String::from);
-            let error_body = resp.text().await.unwrap_or_default();
-            tracing::warn!(
-                status,
-                attempt,
-                retry_after = retry_after.as_deref().unwrap_or("none"),
-                body = &error_body[..error_body.len().min(500)],
-                "Rate limited by API"
-            );
-
-            if attempt < max_retries {
-                let wait_secs = retry_after
-                    .as_deref()
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(2u64.pow(attempt + 1));
-                let _ = tx.send(AppEvent::StreamText(format!(
-                    "\n(Rate limited [{status}], retrying in {wait_secs}s... attempt {}/{})\n",
-                    attempt + 1, max_retries
-                )));
-                tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
-                continue;
-            }
-            return Err(format!("Rate limited after {max_retries} retries: {error_body}"));
-        }
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(format!("API error {status}: {body}"));
-        }
-
-        response = Some(resp);
-        break;
+    // Send request
+    let mut req = client.post(endpoint).json(request_body);
+    for (key, value) in headers {
+        req = req.header(key, value);
     }
-    let response = response.ok_or_else(|| "Max retries exceeded".to_string())?;
+
+    let response = req.send().await.map_err(|e| format!("Request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("API error {status}: {body}"));
+    }
 
     // For Google, handle non-streaming JSON response
     if provider == "google" {
