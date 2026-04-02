@@ -2,11 +2,12 @@
   "uuid": "5b072c3e-0beb-4e95-9473-d3b349860613",
   "display_id": 149,
   "title": "N-16: Plugin manifest naming inconsistency",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-01T03:39:43.569466302Z",
-  "updated_at": "2026-04-01T03:39:43.696860376Z",
+  "updated_at": "2026-04-02T21:01:39.329588268Z",
+  "closed_at": "2026-04-02T21:01:39.329588268Z",
   "labels": [
     "qa"
   ]
