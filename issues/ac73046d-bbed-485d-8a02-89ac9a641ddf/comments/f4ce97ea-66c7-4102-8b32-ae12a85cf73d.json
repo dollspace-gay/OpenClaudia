@@ -1,0 +1,10 @@
+{
+  "uuid": "f4ce97ea-66c7-4102-8b32-ae12a85cf73d",
+  "issue_uuid": "ac73046d-bbed-485d-8a02-89ac9a641ddf",
+  "author": "lOrm",
+  "content": "Memory DB is per-project by design (open_for_project). Changing working directory mid-session is not a supported workflow. Each TUI instance binds to one project.",
+  "created_at": "2026-04-02T20:32:04.603844142Z",
+  "kind": "decision",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEe0KY4l/Z7G/vfkx00kFwZtY3FjD8lde6VcPNSNT06kyL5ZUnzQGbJUMzOdlFd65s/RCzZhVJQVonLQ3yKzipGAAAABFjcm9zc2xpbmstY29tbWVudAAAAAAAAAAGc2hhNTEyAAAAYwAAABNlY2RzYS1zaGEyLW5pc3RwMjU2AAAASAAAACAyjAikzVs/soQc5vNNp6yi58G1cOt1gZQhIAWTcWQFIAAAACA7BsGQwI3UAgjAOJo4lZx5G9ZGYnx6MMMoTKzmmBoGhA=="
+}
