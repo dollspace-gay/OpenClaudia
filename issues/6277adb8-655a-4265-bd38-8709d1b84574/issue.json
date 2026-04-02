@@ -1,0 +1,11 @@
+{
+  "uuid": "6277adb8-655a-4265-bd38-8709d1b84574",
+  "display_id": 208,
+  "title": "Rewrite system prompt: our tools, QA standards, crosslink, no laziness",
+  "description": "Goal: \n\nAcceptance criteria:\n- \n\nReplace Claude Code's tool guidance with our tool names, add QA/crosslink/global.md guardrails, replace simplest-path directive with research-first approach.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-02T14:54:36.504628324Z",
+  "updated_at": "2026-04-02T14:54:36.504628324Z"
+}
