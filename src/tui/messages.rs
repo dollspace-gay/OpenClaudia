@@ -34,6 +34,19 @@ impl MessageList {
         }
     }
 
+    /// Remove the last N messages from the display list.
+    pub fn pop_last(&mut self, count: usize) {
+        for _ in 0..count {
+            self.messages.pop();
+        }
+    }
+
+    /// Number of messages in the display list.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.messages.len()
+    }
+
     pub fn add(&mut self, msg: DisplayMessage) {
         self.messages.push(msg);
         self.scroll_to_bottom();

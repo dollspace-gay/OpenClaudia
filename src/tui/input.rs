@@ -3,7 +3,15 @@
 /// Single-line text input with cursor tracking.
 pub struct TextInput {
     pub content: String,
-    pub cursor_pos: usize,
+    cursor_pos: usize,
+}
+
+impl TextInput {
+    /// Current cursor position (byte offset into content).
+    #[must_use]
+    pub const fn cursor_position(&self) -> usize {
+        self.cursor_pos
+    }
 }
 
 impl TextInput {

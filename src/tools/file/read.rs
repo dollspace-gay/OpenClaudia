@@ -121,10 +121,11 @@ pub fn read_pdf_file(path: &str, pages: Option<&str>) -> (String, bool) {
                     if line.starts_with("Pages:") {
                         if let Some(count_str) = line.split(':').nth(1) {
                             if let Ok(count) = count_str.trim().parse::<u32>() {
-                                if count > 10 {
+                                const MAX_PDF_PAGES_WITHOUT_RANGE: u32 = 10;
+                                if count > MAX_PDF_PAGES_WITHOUT_RANGE {
                                     return (
                                         format!(
-                                            "PDF has {count} pages. For large PDFs (>10 pages), you must specify \
+                                            "PDF has {count} pages. For large PDFs (>{MAX_PDF_PAGES_WITHOUT_RANGE} pages), you must specify \
                                              a page range using the 'pages' parameter (e.g., '1-5', '3', '10-20')."
                                         ),
                                         true,

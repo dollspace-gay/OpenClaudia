@@ -65,14 +65,19 @@ fn validate_cron(expr: &str) -> Result<(), String> {
         ));
     }
 
-    let field_names = [
+    const FIELD_NAMES: [&str; 5] = [
         "minute (0-59)",
         "hour (0-23)",
         "day (1-31)",
         "month (1-12)",
         "weekday (0-6)",
     ];
-    let field_ranges = [(0, 59), (0, 23), (1, 31), (1, 12), (0, 6)];
+    const FIELD_RANGES: [(u32, u32); 5] = [(0, 59), (0, 23), (1, 31), (1, 12), (0, 6)];
+    // Compile-time assertion that both arrays have matching lengths
+    const _: () = assert!(FIELD_NAMES.len() == FIELD_RANGES.len());
+
+    let field_names = FIELD_NAMES;
+    let field_ranges = FIELD_RANGES;
 
     for (i, field) in fields.iter().enumerate() {
         if *field == "*" {

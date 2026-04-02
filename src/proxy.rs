@@ -1143,36 +1143,35 @@ async fn proxy_passthrough(
     convert_response(response).await
 }
 
-/// Determine which provider to use based on model name
+/// Determine which provider to use based on model name.
+/// Returns a static string — no allocation needed.
 #[must_use]
 pub fn determine_provider(model: &str, config: &AppConfig) -> String {
     let model_lower = model.to_lowercase();
-    if model_lower.starts_with("claude") || model_lower.starts_with("anthropic") {
-        "anthropic".to_string()
+    let provider = if model_lower.starts_with("claude") || model_lower.starts_with("anthropic") {
+        "anthropic"
     } else if model_lower.starts_with("gpt")
         || model_lower.starts_with("o1")
         || model_lower.starts_with("o3")
         || model_lower.starts_with("o4")
     {
-        "openai".to_string()
+        "openai"
     } else if model_lower.starts_with("gemini") {
-        "google".to_string()
+        "google"
     } else if model_lower.starts_with("glm") {
-        // Z.AI/GLM models (OpenAI-compatible)
-        "zai".to_string()
+        "zai"
     } else if model_lower.starts_with("deepseek") {
-        // DeepSeek models (OpenAI-compatible)
-        "deepseek".to_string()
+        "deepseek"
     } else if model_lower.starts_with("qwen")
         || model_lower.starts_with("qwq")
         || model_lower.starts_with("qvq")
     {
-        // Alibaba Qwen/QwQ/QvQ models (OpenAI-compatible)
-        "qwen".to_string()
+        "qwen"
     } else {
         // Fall back to configured target
-        config.proxy.target.clone()
-    }
+        return config.proxy.target.clone();
+    };
+    provider.to_string()
 }
 
 /// Recursively strip `ttl` from any `cache_control` objects in a JSON value.
@@ -1461,6 +1460,27 @@ async fn convert_response(response: reqwest::Response) -> Result<Response, Proxy
     }
 
     let body = response.bytes().await?;
+
+    // If the response is HTML (error page from CDN/proxy), convert to a
+    // clean JSON error instead of dumping raw HTML to the terminal.
+    if !status.is_success() {
+        let body_str = String::from_utf8_lossy(&body);
+        if body_str.trim_start().starts_with('<') || body_str.contains("<!DOCTYPE") {
+            let clean_error = serde_json::json!({
+                "error": {
+                    "type": "upstream_error",
+                    "message": format!("Provider returned HTTP {status} with HTML error page"),
+                    "status": status.as_u16()
+                }
+            });
+            let json_body = serde_json::to_string(&clean_error).unwrap_or_default();
+            return builder
+                .header("content-type", "application/json")
+                .body(Body::from(json_body))
+                .map_err(|e| ProxyError::InvalidBody(format!("Failed to build error body: {e}")));
+        }
+    }
+
     builder
         .body(Body::from(body))
         .map_err(|e| ProxyError::InvalidBody(format!("Failed to build response body: {e}")))

@@ -714,9 +714,8 @@ impl App {
                         if self.chat_session.undo() {
                             self.session_messages = self.chat_session.messages.clone();
                             // Remove last two display messages (user + assistant)
-                            if self.messages.messages.len() >= 2 {
-                                self.messages.messages.pop();
-                                self.messages.messages.pop();
+                            if self.messages.len() >= 2 {
+                                self.messages.pop_last(2);
                             }
                             self.messages.add(DisplayMessage {
                                 role: "system".to_string(),
@@ -1186,7 +1185,7 @@ impl App {
         if !self.is_waiting {
             #[allow(clippy::cast_possible_truncation)]
             let prompt_width = 2u16;
-            let cx = chunks[2].x + prompt_width + self.input.cursor_pos as u16;
+            let cx = chunks[2].x + prompt_width + self.input.cursor_position() as u16;
             let cy = chunks[2].y + 1;
             frame.set_cursor_position(Position::new(
                 cx.min(chunks[2].right().saturating_sub(1)),
