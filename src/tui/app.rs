@@ -1294,15 +1294,6 @@ impl App {
             return;
         };
 
-        // Build request
-        let request_body = crate::pipeline::build_request(
-            &self.provider,
-            &self.model,
-            &self.session_messages,
-            &self.effort_level,
-            self.claude_code_token.as_deref(),
-        );
-
         let client = self.client.clone();
         let endpoint = self.endpoint.clone();
         let headers = self.headers.clone();
@@ -1348,6 +1339,15 @@ impl App {
                 }
             }
 
+            // Build request body AFTER hooks (hooks may inject system messages)
+            let request_body = crate::pipeline::build_request(
+                &provider,
+                &model,
+                &session_messages,
+                &effort_level,
+                claude_code_token.as_deref(),
+            );
+
             // Run the turn (may include tool execution)
             match crate::pipeline::run_turn(
                 &client, &endpoint, &headers, &request_body, &provider, memory_db.clone(), tx.clone(),
@@ -1355,6 +1355,12 @@ impl App {
             .await
             {
                 Ok(turn_result) => {
+                    tracing::debug!(
+                        content_len = turn_result.content.len(),
+                        tool_calls = turn_result.tool_calls.len(),
+                        needs_followup = turn_result.needs_followup,
+                        "Turn result"
+                    );
                     // If the model returned tool calls, we need to append the
                     // assistant message + tool results and send a follow-up.
                     if turn_result.needs_followup {
