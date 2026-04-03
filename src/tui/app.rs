@@ -378,7 +378,7 @@ impl App {
                     content,
                 }) => {
                     let preview = if content.len() > 300 {
-                        format!("{}...", &content[..297])
+                        format!("{}...", crate::tools::safe_truncate(&content, 297))
                     } else {
                         content
                     };
