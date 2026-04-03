@@ -1,0 +1,79 @@
+[package]
+name = "openclaudia-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+regex = "1"
+
+[dependencies.openclaudia]
+path = ".."
+
+[[bin]]
+name = "fuzz_safe_truncate"
+path = "fuzz_targets/fuzz_safe_truncate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_sse_event"
+path = "fuzz_targets/fuzz_sse_event.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_build_request"
+path = "fuzz_targets/fuzz_build_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_cron_validate"
+path = "fuzz_targets/fuzz_cron_validate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_path_resolve"
+path = "fuzz_targets/fuzz_path_resolve.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_json_tool_args"
+path = "fuzz_targets/fuzz_json_tool_args.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_hook_matcher"
+path = "fuzz_targets/fuzz_hook_matcher.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_anthropic_convert"
+path = "fuzz_targets/fuzz_anthropic_convert.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_streaming_markdown"
+path = "fuzz_targets/fuzz_streaming_markdown.rs"
+test = false
+doc = false
+bench = false
