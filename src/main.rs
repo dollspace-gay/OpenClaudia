@@ -149,7 +149,7 @@ enum Commands {
     /// Run in iteration/loop mode with Stop hooks
     Loop {
         /// Maximum number of iterations (0 = unlimited)
-        #[arg(short, long, default_value = "0")]
+        #[arg(short = 'n', long, default_value = "0")]
         max_iterations: u32,
 
         /// Port to listen on (overrides config)

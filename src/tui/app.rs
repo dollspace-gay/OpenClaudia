@@ -1376,11 +1376,17 @@ impl App {
                         session_messages.extend(turn_result.tool_results.iter().cloned());
 
                         // Agentic loop: keep calling until no more tool calls
+                        tracing::info!(
+                            tool_count = turn_result.tool_calls.len(),
+                            result_count = turn_result.tool_results.len(),
+                            "Starting agentic follow-up loop"
+                        );
                         let max_iterations = 25u32;
                         let mut iteration = 0u32;
                         let mut current_messages = session_messages;
                         loop {
                             iteration += 1;
+                            tracing::debug!(iteration, "Agentic loop iteration");
                             if iteration > max_iterations {
                                 let _ = tx.send(AppEvent::ApiError(
                                     "Reached maximum tool iterations (25)".to_string(),
@@ -1408,6 +1414,12 @@ impl App {
                             .await
                             {
                                 Ok(followup) => {
+                                    tracing::debug!(
+                                        content_len = followup.content.len(),
+                                        tool_calls = followup.tool_calls.len(),
+                                        needs_followup = followup.needs_followup,
+                                        "Follow-up result"
+                                    );
                                     if followup.needs_followup {
                                         let asst_msg =
                                             crate::pipeline::build_assistant_message_with_tools(
@@ -1432,6 +1444,7 @@ impl App {
                                     }
                                 }
                                 Err(e) => {
+                                    tracing::error!(error = %e, "Agentic follow-up failed");
                                     let _ = tx.send(AppEvent::ApiError(e));
                                     break;
                                 }

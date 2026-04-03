@@ -237,6 +237,15 @@ pub async fn run_turn(
     memory_db: Option<Arc<MemoryDb>>,
     tx: mpsc::Sender<AppEvent>,
 ) -> Result<TurnResult, String> {
+    tracing::info!(
+        endpoint,
+        model = request_body.get("model").and_then(|v| v.as_str()).unwrap_or("?"),
+        system_blocks = request_body.get("system").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
+        messages = request_body.get("messages").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
+        has_tools = request_body.get("tools").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false),
+        "Sending API request"
+    );
+
     // Send request with retry on transient errors (429, 529, 503)
     let max_retries = 3u32;
     let mut response = None;
@@ -433,6 +442,11 @@ async fn stream_sse_response(
                         }
 
                         if let Ok(json) = serde_json::from_str::<Value>(data) {
+                            // Extract usage BEFORE the accumulator (both can process the same event)
+                            if let Some(usage) = proxy::extract_usage_from_sse_event(&json) {
+                                stream_usage.accumulate(&usage);
+                            }
+
                             match process_sse_event(
                                 &json,
                                 in_thinking_block,
@@ -454,9 +468,6 @@ async fn stream_sse_response(
                                 }
                                 SseAction::ThinkingEnd => {
                                     in_thinking_block = false;
-                                }
-                                SseAction::Usage(usage) => {
-                                    stream_usage.accumulate(&usage);
                                 }
                                 SseAction::None => {}
                             }
@@ -510,8 +521,6 @@ pub enum SseAction {
     ThinkingStart,
     /// End a thinking block
     ThinkingEnd,
-    /// Accumulate token usage
-    Usage(TokenUsage),
     /// No action needed (event consumed internally by accumulators)
     None,
 }
@@ -525,12 +534,10 @@ pub fn process_sse_event(
     anthropic_accumulator: &mut AnthropicToolAccumulator,
     tool_accumulator: &mut ToolCallAccumulator,
 ) -> SseAction {
-    // Extract usage
-    if let Some(usage) = proxy::extract_usage_from_sse_event(json) {
-        if usage.total() > 0 {
-            return SseAction::Usage(usage);
-        }
-    }
+    // Note: usage extraction is handled by the caller after the accumulator
+    // processes the event. We used to return SseAction::Usage here, but that
+    // caused the accumulator to miss events like message_start and message_delta
+    // which contain both usage AND tool call state (stop_reason: "tool_use").
 
     // Thinking block detection (Anthropic)
     if let Some(event_type) = json.get("type").and_then(|t| t.as_str()) {
