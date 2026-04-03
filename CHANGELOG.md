@@ -75,6 +75,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Read-before-edit enforcement on edit_file tool
 
 ### Fixed
+- Finish incomplete features: git_with_timeout, hook regex, oauth metadata check (#245)
 - Fix flaky test_todo_list_persistence integration test (#4)
 - Fix raw HTML dumped to terminal on non-2xx provider responses (#2)
 - Fix provider.headers not applied to chat completions requests (#1)
