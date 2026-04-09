@@ -63,7 +63,7 @@ impl TuiSession {
         ) {
             if let Some(content) = first_user.get("content").and_then(|c| c.as_str()) {
                 self.title = if content.len() > 50 {
-                    format!("{}...", crate::tools::safe_truncate(&content, 47))
+                    format!("{}...", crate::tools::safe_truncate(content, 47))
                 } else {
                     content.to_string()
                 };

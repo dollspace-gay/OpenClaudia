@@ -47,6 +47,12 @@ impl MessageList {
         self.messages.len()
     }
 
+    /// Returns `true` if there are no messages in the display list.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
+
     pub fn add(&mut self, msg: DisplayMessage) {
         self.messages.push(msg);
         self.scroll_to_bottom();

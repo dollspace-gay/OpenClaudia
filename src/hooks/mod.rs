@@ -1099,8 +1099,6 @@ mod tests {
 
     #[test]
     fn test_hook_engine_matcher_regex() {
-        let engine = HookEngine::new(HooksConfig::default());
-
         // Valid pattern match
         let result = HookEngine::validate_and_match("Write|Edit", "Write");
         assert!(result.is_ok());
@@ -1114,8 +1112,6 @@ mod tests {
 
     #[test]
     fn test_hook_engine_matcher_invalid_regex() {
-        let engine = HookEngine::new(HooksConfig::default());
-
         // Invalid regex pattern
         let result = HookEngine::validate_and_match("(unclosed", "test");
         assert!(result.is_err());
@@ -1124,8 +1120,6 @@ mod tests {
 
     #[test]
     fn test_hook_engine_matcher_empty_pattern() {
-        let engine = HookEngine::new(HooksConfig::default());
-
         // Empty pattern is invalid
         let result = HookEngine::validate_and_match("", "test");
         assert!(result.is_err());
@@ -1133,8 +1127,6 @@ mod tests {
 
     #[test]
     fn test_hook_engine_matcher_complex_patterns() {
-        let engine = HookEngine::new(HooksConfig::default());
-
         // Case sensitive by default
         let result = HookEngine::validate_and_match("Write", "write");
         assert!(result.is_ok());

@@ -779,7 +779,6 @@ mod tests {
             create_test_message("assistant", "Rust is a systems programming language."),
         ];
 
-        let compactor = ContextCompactor::new(CompactionConfig::default());
         let msg_refs: Vec<&ChatMessage> = messages.iter().collect();
         let summary = ContextCompactor::generate_summary(&msg_refs);
 
@@ -1067,7 +1066,6 @@ mod tests {
             },
         ];
 
-        let compactor = ContextCompactor::new(CompactionConfig::default());
         let msg_refs: Vec<&ChatMessage> = messages.iter().collect();
         let summary = ContextCompactor::generate_summary(&msg_refs);
 
