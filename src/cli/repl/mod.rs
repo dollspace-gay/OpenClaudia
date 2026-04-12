@@ -81,6 +81,9 @@ pub struct ChatSession {
     /// Agent mode (Build or Plan)
     #[serde(default)]
     pub mode: AgentMode,
+    /// Behavioral mode (agency/quality/scope axes + modifiers)
+    #[serde(default)]
+    pub behavior_mode: openclaudia::modes::BehaviorMode,
     /// Conversation messages
     pub messages: Vec<serde_json::Value>,
     /// Undo stack for undone message pairs (user + assistant)
@@ -95,7 +98,11 @@ pub struct ChatSession {
 }
 
 impl ChatSession {
-    pub fn new(model: &str, provider: &str) -> Self {
+    pub fn new(
+        model: &str,
+        provider: &str,
+        behavior_mode: openclaudia::modes::BehaviorMode,
+    ) -> Self {
         let now = chrono::Utc::now();
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -105,6 +112,7 @@ impl ChatSession {
             model: model.to_string(),
             provider: provider.to_string(),
             mode: AgentMode::default(),
+            behavior_mode,
             messages: Vec::new(),
             undo_stack: Vec::new(),
             plan_mode: None,

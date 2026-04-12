@@ -192,9 +192,13 @@ pub fn expand_file_references(input: &str) -> String {
     let cwd = std::env::current_dir().unwrap_or_default();
 
     for cap in re.captures_iter(input) {
-        let Some(full_match) = cap.get(0) else { continue };
+        let Some(full_match) = cap.get(0) else {
+            continue;
+        };
         let full_match = full_match.as_str();
-        let Some(raw_path) = cap.get(1).or(cap.get(2)) else { continue };
+        let Some(raw_path) = cap.get(1).or(cap.get(2)) else {
+            continue;
+        };
         let raw_path = raw_path.as_str();
 
         // Resolve and validate path — reject traversal attempts
@@ -204,7 +208,10 @@ pub fn expand_file_references(input: &str) -> String {
             cwd.join(raw_path)
         };
 
-        if resolved.components().any(|c| c == std::path::Component::ParentDir) {
+        if resolved
+            .components()
+            .any(|c| c == std::path::Component::ParentDir)
+        {
             replacements.push((
                 full_match.to_string(),
                 format!("[Path traversal blocked: {raw_path}]"),
@@ -213,25 +220,23 @@ pub fn expand_file_references(input: &str) -> String {
         }
 
         match fs::canonicalize(&resolved) {
-            Ok(canonical) if canonical.starts_with(&cwd) => {
-                match fs::read_to_string(&canonical) {
-                    Ok(content) => {
-                        let file_context = format!(
-                            "\n<file path=\"{}\">\n{}\n</file>\n",
-                            canonical.display(),
-                            content.trim()
-                        );
-                        replacements.push((full_match.to_string(), file_context));
-                    }
-                    Err(e) => {
-                        eprintln!("Warning: Could not read {raw_path}: {e}");
-                        replacements.push((
-                            full_match.to_string(),
-                            format!("[Cannot read {raw_path}: {e}]"),
-                        ));
-                    }
+            Ok(canonical) if canonical.starts_with(&cwd) => match fs::read_to_string(&canonical) {
+                Ok(content) => {
+                    let file_context = format!(
+                        "\n<file path=\"{}\">\n{}\n</file>\n",
+                        canonical.display(),
+                        content.trim()
+                    );
+                    replacements.push((full_match.to_string(), file_context));
                 }
-            }
+                Err(e) => {
+                    eprintln!("Warning: Could not read {raw_path}: {e}");
+                    replacements.push((
+                        full_match.to_string(),
+                        format!("[Cannot read {raw_path}: {e}]"),
+                    ));
+                }
+            },
             Ok(_) => {
                 replacements.push((
                     full_match.to_string(),

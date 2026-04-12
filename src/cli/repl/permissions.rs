@@ -58,21 +58,39 @@ pub fn execute_shell_command_with_permission(
 ) {
     let dangerous_patterns = [
         // Destructive file operations
-        "rm -rf", "rm -fr", "rmdir /s", "del /f", "del /q",
+        "rm -rf",
+        "rm -fr",
+        "rmdir /s",
+        "del /f",
+        "del /q",
         // Disk/filesystem operations
-        "format", "mkfs", "dd if=", "dd of=",
+        "format",
+        "mkfs",
+        "dd if=",
+        "dd of=",
         // Device writes
-        "> /dev/", ">> /dev/",
+        "> /dev/",
+        ">> /dev/",
         // Privileged destructive ops
-        "sudo rm", "sudo dd", "sudo mkfs",
+        "sudo rm",
+        "sudo dd",
+        "sudo mkfs",
         // Permission changes (recursive)
-        "chmod -R 777", "chmod -R 000", "chown -R",
+        "chmod -R 777",
+        "chmod -R 000",
+        "chown -R",
         // Git destructive ops
-        "git push --force", "git push -f", "git reset --hard", "git clean -fd",
+        "git push --force",
+        "git push -f",
+        "git reset --hard",
+        "git clean -fd",
         // Process/system
-        "kill -9", "killall", "pkill",
+        "kill -9",
+        "killall",
+        "pkill",
         // Python/shell destructive
-        "shutil.rmtree", "os.remove",
+        "shutil.rmtree",
+        "os.remove",
     ];
     let is_dangerous = dangerous_patterns.iter().any(|p| cmd.contains(p));
 

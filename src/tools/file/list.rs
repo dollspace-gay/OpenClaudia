@@ -26,6 +26,9 @@ pub fn execute_list_files(args: &HashMap<String, Value>) -> (String, bool) {
             items.sort();
             (items.join("\n"), false)
         }
-        Err(e) => (format!("Failed to list directory '{}': {e}", path.display()), true),
+        Err(e) => (
+            format!("Failed to list directory '{}': {e}", path.display()),
+            true,
+        ),
     }
 }

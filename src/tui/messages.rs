@@ -132,10 +132,7 @@ impl MessageList {
                                         .add_modifier(Modifier::BOLD),
                                 ))
                             } else {
-                                Line::from(Span::styled(
-                                    line,
-                                    Style::default().fg(Color::DarkGray),
-                                ))
+                                Line::from(Span::styled(line, Style::default().fg(Color::DarkGray)))
                             };
                             lines.push(styled);
                         }

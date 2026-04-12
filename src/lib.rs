@@ -20,6 +20,7 @@ pub mod guardrails;
 pub mod hooks;
 pub mod mcp;
 pub mod memory;
+pub mod modes;
 pub mod oauth;
 pub mod output_style;
 pub mod permissions;

@@ -3,19 +3,16 @@
 //! Extracted from the `cmd_chat` function in `main.rs` to enable reuse
 //! from both the rustyline REPL and the ratatui TUI.
 
-
 use crate::memory::MemoryDb;
-use crate::providers::{
-    convert_messages_to_anthropic, convert_tools_to_anthropic, get_adapter,
-};
+use crate::providers::{convert_messages_to_anthropic, convert_tools_to_anthropic, get_adapter};
 use crate::proxy::{self, normalize_base_url};
 use crate::session::TokenUsage;
 use crate::tools::{self, AnthropicToolAccumulator, ToolCall, ToolCallAccumulator};
 use crate::tui::events::{AppEvent, PermissionResponse};
 use futures::StreamExt;
 use serde_json::Value;
-use std::sync::Arc;
 use std::sync::mpsc;
+use std::sync::Arc;
 
 /// Send an event to the TUI, logging and returning early if the channel is closed.
 macro_rules! send_event {
@@ -239,10 +236,25 @@ pub async fn run_turn(
 ) -> Result<TurnResult, String> {
     tracing::info!(
         endpoint,
-        model = request_body.get("model").and_then(|v| v.as_str()).unwrap_or("?"),
-        system_blocks = request_body.get("system").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
-        messages = request_body.get("messages").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
-        has_tools = request_body.get("tools").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false),
+        model = request_body
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?"),
+        system_blocks = request_body
+            .get("system")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0),
+        messages = request_body
+            .get("messages")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0),
+        has_tools = request_body
+            .get("tools")
+            .and_then(|v| v.as_array())
+            .map(|a| !a.is_empty())
+            .unwrap_or(false),
         "Sending API request"
     );
 
@@ -255,7 +267,10 @@ pub async fn run_turn(
             req = req.header(key, value);
         }
 
-        let resp = req.send().await.map_err(|e| format!("Request failed: {e}"))?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {e}"))?;
         let status = resp.status().as_u16();
 
         if matches!(status, 429 | 503 | 529) && attempt < max_retries {
@@ -265,12 +280,7 @@ pub async fn run_turn(
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(2u64.pow(attempt + 1));
-            tracing::warn!(
-                status,
-                attempt,
-                wait_secs,
-                "Transient API error, retrying"
-            );
+            tracing::warn!(status, attempt, wait_secs, "Transient API error, retrying");
             let _ = tx.send(AppEvent::StreamText(format!(
                 "\n(Retrying in {wait_secs}s — {status}...)\n"
             )));
@@ -324,7 +334,10 @@ async fn handle_google_response(
 
     // Check for Gemini error responses
     if let Some(error) = gemini_json.get("error") {
-        let msg = error.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error");
+        let msg = error
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("Unknown error");
         let code = error.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
         return Err(format!("Gemini API error ({code}): {msg}"));
     }
@@ -462,9 +475,10 @@ async fn stream_sse_response(
                                 }
                                 SseAction::ThinkingStart => {
                                     in_thinking_block = true;
-                                    send_event!(tx, AppEvent::StreamThinking(
-                                        "[thinking...]\n".to_string(),
-                                    ));
+                                    send_event!(
+                                        tx,
+                                        AppEvent::StreamThinking("[thinking...]\n".to_string(),)
+                                    );
                                 }
                                 SseAction::ThinkingEnd => {
                                     in_thinking_block = false;
@@ -647,14 +661,15 @@ async fn execute_tool_calls_for_tui(
         let tool_name = &tool_call.function.name;
 
         // Check blast radius guardrails
-        if let Err(msg) = crate::guardrails::check_file_access(
-            &tool_call.function.arguments,
-        ) {
-            send_event_or_break!(tx, AppEvent::ToolDone {
-                name: tool_name.clone(),
-                success: false,
-                content: format!("Blocked by guardrails: {msg}"),
-            });
+        if let Err(msg) = crate::guardrails::check_file_access(&tool_call.function.arguments) {
+            send_event_or_break!(
+                tx,
+                AppEvent::ToolDone {
+                    name: tool_name.clone(),
+                    success: false,
+                    content: format!("Blocked by guardrails: {msg}"),
+                }
+            );
             results.push(serde_json::json!({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
@@ -667,11 +682,14 @@ async fn execute_tool_calls_for_tui(
         // Permission check for write/destructive tools
         if tool_needs_permission(tool_name) {
             if always_denied.contains(tool_name) {
-                send_event_or_break!(tx, AppEvent::ToolDone {
-                    name: tool_name.clone(),
-                    success: false,
-                    content: "Denied (always deny for this session)".to_string(),
-                });
+                send_event_or_break!(
+                    tx,
+                    AppEvent::ToolDone {
+                        name: tool_name.clone(),
+                        success: false,
+                        content: "Denied (always deny for this session)".to_string(),
+                    }
+                );
                 results.push(serde_json::json!({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
@@ -685,15 +703,21 @@ async fn execute_tool_calls_for_tui(
                 // Send permission request and wait for response
                 let (reply_tx, reply_rx) = mpsc::channel();
                 let args_preview = if tool_call.function.arguments.len() > 200 {
-                    format!("{}...", crate::tools::safe_truncate(&tool_call.function.arguments, 197))
+                    format!(
+                        "{}...",
+                        crate::tools::safe_truncate(&tool_call.function.arguments, 197)
+                    )
                 } else {
                     tool_call.function.arguments.clone()
                 };
-                send_event_or_break!(tx, AppEvent::PermissionRequest {
-                    tool_name: tool_name.clone(),
-                    tool_args: args_preview,
-                    reply: reply_tx,
-                });
+                send_event_or_break!(
+                    tx,
+                    AppEvent::PermissionRequest {
+                        tool_name: tool_name.clone(),
+                        tool_args: args_preview,
+                        reply: reply_tx,
+                    }
+                );
 
                 // Block until user responds (TUI sends back the decision)
                 match reply_rx.recv() {
@@ -703,11 +727,14 @@ async fn execute_tool_calls_for_tui(
                     }
                     Ok(PermissionResponse::AlwaysDeny) => {
                         always_denied.insert(tool_name.clone());
-                        send_event_or_break!(tx, AppEvent::ToolDone {
-                            name: tool_name.clone(),
-                            success: false,
-                            content: "Denied (always deny)".to_string(),
-                        });
+                        send_event_or_break!(
+                            tx,
+                            AppEvent::ToolDone {
+                                name: tool_name.clone(),
+                                success: false,
+                                content: "Denied (always deny)".to_string(),
+                            }
+                        );
                         results.push(serde_json::json!({
                             "role": "tool",
                             "tool_call_id": tool_call.id,
@@ -717,11 +744,14 @@ async fn execute_tool_calls_for_tui(
                         continue;
                     }
                     Ok(PermissionResponse::Deny) | Err(_) => {
-                        send_event_or_break!(tx, AppEvent::ToolDone {
-                            name: tool_name.clone(),
-                            success: false,
-                            content: "Denied by user".to_string(),
-                        });
+                        send_event_or_break!(
+                            tx,
+                            AppEvent::ToolDone {
+                                name: tool_name.clone(),
+                                success: false,
+                                content: "Denied by user".to_string(),
+                            }
+                        );
                         results.push(serde_json::json!({
                             "role": "tool",
                             "tool_call_id": tool_call.id,
@@ -736,44 +766,67 @@ async fn execute_tool_calls_for_tui(
 
         // Build a descriptive preview of what the tool is doing
         let args_desc = {
-            let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
-                .unwrap_or_default();
+            let args: serde_json::Value =
+                serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
             match tool_name.as_str() {
-                "read_file" => args.get("path").and_then(|v| v.as_str())
+                "read_file" => args
+                    .get("path")
+                    .and_then(|v| v.as_str())
                     .map(|p| format!("Reading {p}"))
                     .unwrap_or_else(|| "Reading file".to_string()),
-                "write_file" => args.get("path").and_then(|v| v.as_str())
+                "write_file" => args
+                    .get("path")
+                    .and_then(|v| v.as_str())
                     .map(|p| format!("Writing {p}"))
                     .unwrap_or_else(|| "Writing file".to_string()),
-                "edit_file" => args.get("path").and_then(|v| v.as_str())
+                "edit_file" => args
+                    .get("path")
+                    .and_then(|v| v.as_str())
                     .map(|p| format!("Editing {p}"))
                     .unwrap_or_else(|| "Editing file".to_string()),
-                "bash" => args.get("command").and_then(|v| v.as_str())
+                "bash" => args
+                    .get("command")
+                    .and_then(|v| v.as_str())
                     .map(|c| {
-                        let truncated = if c.len() > 80 { crate::tools::safe_truncate(c, 77) } else { c };
+                        let truncated = if c.len() > 80 {
+                            crate::tools::safe_truncate(c, 77)
+                        } else {
+                            c
+                        };
                         format!("$ {truncated}")
                     })
                     .unwrap_or_else(|| "Running command".to_string()),
-                "list_files" => args.get("path").and_then(|v| v.as_str())
+                "list_files" => args
+                    .get("path")
+                    .and_then(|v| v.as_str())
                     .map(|p| format!("Listing {p}"))
                     .unwrap_or_else(|| "Listing files".to_string()),
-                "web_search" => args.get("query").and_then(|v| v.as_str())
+                "web_search" => args
+                    .get("query")
+                    .and_then(|v| v.as_str())
                     .map(|q| format!("Searching: {q}"))
                     .unwrap_or_else(|| "Searching web".to_string()),
-                "web_fetch" => args.get("url").and_then(|v| v.as_str())
+                "web_fetch" => args
+                    .get("url")
+                    .and_then(|v| v.as_str())
                     .map(|u| format!("Fetching {u}"))
                     .unwrap_or_else(|| "Fetching URL".to_string()),
-                "chainlink" => args.get("args").and_then(|v| v.as_str())
+                "chainlink" => args
+                    .get("args")
+                    .and_then(|v| v.as_str())
                     .map(|a| format!("crosslink {a}"))
                     .unwrap_or_else(|| "Running crosslink".to_string()),
                 _ => format!("Running {tool_name}"),
             }
         };
 
-        send_event_or_break!(tx, AppEvent::ToolStart {
-            name: tool_name.clone(),
-            description: args_desc,
-        });
+        send_event_or_break!(
+            tx,
+            AppEvent::ToolStart {
+                name: tool_name.clone(),
+                description: args_desc,
+            }
+        );
 
         // Run tool on a blocking thread so the async event channel stays
         // responsive — TUI can redraw and show the spinner/progress while
@@ -794,11 +847,14 @@ async fn execute_tool_calls_for_tui(
             is_error: true,
         });
 
-        send_event_or_break!(tx, AppEvent::ToolDone {
-            name: tool_name.clone(),
-            success: !result.is_error,
-            content: result.content.clone(),
-        });
+        send_event_or_break!(
+            tx,
+            AppEvent::ToolDone {
+                name: tool_name.clone(),
+                success: !result.is_error,
+                content: result.content.clone(),
+            }
+        );
 
         let result_content = if result.is_error {
             format!("[ERROR] {}", result.content)
@@ -817,10 +873,14 @@ async fn execute_tool_calls_for_tui(
     let gates = crate::guardrails::run_quality_gates();
     for gate in &gates {
         if !gate.passed {
-            send_event_or_break!(tx, AppEvent::StreamText(format!(
-                "\n⚠ Quality gate '{}': {}\n",
-                gate.name, gate.stdout.lines().next().unwrap_or("failed")
-            )));
+            send_event_or_break!(
+                tx,
+                AppEvent::StreamText(format!(
+                    "\n⚠ Quality gate '{}': {}\n",
+                    gate.name,
+                    gate.stdout.lines().next().unwrap_or("failed")
+                ))
+            );
         }
     }
 

@@ -406,11 +406,10 @@ async fn run_pre_tool_use_hooks(
 }
 
 /// Lazily-compiled regex for extracting file extensions from message text.
-static EXTENSION_PATTERN: std::sync::LazyLock<regex::Regex> =
-    std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"[\w/\\.-]+\.([a-zA-Z0-9]{1,10})\b")
-            .expect("EXTENSION_PATTERN is a valid static regex")
-    });
+static EXTENSION_PATTERN: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"[\w/\\.-]+\.([a-zA-Z0-9]{1,10})\b")
+        .expect("EXTENSION_PATTERN is a valid static regex")
+});
 
 /// Extract file extensions from message content (looks for file paths)
 fn extract_extensions_from_messages(messages: &[ChatMessage]) -> Vec<String> {

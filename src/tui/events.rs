@@ -113,9 +113,7 @@ impl EventHandler {
 /// See: <https://github.com/ratatui/ratatui/issues/347>
 fn translate_terminal_event(evt: CEvent) -> Option<AppEvent> {
     match evt {
-        CEvent::Key(key)
-            if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
-        {
+        CEvent::Key(key) if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
             Some(AppEvent::Key(key))
         }
         CEvent::Key(_) => None,

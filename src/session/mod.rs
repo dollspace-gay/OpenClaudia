@@ -502,7 +502,10 @@ impl SessionManager {
 
         // Also update the "latest" symlink/file
         let latest_path = self.persist_dir.join("latest.json");
-        atomic_write(&latest_path, serde_json::to_string_pretty(session)?.as_bytes())?;
+        atomic_write(
+            &latest_path,
+            serde_json::to_string_pretty(session)?.as_bytes(),
+        )?;
 
         // Generate and save handoff document
         let handoff_path = self.persist_dir.join("handoff.md");

@@ -38,12 +38,16 @@ impl<'a> AutoLearner<'a> {
     /// If non-zero, the auto-learning system is degraded.
     #[must_use]
     pub fn error_count(&self) -> u32 {
-        self.db_error_count.load(std::sync::atomic::Ordering::Relaxed)
+        self.db_error_count
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Log a database error and increment the failure counter.
     fn log_db_error(&self, operation: &str, err: &impl std::fmt::Display) {
-        let count = self.db_error_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let count = self
+            .db_error_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
         tracing::warn!(
             operation,
             error = %err,
@@ -123,7 +127,10 @@ impl<'a> AutoLearner<'a> {
         }
         let path = std::path::Path::new(raw);
         // Reject path traversal
-        if path.components().any(|c| c == std::path::Component::ParentDir) {
+        if path
+            .components()
+            .any(|c| c == std::path::Component::ParentDir)
+        {
             return None;
         }
         // Canonicalize if file exists, otherwise use as-is

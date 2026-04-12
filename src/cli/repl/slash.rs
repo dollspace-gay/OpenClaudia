@@ -70,6 +70,8 @@ pub enum SlashCommandResult {
     Status,
     /// Toggle agent mode (Build/Plan)
     ToggleMode,
+    /// Switch behavioral mode to a preset or custom configuration
+    SetBehaviorMode(openclaudia::modes::BehaviorMode),
     /// Show keybindings
     Keybindings,
     /// Rename session with new title
@@ -136,7 +138,11 @@ pub fn handle_slash_command(
             println!("  /connect         - Configure API keys for providers");
             println!("  /theme           - List available color themes");
             println!("  /theme <name>    - Switch to a color theme");
-            println!("  /mode            - Toggle between Build and Plan modes");
+            println!("  /mode            - Show current behavioral mode and list presets");
+            println!(
+                "  /mode <preset>   - Switch behavioral mode (create/extend/safe/refactor/...)"
+            );
+            println!("  /plan            - Toggle between Build and Plan modes");
             println!("  /vim             - Toggle vim mode (show mode indicator in prompt)");
             println!("  /effort [level]  - Set effort level (low/medium/high)");
             println!("  /keybindings     - Show configured keyboard shortcuts");
@@ -451,7 +457,8 @@ session:
                 Some(SlashCommandResult::Handled)
             }
         }
-        "mode" => Some(SlashCommandResult::ToggleMode),
+        "plan" => Some(SlashCommandResult::ToggleMode),
+        "mode" => handle_mode_command(args),
         "vim" => Some(SlashCommandResult::ToggleVim),
         "effort" => {
             let level = args.trim().to_lowercase();
@@ -1870,4 +1877,148 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
             }
         }
     }
+}
+
+/// Handle the `/mode` slash command.
+///
+/// - No args: show current mode info and list presets
+/// - Preset name: switch to that preset
+/// - `--agency`/`--quality`/`--scope`: override individual axes
+fn handle_mode_command(args: &str) -> Option<SlashCommandResult> {
+    use openclaudia::modes::{self, BehaviorMode, Preset};
+
+    let args = args.trim();
+
+    // No args: show available presets
+    if args.is_empty() {
+        println!("\nBehavioral Modes:");
+        println!("  Switch with /mode <preset> or override axes individually.\n");
+        println!("  Presets:");
+        for (name, desc) in modes::list_presets() {
+            println!("    {name:<12} {desc}");
+        }
+        println!();
+        println!("  Modifiers (add with /mode <preset> +<modifier>):");
+        for (name, desc) in modes::list_modifiers() {
+            println!("    {name:<16} {desc}");
+        }
+        println!();
+        println!("  Examples:");
+        println!("    /mode create              Switch to create preset");
+        println!("    /mode create +bold        Create preset with bold modifier");
+        println!("    /mode safe +context-pacing  Safe preset with pacing");
+        println!();
+        return Some(SlashCommandResult::Handled);
+    }
+
+    // Parse: <preset> [+modifier ...] or axis overrides
+    let parts: Vec<&str> = args.split_whitespace().collect();
+
+    // Try to parse first arg as a preset
+    let first = parts[0];
+
+    // Check for axis-override syntax: --agency=X --quality=Y --scope=Z
+    if first.starts_with("--") {
+        return parse_axis_overrides(&parts);
+    }
+
+    // Parse as preset name
+    let preset = match first.parse::<Preset>() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("\n{e}");
+            eprintln!("Use /mode to see available presets.\n");
+            return Some(SlashCommandResult::Handled);
+        }
+    };
+
+    let mut mode = BehaviorMode::from_preset(preset);
+
+    // Parse remaining args for +modifiers
+    for part in &parts[1..] {
+        if let Some(mod_name) = part.strip_prefix('+') {
+            match mod_name.parse::<openclaudia::modes::Modifier>() {
+                Ok(m) => mode.add_modifier(m),
+                Err(e) => {
+                    eprintln!("\n{e}\n");
+                    return Some(SlashCommandResult::Handled);
+                }
+            }
+        } else {
+            eprintln!("\nUnexpected argument: \"{part}\". Use +modifier to add modifiers.\n");
+            return Some(SlashCommandResult::Handled);
+        }
+    }
+
+    println!(
+        "\n\u{2713} Mode: \x1b[36m{}\x1b[0m ({})\n",
+        mode.display_name(),
+        mode
+    );
+
+    Some(SlashCommandResult::SetBehaviorMode(mode))
+}
+
+/// Parse `--agency=X --quality=Y --scope=Z` style overrides into a custom mode.
+fn parse_axis_overrides(parts: &[&str]) -> Option<SlashCommandResult> {
+    use openclaudia::modes::BehaviorMode;
+
+    let mut mode = BehaviorMode::default();
+    let mut had_error = false;
+
+    for part in parts {
+        if let Some(val) = part
+            .strip_prefix("--agency=")
+            .or_else(|| part.strip_prefix("--agency "))
+        {
+            match val.parse() {
+                Ok(a) => mode.agency = a,
+                Err(e) => {
+                    eprintln!("\n{e}\n");
+                    had_error = true;
+                }
+            }
+        } else if let Some(val) = part
+            .strip_prefix("--quality=")
+            .or_else(|| part.strip_prefix("--quality "))
+        {
+            match val.parse() {
+                Ok(q) => mode.quality = q,
+                Err(e) => {
+                    eprintln!("\n{e}\n");
+                    had_error = true;
+                }
+            }
+        } else if let Some(val) = part
+            .strip_prefix("--scope=")
+            .or_else(|| part.strip_prefix("--scope "))
+        {
+            match val.parse() {
+                Ok(s) => mode.scope = s,
+                Err(e) => {
+                    eprintln!("\n{e}\n");
+                    had_error = true;
+                }
+            }
+        } else if let Some(mod_name) = part.strip_prefix('+') {
+            match mod_name.parse() {
+                Ok(m) => mode.add_modifier(m),
+                Err(e) => {
+                    eprintln!("\n{e}\n");
+                    had_error = true;
+                }
+            }
+        } else {
+            eprintln!("\nUnrecognized flag: \"{part}\"\n");
+            had_error = true;
+        }
+    }
+
+    if had_error {
+        return Some(SlashCommandResult::Handled);
+    }
+
+    println!("\n\u{2713} Mode: \x1b[36mcustom\x1b[0m ({})\n", mode);
+
+    Some(SlashCommandResult::SetBehaviorMode(mode))
 }

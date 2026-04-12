@@ -55,12 +55,16 @@ impl TuiSession {
         }
     }
 
-    fn touch(&mut self) { self.updated_at = chrono::Utc::now(); }
+    fn touch(&mut self) {
+        self.updated_at = chrono::Utc::now();
+    }
 
     fn update_title(&mut self) {
-        if let Some(first_user) = self.messages.iter().find(|m|
-            m.get("role").and_then(|r| r.as_str()) == Some("user")
-        ) {
+        if let Some(first_user) = self
+            .messages
+            .iter()
+            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+        {
             if let Some(content) = first_user.get("content").and_then(|c| c.as_str()) {
                 self.title = if content.len() > 50 {
                     format!("{}...", crate::tools::safe_truncate(content, 47))
@@ -108,9 +112,17 @@ impl TuiSession {
     }
 
     fn estimate_tokens(&self) -> usize {
-        self.messages.iter().map(|m| {
-            m.get("content").and_then(|c| c.as_str()).unwrap_or("").len() / 4 + 4
-        }).sum()
+        self.messages
+            .iter()
+            .map(|m| {
+                m.get("content")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .len()
+                    / 4
+                    + 4
+            })
+            .sum()
     }
 }
 
@@ -138,7 +150,10 @@ fn expand_file_refs(input: &str) -> String {
         };
 
         // Reject paths with .. components
-        if resolved.components().any(|c| c == std::path::Component::ParentDir) {
+        if resolved
+            .components()
+            .any(|c| c == std::path::Component::ParentDir)
+        {
             replacements.push((
                 full_match.to_string(),
                 format!("[Path traversal blocked: {raw_path}]"),
@@ -160,7 +175,11 @@ fn expand_file_refs(input: &str) -> String {
                     Ok(content) => {
                         replacements.push((
                             full_match.to_string(),
-                            format!("\n<file path=\"{}\">\n{}\n</file>\n", canonical.display(), content.trim()),
+                            format!(
+                                "\n<file path=\"{}\">\n{}\n</file>\n",
+                                canonical.display(),
+                                content.trim()
+                            ),
                         ));
                     }
                     Err(e) => {
@@ -487,7 +506,10 @@ impl App {
                         role: "system".to_string(),
                         content: format!("{label}: {}", perm.tool_name),
                         tool_name: None,
-                        is_error: matches!(resp, PermissionResponse::Deny | PermissionResponse::AlwaysDeny),
+                        is_error: matches!(
+                            resp,
+                            PermissionResponse::Deny | PermissionResponse::AlwaysDeny
+                        ),
                         is_thinking: false,
                     });
                     let _ = perm.reply.send(resp);
@@ -557,15 +579,15 @@ impl App {
 
     /// Handle slash commands. Returns true if the command was recognized.
     fn handle_slash_command(&mut self, text: &str) -> bool {
-                    if text == "/quit" || text == "/exit" {
-                        self.should_quit = true;
-                        return true;
-                    }
+        if text == "/quit" || text == "/exit" {
+            self.should_quit = true;
+            return true;
+        }
 
-                    if text == "/help" || text == "?" {
-                        self.messages.add(DisplayMessage {
-                            role: "system".to_string(),
-                            content: "Commands:\n\
+        if text == "/help" || text == "?" {
+            self.messages.add(DisplayMessage {
+                role: "system".to_string(),
+                content: "Commands:\n\
                                       /help          Show this help\n\
                                       /mode          Toggle Build/Plan mode\n\
                                       /effort [lvl]  Set effort (low/medium/high) or cycle\n\
@@ -586,159 +608,160 @@ impl App {
                                       !<cmd>         Run shell command\n\
                                       /quit          Exit\n\n\
                                       Scroll: Up/Down/PageUp/PageDown · Cancel: Esc · Quit: Ctrl+C"
-                                .to_string(),
-                            tool_name: None,
-                            is_error: false,
-                            is_thinking: false,
-                        });
-                        return true;
-                    }
+                    .to_string(),
+                tool_name: None,
+                is_error: false,
+                is_thinking: false,
+            });
+            return true;
+        }
 
-                    if text == "/clear" {
-                        self.messages = MessageList::new();
-                        // Reset session but keep system prompt
-                        self.session_messages.retain(|m| {
-                            m.get("role").and_then(|r| r.as_str()) == Some("system")
-                        });
-                        return true;
-                    }
+        if text == "/clear" {
+            self.messages = MessageList::new();
+            // Reset session but keep system prompt
+            self.session_messages
+                .retain(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"));
+            return true;
+        }
 
-                    if text == "/status" {
-                        self.messages.add(DisplayMessage {
-                            role: "system".to_string(),
-                            content: format!(
-                                "Model: {}\nProvider: {}\nEffort: {}\nMessages: {}\n~{} tokens",
-                                self.model,
-                                self.provider,
-                                self.effort_level,
-                                self.session_messages.len(),
-                                self.tokens,
-                            ),
-                            tool_name: None,
-                            is_error: false,
-                            is_thinking: false,
-                        });
-                        return true;
-                    }
+        if text == "/status" {
+            self.messages.add(DisplayMessage {
+                role: "system".to_string(),
+                content: format!(
+                    "Model: {}\nProvider: {}\nEffort: {}\nMessages: {}\n~{} tokens",
+                    self.model,
+                    self.provider,
+                    self.effort_level,
+                    self.session_messages.len(),
+                    self.tokens,
+                ),
+                tool_name: None,
+                is_error: false,
+                is_thinking: false,
+            });
+            return true;
+        }
 
-                    if text == "/mode" {
-                        self.chat_session.toggle_mode();
-                        self.mode = self.chat_session.mode.clone();
-                        self.messages.add(DisplayMessage {
-                            role: "system".to_string(),
-                            content: format!(
-                                "Mode: {} — {}",
-                                self.chat_session.mode,
-                                self.chat_session.mode_description()
-                            ),
-                            tool_name: None,
-                            is_error: false,
-                            is_thinking: false,
-                        });
-                        return true;
-                    }
+        if text == "/mode" {
+            self.chat_session.toggle_mode();
+            self.mode = self.chat_session.mode.clone();
+            self.messages.add(DisplayMessage {
+                role: "system".to_string(),
+                content: format!(
+                    "Mode: {} — {}",
+                    self.chat_session.mode,
+                    self.chat_session.mode_description()
+                ),
+                tool_name: None,
+                is_error: false,
+                is_thinking: false,
+            });
+            return true;
+        }
 
-                    if text == "/sessions" || text == "/list" {
-                        let sessions = list_sessions();
-                        if sessions.is_empty() {
-                            self.messages.add(DisplayMessage {
-                                role: "system".to_string(),
-                                content: "No saved sessions.".to_string(),
-                                tool_name: None,
-                                is_error: false,
-                                is_thinking: false,
-                            });
+        if text == "/sessions" || text == "/list" {
+            let sessions = list_sessions();
+            if sessions.is_empty() {
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content: "No saved sessions.".to_string(),
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+            } else {
+                let list = sessions
+                    .iter()
+                    .take(10)
+                    .map(|s| {
+                        format!(
+                            "  {} — {} ({})",
+                            &s.id[..8],
+                            s.title,
+                            s.updated_at.format("%Y-%m-%d %H:%M")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content: format!("Saved sessions:\n{list}\n\nUse /load <id> to resume."),
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+            }
+            return true;
+        }
+
+        if text.starts_with("/load ") || text.starts_with("/continue ") {
+            let id = text.split_whitespace().nth(1).unwrap_or("");
+            let sessions = list_sessions();
+            if let Some(loaded) = sessions.iter().find(|s| s.id.starts_with(id)) {
+                self.chat_session = loaded.clone();
+                self.session_messages = loaded.messages.clone();
+                self.model = loaded.model.clone();
+                self.provider = loaded.provider.clone();
+                self.mode = loaded.mode.clone();
+                self.tokens = self.chat_session.estimate_tokens();
+                // Show loaded messages in the display
+                self.messages = super::messages::MessageList::new();
+                for msg in &loaded.messages {
+                    let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("system");
+                    let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                    if role == "system" {
+                        continue;
+                    }
+                    self.messages.add(DisplayMessage {
+                        role: role.to_string(),
+                        content: content.to_string(),
+                        tool_name: None,
+                        is_error: false,
+                        is_thinking: false,
+                    });
+                }
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content: format!("Resumed session: {} ({})", loaded.title, &loaded.id[..8]),
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+            } else {
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content: format!("Session not found: {id}"),
+                    tool_name: None,
+                    is_error: true,
+                    is_thinking: false,
+                });
+            }
+            return true;
+        }
+
+        if text == "/rewind" || text.starts_with("/rewind ") {
+            let arg = text.strip_prefix("/rewind").unwrap_or("").trim();
+            if arg.is_empty() {
+                // Show conversation turns for the user to see what they can rewind to
+                let mut turn_list = String::new();
+                let mut turn_num = 0;
+                for msg in &self.chat_session.messages {
+                    let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("?");
+                    if role == "user" {
+                        turn_num += 1;
+                        let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                        let preview = if content.len() > 60 {
+                            format!("{}...", crate::tools::safe_truncate(content, 57))
                         } else {
-                            let list = sessions
-                                .iter()
-                                .take(10)
-                                .map(|s| {
-                                    format!(
-                                        "  {} — {} ({})",
-                                        &s.id[..8],
-                                        s.title,
-                                        s.updated_at.format("%Y-%m-%d %H:%M")
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            self.messages.add(DisplayMessage {
-                                role: "system".to_string(),
-                                content: format!("Saved sessions:\n{list}\n\nUse /load <id> to resume."),
-                                tool_name: None,
-                                is_error: false,
-                                is_thinking: false,
-                            });
-                        }
-                        return true;
+                            content.to_string()
+                        };
+                        turn_list.push_str(&format!("  {turn_num}. {preview}\n"));
                     }
-
-                    if text.starts_with("/load ") || text.starts_with("/continue ") {
-                        let id = text.split_whitespace().nth(1).unwrap_or("");
-                        let sessions = list_sessions();
-                        if let Some(loaded) = sessions.iter().find(|s| s.id.starts_with(id)) {
-                            self.chat_session = loaded.clone();
-                            self.session_messages = loaded.messages.clone();
-                            self.model = loaded.model.clone();
-                            self.provider = loaded.provider.clone();
-                            self.mode = loaded.mode.clone();
-                            self.tokens = self.chat_session.estimate_tokens();
-                            // Show loaded messages in the display
-                            self.messages = super::messages::MessageList::new();
-                            for msg in &loaded.messages {
-                                let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("system");
-                                let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
-                                if role == "system" { continue; }
-                                self.messages.add(DisplayMessage {
-                                    role: role.to_string(),
-                                    content: content.to_string(),
-                                    tool_name: None,
-                                    is_error: false,
-                                    is_thinking: false,
-                                });
-                            }
-                            self.messages.add(DisplayMessage {
-                                role: "system".to_string(),
-                                content: format!("Resumed session: {} ({})", loaded.title, &loaded.id[..8]),
-                                tool_name: None,
-                                is_error: false,
-                                is_thinking: false,
-                            });
-                        } else {
-                            self.messages.add(DisplayMessage {
-                                role: "system".to_string(),
-                                content: format!("Session not found: {id}"),
-                                tool_name: None,
-                                is_error: true,
-                                is_thinking: false,
-                            });
-                        }
-                        return true;
-                    }
-
-                    if text == "/rewind" || text.starts_with("/rewind ") {
-                        let arg = text.strip_prefix("/rewind").unwrap_or("").trim();
-                        if arg.is_empty() {
-                            // Show conversation turns for the user to see what they can rewind to
-                            let mut turn_list = String::new();
-                            let mut turn_num = 0;
-                            for msg in &self.chat_session.messages {
-                                let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("?");
-                                if role == "user" {
-                                    turn_num += 1;
-                                    let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
-                                    let preview = if content.len() > 60 {
-                                        format!("{}...", crate::tools::safe_truncate(content, 57))
-                                    } else {
-                                        content.to_string()
-                                    };
-                                    turn_list.push_str(&format!("  {turn_num}. {preview}\n"));
-                                }
-                            }
-                            if turn_list.is_empty() {
-                                turn_list = "  (no conversation turns yet)\n".to_string();
-                            }
-                            self.messages.add(DisplayMessage {
+                }
+                if turn_list.is_empty() {
+                    turn_list = "  (no conversation turns yet)\n".to_string();
+                }
+                self.messages.add(DisplayMessage {
                                 role: "system".to_string(),
                                 content: format!(
                                     "Conversation has {turn_num} turn(s):\n{turn_list}\nUse /rewind N to undo the last N turns."
@@ -747,396 +770,451 @@ impl App {
                                 is_error: false,
                                 is_thinking: false,
                             });
-                        } else if let Ok(n) = arg.parse::<usize>() {
-                            if n == 0 {
-                                self.messages.add(DisplayMessage {
-                                    role: "system".to_string(),
-                                    content: "Nothing to rewind (0 turns).".to_string(),
-                                    tool_name: None,
-                                    is_error: false,
-                                    is_thinking: false,
-                                });
-                            } else {
-                                let mut rewound = 0;
-                                for _ in 0..n {
-                                    if self.chat_session.undo() {
-                                        rewound += 1;
-                                    } else {
-                                        break;
-                                    }
-                                }
-                                if rewound > 0 {
-                                    self.session_messages = self.chat_session.messages.clone();
-                                    // Remove display messages for rewound turns
-                                    let to_remove = rewound * 2; // user + assistant per turn
-                                    if self.messages.len() >= to_remove {
-                                        self.messages.pop_last(to_remove);
-                                    }
-                                    self.messages.add(DisplayMessage {
-                                        role: "system".to_string(),
-                                        content: format!("Rewound {rewound} turn(s)."),
-                                        tool_name: None,
-                                        is_error: false,
-                                        is_thinking: false,
-                                    });
-                                    let _ = save_session(&self.chat_session);
-                                } else {
-                                    self.messages.add(DisplayMessage {
-                                        role: "system".to_string(),
-                                        content: "Nothing to rewind.".to_string(),
-                                        tool_name: None,
-                                        is_error: false,
-                                        is_thinking: false,
-                                    });
-                                }
-                            }
-                        } else {
-                            self.messages.add(DisplayMessage {
-                                role: "system".to_string(),
-                                content: "Usage: /rewind [N] — rewind N turns, or show turn list".to_string(),
-                                tool_name: None,
-                                is_error: false,
-                                is_thinking: false,
-                            });
-                        }
-                        return true;
-                    }
-
-                    if text == "/undo" {
+            } else if let Ok(n) = arg.parse::<usize>() {
+                if n == 0 {
+                    self.messages.add(DisplayMessage {
+                        role: "system".to_string(),
+                        content: "Nothing to rewind (0 turns).".to_string(),
+                        tool_name: None,
+                        is_error: false,
+                        is_thinking: false,
+                    });
+                } else {
+                    let mut rewound = 0;
+                    for _ in 0..n {
                         if self.chat_session.undo() {
-                            self.session_messages = self.chat_session.messages.clone();
-                            // Remove last two display messages (user + assistant)
-                            if self.messages.len() >= 2 {
-                                self.messages.pop_last(2);
-                            }
-                            self.messages.add(DisplayMessage {
-                                role: "system".to_string(),
-                                content: "Undone last message pair.".to_string(),
-                                tool_name: None,
-                                is_error: false,
-                                is_thinking: false,
-                            });
-                            let _ = save_session(&self.chat_session);
+                            rewound += 1;
                         } else {
-                            self.messages.add(DisplayMessage {
-                                role: "system".to_string(),
-                                content: "Nothing to undo.".to_string(),
-                                tool_name: None,
-                                is_error: false,
-                                is_thinking: false,
-                            });
+                            break;
                         }
-                        return true;
                     }
-
-                    if text == "/redo" {
-                        if self.chat_session.redo() {
-                            self.session_messages = self.chat_session.messages.clone();
-                            self.messages.add(DisplayMessage {
-                                role: "system".to_string(),
-                                content: "Redone last undone messages.".to_string(),
-                                tool_name: None,
-                                is_error: false,
-                                is_thinking: false,
-                            });
-                            let _ = save_session(&self.chat_session);
-                        } else {
-                            self.messages.add(DisplayMessage {
-                                role: "system".to_string(),
-                                content: "Nothing to redo.".to_string(),
-                                tool_name: None,
-                                is_error: false,
-                                is_thinking: false,
-                            });
-                        }
-                        return true;
-                    }
-
-                    if text == "/export" {
-                        let mut md = format!("# {}\n\n", self.chat_session.title);
-                        md.push_str(&format!(
-                            "Model: {} · Provider: {} · {}\n\n---\n\n",
-                            self.model, self.provider, self.chat_session.created_at.format("%Y-%m-%d %H:%M")
-                        ));
-                        for msg in &self.session_messages {
-                            let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("?");
-                            let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
-                            if role == "system" { continue; }
-                            md.push_str(&format!("**{role}:**\n{content}\n\n"));
-                        }
-                        let export_path = format!("conversation-{}.md", &self.chat_session.id[..8]);
-                        match std::fs::write(&export_path, &md) {
-                            Ok(()) => {
-                                self.messages.add(DisplayMessage {
-                                    role: "system".to_string(),
-                                    content: format!("Exported to {export_path}"),
-                                    tool_name: None,
-                                    is_error: false,
-                                    is_thinking: false,
-                                });
-                            }
-                            Err(e) => {
-                                self.messages.add(DisplayMessage {
-                                    role: "system".to_string(),
-                                    content: format!("Export failed: {e}"),
-                                    tool_name: None,
-                                    is_error: true,
-                                    is_thinking: false,
-                                });
-                            }
-                        }
-                        return true;
-                    }
-
-                    if text.starts_with("/effort") {
-                        let parts: Vec<&str> = text.splitn(2, ' ').collect();
-                        if parts.len() == 2 {
-                            let level = parts[1].trim();
-                            if matches!(level, "low" | "medium" | "high") {
-                                self.effort_level = level.to_string();
-                            }
-                        } else {
-                            // Cycle: low -> medium -> high -> low
-                            self.effort_level = match self.effort_level.as_str() {
-                                "low" => "medium".to_string(),
-                                "medium" => "high".to_string(),
-                                _ => "low".to_string(),
-                            };
+                    if rewound > 0 {
+                        self.session_messages = self.chat_session.messages.clone();
+                        // Remove display messages for rewound turns
+                        let to_remove = rewound * 2; // user + assistant per turn
+                        if self.messages.len() >= to_remove {
+                            self.messages.pop_last(to_remove);
                         }
                         self.messages.add(DisplayMessage {
                             role: "system".to_string(),
-                            content: format!("Effort level: {}", self.effort_level),
+                            content: format!("Rewound {rewound} turn(s)."),
                             tool_name: None,
                             is_error: false,
                             is_thinking: false,
                         });
-                        return true;
-                    }
-
-                    if text == "/skill" || text == "/skills" {
-                        let skills = crate::skills::load_skills();
-                        if skills.is_empty() {
-                            self.messages.add(DisplayMessage {
-                                role: "system".to_string(),
-                                content: "No skills found. Add .md files to .openclaudia/skills/".to_string(),
-                                tool_name: None,
-                                is_error: false,
-                                is_thinking: false,
-                            });
-                        } else {
-                            let list = skills
-                                .iter()
-                                .map(|s| format!("  /{} — {}", s.name, s.description))
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            self.messages.add(DisplayMessage {
-                                role: "system".to_string(),
-                                content: format!("Available skills:\n{list}"),
-                                tool_name: None,
-                                is_error: false,
-                                is_thinking: false,
-                            });
-                        }
-                        return true;
-                    }
-
-                    // Check if it's a skill invocation: /skillname or /skill skillname
-                    if text.starts_with('/') {
-                        let skill_name = if text.starts_with("/skill ") {
-                            text.strip_prefix("/skill ").unwrap_or("").trim()
-                        } else {
-                            text.strip_prefix('/').unwrap_or("")
-                        };
-
-                        if let Some(skill) = crate::skills::get_skill(skill_name) {
-                            self.messages.add(DisplayMessage {
-                                role: "system".to_string(),
-                                content: format!("Running skill: /{}", skill.name),
-                                tool_name: None,
-                                is_error: false,
-                                is_thinking: false,
-                            });
-
-                            // Inject skill prompt as user message and send to API
-                            self.session_messages.push(serde_json::json!({
-                                "role": "user",
-                                "content": skill.prompt
-                            }));
-                            self.is_waiting = true;
-                            self.spawn_api_turn();
-                            return true;
-                        }
-
-                    // /rename — rename the current session
-                    if text.starts_with("/rename ") {
-                        let new_title = text.strip_prefix("/rename ").unwrap_or("").trim();
-                        if new_title.is_empty() {
-                            self.messages.add(DisplayMessage {
-                                role: "system".to_string(),
-                                content: "Usage: /rename <new title>".to_string(),
-                                tool_name: None, is_error: false, is_thinking: false,
-                            });
-                        } else {
-                            self.chat_session.title = new_title.to_string();
-                            self.chat_session.touch();
-                            let _ = save_session(&self.chat_session);
-                            self.messages.add(DisplayMessage {
-                                role: "system".to_string(),
-                                content: format!("Session renamed to: {new_title}"),
-                                tool_name: None, is_error: false, is_thinking: false,
-                            });
-                        }
-                        return true;
-                    }
-
-                    // /cost — show estimated session cost
-                    if text == "/cost" {
-                        let tokens = self.chat_session.estimate_tokens();
-                        // Rough cost estimate based on model
-                        #[allow(clippy::cast_precision_loss)]
-                        let cost = match self.model.as_str() {
-                            m if m.contains("opus") => tokens as f64 * 0.000015 + tokens as f64 * 0.000075,
-                            m if m.contains("sonnet") => tokens as f64 * 0.000003 + tokens as f64 * 0.000015,
-                            m if m.contains("haiku") => tokens as f64 * 0.00000025 + tokens as f64 * 0.00000125,
-                            _ => 0.0,
-                        };
+                        let _ = save_session(&self.chat_session);
+                    } else {
                         self.messages.add(DisplayMessage {
                             role: "system".to_string(),
-                            content: format!(
-                                "Session cost estimate:\n  ~{tokens} tokens\n  ~${cost:.4}",
-                            ),
-                            tool_name: None, is_error: false, is_thinking: false,
+                            content: "Nothing to rewind.".to_string(),
+                            tool_name: None,
+                            is_error: false,
+                            is_thinking: false,
                         });
-                        return true;
                     }
+                }
+            } else {
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content: "Usage: /rewind [N] — rewind N turns, or show turn list".to_string(),
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+            }
+            return true;
+        }
 
-                    // /files — list files in current directory
-                    if text == "/files" || text.starts_with("/files ") {
-                        let dir = text.strip_prefix("/files").unwrap_or("").trim();
-                        let dir = if dir.is_empty() { "." } else { dir };
-                        match std::fs::read_dir(dir) {
-                            Ok(entries) => {
-                                let mut items: Vec<String> = entries
-                                    .flatten()
-                                    .map(|e| {
-                                        let name = e.file_name().to_string_lossy().to_string();
-                                        let suffix = if e.file_type().map(|t| t.is_dir()).unwrap_or(false) { "/" } else { "" };
-                                        format!("  {name}{suffix}")
-                                    })
-                                    .collect();
-                                items.sort();
-                                self.messages.add(DisplayMessage {
-                                    role: "system".to_string(),
-                                    content: format!("Files in {dir}:\n{}", items.join("\n")),
-                                    tool_name: None, is_error: false, is_thinking: false,
-                                });
-                            }
-                            Err(e) => {
-                                self.messages.add(DisplayMessage {
-                                    role: "system".to_string(),
-                                    content: format!("Failed to list {dir}: {e}"),
-                                    tool_name: None, is_error: true, is_thinking: false,
-                                });
-                            }
-                        }
-                        return true;
+        if text == "/undo" {
+            if self.chat_session.undo() {
+                self.session_messages = self.chat_session.messages.clone();
+                // Remove last two display messages (user + assistant)
+                if self.messages.len() >= 2 {
+                    self.messages.pop_last(2);
+                }
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content: "Undone last message pair.".to_string(),
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+                let _ = save_session(&self.chat_session);
+            } else {
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content: "Nothing to undo.".to_string(),
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+            }
+            return true;
+        }
+
+        if text == "/redo" {
+            if self.chat_session.redo() {
+                self.session_messages = self.chat_session.messages.clone();
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content: "Redone last undone messages.".to_string(),
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+                let _ = save_session(&self.chat_session);
+            } else {
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content: "Nothing to redo.".to_string(),
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+            }
+            return true;
+        }
+
+        if text == "/export" {
+            let mut md = format!("# {}\n\n", self.chat_session.title);
+            md.push_str(&format!(
+                "Model: {} · Provider: {} · {}\n\n---\n\n",
+                self.model,
+                self.provider,
+                self.chat_session.created_at.format("%Y-%m-%d %H:%M")
+            ));
+            for msg in &self.session_messages {
+                let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("?");
+                let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                if role == "system" {
+                    continue;
+                }
+                md.push_str(&format!("**{role}:**\n{content}\n\n"));
+            }
+            let export_path = format!("conversation-{}.md", &self.chat_session.id[..8]);
+            match std::fs::write(&export_path, &md) {
+                Ok(()) => {
+                    self.messages.add(DisplayMessage {
+                        role: "system".to_string(),
+                        content: format!("Exported to {export_path}"),
+                        tool_name: None,
+                        is_error: false,
+                        is_thinking: false,
+                    });
+                }
+                Err(e) => {
+                    self.messages.add(DisplayMessage {
+                        role: "system".to_string(),
+                        content: format!("Export failed: {e}"),
+                        tool_name: None,
+                        is_error: true,
+                        is_thinking: false,
+                    });
+                }
+            }
+            return true;
+        }
+
+        if text.starts_with("/effort") {
+            let parts: Vec<&str> = text.splitn(2, ' ').collect();
+            if parts.len() == 2 {
+                let level = parts[1].trim();
+                if matches!(level, "low" | "medium" | "high") {
+                    self.effort_level = level.to_string();
+                }
+            } else {
+                // Cycle: low -> medium -> high -> low
+                self.effort_level = match self.effort_level.as_str() {
+                    "low" => "medium".to_string(),
+                    "medium" => "high".to_string(),
+                    _ => "low".to_string(),
+                };
+            }
+            self.messages.add(DisplayMessage {
+                role: "system".to_string(),
+                content: format!("Effort level: {}", self.effort_level),
+                tool_name: None,
+                is_error: false,
+                is_thinking: false,
+            });
+            return true;
+        }
+
+        if text == "/skill" || text == "/skills" {
+            let skills = crate::skills::load_skills();
+            if skills.is_empty() {
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content: "No skills found. Add .md files to .openclaudia/skills/".to_string(),
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+            } else {
+                let list = skills
+                    .iter()
+                    .map(|s| format!("  /{} — {}", s.name, s.description))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content: format!("Available skills:\n{list}"),
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+            }
+            return true;
+        }
+
+        // Check if it's a skill invocation: /skillname or /skill skillname
+        if text.starts_with('/') {
+            let skill_name = if text.starts_with("/skill ") {
+                text.strip_prefix("/skill ").unwrap_or("").trim()
+            } else {
+                text.strip_prefix('/').unwrap_or("")
+            };
+
+            if let Some(skill) = crate::skills::get_skill(skill_name) {
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content: format!("Running skill: /{}", skill.name),
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+
+                // Inject skill prompt as user message and send to API
+                self.session_messages.push(serde_json::json!({
+                    "role": "user",
+                    "content": skill.prompt
+                }));
+                self.is_waiting = true;
+                self.spawn_api_turn();
+                return true;
+            }
+
+            // /rename — rename the current session
+            if text.starts_with("/rename ") {
+                let new_title = text.strip_prefix("/rename ").unwrap_or("").trim();
+                if new_title.is_empty() {
+                    self.messages.add(DisplayMessage {
+                        role: "system".to_string(),
+                        content: "Usage: /rename <new title>".to_string(),
+                        tool_name: None,
+                        is_error: false,
+                        is_thinking: false,
+                    });
+                } else {
+                    self.chat_session.title = new_title.to_string();
+                    self.chat_session.touch();
+                    let _ = save_session(&self.chat_session);
+                    self.messages.add(DisplayMessage {
+                        role: "system".to_string(),
+                        content: format!("Session renamed to: {new_title}"),
+                        tool_name: None,
+                        is_error: false,
+                        is_thinking: false,
+                    });
+                }
+                return true;
+            }
+
+            // /cost — show estimated session cost
+            if text == "/cost" {
+                let tokens = self.chat_session.estimate_tokens();
+                // Rough cost estimate based on model
+                #[allow(clippy::cast_precision_loss)]
+                let cost = match self.model.as_str() {
+                    m if m.contains("opus") => tokens as f64 * 0.000015 + tokens as f64 * 0.000075,
+                    m if m.contains("sonnet") => {
+                        tokens as f64 * 0.000003 + tokens as f64 * 0.000015
                     }
+                    m if m.contains("haiku") => {
+                        tokens as f64 * 0.00000025 + tokens as f64 * 0.00000125
+                    }
+                    _ => 0.0,
+                };
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content: format!("Session cost estimate:\n  ~{tokens} tokens\n  ~${cost:.4}",),
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+                return true;
+            }
 
-                    // /diff — show uncommitted git changes
-                    if text == "/diff" {
-                        let output = std::process::Command::new("git")
-                            .args(["diff", "--stat"])
-                            .output();
-                        let content = match output {
-                            Ok(out) => {
-                                let stdout = String::from_utf8_lossy(&out.stdout);
-                                if stdout.is_empty() {
-                                    "No uncommitted changes.".to_string()
+            // /files — list files in current directory
+            if text == "/files" || text.starts_with("/files ") {
+                let dir = text.strip_prefix("/files").unwrap_or("").trim();
+                let dir = if dir.is_empty() { "." } else { dir };
+                match std::fs::read_dir(dir) {
+                    Ok(entries) => {
+                        let mut items: Vec<String> = entries
+                            .flatten()
+                            .map(|e| {
+                                let name = e.file_name().to_string_lossy().to_string();
+                                let suffix = if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                                    "/"
                                 } else {
-                                    format!("Uncommitted changes:\n{stdout}")
-                                }
-                            }
-                            Err(e) => format!("Failed to run git diff: {e}"),
-                        };
+                                    ""
+                                };
+                                format!("  {name}{suffix}")
+                            })
+                            .collect();
+                        items.sort();
                         self.messages.add(DisplayMessage {
                             role: "system".to_string(),
-                            content,
+                            content: format!("Files in {dir}:\n{}", items.join("\n")),
                             tool_name: None,
                             is_error: false,
                             is_thinking: false,
                         });
-                        return true;
                     }
+                    Err(e) => {
+                        self.messages.add(DisplayMessage {
+                            role: "system".to_string(),
+                            content: format!("Failed to list {dir}: {e}"),
+                            tool_name: None,
+                            is_error: true,
+                            is_thinking: false,
+                        });
+                    }
+                }
+                return true;
+            }
 
-                    // /context — show token context usage
-                    if text == "/context" {
-                        let msg_count = self.session_messages.len();
-                        let tokens = self.chat_session.estimate_tokens();
-                        let content = format!(
+            // /diff — show uncommitted git changes
+            if text == "/diff" {
+                let output = std::process::Command::new("git")
+                    .args(["diff", "--stat"])
+                    .output();
+                let content = match output {
+                    Ok(out) => {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        if stdout.is_empty() {
+                            "No uncommitted changes.".to_string()
+                        } else {
+                            format!("Uncommitted changes:\n{stdout}")
+                        }
+                    }
+                    Err(e) => format!("Failed to run git diff: {e}"),
+                };
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content,
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+                return true;
+            }
+
+            // /context — show token context usage
+            if text == "/context" {
+                let msg_count = self.session_messages.len();
+                let tokens = self.chat_session.estimate_tokens();
+                let content = format!(
                             "Context usage:\n  Messages: {msg_count}\n  Est. tokens: ~{tokens}\n  Model: {}\n  Provider: {}",
                             self.model, self.provider
                         );
-                        self.messages.add(DisplayMessage {
-                            role: "system".to_string(),
-                            content,
-                            tool_name: None,
-                            is_error: false,
-                            is_thinking: false,
-                        });
-                        return true;
-                    }
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content,
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+                return true;
+            }
 
-                    // /doctor — diagnostics
-                    if text == "/doctor" {
-                        let mut checks = Vec::new();
-                        // Check config
-                        checks.push(match crate::config::load_config() {
-                            Ok(_) => "✓ Config: loaded".to_string(),
-                            Err(e) => format!("✗ Config: {e}"),
-                        });
-                        // Check API connectivity
-                        checks.push(format!("✓ Provider: {}", self.provider));
-                        checks.push(format!("✓ Model: {}", self.model));
-                        checks.push(format!("✓ Endpoint: {}", self.endpoint));
-                        // Check skills
-                        let skills = crate::skills::load_skills();
-                        checks.push(format!("✓ Skills: {} loaded", skills.len()));
-                        // Check memory
-                        if self.memory_db.is_some() {
-                            checks.push("✓ Memory DB: connected".to_string());
+            // /doctor — diagnostics
+            if text == "/doctor" {
+                let mut checks = Vec::new();
+                // Check config
+                checks.push(match crate::config::load_config() {
+                    Ok(_) => "✓ Config: loaded".to_string(),
+                    Err(e) => format!("✗ Config: {e}"),
+                });
+                // Check API connectivity
+                checks.push(format!("✓ Provider: {}", self.provider));
+                checks.push(format!("✓ Model: {}", self.model));
+                checks.push(format!("✓ Endpoint: {}", self.endpoint));
+                // Check skills
+                let skills = crate::skills::load_skills();
+                checks.push(format!("✓ Skills: {} loaded", skills.len()));
+                // Check memory
+                if self.memory_db.is_some() {
+                    checks.push("✓ Memory DB: connected".to_string());
+                } else {
+                    checks.push("✗ Memory DB: not available".to_string());
+                }
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content: format!("Diagnostics:\n{}", checks.join("\n")),
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+                return true;
+            }
+
+            // /review — show git changes for review
+            if text == "/review" || text.starts_with("/review ") {
+                let output = std::process::Command::new("git")
+                    .args(["diff", "HEAD"])
+                    .output();
+                let content = match output {
+                    Ok(out) => {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        if stdout.is_empty() {
+                            "No changes to review.".to_string()
                         } else {
-                            checks.push("✗ Memory DB: not available".to_string());
+                            let lines: Vec<&str> = stdout.lines().take(100).collect();
+                            if stdout.lines().count() > 100 {
+                                format!(
+                                    "{}\n... (truncated, {} total lines)",
+                                    lines.join("\n"),
+                                    stdout.lines().count()
+                                )
+                            } else {
+                                lines.join("\n")
+                            }
                         }
+                    }
+                    Err(e) => format!("Failed to run git diff: {e}"),
+                };
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content,
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+                return true;
+            }
+
+            // /init — initialize project config
+            if text == "/init" {
+                match crate::config::config_file_exists() {
+                    true => {
                         self.messages.add(DisplayMessage {
                             role: "system".to_string(),
-                            content: format!("Diagnostics:\n{}", checks.join("\n")),
+                            content: "Config already exists. Use /doctor to check it.".to_string(),
                             tool_name: None,
                             is_error: false,
                             is_thinking: false,
                         });
-                        return true;
                     }
-
-                    // /review — show git changes for review
-                    if text == "/review" || text.starts_with("/review ") {
-                        let output = std::process::Command::new("git")
-                            .args(["diff", "HEAD"])
+                    false => {
+                        // Run init in the background
+                        let output = std::process::Command::new("openclaudia")
+                            .arg("init")
                             .output();
                         let content = match output {
-                            Ok(out) => {
-                                let stdout = String::from_utf8_lossy(&out.stdout);
-                                if stdout.is_empty() {
-                                    "No changes to review.".to_string()
-                                } else {
-                                    let lines: Vec<&str> = stdout.lines().take(100).collect();
-                                    if stdout.lines().count() > 100 {
-                                        format!("{}\n... (truncated, {} total lines)", lines.join("\n"), stdout.lines().count())
-                                    } else {
-                                        lines.join("\n")
-                                    }
-                                }
-                            }
-                            Err(e) => format!("Failed to run git diff: {e}"),
+                            Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
+                            Err(e) => format!("Init failed: {e}"),
                         };
                         self.messages.add(DisplayMessage {
                             role: "system".to_string(),
@@ -1145,51 +1223,20 @@ impl App {
                             is_error: false,
                             is_thinking: false,
                         });
-                        return true;
                     }
+                }
+                return true;
+            }
 
-                    // /init — initialize project config
-                    if text == "/init" {
-                        match crate::config::config_file_exists() {
-                            true => {
-                                self.messages.add(DisplayMessage {
-                                    role: "system".to_string(),
-                                    content: "Config already exists. Use /doctor to check it.".to_string(),
-                                    tool_name: None,
-                                    is_error: false,
-                                    is_thinking: false,
-                                });
-                            }
-                            false => {
-                                // Run init in the background
-                                let output = std::process::Command::new("openclaudia")
-                                    .arg("init")
-                                    .output();
-                                let content = match output {
-                                    Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
-                                    Err(e) => format!("Init failed: {e}"),
-                                };
-                                self.messages.add(DisplayMessage {
-                                    role: "system".to_string(),
-                                    content,
-                                    tool_name: None,
-                                    is_error: false,
-                                    is_thinking: false,
-                                });
-                            }
-                        }
-                        return true;
-                    }
-
-                        self.messages.add(DisplayMessage {
-                            role: "system".to_string(),
-                            content: format!("Unknown command: {text}. Type /help for commands."),
-                            tool_name: None,
-                            is_error: false,
-                            is_thinking: false,
-                        });
-                        return true;
-                    }
+            self.messages.add(DisplayMessage {
+                role: "system".to_string(),
+                content: format!("Unknown command: {text}. Type /help for commands."),
+                tool_name: None,
+                is_error: false,
+                is_thinking: false,
+            });
+            return true;
+        }
 
         false
     }
@@ -1212,7 +1259,9 @@ impl App {
                     result.push_str(&stdout);
                 }
                 if !stderr.is_empty() {
-                    if !result.is_empty() { result.push('\n'); }
+                    if !result.is_empty() {
+                        result.push('\n');
+                    }
                     result.push_str(&stderr);
                 }
                 if result.is_empty() {
@@ -1258,10 +1307,13 @@ impl App {
         // Inject rules as system message on first turn
         if !self.rules_injected {
             if let Some(ref rules) = self.rules_content {
-                self.session_messages.insert(0, serde_json::json!({
-                    "role": "system",
-                    "content": rules
-                }));
+                self.session_messages.insert(
+                    0,
+                    serde_json::json!({
+                        "role": "system",
+                        "content": rules
+                    }),
+                );
             }
             self.rules_injected = true;
         }
@@ -1310,18 +1362,24 @@ impl App {
             // Run UserPromptSubmit hooks before the API call
             if let Some(ref engine) = hook_engine {
                 // Get the last user message as the prompt
-                let user_prompt = session_messages.last()
+                let user_prompt = session_messages
+                    .last()
                     .and_then(|m| m.get("content"))
                     .and_then(|c| c.as_str())
                     .unwrap_or("")
                     .to_string();
 
-                let hook_input = crate::hooks::HookInput::new(crate::hooks::HookEvent::UserPromptSubmit)
-                    .with_prompt(&user_prompt);
-                let hook_result = engine.run(crate::hooks::HookEvent::UserPromptSubmit, &hook_input).await;
+                let hook_input =
+                    crate::hooks::HookInput::new(crate::hooks::HookEvent::UserPromptSubmit)
+                        .with_prompt(&user_prompt);
+                let hook_result = engine
+                    .run(crate::hooks::HookEvent::UserPromptSubmit, &hook_input)
+                    .await;
 
                 if !hook_result.allowed {
-                    let reason = hook_result.errors.first()
+                    let reason = hook_result
+                        .errors
+                        .first()
                         .map(|e| e.to_string())
                         .unwrap_or_else(|| "Hook blocked the request".to_string());
                     let _ = tx.send(AppEvent::ApiError(format!("Blocked by hook: {reason}")));
@@ -1350,7 +1408,13 @@ impl App {
 
             // Run the turn (may include tool execution)
             match crate::pipeline::run_turn(
-                &client, &endpoint, &headers, &request_body, &provider, memory_db.clone(), tx.clone(),
+                &client,
+                &endpoint,
+                &headers,
+                &request_body,
+                &provider,
+                memory_db.clone(),
+                tx.clone(),
             )
             .await
             {
@@ -1365,12 +1429,11 @@ impl App {
                     // assistant message + tool results and send a follow-up.
                     if turn_result.needs_followup {
                         // Build assistant message with tool calls
-                        let assistant_msg =
-                            crate::pipeline::build_assistant_message_with_tools(
-                                &turn_result.content,
-                                &turn_result.tool_calls,
-                                &provider,
-                            );
+                        let assistant_msg = crate::pipeline::build_assistant_message_with_tools(
+                            &turn_result.content,
+                            &turn_result.tool_calls,
+                            &provider,
+                        );
                         session_messages.push(assistant_msg);
                         // Append tool results
                         session_messages.extend(turn_result.tool_results.iter().cloned());
@@ -1428,9 +1491,8 @@ impl App {
                                                 &provider,
                                             );
                                         current_messages.push(asst_msg);
-                                        current_messages.extend(
-                                            followup.tool_results.iter().cloned(),
-                                        );
+                                        current_messages
+                                            .extend(followup.tool_results.iter().cloned());
                                         // continue loop
                                     } else {
                                         // Done — add final assistant message
@@ -1530,13 +1592,10 @@ impl App {
         let bar_width = chunks[3].width as usize;
         let content_len = left_text.len() + right_text.len() + 2;
         let padding = bar_width.saturating_sub(content_len);
-        let status_text = format!(
-            " {left_text}{}{right_text} ",
-            " ".repeat(padding)
-        );
+        let status_text = format!(" {left_text}{}{right_text} ", " ".repeat(padding));
 
-        let status = Paragraph::new(status_text)
-            .style(Style::default().fg(Color::Rgb(128, 128, 128)));
+        let status =
+            Paragraph::new(status_text).style(Style::default().fg(Color::Rgb(128, 128, 128)));
         frame.render_widget(status, chunks[3]);
 
         // ── Permission prompt overlay ──
@@ -1550,8 +1609,7 @@ impl App {
             let dialog_area = Rect::new(x, y, dialog_width, dialog_height);
 
             // Clear the area behind the dialog
-            let clear = Paragraph::new("")
-                .style(Style::default().bg(Color::Black));
+            let clear = Paragraph::new("").style(Style::default().bg(Color::Black));
             frame.render_widget(clear, dialog_area);
 
             let args_preview = if perm.tool_args.len() > 50 {
@@ -1563,7 +1621,9 @@ impl App {
             let prompt_text = vec![
                 Line::from(Span::styled(
                     format!("  Tool: {}", perm.tool_name),
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
                 )),
                 Line::from(Span::styled(
                     format!("  Args: {args_preview}"),
@@ -1586,7 +1646,11 @@ impl App {
                 .block(
                     Block::default()
                         .title(" Permission Required ")
-                        .title_style(Style::default().fg(Color::Rgb(218, 165, 32)).add_modifier(Modifier::BOLD))
+                        .title_style(
+                            Style::default()
+                                .fg(Color::Rgb(218, 165, 32))
+                                .add_modifier(Modifier::BOLD),
+                        )
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Rgb(218, 165, 32))),
                 )
@@ -1650,7 +1714,9 @@ impl App {
         let left = Paragraph::new(vec![
             Line::from(Span::styled(
                 greeting,
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from(Span::styled(

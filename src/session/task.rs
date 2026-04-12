@@ -514,10 +514,22 @@ mod tests {
 
     #[test]
     fn test_task_update_status_parse() {
-        assert_eq!(TaskUpdateStatus::parse("pending"), Some(TaskUpdateStatus::Pending));
-        assert_eq!(TaskUpdateStatus::parse("in_progress"), Some(TaskUpdateStatus::InProgress));
-        assert_eq!(TaskUpdateStatus::parse("completed"), Some(TaskUpdateStatus::Completed));
-        assert_eq!(TaskUpdateStatus::parse("deleted"), Some(TaskUpdateStatus::Deleted));
+        assert_eq!(
+            TaskUpdateStatus::parse("pending"),
+            Some(TaskUpdateStatus::Pending)
+        );
+        assert_eq!(
+            TaskUpdateStatus::parse("in_progress"),
+            Some(TaskUpdateStatus::InProgress)
+        );
+        assert_eq!(
+            TaskUpdateStatus::parse("completed"),
+            Some(TaskUpdateStatus::Completed)
+        );
+        assert_eq!(
+            TaskUpdateStatus::parse("deleted"),
+            Some(TaskUpdateStatus::Deleted)
+        );
         assert_eq!(TaskUpdateStatus::parse("invalid"), None);
         assert_eq!(TaskUpdateStatus::parse(""), None);
     }

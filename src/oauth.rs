@@ -361,7 +361,11 @@ impl OAuthStore {
         let file = match fs::File::open(path) {
             Ok(f) => f,
             Err(e) => {
-                tracing::warn!("Failed to open OAuth session file {}: {}", path.display(), e);
+                tracing::warn!(
+                    "Failed to open OAuth session file {}: {}",
+                    path.display(),
+                    e
+                );
                 return;
             }
         };

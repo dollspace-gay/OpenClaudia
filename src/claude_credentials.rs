@@ -369,8 +369,7 @@ pub fn inject_system_prompt(request: &mut serde_json::Value) {
                 "type": "text",
                 "text": existing.clone(),
             });
-            request["system"] =
-                serde_json::json!([prefix_block, behavioral_block, existing_obj]);
+            request["system"] = serde_json::json!([prefix_block, behavioral_block, existing_obj]);
         }
         _ => {
             request["system"] = serde_json::json!([prefix_block, behavioral_block]);

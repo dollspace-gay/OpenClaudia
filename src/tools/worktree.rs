@@ -24,7 +24,11 @@ fn git_with_timeout(args: &[&str]) -> Result<std::process::Output, String> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(GIT_TIMEOUT_SECS);
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => return child.wait_with_output().map_err(|e| format!("Git wait failed: {e}")),
+            Ok(Some(_)) => {
+                return child
+                    .wait_with_output()
+                    .map_err(|e| format!("Git wait failed: {e}"))
+            }
             Ok(None) => {
                 if std::time::Instant::now() >= deadline {
                     let _ = child.kill();
@@ -224,7 +228,8 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
             };
 
             // Clean up worktree
-            let _ = git_with_timeout(&["worktree", "remove", cwd.to_str().unwrap_or(""), "--force"]);
+            let _ =
+                git_with_timeout(&["worktree", "remove", cwd.to_str().unwrap_or(""), "--force"]);
 
             (
                 format!(
@@ -235,7 +240,8 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
                 false,
             )
         } else {
-            let _ = git_with_timeout(&["worktree", "remove", cwd.to_str().unwrap_or(""), "--force"]);
+            let _ =
+                git_with_timeout(&["worktree", "remove", cwd.to_str().unwrap_or(""), "--force"]);
             (
                 format!(
                     "No changes to commit. Removed worktree.\nReturned to: {}",

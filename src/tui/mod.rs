@@ -924,10 +924,7 @@ impl WelcomeScreen {
                 format!("Model: {}", &self.model),
                 Style::default().fg(GOLD),
             )),
-            Line::from(Span::styled(
-                &self.working_dir,
-                Style::default().fg(DIM),
-            )),
+            Line::from(Span::styled(&self.working_dir, Style::default().fg(DIM))),
         ];
         let left_para = Paragraph::new(left_text).wrap(Wrap { trim: true });
         frame.render_widget(left_para, chunks[0]);
@@ -1241,7 +1238,9 @@ pub fn print_welcome_banner(version: &str, provider: &str, model: &str, auth_met
     let _ = out.execute(Print("\n"));
     // Provider and model on next line
     let _ = out.execute(SetForegroundColor(CtColor::DarkGrey));
-    let _ = out.execute(Print(format!("  {provider} \u{00B7} {model} \u{00B7} {auth_method}\n\n")));
+    let _ = out.execute(Print(format!(
+        "  {provider} \u{00B7} {model} \u{00B7} {auth_method}\n\n"
+    )));
     let _ = out.execute(ResetColor);
 }
 

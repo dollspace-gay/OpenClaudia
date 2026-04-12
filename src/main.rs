@@ -92,6 +92,10 @@ struct Cli {
     /// Launch full-screen interactive TUI (experimental)
     #[arg(long)]
     tui_mode: bool,
+
+    /// Behavioral mode preset (create, extend, safe, refactor, explore, debug, methodical, director)
+    #[arg(long, value_name = "PRESET")]
+    mode: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -189,6 +193,7 @@ async fn main() -> anyhow::Result<()> {
                 cli.session_id,
                 cli.coordinator,
                 cli.dangerously_skip_permissions,
+                cli.mode,
             )
             .await
         }
@@ -357,7 +362,11 @@ async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
     let rules_content = {
         let extensions: Vec<&str> = vec!["rs", "py", "ts", "js", "go", "java", "rb", "md"];
         let content = rules_engine.get_combined_rules(&extensions);
-        if content.is_empty() { None } else { Some(content) }
+        if content.is_empty() {
+            None
+        } else {
+            Some(content)
+        }
     };
 
     // Build and launch the TUI
@@ -484,6 +493,7 @@ async fn cmd_chat(
     session_id: Option<String>,
     coordinator: bool,
     dangerously_skip_permissions: bool,
+    mode_override: Option<String>,
 ) -> anyhow::Result<()> {
     use indicatif::{ProgressBar, ProgressStyle};
     use openclaudia::hooks::{
@@ -537,6 +547,19 @@ async fn cmd_chat(
             config.proxy.target = detected;
         }
     }
+
+    // Parse behavioral mode from --mode flag
+    let initial_behavior_mode = if let Some(ref mode_str) = mode_override {
+        match mode_str.parse::<openclaudia::modes::Preset>() {
+            Ok(preset) => openclaudia::modes::BehaviorMode::from_preset(preset),
+            Err(e) => {
+                eprintln!("{e}");
+                return Ok(());
+            }
+        }
+    } else {
+        openclaudia::modes::BehaviorMode::default()
+    };
 
     // Initialize guardrails engine from config
     guardrails::configure(&config.guardrails);
@@ -665,8 +688,9 @@ async fn cmd_chat(
     // Set up pinned bottom bar using ANSI scroll region
     let _ = tui::setup_pinned_bar();
 
-    // Initialize chat session
-    let mut chat_session = ChatSession::new(&model, &config.proxy.target);
+    // Initialize chat session with behavioral mode
+    let mut chat_session =
+        ChatSession::new(&model, &config.proxy.target, initial_behavior_mode);
 
     // Resume a previous session if --resume or --session-id was specified
     if resume || session_id.is_some() {
@@ -760,7 +784,12 @@ async fn cmd_chat(
 
     loop {
         // Render separator, status bar, then prompt appears on next line
-        let mode_str = chat_session.mode.display().to_lowercase();
+        let behavior_name = chat_session.behavior_mode.display_name();
+        let mode_str = format!(
+            "{} ({})",
+            chat_session.mode.display().to_lowercase(),
+            behavior_name,
+        );
         let _ = tui::render_input_prompt(&mode_str);
         let _ = tui::render_bottom_bar(&effort_level, &mode_str);
 
@@ -832,7 +861,12 @@ async fn cmd_chat(
                         SlashCommandResult::Clear => {
                             // Save current session before starting new one
                             save_session_to_short_term_memory(&chat_session, memory_db.as_ref());
-                            chat_session = ChatSession::new(&model, &config.proxy.target);
+                            let prev_mode = chat_session.behavior_mode.clone();
+                            chat_session = ChatSession::new(
+                                &model,
+                                &config.proxy.target,
+                                prev_mode,
+                            );
                             continue;
                         }
                         SlashCommandResult::LoadSession(session_id) => {
@@ -927,6 +961,7 @@ async fn cmd_chat(
                             println!("  Title:      {}", chat_session.title);
                             println!("  Provider:   {}", chat_session.provider);
                             println!("  Model:      {}", chat_session.model);
+                            println!("  Behavior:   {}", chat_session.behavior_mode.description());
                             println!(
                                 "  Mode:       {} ({})",
                                 chat_session.mode.display(),
@@ -1048,6 +1083,10 @@ async fn cmd_chat(
                                 _ => "\x1b[36mmedium\x1b[0m (balanced)",
                             };
                             println!("\n\u{2713} Effort set to {label}\n");
+                            continue;
+                        }
+                        SlashCommandResult::SetBehaviorMode(new_mode) => {
+                            chat_session.behavior_mode = new_mode;
                             continue;
                         }
                         SlashCommandResult::Handled => {
@@ -1218,7 +1257,8 @@ async fn cmd_chat(
                 let cwd = std::env::current_dir()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default();
-                let mut system_prompt = prompt::build_system_prompt_with_cwd(
+                let mut system_prompt = prompt::build_system_prompt_with_mode(
+                    &chat_session.behavior_mode,
                     hook_instructions.as_deref(),
                     None, // Custom instructions could come from config in future
                     memory_db.as_ref(),
