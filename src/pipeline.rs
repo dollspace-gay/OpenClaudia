@@ -53,19 +53,19 @@ pub struct TurnResult {
 // ─── Request building ───────────────────────────────────────────────────────
 
 /// Build an Anthropic-format request body.
+///
+/// If `prompt_blocks` is provided, the system prompt is emitted as a
+/// multi-block array for cache efficiency (stable prefix with
+/// `cache_control`, dynamic suffix without).  Otherwise the system
+/// prompt is extracted from `messages` as a single cached block.
 #[must_use]
 pub fn build_anthropic_request(
     model: &str,
     messages: &[Value],
     effort_level: &str,
     claude_code_token: Option<&str>,
+    prompt_blocks: Option<&crate::prompt::SystemPromptBlocks>,
 ) -> Value {
-    let system_msg = messages
-        .iter()
-        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
-        .and_then(|m| m.get("content").and_then(|c| c.as_str()))
-        .map(String::from);
-
     let anthropic_messages = convert_messages_to_anthropic(messages);
     let openai_tools = tools::get_all_tool_definitions(true);
     let anthropic_tools = convert_tools_to_anthropic(openai_tools.as_array().unwrap_or(&vec![]));
@@ -78,12 +78,19 @@ pub fn build_anthropic_request(
         "tools": anthropic_tools
     });
 
-    if let Some(sys) = system_msg {
-        req["system"] = serde_json::json!([{
-            "type": "text",
-            "text": sys,
-            "cache_control": {"type": "ephemeral"}
-        }]);
+    if let Some(blocks) = prompt_blocks {
+        // Multi-block system prompt: stable prefix (cached) + dynamic suffix (not cached)
+        req["system"] = crate::providers::build_system_blocks(blocks);
+    } else {
+        // Legacy single-block path: extract from messages
+        let system_msg = messages
+            .iter()
+            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+            .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+            .map(String::from);
+        if let Some(sys) = system_msg {
+            req["system"] = crate::providers::build_system_blocks_from_string(&sys);
+        }
     }
 
     if claude_code_token.is_some() {
@@ -162,6 +169,9 @@ pub fn build_google_request(messages: &[Value]) -> Value {
 }
 
 /// Build the appropriate request body for the given provider.
+///
+/// `prompt_blocks` is used only for the Anthropic path to enable multi-block
+/// cache-efficient system prompts.  Pass `None` for the legacy single-block path.
 #[must_use]
 pub fn build_request(
     provider: &str,
@@ -169,9 +179,16 @@ pub fn build_request(
     messages: &[Value],
     effort_level: &str,
     claude_code_token: Option<&str>,
+    prompt_blocks: Option<&crate::prompt::SystemPromptBlocks>,
 ) -> Value {
     match provider {
-        "anthropic" => build_anthropic_request(model, messages, effort_level, claude_code_token),
+        "anthropic" => build_anthropic_request(
+            model,
+            messages,
+            effort_level,
+            claude_code_token,
+            prompt_blocks,
+        ),
         "google" => build_google_request(messages),
         _ => build_openai_request(model, messages),
     }
@@ -929,24 +946,84 @@ mod tests {
     }
 
     #[test]
-    fn test_build_anthropic_request() {
+    fn test_build_anthropic_request_legacy_single_block() {
         let messages = vec![
             serde_json::json!({"role": "system", "content": "You are helpful."}),
             serde_json::json!({"role": "user", "content": "hello"}),
         ];
-        let req = build_anthropic_request("claude-sonnet-4-6", &messages, "medium", None);
+        let req = build_anthropic_request("claude-sonnet-4-6", &messages, "medium", None, None);
         assert_eq!(req["model"], "claude-sonnet-4-6");
         assert!(req["system"].is_array());
+        // Legacy path: single block with cache_control
+        assert_eq!(req["system"].as_array().unwrap().len(), 1);
+        assert!(req["system"][0]["cache_control"].is_object());
         assert!(req["tools"].is_array());
+    }
+
+    #[test]
+    fn test_build_anthropic_request_multi_block() {
+        let messages = vec![serde_json::json!({"role": "user", "content": "hello"})];
+        let blocks = crate::prompt::SystemPromptBlocks {
+            stable_prefix: "identity and tools".to_string(),
+            dynamic_suffix: "hooks and env".to_string(),
+        };
+        let req = build_anthropic_request(
+            "claude-sonnet-4-6",
+            &messages,
+            "medium",
+            None,
+            Some(&blocks),
+        );
+        assert_eq!(req["model"], "claude-sonnet-4-6");
+        let sys = req["system"].as_array().unwrap();
+        // Two blocks: prefix (cached) + suffix (not cached)
+        assert_eq!(sys.len(), 2);
+        assert_eq!(sys[0]["text"], "identity and tools");
+        assert!(
+            sys[0]["cache_control"].is_object(),
+            "prefix must have cache_control"
+        );
+        assert_eq!(sys[1]["text"], "hooks and env");
+        assert!(
+            sys[1].get("cache_control").is_none(),
+            "suffix must NOT have cache_control"
+        );
+    }
+
+    #[test]
+    fn test_build_anthropic_request_empty_suffix_single_block() {
+        let messages = vec![serde_json::json!({"role": "user", "content": "hello"})];
+        let blocks = crate::prompt::SystemPromptBlocks {
+            stable_prefix: "everything is static".to_string(),
+            dynamic_suffix: String::new(),
+        };
+        let req = build_anthropic_request(
+            "claude-sonnet-4-6",
+            &messages,
+            "medium",
+            None,
+            Some(&blocks),
+        );
+        let sys = req["system"].as_array().unwrap();
+        // Empty suffix collapses to single cached block
+        assert_eq!(sys.len(), 1);
+        assert!(sys[0]["cache_control"].is_object());
     }
 
     #[test]
     fn test_build_request_dispatches() {
         let messages = vec![serde_json::json!({"role": "user", "content": "hi"})];
-        let req = build_request("openai", "gpt-4", &messages, "medium", None);
+        let req = build_request("openai", "gpt-4", &messages, "medium", None, None);
         assert_eq!(req["model"], "gpt-4");
 
-        let req = build_request("anthropic", "claude-sonnet-4-6", &messages, "medium", None);
+        let req = build_request(
+            "anthropic",
+            "claude-sonnet-4-6",
+            &messages,
+            "medium",
+            None,
+            None,
+        );
         assert_eq!(req["model"], "claude-sonnet-4-6");
     }
 
@@ -971,15 +1048,15 @@ mod tests {
     fn test_effort_levels() {
         let messages = vec![serde_json::json!({"role": "user", "content": "hi"})];
 
-        let high = build_anthropic_request("claude-sonnet-4-6", &messages, "high", None);
+        let high = build_anthropic_request("claude-sonnet-4-6", &messages, "high", None, None);
         assert!(high.get("thinking").is_some());
         assert_eq!(high["max_tokens"], 16000);
 
-        let low = build_anthropic_request("claude-sonnet-4-6", &messages, "low", None);
+        let low = build_anthropic_request("claude-sonnet-4-6", &messages, "low", None, None);
         assert!(low.get("thinking").is_none());
         assert_eq!(low["max_tokens"], 2048);
 
-        let med = build_anthropic_request("claude-sonnet-4-6", &messages, "medium", None);
+        let med = build_anthropic_request("claude-sonnet-4-6", &messages, "medium", None, None);
         assert!(med.get("thinking").is_none());
         assert_eq!(med["max_tokens"], crate::DEFAULT_MAX_TOKENS);
     }

@@ -343,14 +343,16 @@ async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
     let cwd_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let memory_db: Option<memory::MemoryDb> = memory::MemoryDb::open_for_project(&cwd_path).ok();
 
-    // Build system prompt (with memory and CWD)
+    // Build system prompt blocks (stable prefix + dynamic suffix for cache efficiency)
     let cwd = cwd_path.to_string_lossy().to_string();
-    let system_prompt = prompt::build_system_prompt_with_cwd(
+    let tui_prompt_blocks = prompt::build_system_prompt_blocks(
+        &openclaudia::modes::BehaviorMode::default(),
         None, // Hook instructions injected per-turn, not at init
         None,
         memory_db.as_ref(),
         Some(&cwd),
     );
+    let system_prompt = tui_prompt_blocks.to_combined();
 
     // Initialize hook engine
     let claude_hooks = load_claude_code_hooks();
@@ -371,7 +373,13 @@ async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
 
     // Build and launch the TUI
     let mut app = tui::app::App::new(&model, &config.proxy.target);
-    app.set_api_config(endpoint, headers, system_prompt, claude_code_token);
+    app.set_api_config(
+        endpoint,
+        headers,
+        system_prompt,
+        Some(tui_prompt_blocks),
+        claude_code_token,
+    );
     app.hook_engine = Some(hook_engine);
     app.memory_db = memory_db.map(std::sync::Arc::new);
     app.rules_content = rules_content;
@@ -689,8 +697,7 @@ async fn cmd_chat(
     let _ = tui::setup_pinned_bar();
 
     // Initialize chat session with behavioral mode
-    let mut chat_session =
-        ChatSession::new(&model, &config.proxy.target, initial_behavior_mode);
+    let mut chat_session = ChatSession::new(&model, &config.proxy.target, initial_behavior_mode);
 
     // Resume a previous session if --resume or --session-id was specified
     if resume || session_id.is_some() {
@@ -862,11 +869,8 @@ async fn cmd_chat(
                             // Save current session before starting new one
                             save_session_to_short_term_memory(&chat_session, memory_db.as_ref());
                             let prev_mode = chat_session.behavior_mode.clone();
-                            chat_session = ChatSession::new(
-                                &model,
-                                &config.proxy.target,
-                                prev_mode,
-                            );
+                            chat_session =
+                                ChatSession::new(&model, &config.proxy.target, prev_mode);
                             continue;
                         }
                         SlashCommandResult::LoadSession(session_id) => {
@@ -1257,7 +1261,11 @@ async fn cmd_chat(
                 let cwd = std::env::current_dir()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default();
-                let mut system_prompt = prompt::build_system_prompt_with_mode(
+
+                // Build prompt as split blocks for cache efficiency.
+                // Stable prefix (identity, axes, tools, principles, comms) stays cached
+                // across turns; dynamic suffix (env, memory, hooks) is reprocessed.
+                let mut prompt_blocks = prompt::build_system_prompt_blocks(
                     &chat_session.behavior_mode,
                     hook_instructions.as_deref(),
                     None, // Custom instructions could come from config in future
@@ -1265,24 +1273,22 @@ async fn cmd_chat(
                     Some(&cwd),
                 );
 
-                // Inject coordinator prompt if --coordinator flag is set
+                // Inject coordinator prompt into stable prefix (it's session-stable)
                 if coordinator {
-                    system_prompt = format!(
+                    prompt_blocks.stable_prefix = format!(
                         "{}\n\n{}",
                         openclaudia::subagent::AgentType::Coordinator.system_prompt(),
-                        system_prompt
+                        prompt_blocks.stable_prefix
                     );
                 }
 
-                // Inject file-specific knowledge for recently-touched files
+                // Inject file-specific knowledge into dynamic suffix
                 if let Some(ref db) = memory_db {
                     let mut injected_files: std::collections::HashSet<String> =
                         std::collections::HashSet::new();
-                    // Look at recent tool results for file paths
                     for msg in chat_session.messages.iter().rev().take(10) {
                         if let Some(role) = msg.get("role").and_then(|r| r.as_str()) {
                             if role == "tool" || role == "assistant" {
-                                // Check for file paths in tool call arguments
                                 if let Some(tool_calls) =
                                     msg.get("tool_calls").and_then(|t| t.as_array())
                                 {
@@ -1319,7 +1325,6 @@ async fn cmd_chat(
                             }
                         }
                     }
-                    // Inject knowledge for each file (limited to avoid bloating prompt)
                     let mut file_knowledge_parts = Vec::new();
                     for file_path in injected_files.iter().take(3) {
                         if let Ok(knowledge) = db.format_file_knowledge(file_path) {
@@ -1329,22 +1334,39 @@ async fn cmd_chat(
                         }
                     }
                     if !file_knowledge_parts.is_empty() {
-                        system_prompt.push_str("\n\n## File Knowledge\n");
-                        system_prompt.push_str(&file_knowledge_parts.join("\n"));
+                        if !prompt_blocks.dynamic_suffix.is_empty() {
+                            prompt_blocks.dynamic_suffix.push_str("\n\n");
+                        }
+                        prompt_blocks.dynamic_suffix.push_str("## File Knowledge\n");
+                        prompt_blocks
+                            .dynamic_suffix
+                            .push_str(&file_knowledge_parts.join("\n"));
                     }
                 }
 
-                // Insert core system prompt at position 0 (becomes first message)
-                if !chat_session.messages.iter().any(|m| {
+                // Update system prompt in messages for all providers.
+                // Non-Anthropic providers use this directly; Anthropic ignores it
+                // (convert_messages_to_anthropic filters system messages) and
+                // uses the multi-block prompt_blocks instead.
+                //
+                // We always replace rather than insert-once because mode
+                // switches via /mode must be reflected on the next turn.
+                let system_prompt_combined = prompt_blocks.to_combined();
+                if let Some(pos) = chat_session.messages.iter().position(|m| {
                     m.get("content")
                         .and_then(|c| c.as_str())
                         .is_some_and(|s| s.contains("Persona: Claudia"))
                 }) {
+                    chat_session.messages[pos] = serde_json::json!({
+                        "role": "system",
+                        "content": system_prompt_combined
+                    });
+                } else {
                     chat_session.messages.insert(
                         0,
                         serde_json::json!({
                             "role": "system",
-                            "content": system_prompt
+                            "content": system_prompt_combined
                         }),
                     );
                 }
@@ -1352,14 +1374,6 @@ async fn cmd_chat(
                 // Build request body based on provider target.
                 let mut request_body = if config.proxy.target == "anthropic" {
                     // Anthropic direct API mode - need proper Anthropic format
-                    // Extract system message to top-level (Anthropic API requirement)
-                    let system_msg = chat_session
-                        .messages
-                        .iter()
-                        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
-                        .and_then(|m| m.get("content").and_then(|c| c.as_str()))
-                        .map(String::from);
-
                     // Convert messages to Anthropic format (handles tool_calls and tool results)
                     let anthropic_messages = convert_messages_to_anthropic(&chat_session.messages);
 
@@ -1376,14 +1390,12 @@ async fn cmd_chat(
                         "tools": anthropic_tools
                     });
 
-                    // Add system as top-level parameter with cache_control for prompt caching
-                    if let Some(sys) = system_msg {
-                        req["system"] = serde_json::json!([{
-                            "type": "text",
-                            "text": sys,
-                            "cache_control": {"type": "ephemeral"}
-                        }]);
-                    }
+                    // Multi-block system prompt for cache efficiency:
+                    // Block 0 (stable prefix): identity + axes + tools + principles + comms
+                    //   → cache_control: { type: "ephemeral" } — cached across turns
+                    // Block 1 (dynamic suffix): env + memory + hooks + file knowledge
+                    //   → no cache_control — reprocessed each turn
+                    req["system"] = openclaudia::providers::build_system_blocks(&prompt_blocks);
 
                     req
                 } else if config.proxy.target == "google" {
@@ -2569,17 +2581,6 @@ async fn cmd_chat(
                                             let anthropic_messages = convert_messages_to_anthropic(
                                                 &chat_session.messages,
                                             );
-                                            let system_msg = chat_session
-                                                .messages
-                                                .iter()
-                                                .find(|m| {
-                                                    m.get("role").and_then(|r| r.as_str())
-                                                        == Some("system")
-                                                })
-                                                .and_then(|m| {
-                                                    m.get("content").and_then(|c| c.as_str())
-                                                })
-                                                .map(String::from);
 
                                             let openai_tools =
                                                 tools::get_all_tool_definitions(true);
@@ -2594,9 +2595,13 @@ async fn cmd_chat(
                                                 "stream": true,
                                                 "tools": anthropic_tools
                                             });
-                                            if let Some(sys) = system_msg {
-                                                followup_req["system"] = serde_json::json!(sys);
-                                            }
+                                            // Reuse multi-block system prompt from the initial
+                                            // turn — the stable prefix stays cached across the
+                                            // entire agentic tool loop.
+                                            followup_req["system"] =
+                                                openclaudia::providers::build_system_blocks(
+                                                    &prompt_blocks,
+                                                );
                                             if claude_code_token.is_some() {
                                                 openclaudia::claude_credentials::inject_system_prompt(&mut followup_req);
                                             }
@@ -2825,17 +2830,6 @@ async fn cmd_chat(
                                             let anthropic_messages = convert_messages_to_anthropic(
                                                 &chat_session.messages,
                                             );
-                                            let system_msg = chat_session
-                                                .messages
-                                                .iter()
-                                                .find(|m| {
-                                                    m.get("role").and_then(|r| r.as_str())
-                                                        == Some("system")
-                                                })
-                                                .and_then(|m| {
-                                                    m.get("content").and_then(|c| c.as_str())
-                                                })
-                                                .map(String::from);
 
                                             // Proxy mode: omit tools from follow-up requests
                                             let mut followup_req = serde_json::json!({
@@ -2844,9 +2838,12 @@ async fn cmd_chat(
                                                 "max_tokens": openclaudia::DEFAULT_MAX_TOKENS,
                                                 "stream": true
                                             });
-                                            if let Some(sys) = system_msg {
-                                                followup_req["system"] = serde_json::json!(sys);
-                                            }
+                                            // Reuse multi-block system prompt — stable prefix
+                                            // stays cached across the proxy tool loop.
+                                            followup_req["system"] =
+                                                openclaudia::providers::build_system_blocks(
+                                                    &prompt_blocks,
+                                                );
                                             if claude_code_token.is_some() {
                                                 openclaudia::claude_credentials::inject_system_prompt(&mut followup_req);
                                             }

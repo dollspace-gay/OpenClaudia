@@ -265,6 +265,8 @@ pub struct App {
     pub headers: Vec<(String, String)>,
     pub effort_level: String,
     pub system_prompt: String,
+    /// Split system prompt blocks for Anthropic cache efficiency.
+    pub prompt_blocks: Option<crate::prompt::SystemPromptBlocks>,
     pub claude_code_token: Option<String>,
     /// Memory database for auto-learning from tool execution.
     pub memory_db: Option<std::sync::Arc<crate::memory::MemoryDb>>,
@@ -303,6 +305,7 @@ impl App {
             headers: Vec::new(),
             effort_level: "medium".to_string(),
             system_prompt: String::new(),
+            prompt_blocks: None,
             claude_code_token: None,
             memory_db: None,
             session_messages: Vec::new(),
@@ -321,11 +324,13 @@ impl App {
         endpoint: String,
         headers: Vec<(String, String)>,
         system_prompt: String,
+        prompt_blocks: Option<crate::prompt::SystemPromptBlocks>,
         claude_code_token: Option<String>,
     ) {
         self.endpoint = endpoint;
         self.headers = headers;
         self.system_prompt = system_prompt;
+        self.prompt_blocks = prompt_blocks;
         self.claude_code_token = claude_code_token;
     }
 
@@ -1353,6 +1358,7 @@ impl App {
         let model = self.model.clone();
         let effort_level = self.effort_level.clone();
         let claude_code_token = self.claude_code_token.clone();
+        let prompt_blocks = self.prompt_blocks.clone();
         let hook_engine = self.hook_engine.clone();
         let memory_db = self.memory_db.clone();
         // Clone session messages so the async task can build follow-up requests
@@ -1404,6 +1410,7 @@ impl App {
                 &session_messages,
                 &effort_level,
                 claude_code_token.as_deref(),
+                prompt_blocks.as_ref(),
             );
 
             // Run the turn (may include tool execution)
@@ -1463,6 +1470,7 @@ impl App {
                                 &current_messages,
                                 &effort_level,
                                 claude_code_token.as_deref(),
+                                prompt_blocks.as_ref(),
                             );
 
                             match crate::pipeline::run_turn(

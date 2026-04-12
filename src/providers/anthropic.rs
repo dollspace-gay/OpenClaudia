@@ -127,13 +127,7 @@ impl ProviderAdapter for AnthropicAdapter {
         // Add system message if present - use array format with cache_control for prompt caching
         // See: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
         if let Some(system) = Self::extract_system(&request.messages) {
-            body["system"] = json!([
-                {
-                    "type": "text",
-                    "text": system,
-                    "cache_control": {"type": "ephemeral"}
-                }
-            ]);
+            body["system"] = build_system_blocks_from_string(&system);
         }
 
         // Add temperature if specified
@@ -281,6 +275,48 @@ impl ProviderAdapter for AnthropicAdapter {
             ("content-type".to_string(), "application/json".to_string()),
         ]
     }
+}
+
+/// Build an Anthropic `system` array from a [`SystemPromptBlocks`].
+///
+/// Returns two blocks for cache efficiency:
+/// - Block 0: stable prefix with `cache_control: { type: "ephemeral" }`
+/// - Block 1: dynamic suffix without cache_control (reprocessed each turn)
+///
+/// If the dynamic suffix is empty, only one block is returned.
+#[must_use]
+pub fn build_system_blocks(blocks: &crate::prompt::SystemPromptBlocks) -> Value {
+    if blocks.dynamic_suffix.is_empty() {
+        json!([{
+            "type": "text",
+            "text": blocks.stable_prefix,
+            "cache_control": {"type": "ephemeral"}
+        }])
+    } else {
+        json!([
+            {
+                "type": "text",
+                "text": blocks.stable_prefix,
+                "cache_control": {"type": "ephemeral"}
+            },
+            {
+                "type": "text",
+                "text": blocks.dynamic_suffix
+            }
+        ])
+    }
+}
+
+/// Build an Anthropic `system` array from a single string (legacy path).
+///
+/// Used by the proxy adapter which receives pre-assembled strings.
+#[must_use]
+pub fn build_system_blocks_from_string(system: &str) -> Value {
+    json!([{
+        "type": "text",
+        "text": system,
+        "cache_control": {"type": "ephemeral"}
+    }])
 }
 
 /// Convert tools from `OpenAI` format to Anthropic format

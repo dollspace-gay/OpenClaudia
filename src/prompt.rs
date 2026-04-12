@@ -6,10 +6,49 @@
 //! - Hook instructions (injected dynamically)
 //! - Custom instructions (from config or CLI)
 //! - Core memory (in stateful mode)
+//!
+//! # Cache efficiency
+//!
+//! The prompt is split into a **stable prefix** and a **dynamic suffix** for
+//! Anthropic prompt caching.  The prefix (identity, axes, tools, principles,
+//! comms) is the same across turns and gets `cache_control: ephemeral`.  The
+//! suffix (env, skills, memory, hooks, custom instructions) changes per-turn
+//! and is sent as a separate system block without a cache marker.
+//!
+//! Use [`build_system_prompt_blocks`] to get the two-block split for the
+//! Anthropic API, or [`build_system_prompt_with_mode`] to get a single
+//! concatenated string for other providers / backward compat.
 
 use crate::memory::MemoryDb;
 use crate::modes::fragments::{BASE_COMMS, BASE_IDENTITY, BASE_PRINCIPLES, BASE_TOOLS};
 use crate::modes::BehaviorMode;
+
+/// Two system prompt blocks optimised for Anthropic prompt caching.
+///
+/// - `stable_prefix`: identity + axes + tools + principles + comms.
+///   Stable across turns — should carry `cache_control: { type: "ephemeral" }`.
+/// - `dynamic_suffix`: env + skills + memory + hooks + custom instructions.
+///   Changes per-turn — sent as a separate block WITHOUT cache_control.
+#[derive(Debug, Clone)]
+pub struct SystemPromptBlocks {
+    /// Content that is stable across turns (cacheable).
+    pub stable_prefix: String,
+    /// Content that may change every turn (not cached).
+    pub dynamic_suffix: String,
+}
+
+impl SystemPromptBlocks {
+    /// Concatenate both blocks into a single string.
+    /// Use this for providers that don't support multi-block system prompts.
+    #[must_use]
+    pub fn to_combined(&self) -> String {
+        if self.dynamic_suffix.is_empty() {
+            self.stable_prefix.clone()
+        } else {
+            format!("{}\n\n{}", self.stable_prefix, self.dynamic_suffix)
+        }
+    }
+}
 
 /// Build the complete system prompt with all components, using default mode.
 #[must_use]
@@ -46,19 +85,9 @@ pub fn build_system_prompt_with_cwd(
     )
 }
 
-/// Build the complete system prompt using a specific behavioral mode.
+/// Build the complete system prompt as a single concatenated string.
 ///
-/// Assembly order:
-/// 1. Identity (Claudia persona)
-/// 2. Behavioral axes (agency, quality, scope) + modifiers
-/// 3. Tool definitions
-/// 4. Working principles & code quality
-/// 5. Communication style
-/// 6. Environment (working directory)
-/// 7. Available skills
-/// 8. Learned preferences & recent context (memory)
-/// 9. Hook instructions
-/// 10. Custom instructions
+/// For cache-optimised multi-block output, use [`build_system_prompt_blocks`].
 #[must_use]
 pub fn build_system_prompt_with_mode(
     mode: &BehaviorMode,
@@ -67,39 +96,76 @@ pub fn build_system_prompt_with_mode(
     memory_db: Option<&MemoryDb>,
     working_dir: Option<&str>,
 ) -> String {
-    let mut prompt = String::with_capacity(16384);
+    build_system_prompt_blocks(
+        mode,
+        hook_instructions,
+        custom_instructions,
+        memory_db,
+        working_dir,
+    )
+    .to_combined()
+}
+
+/// Build the system prompt split into cacheable prefix + dynamic suffix.
+///
+/// ## Stable prefix (cached across turns)
+/// 1. Identity (Claudia persona)
+/// 2. Behavioral axes (agency, quality, scope) + modifiers
+/// 3. Tool definitions
+/// 4. Working principles & code quality
+/// 5. Communication style
+///
+/// ## Dynamic suffix (reprocessed each turn)
+/// 6. Environment (working directory)
+/// 7. Available skills
+/// 8. Learned preferences & recent context (memory)
+/// 9. Hook instructions
+/// 10. Custom instructions
+#[must_use]
+pub fn build_system_prompt_blocks(
+    mode: &BehaviorMode,
+    hook_instructions: Option<&str>,
+    custom_instructions: Option<&str>,
+    memory_db: Option<&MemoryDb>,
+    working_dir: Option<&str>,
+) -> SystemPromptBlocks {
+    // ── Stable prefix ────────────────────────────────────────────────
+    let mut prefix = String::with_capacity(12288);
 
     // 1. Identity
-    prompt.push_str(BASE_IDENTITY);
+    prefix.push_str(BASE_IDENTITY);
 
     // 2. Behavioral mode (axes + modifiers)
     let behavioral = mode.assemble_behavioral_prompt();
     if !behavioral.is_empty() {
-        prompt.push_str("\n\n");
-        prompt.push_str(&behavioral);
+        prefix.push_str("\n\n");
+        prefix.push_str(&behavioral);
     }
 
     // 3. Tool definitions
-    prompt.push_str("\n\n");
-    prompt.push_str(BASE_TOOLS);
+    prefix.push_str("\n\n");
+    prefix.push_str(BASE_TOOLS);
 
     // 4. Working principles
-    prompt.push_str("\n\n");
-    prompt.push_str(BASE_PRINCIPLES);
+    prefix.push_str("\n\n");
+    prefix.push_str(BASE_PRINCIPLES);
 
     // 5. Communication style
-    prompt.push_str("\n\n");
-    prompt.push_str(BASE_COMMS);
+    prefix.push_str("\n\n");
+    prefix.push_str(BASE_COMMS);
+
+    // ── Dynamic suffix ───────────────────────────────────────────────
+    let mut suffix = String::with_capacity(4096);
 
     // 6. Environment
     if let Some(cwd) = working_dir {
-        prompt.push_str("\n\n## Environment\n");
-        prompt.push_str(&format!("- Working directory: {cwd}\n"));
-        prompt.push_str("- All file paths (read_file, write_file, edit_file, notebook_edit) must use **absolute paths**\n");
-        prompt.push_str(&format!(
+        suffix.push_str("## Environment\n");
+        suffix.push_str(&format!("- Working directory: {cwd}\n"));
+        suffix.push_str("- All file paths (read_file, write_file, edit_file, notebook_edit) must use **absolute paths**\n");
+        suffix.push_str(&format!(
             "- When referring to files in the project, use the full path starting with {cwd}/\n"
         ));
-        prompt.push_str(
+        suffix.push_str(
             "- Relative paths will be resolved against the working directory, but prefer absolute paths\n",
         );
     }
@@ -107,10 +173,13 @@ pub fn build_system_prompt_with_mode(
     // 7. Available skills
     let skills = crate::skills::load_skills();
     if !skills.is_empty() {
-        prompt.push_str("\n\n## Available Skills\n");
-        prompt.push_str("The following skills are available. When the user asks you to run a skill or mentions a /<skill-name>, inject the skill's prompt as your next action.\n\n");
+        if !suffix.is_empty() {
+            suffix.push_str("\n\n");
+        }
+        suffix.push_str("## Available Skills\n");
+        suffix.push_str("The following skills are available. When the user asks you to run a skill or mentions a /<skill-name>, inject the skill's prompt as your next action.\n\n");
         for skill in &skills {
-            prompt.push_str(&format!(
+            suffix.push_str(&format!(
                 "- `/{name}` — {desc}\n",
                 name = skill.name,
                 desc = skill.description
@@ -122,17 +191,23 @@ pub fn build_system_prompt_with_mode(
     if let Some(db) = memory_db {
         if let Ok(prefs) = db.format_learned_preferences() {
             if !prefs.is_empty() {
-                prompt.push_str("\n\n## Learned Preferences\n");
-                prompt.push_str(
+                if !suffix.is_empty() {
+                    suffix.push_str("\n\n");
+                }
+                suffix.push_str("## Learned Preferences\n");
+                suffix.push_str(
                     "These preferences were learned from previous interactions. Follow them:\n\n",
                 );
-                prompt.push_str(&prefs);
+                suffix.push_str(&prefs);
             }
         }
         if let Ok(recent_context) = db.format_recent_context_for_prompt() {
             if !recent_context.is_empty() {
-                prompt.push_str("\n\n## Recent Work\n");
-                prompt.push_str(&recent_context);
+                if !suffix.is_empty() {
+                    suffix.push_str("\n\n");
+                }
+                suffix.push_str("## Recent Work\n");
+                suffix.push_str(&recent_context);
             }
         }
     }
@@ -140,21 +215,30 @@ pub fn build_system_prompt_with_mode(
     // 9. Hook instructions
     if let Some(instructions) = hook_instructions {
         if !instructions.trim().is_empty() {
-            prompt.push_str("\n\n## Active Instructions\n");
-            prompt.push_str("The following instructions come from the project's configured hooks. Follow them carefully:\n\n");
-            prompt.push_str(instructions);
+            if !suffix.is_empty() {
+                suffix.push_str("\n\n");
+            }
+            suffix.push_str("## Active Instructions\n");
+            suffix.push_str("The following instructions come from the project's configured hooks. Follow them carefully:\n\n");
+            suffix.push_str(instructions);
         }
     }
 
     // 10. Custom instructions
     if let Some(custom) = custom_instructions {
         if !custom.trim().is_empty() {
-            prompt.push_str("\n\n## Custom Instructions\n");
-            prompt.push_str(custom);
+            if !suffix.is_empty() {
+                suffix.push_str("\n\n");
+            }
+            suffix.push_str("## Custom Instructions\n");
+            suffix.push_str(custom);
         }
     }
 
-    prompt
+    SystemPromptBlocks {
+        stable_prefix: prefix,
+        dynamic_suffix: suffix,
+    }
 }
 
 #[cfg(test)]
@@ -560,5 +644,160 @@ mod tests {
                 );
             }
         }
+    }
+
+    // =====================================================================
+    // Cache block split correctness
+    // =====================================================================
+
+    /// The stable prefix must contain identity, axes, tools, principles, comms.
+    /// The dynamic suffix must NOT contain any of those.
+    #[test]
+    fn cache_split_prefix_contains_static_content() {
+        let blocks = build_system_prompt_blocks(
+            &BehaviorMode::from_preset(Preset::Create),
+            Some("hook content here"),
+            Some("custom content here"),
+            None,
+            Some("/tmp/test"),
+        );
+
+        // Prefix has all the static sections
+        assert!(blocks.stable_prefix.contains("Persona: Claudia"));
+        assert!(blocks.stable_prefix.contains("Agency: Autonomous"));
+        assert!(blocks.stable_prefix.contains("## Your Tools"));
+        assert!(blocks.stable_prefix.contains("## Working Principles"));
+        assert!(blocks.stable_prefix.contains("## Communication Style"));
+
+        // Prefix does NOT have dynamic content
+        assert!(!blocks.stable_prefix.contains("hook content here"));
+        assert!(!blocks.stable_prefix.contains("custom content here"));
+        assert!(!blocks.stable_prefix.contains("/tmp/test"));
+    }
+
+    /// The dynamic suffix must contain env, hooks, custom instructions.
+    /// It must NOT contain identity, tools, principles, comms.
+    #[test]
+    fn cache_split_suffix_contains_dynamic_content() {
+        let blocks = build_system_prompt_blocks(
+            &BehaviorMode::from_preset(Preset::Safe),
+            Some("HOOK_SENTINEL"),
+            Some("CUSTOM_SENTINEL"),
+            None,
+            Some("/home/project"),
+        );
+
+        // Suffix has dynamic content
+        assert!(blocks.dynamic_suffix.contains("HOOK_SENTINEL"));
+        assert!(blocks.dynamic_suffix.contains("CUSTOM_SENTINEL"));
+        assert!(blocks.dynamic_suffix.contains("/home/project"));
+
+        // Suffix does NOT have static content
+        assert!(!blocks.dynamic_suffix.contains("Persona: Claudia"));
+        assert!(!blocks.dynamic_suffix.contains("## Your Tools"));
+        assert!(!blocks.dynamic_suffix.contains("## Working Principles"));
+        assert!(!blocks.dynamic_suffix.contains("## Communication Style"));
+    }
+
+    /// Switching modes must change the stable prefix but not the dynamic
+    /// suffix (given identical dynamic inputs).  This is the key cache
+    /// invariant: mode changes invalidate the prefix cache, but hook/env
+    /// changes don't touch the prefix.
+    #[test]
+    fn mode_switch_changes_prefix_not_suffix() {
+        let blocks_create = build_system_prompt_blocks(
+            &BehaviorMode::from_preset(Preset::Create),
+            Some("same hook"),
+            None,
+            None,
+            Some("/same/cwd"),
+        );
+        let blocks_safe = build_system_prompt_blocks(
+            &BehaviorMode::from_preset(Preset::Safe),
+            Some("same hook"),
+            None,
+            None,
+            Some("/same/cwd"),
+        );
+
+        // Prefixes differ (different axes)
+        assert_ne!(
+            blocks_create.stable_prefix, blocks_safe.stable_prefix,
+            "mode switch must change the stable prefix"
+        );
+
+        // Suffixes are identical (same dynamic inputs)
+        assert_eq!(
+            blocks_create.dynamic_suffix, blocks_safe.dynamic_suffix,
+            "mode switch must not change the dynamic suffix"
+        );
+    }
+
+    /// Changing hooks must change the dynamic suffix but not the stable
+    /// prefix.  This is the cache efficiency guarantee: turn-to-turn
+    /// hook changes don't bust the prefix cache.
+    #[test]
+    fn hook_change_changes_suffix_not_prefix() {
+        let mode = BehaviorMode::from_preset(Preset::Create);
+        let blocks_a = build_system_prompt_blocks(
+            &mode,
+            Some("hook version A"),
+            None,
+            None,
+            Some("/same/cwd"),
+        );
+        let blocks_b = build_system_prompt_blocks(
+            &mode,
+            Some("hook version B"),
+            None,
+            None,
+            Some("/same/cwd"),
+        );
+
+        // Prefixes identical (same mode)
+        assert_eq!(
+            blocks_a.stable_prefix, blocks_b.stable_prefix,
+            "hook changes must not change the stable prefix"
+        );
+
+        // Suffixes differ (different hooks)
+        assert_ne!(
+            blocks_a.dynamic_suffix, blocks_b.dynamic_suffix,
+            "hook changes must change the dynamic suffix"
+        );
+    }
+
+    /// to_combined() must produce the same result as the legacy
+    /// build_system_prompt_with_mode() for all presets.
+    #[test]
+    fn combined_matches_legacy_for_all_presets() {
+        for preset in ALL_PRESETS {
+            let mode = BehaviorMode::from_preset(preset);
+            let legacy =
+                build_system_prompt_with_mode(&mode, Some("hook"), None, None, Some("/cwd"));
+            let blocks = build_system_prompt_blocks(&mode, Some("hook"), None, None, Some("/cwd"));
+            assert_eq!(
+                legacy,
+                blocks.to_combined(),
+                "preset {preset}: combined blocks diverge from legacy single-string"
+            );
+        }
+    }
+
+    /// Empty dynamic inputs must produce an empty suffix.
+    #[test]
+    fn no_dynamic_inputs_produces_empty_suffix() {
+        let blocks = build_system_prompt_blocks(
+            &BehaviorMode::from_preset(Preset::Create),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(
+            blocks.dynamic_suffix.is_empty(),
+            "no dynamic inputs should produce empty suffix, got: {:?}",
+            &blocks.dynamic_suffix[..blocks.dynamic_suffix.len().min(100)]
+        );
     }
 }
