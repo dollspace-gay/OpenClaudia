@@ -200,7 +200,9 @@ impl VddEngine {
     }
 
     /// Simplified entry point for chat loop integration.
-    /// Takes just the builder text and user task, returns findings for injection.
+    /// Takes the builder text and user task, plus builder auth for the
+    /// AI verification agent (which uses the builder's provider, not the
+    /// adversary's, to avoid correlated confabulation).
     ///
     /// # Errors
     /// Returns an error if the adversary request fails or the response cannot be parsed.
@@ -208,6 +210,8 @@ impl VddEngine {
         &self,
         builder_text: &str,
         user_task: &str,
+        builder_provider: &str,
+        builder_api_key: &str,
     ) -> Result<VddAdvisoryResult, VddError> {
         if !self.config.enabled {
             return Ok(VddAdvisoryResult {
@@ -243,9 +247,16 @@ impl VddEngine {
 
         let (adversary_text, tokens_used) = self.send_to_adversary(&adversary_request).await?;
 
-        // Parse and triage findings (including AI verification)
+        // Parse and triage findings (AI verifier uses builder's provider)
         let mut findings = self.parse_findings(&adversary_text, 1);
-        self.triage_findings(&mut findings, &[], builder_text).await;
+        self.triage_findings(
+            &mut findings,
+            &[],
+            builder_text,
+            builder_provider,
+            builder_api_key,
+        )
+        .await;
 
         // Build context injection string
         let context_injection = format_findings_for_injection(&findings, &static_results);
@@ -309,7 +320,12 @@ impl VddEngine {
         match self.config.mode {
             VddMode::Advisory => {
                 let result = self
-                    .advisory_review(&builder_text, original_request)
+                    .advisory_review(
+                        &builder_text,
+                        original_request,
+                        builder_provider,
+                        builder_api_key,
+                    )
                     .await?;
                 Ok(VddResult::Advisory(result))
             }
@@ -333,6 +349,8 @@ impl VddEngine {
         &self,
         builder_text: &str,
         original_request: &ChatCompletionRequest,
+        builder_provider: &str,
+        builder_api_key: &str,
     ) -> Result<VddAdvisoryResult, VddError> {
         // Run static analysis
         let static_results = self.run_static_analysis().await;
@@ -346,9 +364,16 @@ impl VddEngine {
 
         let (adversary_text, tokens_used) = self.send_to_adversary(&adversary_request).await?;
 
-        // Parse and triage findings (including AI verification)
+        // Parse and triage findings (AI verifier uses builder's provider)
         let mut findings = self.parse_findings(&adversary_text, 1);
-        self.triage_findings(&mut findings, &[], builder_text).await;
+        self.triage_findings(
+            &mut findings,
+            &[],
+            builder_text,
+            builder_provider,
+            builder_api_key,
+        )
+        .await;
 
         // Build context injection string
         let context_injection = format_findings_for_injection(&findings, &static_results);
@@ -415,8 +440,14 @@ impl VddEngine {
 
             // Step 3: Parse and triage findings (including AI verification)
             let mut findings = self.parse_findings(&adversary_text, iteration);
-            self.triage_findings(&mut findings, &previous_fps, &current_builder_text)
-                .await;
+            self.triage_findings(
+                &mut findings,
+                &previous_fps,
+                &current_builder_text,
+                builder_provider,
+                builder_api_key,
+            )
+            .await;
 
             #[allow(clippy::cast_possible_truncation)]
             let genuine_count = findings
@@ -762,16 +793,20 @@ impl VddEngine {
     /// Triage findings using three layers:
     /// 1. Duplicate detection (string similarity against previous FPs)
     /// 2. Common false positive patterns (hardcoded Rust patterns)
-    /// 3. AI-powered verification agent (sends findings + code to a separate
-    ///    model call that checks each claim against the actual code)
+    /// 3. AI-powered verification agent (sends findings + code to the
+    ///    **builder's** provider to check each claim against actual code)
     ///
-    /// The AI verification step is the primary defense against novel
-    /// confabulations that don't match any hardcoded pattern.
+    /// The verifier deliberately uses the builder's provider (not the
+    /// adversary's) to avoid correlated confabulation — if the adversary
+    /// hallucinates, asking the same model to verify would produce the
+    /// same hallucination.
     async fn triage_findings(
         &self,
         findings: &mut [Finding],
         previous_fps: &[String],
         builder_code: &str,
+        builder_provider: &str,
+        builder_api_key: &str,
     ) {
         // Layer 1: Duplicate detection — cheap, catches re-reported FPs
         for finding in findings.iter_mut() {
@@ -805,7 +840,15 @@ impl VddEngine {
             return;
         }
 
-        match self.verify_findings(&surviving_genuine, builder_code).await {
+        match self
+            .verify_findings(
+                &surviving_genuine,
+                builder_code,
+                builder_provider,
+                builder_api_key,
+            )
+            .await
+        {
             Ok(verdicts) => {
                 for finding in findings.iter_mut() {
                     if finding.status != FindingStatus::Genuine {
@@ -813,10 +856,9 @@ impl VddEngine {
                     }
                     if let Some(verdict) = verdicts.get(&finding.id) {
                         if verdict == "confabulated" {
-                            info!(
-                                finding_id = %finding.id,
-                                description = %truncate_output(&finding.description, 80),
-                                "VDD verifier: finding classified as confabulated"
+                            eprintln!(
+                                "\x1b[33m⚠ VDD verifier: adversary finding is confabulated — \"{}\"\x1b[0m",
+                                truncate_output(&finding.description, 80)
                             );
                             finding.status = FindingStatus::FalsePositive;
                         }
@@ -824,28 +866,37 @@ impl VddEngine {
                 }
             }
             Err(e) => {
-                // Verification failure is non-fatal — fall through with
-                // pattern-based triage only. Log but don't block.
-                warn!("VDD verifier request failed, using pattern-based triage only: {e}");
+                // Tell the user verification couldn't run — they're operating
+                // with weaker confabulation detection (pattern-matching only).
+                eprintln!("\x1b[33m⚠ VDD verification agent failed: {e}\x1b[0m");
+                eprintln!(
+                    "\x1b[33m  Triage is using pattern-matching only — novel confabulations may not be caught.\x1b[0m"
+                );
+                warn!("VDD verifier request failed: {e}");
             }
         }
     }
 
-    /// Send findings to a verification agent that checks each claim against
-    /// the actual code.  Returns a map of finding_id → "genuine" | "confabulated".
+    /// Send findings to a verification agent that checks each adversary claim
+    /// against the actual code.  Uses the **builder's** provider (not the
+    /// adversary's) to get an independent second opinion.
+    ///
+    /// Returns a map of finding_id → "genuine" | "confabulated".
     async fn verify_findings(
         &self,
         findings: &[&Finding],
         builder_code: &str,
+        builder_provider: &str,
+        builder_api_key: &str,
     ) -> Result<std::collections::HashMap<String, String>, VddError> {
         if findings.is_empty() {
             return Ok(std::collections::HashMap::new());
         }
 
-        info!(
-            count = findings.len(),
-            "VDD verifier: checking {} finding(s) against code",
-            findings.len()
+        eprintln!(
+            "\x1b[36m🔍 VDD verifier: checking {} finding(s) against code via {}\x1b[0m",
+            findings.len(),
+            builder_provider
         );
 
         // Build the verification request content
@@ -878,14 +929,14 @@ impl VddEngine {
             );
         }
 
-        // Use the same adversary provider for verification (it's already configured)
-        let model = self.config.adversary.model.clone().unwrap_or_else(|| {
-            self.app_config
-                .providers
-                .get(&self.config.adversary.provider)
-                .and_then(|p| p.model.clone())
-                .unwrap_or_else(|| "default".to_string())
-        });
+        // Use the builder's provider model for verification — independent
+        // from the adversary to avoid correlated confabulation.
+        let model = self
+            .app_config
+            .providers
+            .get(builder_provider)
+            .and_then(|p| p.model.clone())
+            .unwrap_or_else(|| "default".to_string());
 
         let request = ChatCompletionRequest {
             model,
@@ -913,16 +964,69 @@ impl VddEngine {
             extra: std::collections::HashMap::new(),
         };
 
-        let (response_text, tokens) = self.send_to_adversary(&request).await?;
+        // Route through the builder's provider, not the adversary's
+        let (response_text, tokens) = self
+            .send_to_builder_for_verification(&request, builder_provider, builder_api_key)
+            .await?;
 
-        info!(
-            input_tokens = tokens.input_tokens,
-            output_tokens = tokens.output_tokens,
-            "VDD verifier: response received"
+        eprintln!(
+            "\x1b[36m  Verifier used {} input + {} output tokens\x1b[0m",
+            tokens.input_tokens, tokens.output_tokens
         );
 
         // Parse verdicts from the response
         self.parse_verification_verdicts(&response_text)
+    }
+
+    /// Send a verification request through the builder's provider.
+    /// Reuses the same HTTP plumbing as `send_to_builder` but with a
+    /// simpler interface (no revision response needed).
+    async fn send_to_builder_for_verification(
+        &self,
+        request: &ChatCompletionRequest,
+        provider_name: &str,
+        api_key: &str,
+    ) -> Result<(String, TokenUsage), VddError> {
+        let provider_config = self
+            .app_config
+            .providers
+            .get(provider_name)
+            .ok_or_else(|| {
+                VddError::ConfigError(format!(
+                    "Builder provider '{provider_name}' not configured — \
+                     cannot run verification agent"
+                ))
+            })?;
+
+        let adapter = get_adapter(provider_name);
+        let transformed = adapter
+            .transform_request(request)
+            .map_err(|e| VddError::AdversaryRequestFailed(format!("verifier transform: {e}")))?;
+
+        let headers = adapter.get_headers(api_key);
+        let endpoint = adapter.chat_endpoint(&request.model);
+
+        let response = forward_request(
+            &self.client,
+            provider_config,
+            provider_name,
+            &request.model,
+            &endpoint,
+            &transformed,
+            headers,
+        )
+        .await
+        .map_err(|e| VddError::AdversaryRequestFailed(format!("verifier request: {e}")))?;
+
+        let response_json: Value = response
+            .json()
+            .await
+            .map_err(|e| VddError::AdversaryRequestFailed(format!("verifier response: {e}")))?;
+
+        let text = extract_response_text(&response_json);
+        let tokens = extract_token_usage(&response_json);
+
+        Ok((text, tokens))
     }
 
     /// Parse the verification agent's response into a finding_id → verdict map.
@@ -1509,7 +1613,13 @@ mod tests {
         // Layer 1 (duplicate detection) catches this before Layer 3 (AI)
         // would be reached, so no API call is made.
         engine
-            .triage_findings(&mut findings, &previous_fps, "fn main() {}")
+            .triage_findings(
+                &mut findings,
+                &previous_fps,
+                "fn main() {}",
+                "test",
+                "test-key",
+            )
             .await;
         assert_eq!(findings[0].status, FindingStatus::FalsePositive);
     }
@@ -1549,7 +1659,13 @@ mod tests {
 
         // Layer 2 catches this common Rust pattern before AI verification
         engine
-            .triage_findings(&mut findings, &[], "let guard = mutex.lock().unwrap();")
+            .triage_findings(
+                &mut findings,
+                &[],
+                "let guard = mutex.lock().unwrap();",
+                "test",
+                "test-key",
+            )
             .await;
         assert_eq!(findings[0].status, FindingStatus::FalsePositive);
     }
@@ -1587,13 +1703,15 @@ mod tests {
             iteration: 1,
         }];
 
-        // AI verification will fail (no provider configured) but should NOT
-        // crash or change the finding status — it stays Genuine as a safe fallback.
+        // AI verification will fail (no provider configured) but should
+        // warn the user and keep the finding as Genuine (safe fallback).
         engine
             .triage_findings(
                 &mut findings,
                 &[],
                 "let query = format!(\"SELECT * FROM users WHERE id = {}\", user_input);",
+                "nonexistent-provider",
+                "no-key",
             )
             .await;
         assert_eq!(

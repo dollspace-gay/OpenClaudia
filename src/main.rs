@@ -1970,7 +1970,14 @@ async fn cmd_chat(
                                                 })
                                                 .unwrap_or("");
 
-                                            match engine.review_text(&full_content, user_task).await
+                                            match engine
+                                                .review_text(
+                                                    &full_content,
+                                                    user_task,
+                                                    &config.proxy.target,
+                                                    &api_key,
+                                                )
+                                                .await
                                             {
                                                 Ok(result) => {
                                                     if result.findings.is_empty() {
@@ -2987,7 +2994,15 @@ async fn cmd_chat(
                                             .and_then(|m| m.get("content").and_then(|c| c.as_str()))
                                             .unwrap_or("");
 
-                                        match engine.review_text(&full_content, user_task).await {
+                                        match engine
+                                            .review_text(
+                                                &full_content,
+                                                user_task,
+                                                &config.proxy.target,
+                                                &api_key,
+                                            )
+                                            .await
+                                        {
                                             Ok(result) => {
                                                 if result.findings.is_empty() {
                                                     println!("\n\x1b[32m✓ VDD Review: No issues found\x1b[0m");
@@ -3523,7 +3538,15 @@ async fn cmd_chat(
                                                 })
                                                 .unwrap_or("");
 
-                                            match engine.review_text(vdd_content, user_task).await {
+                                            match engine
+                                                .review_text(
+                                                    vdd_content,
+                                                    user_task,
+                                                    &config.proxy.target,
+                                                    &api_key,
+                                                )
+                                                .await
+                                            {
                                                 Ok(result) => {
                                                     if result.findings.is_empty() {
                                                         println!("\n\x1b[32m✓ VDD Review: No issues found\x1b[0m");
