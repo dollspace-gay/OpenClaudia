@@ -8,10 +8,11 @@ OpenClaudia is a Rust-based CLI that transforms any LLM into an agentic coding a
 
 ## Features
 
+- **Behavioral Modes** — Three-axis model (agency, quality, scope) with 8 presets and 6 modifiers for fine-grained control over AI behavior
 - **Multi-Provider Support** — Anthropic, OpenAI, Google Gemini, DeepSeek, Qwen, Z.AI/GLM, Ollama, and any OpenAI-compatible server
 - **Local LLM Support** — Run with Ollama, LM Studio, LocalAI, or any OpenAI-compatible endpoint
 - **Auto-Detect Provider** — Pass `-m gemini-2.5-flash` and the provider is detected automatically
-- **30 Agentic Tools** — Bash, file ops, LSP, web search, notebooks, task tracking, plan mode, worktrees, cron scheduling, MCP resources
+- **30+ Agentic Tools** — Bash, file ops, LSP, web search, notebooks, task tracking, plan mode, worktrees, cron scheduling, MCP resources
 - **Tool Execution Loop** — Multi-turn tool calling with automatic result feedback (works across all providers)
 - **Web Search** — DuckDuckGo (free, no API key), Tavily, or Brave APIs
 - **Auto-Learning Memory** — Automatically captures coding patterns, error resolutions, file relationships, and user preferences across sessions
@@ -86,6 +87,11 @@ openclaudia
 openclaudia -m gemini-2.5-flash
 openclaudia -m gpt-4o
 openclaudia -m claude-sonnet-4-20250514
+
+# Start with a behavioral mode
+openclaudia --mode create     # Autonomous architect — build from scratch
+openclaudia --mode safe       # Collaborative minimal — surgical precision
+openclaudia --mode debug      # Investigation-first debugging
 ```
 
 ## Configuration
@@ -171,6 +177,7 @@ openclaudia --resume           # Resume last session
 openclaudia --session-id <id>  # Resume specific session
 openclaudia --coordinator      # Multi-agent coordinator mode
 openclaudia --tui-mode         # Full-screen TUI (experimental)
+openclaudia --mode <preset>    # Start with a behavioral mode preset
 
 openclaudia init               # Initialize config in current directory
 openclaudia init --force       # Overwrite existing config
@@ -221,7 +228,10 @@ openclaudia doctor             # Check connectivity and API keys
 | `/connect`, `/auth` | Configure API keys |
 | `/login` | Check authentication status |
 | `/effort [low\|medium\|high]` | Set effort level |
-| `/mode` | Toggle Build/Plan mode |
+| `/mode` | Show current behavioral mode and list presets |
+| `/mode <preset>` | Switch behavioral mode (create, extend, safe, refactor, explore, debug, methodical, director) |
+| `/mode <preset> +<modifier>` | Switch mode with additional modifiers (bold, debug, methodical, director, readonly, context-pacing) |
+| `/plan` | Toggle Build/Plan mode |
 | `/vim` | Toggle vim mode |
 
 ### Session Info
@@ -407,6 +417,61 @@ openclaudia doctor             # Check connectivity and API keys
 ### OpenAI-Compatible (Local)
 - Works with LM Studio, LocalAI, text-generation-webui, vLLM, and any OpenAI-compatible server
 - Set `base_url` to your local server (e.g., `http://localhost:1234/v1`)
+
+## Behavioral Modes
+
+Control how the AI behaves with a three-axis model. Each axis is independent, and presets are named combinations for common workflows.
+
+### The Axis Model
+
+| Axis | Values | Controls |
+|------|--------|----------|
+| **Agency** | `autonomous`, `collaborative`, `surgical` | How much initiative the AI takes |
+| **Quality** | `architect`, `pragmatic`, `minimal` | What code quality standard to target |
+| **Scope** | `unrestricted`, `adjacent`, `narrow` | How far beyond the request to go |
+
+### Presets
+
+| Preset | Agency | Quality | Scope | Use when... |
+|--------|--------|---------|-------|-------------|
+| `create` | autonomous | architect | unrestricted | Building from scratch with proper structure |
+| `extend` | autonomous | pragmatic | adjacent | Extending existing projects, improving as you go |
+| `safe` | collaborative | minimal | narrow | Surgical changes to production code |
+| `refactor` | autonomous | pragmatic | unrestricted | Moving files, consolidating modules |
+| `explore` | collaborative | architect | narrow | Read-only code understanding (+ readonly modifier) |
+| `debug` | collaborative | pragmatic | narrow | Investigation-first debugging (+ debug modifier) |
+| `methodical` | surgical | architect | narrow | Step-by-step precision (+ methodical modifier) |
+| `director` | collaborative | architect | unrestricted | Orchestrate subagents (+ director modifier) |
+
+### Modifiers
+
+Modifiers are behavioral overlays that stack on top of any preset:
+
+| Modifier | Effect |
+|----------|--------|
+| `bold` | Confident, idiomatic code with no hedging or over-engineering |
+| `debug` | Investigation-first: gather evidence, form hypotheses, trace data flow |
+| `methodical` | Step-by-step precision, complete each step before the next |
+| `director` | Orchestrate subagents, delegate implementation, verify results |
+| `readonly` | No file modifications, explain what you would do instead |
+| `context-pacing` | Pace work to context limits with clean pause points |
+
+### Usage
+
+```bash
+# CLI flag
+openclaudia --mode create
+openclaudia --mode safe
+
+# In-session switching
+/mode                        # Show current mode and list presets
+/mode create                 # Switch to create preset
+/mode create +bold           # Create preset with bold modifier
+/mode debug +context-pacing  # Debug with pacing
+/mode safe +bold +readonly   # Stack multiple modifiers
+```
+
+The mode system integrates with Anthropic's prompt caching: behavioral axes and modifiers are part of the stable prompt prefix (cached across turns), while hooks, memory, and environment info are in the dynamic suffix (reprocessed each turn). Mode switches naturally invalidate the prefix cache.
 
 ## Verification-Driven Development (VDD)
 
