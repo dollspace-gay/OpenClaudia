@@ -49,6 +49,42 @@ use static_analysis::{run_chainlink_create, run_shell_command};
 // Constants
 // ==========================================================================
 
+/// System prompt for the verification agent. This is a separate step from
+/// the adversary — it evaluates the adversary's findings against the actual
+/// code to detect confabulated (hallucinated) findings.
+const VERIFIER_SYSTEM_PROMPT: &str = r#"You are a verification agent in a Verification-Driven Development (VDD) loop. Your job is to evaluate whether adversary findings about code are GENUINE or CONFABULATED (hallucinated).
+
+For each finding, you will see:
+- The finding's severity, description, CWE, and the adversary's reasoning
+- The actual code that was reviewed
+
+Your task: determine whether each finding is real by checking the adversary's claims against the actual code. Adversary models frequently hallucinate issues that don't exist — they may reference lines that don't contain the claimed pattern, invent APIs or functions that aren't called, or describe vulnerabilities in code paths that aren't reachable.
+
+Rules:
+1. Check EVERY claim against the actual code. Does the line the adversary cited actually contain the pattern they describe?
+2. If the adversary claims a function is called unsafely, verify the function exists and is actually called that way.
+3. If the adversary claims user input reaches a dangerous sink, trace the data flow in the actual code.
+4. Standard language/framework patterns are NOT vulnerabilities (e.g., mutex unwrap in Rust, test fixtures with hardcoded values).
+5. Be precise. A finding is genuine ONLY if the described issue actually exists in the code as written.
+
+You MUST respond with valid JSON in this exact format:
+{
+  "verdicts": [
+    {
+      "finding_id": "the-finding-id",
+      "verdict": "genuine",
+      "reasoning": "The SQL query on line 45 does concatenate user input directly, as the adversary described."
+    },
+    {
+      "finding_id": "another-finding-id",
+      "verdict": "confabulated",
+      "reasoning": "The adversary claims line 23 uses eval(), but line 23 is actually a comment. The function described does not exist in this code."
+    }
+  ]
+}
+
+The verdict field MUST be exactly "genuine" or "confabulated". No other values."#;
+
 /// System prompt for the adversary model. Establishes the adversarial role
 /// with structured JSON output format.
 const ADVERSARY_SYSTEM_PROMPT: &str = r#"You are an adversarial code reviewer operating in a Verification-Driven Development (VDD) loop. Your role is to find genuine bugs, security vulnerabilities, logic errors, and correctness issues in the code changes presented to you.
@@ -207,9 +243,9 @@ impl VddEngine {
 
         let (adversary_text, tokens_used) = self.send_to_adversary(&adversary_request).await?;
 
-        // Parse and triage findings
+        // Parse and triage findings (including AI verification)
         let mut findings = self.parse_findings(&adversary_text, 1);
-        self.triage_findings(&mut findings, &[]);
+        self.triage_findings(&mut findings, &[], builder_text).await;
 
         // Build context injection string
         let context_injection = format_findings_for_injection(&findings, &static_results);
@@ -310,9 +346,9 @@ impl VddEngine {
 
         let (adversary_text, tokens_used) = self.send_to_adversary(&adversary_request).await?;
 
-        // Parse and triage findings
+        // Parse and triage findings (including AI verification)
         let mut findings = self.parse_findings(&adversary_text, 1);
-        self.triage_findings(&mut findings, &[]);
+        self.triage_findings(&mut findings, &[], builder_text).await;
 
         // Build context injection string
         let context_injection = format_findings_for_injection(&findings, &static_results);
@@ -377,9 +413,10 @@ impl VddEngine {
             let (adversary_text, adversary_tokens) =
                 self.send_to_adversary(&adversary_request).await?;
 
-            // Step 3: Parse and triage findings
+            // Step 3: Parse and triage findings (including AI verification)
             let mut findings = self.parse_findings(&adversary_text, iteration);
-            self.triage_findings(&mut findings, &previous_fps);
+            self.triage_findings(&mut findings, &previous_fps, &current_builder_text)
+                .await;
 
             #[allow(clippy::cast_possible_truncation)]
             let genuine_count = findings
@@ -722,12 +759,22 @@ impl VddEngine {
             .collect()
     }
 
-    /// Triage findings: mark duplicates and previously-seen false positives.
-    #[allow(clippy::unused_self)]
-    fn triage_findings(&self, findings: &mut [Finding], previous_fps: &[String]) {
+    /// Triage findings using three layers:
+    /// 1. Duplicate detection (string similarity against previous FPs)
+    /// 2. Common false positive patterns (hardcoded Rust patterns)
+    /// 3. AI-powered verification agent (sends findings + code to a separate
+    ///    model call that checks each claim against the actual code)
+    ///
+    /// The AI verification step is the primary defense against novel
+    /// confabulations that don't match any hardcoded pattern.
+    async fn triage_findings(
+        &self,
+        findings: &mut [Finding],
+        previous_fps: &[String],
+        builder_code: &str,
+    ) {
+        // Layer 1: Duplicate detection — cheap, catches re-reported FPs
         for finding in findings.iter_mut() {
-            // If this finding's description closely matches a previous false positive,
-            // mark it as false positive (the adversary is re-reporting a known non-issue)
             let desc_lower = finding.description.to_lowercase();
             for fp_desc in previous_fps {
                 if string_similarity(&desc_lower, &fp_desc.to_lowercase()) > 0.7 {
@@ -735,8 +782,10 @@ impl VddEngine {
                     break;
                 }
             }
+        }
 
-            // Common false positive patterns for Rust code
+        // Layer 2: Common false positive patterns — cheap, catches known patterns
+        for finding in findings.iter_mut() {
             if finding.status == FindingStatus::Genuine {
                 let desc = &finding.description.to_lowercase();
                 if is_common_false_positive(desc, &finding.adversary_reasoning.to_lowercase()) {
@@ -744,6 +793,180 @@ impl VddEngine {
                 }
             }
         }
+
+        // Layer 3: AI-powered verification — expensive but catches novel confabulations.
+        // Only verify findings that survived layers 1 and 2.
+        let surviving_genuine: Vec<&Finding> = findings
+            .iter()
+            .filter(|f| f.status == FindingStatus::Genuine)
+            .collect();
+
+        if surviving_genuine.is_empty() {
+            return;
+        }
+
+        match self.verify_findings(&surviving_genuine, builder_code).await {
+            Ok(verdicts) => {
+                for finding in findings.iter_mut() {
+                    if finding.status != FindingStatus::Genuine {
+                        continue; // Already classified by layers 1-2
+                    }
+                    if let Some(verdict) = verdicts.get(&finding.id) {
+                        if verdict == "confabulated" {
+                            info!(
+                                finding_id = %finding.id,
+                                description = %truncate_output(&finding.description, 80),
+                                "VDD verifier: finding classified as confabulated"
+                            );
+                            finding.status = FindingStatus::FalsePositive;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                // Verification failure is non-fatal — fall through with
+                // pattern-based triage only. Log but don't block.
+                warn!("VDD verifier request failed, using pattern-based triage only: {e}");
+            }
+        }
+    }
+
+    /// Send findings to a verification agent that checks each claim against
+    /// the actual code.  Returns a map of finding_id → "genuine" | "confabulated".
+    async fn verify_findings(
+        &self,
+        findings: &[&Finding],
+        builder_code: &str,
+    ) -> Result<std::collections::HashMap<String, String>, VddError> {
+        if findings.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+
+        info!(
+            count = findings.len(),
+            "VDD verifier: checking {} finding(s) against code",
+            findings.len()
+        );
+
+        // Build the verification request content
+        let mut user_content = format!(
+            "## Code Under Review\n```\n{}\n```\n\n## Adversary Findings to Verify\n",
+            truncate_output(builder_code, 12000)
+        );
+
+        for (i, finding) in findings.iter().enumerate() {
+            let _ = write!(
+                user_content,
+                "\n### Finding {} (ID: {})\n\
+                 - **Severity:** {:?}\n\
+                 - **CWE:** {}\n\
+                 - **File:** {}\n\
+                 - **Lines:** {}\n\
+                 - **Description:** {}\n\
+                 - **Adversary reasoning:** {}\n",
+                i + 1,
+                finding.id,
+                finding.severity,
+                finding.cwe.as_deref().unwrap_or("none"),
+                finding.file_path.as_deref().unwrap_or("unknown"),
+                finding
+                    .line_range
+                    .map(|(a, b)| format!("{a}-{b}"))
+                    .unwrap_or_else(|| "unknown".to_string()),
+                finding.description,
+                finding.adversary_reasoning,
+            );
+        }
+
+        // Use the same adversary provider for verification (it's already configured)
+        let model = self.config.adversary.model.clone().unwrap_or_else(|| {
+            self.app_config
+                .providers
+                .get(&self.config.adversary.provider)
+                .and_then(|p| p.model.clone())
+                .unwrap_or_else(|| "default".to_string())
+        });
+
+        let request = ChatCompletionRequest {
+            model,
+            messages: vec![
+                ChatMessage {
+                    role: "system".to_string(),
+                    content: MessageContent::Text(VERIFIER_SYSTEM_PROMPT.to_string()),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                ChatMessage {
+                    role: "user".to_string(),
+                    content: MessageContent::Text(user_content),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            ],
+            temperature: Some(0.0), // Maximally deterministic for verification
+            max_tokens: Some(self.config.adversary.max_tokens),
+            stream: Some(false),
+            tools: None,
+            tool_choice: None,
+            extra: std::collections::HashMap::new(),
+        };
+
+        let (response_text, tokens) = self.send_to_adversary(&request).await?;
+
+        info!(
+            input_tokens = tokens.input_tokens,
+            output_tokens = tokens.output_tokens,
+            "VDD verifier: response received"
+        );
+
+        // Parse verdicts from the response
+        self.parse_verification_verdicts(&response_text)
+    }
+
+    /// Parse the verification agent's response into a finding_id → verdict map.
+    fn parse_verification_verdicts(
+        &self,
+        response: &str,
+    ) -> Result<std::collections::HashMap<String, String>, VddError> {
+        let mut verdicts = std::collections::HashMap::new();
+
+        // Try to extract JSON from the response
+        let json_str = extract_json_from_response(response).unwrap_or(response.to_string());
+
+        if let Ok(value) = serde_json::from_str::<Value>(&json_str) {
+            if let Some(arr) = value.get("verdicts").and_then(|v| v.as_array()) {
+                for item in arr {
+                    if let (Some(id), Some(verdict)) = (
+                        item.get("finding_id").and_then(|v| v.as_str()),
+                        item.get("verdict").and_then(|v| v.as_str()),
+                    ) {
+                        let normalized = verdict.to_lowercase();
+                        if normalized == "genuine" || normalized == "confabulated" {
+                            verdicts.insert(id.to_string(), normalized);
+                        }
+                    }
+                }
+            }
+        }
+
+        if verdicts.is_empty() && !response.is_empty() {
+            // Fallback: try to extract verdicts from natural language
+            // If the verifier says something like "all findings are confabulated"
+            let lower = response.to_lowercase();
+            if lower.contains("all") && lower.contains("confabulated") {
+                debug!("VDD verifier: bulk confabulation detected in natural language response");
+                // Can't map to specific IDs without parsing, so return empty
+                // and let the convergence math handle it next iteration
+            }
+            warn!(
+                "VDD verifier: could not parse structured verdicts from response ({} chars)",
+                response.len()
+            );
+        }
+
+        Ok(verdicts)
     }
 
     /// Create Chainlink issues for genuine findings.
@@ -1248,8 +1471,11 @@ mod tests {
         assert!(findings.is_empty());
     }
 
-    #[test]
-    fn test_triage_marks_duplicate_as_fp() {
+    /// Test that Layer 1 (duplicate detection) catches re-reported findings
+    /// before the AI verification layer is reached.  The AI layer requires
+    /// an API call, but duplicates are caught cheaply via string similarity.
+    #[tokio::test]
+    async fn test_triage_marks_duplicate_as_fp() {
         let config = VddConfig::default();
         let engine = VddEngine {
             config,
@@ -1280,7 +1506,100 @@ mod tests {
         }];
 
         let previous_fps = vec!["SQL injection in query builder module".to_string()];
-        engine.triage_findings(&mut findings, &previous_fps);
+        // Layer 1 (duplicate detection) catches this before Layer 3 (AI)
+        // would be reached, so no API call is made.
+        engine
+            .triage_findings(&mut findings, &previous_fps, "fn main() {}")
+            .await;
         assert_eq!(findings[0].status, FindingStatus::FalsePositive);
+    }
+
+    /// Test that Layer 2 (pattern matching) catches common Rust FPs.
+    #[tokio::test]
+    async fn test_triage_marks_common_pattern_as_fp() {
+        let config = VddConfig::default();
+        let engine = VddEngine {
+            config,
+            app_config: AppConfig {
+                proxy: crate::config::ProxyConfig::default(),
+                providers: std::collections::HashMap::new(),
+                hooks: crate::config::HooksConfig::default(),
+                session: crate::config::SessionConfig::default(),
+                keybindings: crate::config::KeybindingsConfig::default(),
+                vdd: VddConfig::default(),
+                guardrails: crate::config::GuardrailsConfig::default(),
+                permissions: crate::config::PermissionsConfig::default(),
+                managed_settings_path: None,
+            },
+            client: Client::new(),
+        };
+
+        let mut findings = vec![Finding {
+            id: "1".to_string(),
+            severity: Severity::High,
+            cwe: Some("CWE-362".to_string()),
+            description: "Panic on poisoned mutex — unwrap() on mutex can crash".to_string(),
+            file_path: Some("src/main.rs".to_string()),
+            line_range: Some((10, 10)),
+            status: FindingStatus::Genuine,
+            adversary_reasoning: "The code calls unwrap() on mutex which panics if poisoned"
+                .to_string(),
+            iteration: 1,
+        }];
+
+        // Layer 2 catches this common Rust pattern before AI verification
+        engine
+            .triage_findings(&mut findings, &[], "let guard = mutex.lock().unwrap();")
+            .await;
+        assert_eq!(findings[0].status, FindingStatus::FalsePositive);
+    }
+
+    /// Test that findings surviving layers 1-2 remain Genuine when
+    /// AI verification fails (non-blocking fallback).
+    #[tokio::test]
+    async fn test_triage_ai_failure_is_nonblocking() {
+        let config = VddConfig::default();
+        let engine = VddEngine {
+            config,
+            app_config: AppConfig {
+                proxy: crate::config::ProxyConfig::default(),
+                providers: std::collections::HashMap::new(), // No provider = AI call will fail
+                hooks: crate::config::HooksConfig::default(),
+                session: crate::config::SessionConfig::default(),
+                keybindings: crate::config::KeybindingsConfig::default(),
+                vdd: VddConfig::default(),
+                guardrails: crate::config::GuardrailsConfig::default(),
+                permissions: crate::config::PermissionsConfig::default(),
+                managed_settings_path: None,
+            },
+            client: Client::new(),
+        };
+
+        let mut findings = vec![Finding {
+            id: "novel-issue".to_string(),
+            severity: Severity::High,
+            cwe: Some("CWE-89".to_string()),
+            description: "Novel SQL injection that no pattern catches".to_string(),
+            file_path: Some("src/db.rs".to_string()),
+            line_range: Some((45, 52)),
+            status: FindingStatus::Genuine,
+            adversary_reasoning: "User input concatenated into query".to_string(),
+            iteration: 1,
+        }];
+
+        // AI verification will fail (no provider configured) but should NOT
+        // crash or change the finding status — it stays Genuine as a safe fallback.
+        engine
+            .triage_findings(
+                &mut findings,
+                &[],
+                "let query = format!(\"SELECT * FROM users WHERE id = {}\", user_input);",
+            )
+            .await;
+        assert_eq!(
+            findings[0].status,
+            FindingStatus::Genuine,
+            "AI verification failure must not demote genuine findings"
+        );
     }
 }
