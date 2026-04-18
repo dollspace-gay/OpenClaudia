@@ -1622,7 +1622,7 @@ mod tests {
                 &previous_fps,
                 "fn main() {}",
                 "test",
-                "test-key",
+                None,
             )
             .await;
         assert_eq!(findings[0].status, FindingStatus::FalsePositive);
@@ -1668,7 +1668,7 @@ mod tests {
                 &[],
                 "let guard = mutex.lock().unwrap();",
                 "test",
-                "test-key",
+                None,
             )
             .await;
         assert_eq!(findings[0].status, FindingStatus::FalsePositive);
@@ -1715,7 +1715,7 @@ mod tests {
                 &[],
                 "let query = format!(\"SELECT * FROM users WHERE id = {}\", user_input);",
                 "nonexistent-provider",
-                "no-key",
+                None,
             )
             .await;
         assert_eq!(
