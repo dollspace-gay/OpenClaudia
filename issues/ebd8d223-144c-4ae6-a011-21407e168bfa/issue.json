@@ -1,0 +1,11 @@
+{
+  "uuid": "ebd8d223-144c-4ae6-a011-21407e168bfa",
+  "display_id": 425,
+  "title": "subagent: execute_task_tool uses block_in_place inside tokio runtime — can deadlock if already on current_thread runtime",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Functional Correctness / Performance. Location: src/subagent.rs:1275-1285 (sync branch of execute_task_tool). Violation: block_in_place only works on a multi-threaded tokio runtime. On a current_thread runtime it panics. Worse, falling through to tokio::runtime::Runtime::new() creates a NEW runtime inside an existing one — a well-known anti-pattern that can deadlock or double-spawn background tasks. The global BACKGROUND_AGENTS HashMap + TRANSCRIPT_STORE are shared across runtimes, so task registration happens on one runtime and polling on another. Mandated Refactor: Make execute_task_tool async and plumb its awaitability up to the tool dispatch layer (tools.rs execute_tool). The sync wrapper is an artifact of the tool layer being sync — fix the root cause. If that is too invasive, gate behind a runtime check and surface a clear error on single-threaded runtimes rather than silently mis-behaving.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:40:00.429108220Z",
+  "updated_at": "2026-04-18T00:40:00.429108220Z"
+}
