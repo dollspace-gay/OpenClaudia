@@ -1,0 +1,11 @@
+{
+  "uuid": "c28cf201-58f5-4830-a317-1a06da6516a9",
+  "display_id": 427,
+  "title": "MessageList::pop_last uses O(N) pop() loop where truncate suffices",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Performance / KISS\nLocation: src/tui/messages.rs:38-42 pop_last uses for _ in 0..count { self.messages.pop(); }\nViolation: Vec::pop() in a loop performs count individual length decrements. Idiomatic operation is truncate. The hand-rolled loop confuses the reader — is it removing based on a predicate? No, just decrementing length.\nMandated Refactor: Replace body with self.messages.truncate(self.messages.len().saturating_sub(count));",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:40:04.992217600Z",
+  "updated_at": "2026-04-18T00:40:04.992217600Z"
+}
