@@ -1,0 +1,11 @@
+{
+  "uuid": "a74f0f4e-db19-4096-9e1d-7de5a824e90a",
+  "display_id": 247,
+  "title": "proxy_chat_completions is a 308-line God function violating SRP",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Structural Modularity / SRP / Cognitive Readability\n\nLocation: src/proxy.rs lines 583-890 (function proxy_chat_completions, with prepare_request_context above at 444-581).\n\nViolation: Single function performs at least 9 distinct responsibilities: (1) JSON body parsing, (2) provider selection + API key extraction, (3) session increment bookkeeping, (4) context preparation via prepare_request_context, (5) per-request compactor cloning/configuration, (6) compaction with hint, (7) token estimation + turn metrics + threshold warnings, (8) streaming/thinking request transform + stream_options injection, (9) forwarding, then (10) token-usage extraction + (11) VDD adversarial review with four-arm Response rebuild. Estimated cyclomatic complexity well over 15 (nested matches on VddResult, if-let chains, error branches). The presence of #[allow(clippy::too_many_lines)] at line 442 is an explicit SRP violation suppression. ABC metric is saturated. Cognitive reading is interrupted by multiple scoped locks ( blocks on lines 610, 633, 714, 776, 807, 843) that are non-linear.\n\nMandated Refactor: Extract the following pure helpers and call them in sequence:\n1.  — returns (provider_name, provider_config, api_key).\n2.  — owns the compactor model-cloning and hint logic.\n3.  — owns all token estimation and warn-threshold notification.\n4.  — request transform + stream_options injection + forward.\n5.  — VDD dispatch, pattern-matched once, handles Response::from_parts reassembly internally (currently reassembled 4 times).\nAfter extraction, proxy_chat_completions should be ~40-60 lines and the #[allow(clippy::too_many_lines)] attribute must be deleted.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:26:34.816715756Z",
+  "updated_at": "2026-04-18T00:26:34.816715756Z"
+}
