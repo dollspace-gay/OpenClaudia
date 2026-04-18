@@ -1,0 +1,11 @@
+{
+  "uuid": "b2d7368a-b5fa-46d2-b34f-c0694747dd60",
+  "display_id": 380,
+  "title": "Installed plugin file_path only resolves home dir; project-scope entries orphan",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension**: Functional Correctness / Testability Coverage\n\n**Location**: src/plugins/install.rs:173-182 (file_path)\n\n**Violation**: InstalledPlugins::file_path always returns ~/.openclaudia/plugins/installed_plugins.json regardless of InstallScope (Managed, User, Project, Local). Yet PluginInstallEntry carries scope + project_path distinguishing per-project installs. A user with multiple projects, each having their own plugin installs, has ALL scopes writing to the same global file. Consequences:\n- Two different projects installing the same plugin name at different paths trigger the upsert match-by-scope-and-project_path logic (install.rs:157-164) correctly — BUT if one project is deleted, the entry remains forever (no cleanup).\n- If dirs::home_dir() returns None (unusual, but possible in restricted environments), it falls back to RELATIVE path .openclaudia/plugins/installed_plugins.json — this then changes depending on the process CWD. A long-running agent changing cwd between sessions writes to DIFFERENT files, fragmenting install state.\n- No project-scoped file path even though scope enumerates Project.\n\n**Mandated Refactor**:\n1. Split into two tracking files: global ~/.openclaudia/plugins/installed_plugins.json (User/Managed scopes) and .openclaudia/plugins/installed_plugins.json (Project/Local scopes).\n2. InstalledPlugins::load should merge them; save should dispatch each entry to the correct file based on scope.\n3. If dirs::home_dir() returns None, return an error (not a relative-path fallback) — fail fast.\n4. Add a `prune_stale()` method that drops entries whose install_path no longer exists.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:37:28.221608223Z",
+  "updated_at": "2026-04-18T00:37:28.221608223Z"
+}
