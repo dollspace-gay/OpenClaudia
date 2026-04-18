@@ -1,0 +1,11 @@
+{
+  "uuid": "5c607a42-f2f6-4b58-b575-b9e44ee85695",
+  "display_id": 256,
+  "title": "API keys flow through raw String interpolation with no redaction newtype",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Security and Access\n\nLocation: src/proxy.rs line 1390 (forward_to_provider) and line 1413 (set_auth_header), and src/providers/openai.rs line 80, qwen.rs line 69, deepseek.rs line 67, zai.rs line 85.\n\nViolation: API keys are inlined into Authorization header values via format!(\"Bearer {api_key}\") and into x-api-key via raw api_key strings (line 1387, 1410). No validation that api_key is non-empty, free of CRLF injection, or is not a debug placeholder. An attacker who controls a config value or header injection site could smuggle newlines into the Authorization header to pivot to header injection. Additionally, the api_key is moved through multiple owned String clones and formatted into log-capable contexts — e.g., line 1116 debug!(url = %url, \"Passthrough request\") and forward_to_provider_raw_reqwest line 1430 do not log secrets, but the api_key flows through .header() which, if reqwest or axum debug-logs headers (e.g., tracing integration with TRACE level), will leak the secret.\n\nMandated Refactor:\n  1. Introduce a dedicated `ApiKey(String)` newtype in src/providers/mod.rs whose Debug and Display impls redact the value (e.g., print \"***sk-...xyz\" with last 4 chars). All function signatures taking &str api_key should take &ApiKey instead.\n  2. Validate in ApiKey::new(): reject empty strings, reject strings containing '\\r', '\\n', or non-ASCII bytes. Return ProviderError::InvalidResponse on violation.\n  3. Replace every format!(\"Bearer {api_key}\") with an explicit header builder that checks HeaderValue::from_str and returns an error on failure.\n  4. Audit all tracing calls near the auth path: ensure no api_key appears in format args. The secret must never be in a tracing field, even a %-formatted one.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:27:35.033298296Z",
+  "updated_at": "2026-04-18T00:27:35.033298296Z"
+}
