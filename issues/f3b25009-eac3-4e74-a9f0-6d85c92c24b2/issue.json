@@ -1,0 +1,11 @@
+{
+  "uuid": "f3b25009-eac3-4e74-a9f0-6d85c92c24b2",
+  "display_id": 262,
+  "title": "main::cmd_chat is a 3200-line mega-function",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Structural Modularity / Cognitive Complexity\nLocation: src/main.rs:498-~3700 (cmd_chat body spans ~3200 lines; main.rs total is 3716)\nViolation: cmd_chat performs config loading, provider detection, credential resolution, rules engine init, hook engine init, rustyline setup, vim-mode state, history persistence, chat loop, slash-command re-dispatch, shell-expansion, file expansion, tool permission prompting, message streaming, agentic tool loop, session save/load. This single function has a cyclomatic complexity in the hundreds. It is the single biggest violation of SRP, KISS, and testability in the codebase — there is no way to unit-test any slice of it. main.rs also suppresses the warning via #![allow(clippy::too_many_lines)] at file scope (line 7-24), which per project policy (no_allow_dead_code / no suppressions) must also be removed.\nMandated Refactor: Split cmd_chat into: (1) fn init_chat_env -> ChatEnvironment, (2) fn build_chat_dependencies(env) -> ChatDeps (hooks, rules, memory, provider, api_key), (3) struct ChatLoop { deps, session, editor } with fn run(&mut self) -> anyhow::Result<()>, (4) handle_user_input, (5) handle_slash_result, (6) run_agentic_turn. Target: main.rs under 400 lines, with orchestration only. Remove the file-level #![allow] block and fix each warning at its source.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:27:54.076651685Z",
+  "updated_at": "2026-04-18T00:27:54.076651685Z"
+}
