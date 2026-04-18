@@ -1,0 +1,11 @@
+{
+  "uuid": "d285fb5a-80bf-4c6b-a0c9-4222fbb4cef8",
+  "display_id": 377,
+  "title": "AuditLogger swallows every error — auditing is best-effort with no alerting",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Error Orchestration (7) / Security and Access (5)\n\nLocation: src/session/audit.rs (entire module).\n\nViolation: An audit log is a security-critical primitive. This implementation treats every failure as recoverable and hides it from the caller:\n\n1. new() prints to stderr with eprintln!() and returns a no-op logger (file: None) on mkdir failure OR on open failure (lines 17, 28). The caller has no way to know the audit log is disabled — log() silently does nothing.\n2. log() wraps the write in 'writeln!(f, ...).ok()' at line 45, discarding any I/O error. Disk full? Audit log on wrong filesystem? You will NEVER KNOW.\n3. No fsync. The audit log sits in the OS page cache until the process exits or Linux flushes; a crash loses entries.\n4. File is opened append-only at construction and held for the session. If log rotation external to this program renames the file (logrotate), writes continue to the now-deleted inode until the FD closes — standard UNIX gotcha; logs are silently lost.\n5. No rate limiting. A hostile tool loop could explode the audit file without bound (relates to the turn_metrics unbounded issue #285).\n6. eprintln!() is used for the failure path instead of tracing::warn!() (which is used elsewhere in the codebase, e.g. session/mod.rs:370). Inconsistent error-handling style.\n\nMandated Refactor:\n1. new() returns Result<Self, AuditError>. Caller decides whether an un-auditable run is acceptable.\n2. log() returns Result<(), io::Error>. Caller must handle (or explicitly drop).\n3. Use tracing::warn!() not eprintln!(), per the rest of the codebase.\n4. fsync after each log entry OR at a configurable batch interval (default every 10 entries or 1 second).\n5. Handle SIGHUP to re-open the file for logrotate compatibility.\n6. Add a fallback: if the primary file fails, buffer last 100 entries in memory and attempt re-open on the next log() call.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:36:46.497649579Z",
+  "updated_at": "2026-04-18T00:36:46.497649579Z"
+}
