@@ -1,0 +1,11 @@
+{
+  "uuid": "3eaa6714-68a4-4a79-a8c5-2afc872a1750",
+  "display_id": 446,
+  "title": "Clippy: 6 format_push_string — use write!/push_str",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Performance & Complexity\n**Lint:** clippy::format_push_string\n\n## Violation\n`s.push_str(&format!(...))` allocates a throwaway String just to copy its bytes into `s`. `write!(s, ...)` avoids the intermediate allocation.\n\n## Locations\n- src/prompt.rs: 163, 165, 182\n- src/tui/app.rs: 763, 885, 897\n\n## Mandated Refactor\n```rust\nuse std::fmt::Write;\n// Before\ns.push_str(&format!(\"foo {x}\\n\"));\n// After\nwrite!(s, \"foo {x}\\n\").unwrap();  // write! on String cannot fail\n```\nFor plain literals without interpolation use `.push_str(\"literal\")`.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:41:48.786234490Z",
+  "updated_at": "2026-04-18T00:41:48.786234490Z"
+}
