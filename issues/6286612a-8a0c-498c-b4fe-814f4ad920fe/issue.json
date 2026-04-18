@@ -4,10 +4,10 @@
   "title": "TUI /help text maintained manually in two places with drift",
   "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: DRY / TUI-Claude-Code parity\nLocation: src/tui/app.rs:592-622 (TUI /help) vs src/cli/repl/slash.rs:115-211 (CLI /help). The TUI lists ~15 commands; the CLI lists ~50 (memory, activity, plugin, skill, commit, theme, debug, version, vim, cost, context, login/logout, etc.).\nViolation: TUI help is a strict subset of CLI help, hand-copied. TUI users do not know /memory, /plugin, /commit, /theme, /debug, /version, /vim exist — even though the TUI already handles /skill, /cost, /context, /doctor, /init, /review, /diff which are the same commands. Per user's stated preference (TUI must match Claude Code), this is a parity drift — the TUI seam is feature-starved vs the CLI seam.\nMandated Refactor: After finding #259 (shared SlashCommandRegistry), help text is auto-generated from each Command::description(). One source of truth. Ensures parity by construction. Bonus: /help can be a paginated overlay in the TUI instead of a dumped blob.",
   "status": "open",
-  "priority": "low",
+  "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:46:27.088854373Z",
-  "updated_at": "2026-04-18T00:46:37.839124625Z",
+  "updated_at": "2026-04-18T00:47:24.642285410Z",
   "labels": [
     "refactor",
     "qa-review-2026-04",
