@@ -1,0 +1,11 @@
+{
+  "uuid": "9feafe7b-76ea-4a4b-a946-8a451b6d9366",
+  "display_id": 354,
+  "title": "Rules engine: extension_to_language is 40-arm match with NO test coverage per language",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension**: Structural Modularity (OCP violation) + Testability Coverage\n\n**Location**: src/rules.rs:11-56 (extension_to_language), src/rules.rs:155-198 (known_languages array)\n\n**Violation**: `extension_to_language` is a 45-arm match statement and `known_languages` is a parallel hardcoded array of 40 strings. These two lists MUST stay in sync but nothing enforces it. Adding a new language requires changes in both places — a maintainer-coupling trap. The RulesEngine would silently fail to dispatch rules to a newly added extension if only one of the two tables is updated.\n\nCyclomatic complexity of extension_to_language is >40, violating the stated threshold of 15 in the CLAUDE.md guidelines.\n\nTests (rules.rs:348-399) only cover rs/py/ts — the other 37 mappings are entirely untested. The function is an OCP violation: every new language requires editing the core function body.\n\n**Mandated Refactor**:\n1. Consolidate into a single `const LANGUAGES: &[(&str, &[&str])] = &[(\"rust\", &[\"rs\"]), (\"python\", &[\"py\", \"pyw\"]), ...]` table.\n2. Derive extension_to_language and known_languages from the same table.\n3. Add a compile-time test or build.rs assertion that table entries have kebab-case names and at least one extension.\n4. Expose LANGUAGES as pub(crate) so tests can iterate and assert bidirectional consistency.\n5. Consider using the `tree-sitter-language-registry` crate or similar rather than reinventing.\n\nNote: file naming collision between src/rules.rs (rules engine) and src/config/guardrails.rs / src/guardrails.rs is also confusing — top-level rules.rs is unrelated to linting rules and should be renamed context_rules.rs or similar.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:35:29.054418554Z",
+  "updated_at": "2026-04-18T00:35:29.054418554Z"
+}
