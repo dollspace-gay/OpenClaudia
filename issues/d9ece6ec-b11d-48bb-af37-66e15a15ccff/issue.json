@@ -1,0 +1,11 @@
+{
+  "uuid": "d9ece6ec-b11d-48bb-af37-66e15a15ccff",
+  "display_id": 374,
+  "title": "Clippy: 11 map(...).unwrap_or_else(...) on Option — replace with map_or_else",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Cognitive Readability, DRY\n**Lint:** clippy::map_unwrap_or\n**Count:** 11 on Option, 3 on Result, 3 on Option with unwrap_or(default)\n\n## Violation\nChaining `.map(f).unwrap_or_else(g)` forces the reader to mentally merge two transformations. `Option::map_or_else` (and `Result::map_or_else`) expresses the same logic in one call with clearer parameter semantics (default-producing closure first).\n\n## Locations\nOption .map().unwrap_or_else():\n- src/pipeline.rs: 379, 789, 794, 799, 804, 816, 821, 826, 831\n- src/tui/app.rs: 1386\n- src/vdd/mod.rs: 923\n\nResult .map().unwrap_or_else():\n- src/auto_learn.rs: 511\n- src/tui/app.rs: 1711\n- src/tui/mod.rs: 812\n\nOption .map().unwrap_or(value):\n- src/pipeline.rs: 260 (twice), 265\n\nOption .map().unwrap_or(false):\n- src/pipeline.rs: 270\n\n## Mandated Refactor\n```rust\n// Before\nsome_opt.map(|x| transform(x)).unwrap_or_else(|| default())\n// After\nsome_opt.map_or_else(|| default(), |x| transform(x))\n// For map().unwrap_or(v):\nsome_opt.map_or(v, |x| transform(x))\n```\npipeline.rs has 9 of 11 occurrences concentrated in a small range — likely a copy-paste cluster worth examining for DRY extraction into a helper.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:36:46.951320438Z",
+  "updated_at": "2026-04-18T00:36:46.951320438Z"
+}
