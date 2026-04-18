@@ -7,5 +7,8 @@
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:37:12.169200005Z",
-  "updated_at": "2026-04-18T00:37:12.169200005Z"
+  "updated_at": "2026-04-18T00:37:19.683686780Z",
+  "labels": [
+    "bug"
+  ]
 }
