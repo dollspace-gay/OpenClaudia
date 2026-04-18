@@ -1680,142 +1680,21 @@ pub async fn start_server(config: AppConfig) -> anyhow::Result<()> {
 ///
 /// Returns an error if binding the TCP listener, serving, or VDD
 /// configuration validation fails.
-#[allow(clippy::too_many_lines)]
 pub async fn start_server_with_shutdown(
     config: AppConfig,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     let addr = format!("{}:{}", config.proxy.host, config.proxy.port);
 
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
-        .build()?;
-
-    // Load hooks from both OpenClaudia config and Claude Code settings.json
-    let claude_hooks = load_claude_code_hooks();
-    let merged_hooks = merge_hooks_config(config.hooks.clone(), claude_hooks);
-    let hook_engine = HookEngine::new(merged_hooks);
-
-    let rules_engine = RulesEngine::new(".openclaudia/rules");
-
-    // Initialize compactor with default model context
-    let compactor = ContextCompactor::new(CompactionConfig::default());
-
-    // Initialize session manager
-    let session_manager = Arc::new(RwLock::new(SessionManager::new(
-        &config.session.persist_path,
-    )));
-
-    // Initialize plugin manager and discover plugins
-    let mut plugin_manager = PluginManager::new();
-    let plugin_errors = plugin_manager.discover();
-    for err in plugin_errors {
-        warn!(error = %err, "Plugin discovery error");
-    }
-    let plugin_manager = Arc::new(plugin_manager);
-
-    // Initialize MCP manager and connect to configured servers
-    let mcp_manager = Arc::new(RwLock::new(McpManager::new()));
-    {
-        let mut mcp = mcp_manager.write().await;
-        for (plugin, server) in plugin_manager.all_mcp_servers() {
-            match server.transport.as_str() {
-                "stdio" => {
-                    if let Some(command) = &server.command {
-                        let args: Vec<&str> = server
-                            .args
-                            .iter()
-                            .map(std::string::String::as_str)
-                            .collect();
-                        match mcp.connect_stdio(&server.name, command, &args).await {
-                            Ok(()) => {
-                                info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (stdio)");
-                            }
-                            Err(e) => {
-                                warn!(server = %server.name, error = %e, "MCP connect failed");
-                            }
-                        }
-                    }
-                }
-                "http" => {
-                    if let Some(url) = &server.url {
-                        match mcp.connect_http(&server.name, url).await {
-                            Ok(()) => {
-                                info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (http)");
-                            }
-                            Err(e) => {
-                                warn!(server = %server.name, error = %e, "MCP connect failed");
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    warn!(server = %server.name, transport = %server.transport, "Unknown MCP transport");
-                }
-            }
-        }
-        if mcp.server_count() > 0 {
-            info!(connected = mcp.server_count(), "MCP servers initialized");
-        }
-    }
-
-    // Initialize OAuth store for Claude Max authentication
-    let oauth_store = Arc::new(OAuthStore::new());
-
-    // Initialize VDD engine if enabled
-    let vdd_engine = if config.vdd.enabled {
-        if let Err(e) = config.vdd.validate(&config.proxy.target) {
-            anyhow::bail!("VDD configuration error: {e}");
-        }
-        info!(
-            mode = %config.vdd.mode,
-            adversary = %config.vdd.adversary.provider,
-            "VDD engine enabled"
-        );
-        Some(Arc::new(tokio::sync::Mutex::new(VddEngine::new(
-            &config.vdd,
-            &config,
-            client.clone(),
-        ))))
-    } else {
-        debug!(
-            "VDD is disabled. To enable adversarial review, add vdd.enabled=true to config.yaml"
-        );
-        None
-    };
-
-    let state = ProxyState {
-        config: Arc::new(config),
-        client,
-        hook_engine,
-        rules_engine,
-        compactor,
-        session_manager,
-        plugin_manager,
-        mcp_manager,
-        oauth_store,
-        vdd_engine,
-    };
-
-    // Fire SessionStart hook
-    let session_id = {
-        let mut sm = state.session_manager.write().await;
-        let id = sm.get_or_create_session().id.clone();
-        drop(sm);
-        id
-    };
-
-    let start_input = HookInput::new(HookEvent::SessionStart).with_session_id(&session_id);
-    let start_result = state
-        .hook_engine
-        .run(HookEvent::SessionStart, &start_input)
-        .await;
-
-    info!(
-        session_id = %session_id,
-        hooks_allowed = start_result.allowed,
-        "Session started"
-    );
+    // Build the proxy state + fire SessionStart hook via the SAME
+    // helpers that `start_server` uses. The previous implementation of
+    // this function duplicated ~150 lines of initialization (Client,
+    // hook merging, rules engine, compactor, session manager, plugin
+    // discovery, MCP connect loop, OAuth store, VDD engine setup,
+    // SessionStart hook). Any change to provisioning had to land in
+    // two places — classic stovepipe. See crosslink #246.
+    let state = build_proxy_state(config).await?;
+    fire_session_start(&state).await;
 
     let app = create_router(state);
 
