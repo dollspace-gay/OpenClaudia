@@ -1,0 +1,11 @@
+{
+  "uuid": "dc290472-e1a6-4cce-9516-5489a060af61",
+  "display_id": 439,
+  "title": "Compaction threshold_tokens_for uses lossy integer math and compact() cannot rollback on verify-failure",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Functional Correctness (1)\n\nLocation: src/compaction.rs:592-597 threshold_tokens_for; 423-438 compact_with_hint.\n\nViolation 1 — lossy threshold math: (max_context_tokens / 1000 * ratio_millths) loses precision. For 16385 (GPT-3.5) * 0.85 true = 13927 but (16385/1000)*850 = 13600. Under-computes threshold by 327 tokens, triggering compaction earlier than configured. The comment blaming usize-as-f32 precision loss is wrong — f64 has 53-bit mantissa, plenty for any realistic context size.\n\nViolation 2 — no rollback on post-compact verify failure: at line 424 request.messages is OVERWRITTEN. If line 429 sees new_tokens >= original_tokens, function returns Err but the request has ALREADY been mutated. Caller sees both a corrupted request AND an error — worst of both worlds.\n\nViolation 3 — target_tokens = threshold_tokens/2 is an arbitrary heuristic unrelated to how much actually needs freeing.\n\nMandated Refactor:\n1. Use f64 arithmetic: (max_context_tokens as f64 * threshold as f64).round() as usize.\n2. Snapshot request.messages BEFORE line 424; restore on post-check failure.\n3. target_tokens = current_tokens.saturating_sub(tokens_to_free); if insufficient, iterate up to 3 passes.\n4. Tests: context 16385 threshold 0.85 == 13927 (not 13600); mutated-request-with-error case asserts request restored to original.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:41:09.642166013Z",
+  "updated_at": "2026-04-18T00:41:09.642166013Z"
+}
