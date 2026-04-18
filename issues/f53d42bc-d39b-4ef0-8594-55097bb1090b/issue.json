@@ -1,0 +1,11 @@
+{
+  "uuid": "f53d42bc-d39b-4ef0-8594-55097bb1090b",
+  "display_id": 488,
+  "title": "App::spawn_api_turn is a 200-line closure that clones 10 fields (cognitive load)",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Cognitive Readability / Structural Modularity\nLocation: src/tui/app.rs:1335-1543 fn spawn_api_turn(&mut self)\nViolation: Function clones client, endpoint, headers, provider, model, effort_level, claude_code_token, prompt_blocks, hook_engine, memory_db, session_messages (11 fields) into a move closure, then spawns a 175-line async block containing: UserPromptSubmit hook execution, hook output handling, build_request, run_turn, agentic follow-up loop, assistant-message construction, SyncMessages/ResponseDone event emission. Cyclomatic complexity well above the 15 threshold; the nested 'match ... { Ok(...) => { if needs_followup { loop { match ...} } } Err(...) => ... }' structure is pyramid-of-doom.\nMandated Refactor: Extract self.build_agent_task(session_messages) -> AgentTask which owns the cloned config + tx. On that struct implement pub async fn run(self) that delegates to shared agentic loop (#456). spawn_api_turn becomes: let task = self.build_agent_task(messages); handle.spawn(async move { task.run().await });",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:45:13.187928996Z",
+  "updated_at": "2026-04-18T00:45:13.187928996Z"
+}
