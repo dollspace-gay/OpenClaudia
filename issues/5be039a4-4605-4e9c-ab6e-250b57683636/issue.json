@@ -1,0 +1,11 @@
+{
+  "uuid": "5be039a4-4605-4e9c-ab6e-250b57683636",
+  "display_id": 273,
+  "title": "VDD static_analysis: run_chainlink_create uses shell string interpolation — command injection via finding title",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension:** Security and Access (OWASP A03 Injection)\n**Location:** src/vdd/static_analysis.rs:80-129 (run_chainlink_create)\n**Violation:** The function builds a shell command via format!(\"chainlink create \\\"{}\\\" -p high\", title.replace('\"', \"\\\\\\\"\")) and executes it through sh -c. The title originates from adversary-controlled text (finding.description, truncated). An adversary LLM returning a finding with backticks, $( ), semicolons, or newlines breaks out of quoting. The .replace('\"', ...) does NOT neutralize backticks, $, ;, or newlines under sh -c. Same bug applies to label and comment commands on L112 and L119-L125. Adversary JSON is attacker-controlled surface by design.\n**Mandated Refactor:** Replace shell invocation with tokio::process::Command::new(\"chainlink\").arg(\"create\").arg(title).arg(\"-p\").arg(\"high\") — argv-level arg passing eliminates shell interpretation entirely. Do the same for label and comment subcommands. Delete the .replace('\"', ...) pseudo-sanitization; it creates a false sense of safety.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:29:00.662440927Z",
+  "updated_at": "2026-04-18T00:29:00.662440927Z"
+}
