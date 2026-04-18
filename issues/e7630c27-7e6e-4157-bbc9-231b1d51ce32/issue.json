@@ -1,0 +1,11 @@
+{
+  "uuid": "e7630c27-7e6e-4157-bbc9-231b1d51ce32",
+  "display_id": 259,
+  "title": "tui::app::handle_slash_command — 660-line if-chain on raw strings",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Structural Modularity / OCP\nLocation: src/tui/app.rs:586-1247 (approx 660 lines, 18 'if text ==' + 6 'text.starts_with' branches)\nViolation: The TUI has its own slash-command dispatcher completely parallel to src/cli/repl/slash.rs (tracked in #232). Each branch re-hand-rolls parsing, argument splitting, and DisplayMessage construction. Adding a command requires editing a 1767-line God object. Cyclomatic complexity far exceeds the 15 threshold; cognitive complexity is unreadable. This is a DRY violation across the TUI/CLI seam — both call sites must be kept in sync manually.\nMandated Refactor: Extract a shared SlashCommandRegistry trait in src/commands/ consumed by both seam handlers. Define trait Command { fn name() -> &'static str; fn aliases() -> &'static [&'static str]; fn execute(ctx: &mut CommandContext, args: &str) -> CommandOutcome; }. Register each command (HelpCmd, ClearCmd, StatusCmd, RewindCmd, ...) as a unit-struct implementing the trait. The TUI dispatcher becomes a HashMap<&'static str, Box<dyn Command>> lookup. Resolves this duplication once, OCP-compliant for all future commands. Complements #232 which covers only the CLI side.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:27:44.102955426Z",
+  "updated_at": "2026-04-18T00:27:44.102955426Z"
+}
