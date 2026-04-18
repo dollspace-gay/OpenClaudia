@@ -1,0 +1,11 @@
+{
+  "uuid": "c2c37ed1-518f-4967-8222-1fabe61f008e",
+  "display_id": 339,
+  "title": "Hooks dedup_hook_entries O(n*m) and silently drops base entries",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension**: Structural Modularity / Functional Correctness\n\n**Location**: src/hooks/merge.rs:41-47 (dedup_hook_entries)\n\n**Violation**: The dedup logic:\n```rust\nfor entry in other {\n    base.retain(|existing| existing.matcher != entry.matcher);\n    base.push(entry);\n}\n```\n- Complexity: O(|other| * |base|) with Vec::retain on every iteration. For 1000 entries this is 1M compares.\n- SILENTLY discards base entries whose matcher collides — including differently-configured hook commands that use the same regex. A user with a project hook and a user-global hook on Matcher='Write' loses the user-global hook without any warning log.\n- Comparing Option<String> by equality is brittle: `None` and `Some(\"\")` are treated as different (even though merge_claude_hooks already normalizes empty-to-None, any other source may not).\n- 'later source wins' semantics is inverted relative to most config tools (earlier source wins is more common for lockfile-like semantics); but worse, the docs at merge_hooks_config (merge.rs:18-19) claim 'other takes precedence' yet session_start/session_end are presumably independent events that SHOULD union, not replace.\n\n**Mandated Refactor**:\n1. Use a HashMap<Option<String>, HookEntry> keyed by normalized matcher for O(n+m) merge.\n2. When a replacement occurs, log WARN with the replaced hook's command list so users can debug.\n3. Add a 'merge_strategy' field at the config level with variants: `Replace` (current) | `Append` | `Error` (treat collision as misconfiguration).\n4. Add tests: merging a project hook with a user-global hook on the same matcher MUST be explicit about which wins, covered by a unit test.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:34:07.077455254Z",
+  "updated_at": "2026-04-18T00:34:07.077455254Z"
+}
