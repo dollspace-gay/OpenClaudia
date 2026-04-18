@@ -1,0 +1,11 @@
+{
+  "uuid": "7b7677f6-2896-4c57-bc57-cd7566fff977",
+  "display_id": 493,
+  "title": "normalize_base_url is duplicated inline in providers/mod.rs::fetch_models",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Architectural Alignment / DRY\n\nLocation: src/proxy.rs line 40-46 (fn normalize_base_url) AND src/providers/mod.rs lines 163-167 (inline duplicate inside fetch_models).\n\nViolation: normalize_base_url is a public free function in proxy.rs with docstring explaining its purpose (strip trailing slash and /v1). In providers/mod.rs::fetch_models, the SAME logic is inlined:\n  let normalized_base = base_url\n      .trim_end_matches('/')\n      .trim_end_matches(\"/v1\")\n      .trim_end_matches('/');\nThis is a 3-line copy-paste. fetch_models does not import normalize_base_url. Any fix (e.g., also stripping /v1beta for Gemini) must be applied in both places.\n\nMandated Refactor:\n  1. Move normalize_base_url into src/providers/mod.rs since it's a cross-cutting utility used by both provider-side URL construction (fetch_models) and proxy-side forwarding. Or put it in a shared src/url_utils.rs.\n  2. Delete the inline version at mod.rs lines 163-167; call `normalize_base_url(base_url)`.\n  3. Consider also stripping `/v1beta` for Gemini — but only after confirming Google's fetch_models endpoint works with the stripped form.\n  4. Add a unit test: `assert_eq!(normalize_base_url(\"https://api.example.com/v1/\"), \"https://api.example.com\")`.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:45:46.703908177Z",
+  "updated_at": "2026-04-18T00:45:46.703908177Z"
+}
