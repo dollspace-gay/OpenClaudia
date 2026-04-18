@@ -367,8 +367,10 @@ impl PluginManager {
             )));
         }
 
-        // Clone the repository
-        git_clone(url, &clone_dest, git_ref)?;
+        // Clone the repository. SHA is ignored here because marketplaces
+        // themselves aren't pinned in install tracking — individual
+        // plugin installs carry the commit SHA.
+        let _ = git_clone(url, &clone_dest, git_ref)?;
 
         // Validate the cloned repo has a marketplace manifest
         let manifest_path = clone_dest.join(".claude-plugin").join("marketplace.json");
@@ -533,18 +535,34 @@ impl PluginManager {
                 canonical
             }
             PluginSource::Structured(def) => {
-                // For structured sources, clone/download directly to dest
-                match def {
+                // For structured sources, clone/download directly to dest.
+                // Capture the commit SHA returned by `git_clone` so the
+                // install record pins exactly what was materialized —
+                // crosslink #249 mandated refactor point 1.
+                let commit_sha = match def {
                     PluginSourceDef::Url { url, git_ref } => {
+                        // No-silent-HEAD rule (#249 mandated point 5): a
+                        // `PluginSourceDef::Url` without an explicit
+                        // `git_ref` would silently track upstream HEAD,
+                        // meaning any future push to that repo becomes
+                        // active in the agent's privilege domain without
+                        // review. Require explicit pinning.
+                        if git_ref.is_none() {
+                            return Err(PluginError::InvalidManifest(format!(
+                                "Plugin source URL '{url}' has no `ref`; \
+                                 refusing to track upstream HEAD. Specify \
+                                 a tag, branch, or commit SHA in the manifest."
+                            )));
+                        }
                         fs::create_dir_all(&plugins_dir)
                             .map_err(|e| PluginError::IoError(e.to_string()))?;
-                        git_clone(url, &dest, git_ref.as_deref())?;
+                        git_clone(url, &dest, git_ref.as_deref())?
                     }
                     PluginSourceDef::GitHub { repo, git_ref } => {
                         let resolved_url = format!("https://github.com/{repo}.git");
                         fs::create_dir_all(&plugins_dir)
                             .map_err(|e| PluginError::IoError(e.to_string()))?;
-                        git_clone(&resolved_url, &dest, git_ref.as_deref())?;
+                        git_clone(&resolved_url, &dest, git_ref.as_deref())?
                     }
                     _ => {
                         return Err(PluginError::InvalidManifest(
@@ -552,7 +570,7 @@ impl PluginManager {
                                 .to_string(),
                         ));
                     }
-                }
+                };
                 // Track and return (dest already populated by git clone)
                 let plugin_id = format!("{plugin_name}@{marketplace_name}");
                 let mut installed = InstalledPlugins::load();
@@ -570,7 +588,7 @@ impl PluginManager {
                         version: mp_plugin.version.clone(),
                         installed_at: Some(chrono::Utc::now().to_rfc3339()),
                         last_updated: None,
-                        git_commit_sha: None,
+                        git_commit_sha: Some(commit_sha),
                     },
                 );
                 if let Err(e) = installed.save() {
@@ -650,8 +668,9 @@ impl PluginManager {
 
         fs::create_dir_all(&plugins_dir).map_err(|e| PluginError::IoError(e.to_string()))?;
 
-        // Clone the repo
-        git_clone(url, &dest, git_ref)?;
+        // Clone the repo. Capture the commit SHA so the install record
+        // pins exactly what was materialized (crosslink #249 point 1).
+        let commit_sha = git_clone(url, &dest, git_ref)?;
 
         // Validate it's a valid plugin
         match Plugin::load(&dest) {
@@ -673,7 +692,7 @@ impl PluginManager {
                         version: plugin.manifest.version,
                         installed_at: Some(chrono::Utc::now().to_rfc3339()),
                         last_updated: None,
-                        git_commit_sha: None,
+                        git_commit_sha: Some(commit_sha),
                     },
                 );
                 if let Err(e) = installed.save() {
