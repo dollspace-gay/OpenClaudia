@@ -7,9 +7,10 @@
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:38:53.694941923Z",
-  "updated_at": "2026-04-18T00:38:59.047440635Z",
+  "updated_at": "2026-04-18T00:39:04.445379028Z",
   "labels": [
     "refactor",
-    "qa-review-2026-04"
+    "qa-review-2026-04",
+    "clippy-strict"
   ]
 }
