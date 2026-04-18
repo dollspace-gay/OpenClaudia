@@ -1,0 +1,11 @@
+{
+  "uuid": "6eca7e6f-d207-4b09-a3a2-23942f86c6a1",
+  "display_id": 249,
+  "title": "Plugin manifest trust: no signature, origin, or integrity verification",
+  "description": "Question: \n\nContext: \n\nFindings: \n\n**Dimension**: Security and Access (Least Privilege / Supply Chain)\n\n**Location**: src/plugins/manager.rs:624-689, src/plugins/mod.rs:256-309, src/plugins/manifest.rs, src/plugins/marketplace.rs\n\n**Violation**: Plugin install model has NO trust boundary enforcement whatsoever:\n- No signature verification (GPG/sigstore/minisign) of manifests or plugin contents\n- No origin allowlist for git URLs (install_from_git accepts any URL — attacker can host malicious plugin on any server)\n- No checksum/hash verification of installed plugin payload against marketplace-declared value\n- No verification that PluginSourceDef::GitHub repo matches a published identity\n- No pinning: PluginSourceDef::Url { git_ref: None } allows silent upgrade to latest HEAD\n- install_from_marketplace stores git_commit_sha: None (manager.rs:573, 606) — commit SHA is never actually recorded despite the schema field existing\n- Plugins can register arbitrary hooks (shell commands), MCP servers (spawns child processes), env vars, and commands with allowed_tools. Once installed they run with the agent's full privilege.\n\n**Mandated Refactor**:\n1. Add minimum: SHA-256 hash pinning for non-git sources; commit-SHA pinning for git sources (actually populate git_commit_sha after clone via `git rev-parse HEAD`).\n2. Introduce a signed-manifest scheme (ed25519 detached sig) OR a marketplace-signed index.\n3. Add an origin allowlist in AppConfig: `plugin_trust.allowed_origins: Vec<String>` defaulting to empty; bail if URL host not on the list.\n4. Prompt the user interactively on first install displaying exactly what hooks/MCP servers the plugin will register.\n5. Treat PluginSourceDef::Url with missing git_ref as an error, not silent-latest.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:26:54.315305693Z",
+  "updated_at": "2026-04-18T00:26:54.315305693Z"
+}
