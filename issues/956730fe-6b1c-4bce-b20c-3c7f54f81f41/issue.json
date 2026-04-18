@@ -1,0 +1,11 @@
+{
+  "uuid": "956730fe-6b1c-4bce-b20c-3c7f54f81f41",
+  "display_id": 276,
+  "title": "execute_bash: boolean flag parameter 'run_in_background' violates split-function rule",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Structural Modularity (Boolean Flag Parameter)\n\n**Location:** /home/doll/OpenClaudia/src/tools/bash/mod.rs lines 309-389 (execute_bash), 314-327 (run_in_background branch)\n\n**Violation:**\nexecute_bash receives a run_in_background: bool inside args, then forks into two completely different execution semantics at lines 320-327 vs 328-388 — different return contracts (shell_id vs stdout/stderr), different lifecycle (fire-and-track vs synchronous), different resource limits, different failure modes. The QA skill explicitly requires: 'Reject boolean flag arguments immediately (split into two distinct functions).' The current shape means every caller, every test, and every reader must branch on a runtime flag to understand what the function returns.\n\n**Mandated Refactor:**\n1. Split into execute_bash_sync(cmd: &str) -> SyncResult and execute_bash_spawn(cmd: &str) -> Result<ShellId, _>.\n2. At the tool-dispatch layer (mod.rs:809) expose these as two distinct tool names: 'bash' (synchronous) and 'bash_background' (returns shell_id). This matches the existing bash_output and kill_shell split.\n3. The JSON schema at mod.rs:109-126 already lists run_in_background as a parameter — replace with a second tool entry. The model chooses the right one explicitly.\n4. Downstream: remove the run_in_background field from the bash tool schema and the model will stop incorrectly mixing the two modes (current code silently swallows unknown arg values because unwrap_or(false) at line 318).",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:29:21.925417541Z",
+  "updated_at": "2026-04-18T00:29:21.925417541Z"
+}
