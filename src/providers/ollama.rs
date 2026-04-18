@@ -196,7 +196,7 @@ impl ProviderAdapter for OllamaAdapter {
         "/api/chat".to_string()
     }
 
-    fn get_headers(&self, _api_key: &str) -> Vec<(String, String)> {
+    fn get_headers(&self, _api_key: &super::ApiKey) -> Vec<(String, String)> {
         // Ollama doesn't require authentication by default
         vec![("content-type".to_string(), "application/json".to_string())]
     }

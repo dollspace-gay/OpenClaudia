@@ -13,6 +13,7 @@
 //! Handles message format translation and tool/function calling conversion.
 
 mod anthropic;
+pub mod api_key;
 mod deepseek;
 mod google;
 mod ollama;
@@ -32,6 +33,7 @@ pub use anthropic::{
     build_system_blocks, build_system_blocks_from_string, convert_messages_to_anthropic,
     convert_tools_to_anthropic, AnthropicAdapter,
 };
+pub use api_key::{ApiKey, ApiKeyError};
 pub use deepseek::DeepSeekAdapter;
 pub use google::GoogleAdapter;
 pub use ollama::OllamaAdapter;
@@ -101,8 +103,13 @@ pub trait ProviderAdapter: Send + Sync {
     /// The model parameter allows providers like Google to build model-specific URLs.
     fn chat_endpoint(&self, _model: &str) -> String;
 
-    /// Get required headers for this provider
-    fn get_headers(&self, api_key: &str) -> Vec<(String, String)>;
+    /// Get required headers for this provider.
+    ///
+    /// The key is passed as an [`ApiKey`] rather than `&str` so that the
+    /// only way to reach the raw secret is an explicit `.as_str()` call
+    /// at the HTTP-header construction site — `Debug`/`Display` of an
+    /// `ApiKey` always redact. See crosslink #256.
+    fn get_headers(&self, api_key: &ApiKey) -> Vec<(String, String)>;
 
     /// Check if this provider supports model listing
     fn supports_model_listing(&self) -> bool {
@@ -148,7 +155,7 @@ pub fn get_adapter(provider: &str) -> Box<dyn ProviderAdapter> {
 /// Returns a `ProviderError` if the provider does not support model listing or the request fails.
 pub async fn fetch_models(
     base_url: &str,
-    api_key: Option<&str>,
+    api_key: Option<&ApiKey>,
     adapter: &dyn ProviderAdapter,
 ) -> Result<Vec<ModelInfo>, ProviderError> {
     if !adapter.supports_model_listing() {
@@ -169,11 +176,10 @@ pub async fn fetch_models(
 
     let mut request = client.get(&url);
 
-    // Add auth header if API key provided
+    // Add auth header if API key provided. Unredacted access is confined to
+    // `.as_str()` at the request boundary.
     if let Some(key) = api_key {
-        if !key.is_empty() {
-            request = request.header("Authorization", format!("Bearer {key}"));
-        }
+        request = request.header("Authorization", format!("Bearer {}", key.as_str()));
     }
 
     let response = request

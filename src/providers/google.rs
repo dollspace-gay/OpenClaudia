@@ -262,9 +262,9 @@ impl ProviderAdapter for GoogleAdapter {
         format!("/v1beta/models/{model}:generateContent")
     }
 
-    fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {
+    fn get_headers(&self, api_key: &super::ApiKey) -> Vec<(String, String)> {
         vec![
-            ("x-goog-api-key".to_string(), api_key.to_string()),
+            ("x-goog-api-key".to_string(), api_key.as_str().to_string()),
             ("content-type".to_string(), "application/json".to_string()),
         ]
     }

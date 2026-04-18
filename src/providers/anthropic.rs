@@ -7,7 +7,7 @@ use tracing::debug;
 use crate::config::ThinkingConfig;
 use crate::proxy::{ChatCompletionRequest, ChatMessage, MessageContent};
 
-use super::{ProviderAdapter, ProviderError};
+use super::{ApiKey, ProviderAdapter, ProviderError};
 
 /// Anthropic Messages API adapter
 pub struct AnthropicAdapter;
@@ -268,9 +268,9 @@ impl ProviderAdapter for AnthropicAdapter {
         "/v1/messages".to_string()
     }
 
-    fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {
+    fn get_headers(&self, api_key: &ApiKey) -> Vec<(String, String)> {
         vec![
-            ("x-api-key".to_string(), api_key.to_string()),
+            ("x-api-key".to_string(), api_key.as_str().to_string()),
             ("anthropic-version".to_string(), "2023-06-01".to_string()),
             ("content-type".to_string(), "application/json".to_string()),
         ]

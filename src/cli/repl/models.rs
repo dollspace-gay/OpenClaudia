@@ -65,7 +65,7 @@ pub async fn fetch_dynamic_models(
 
     match providers::fetch_models(
         &provider_config.base_url,
-        provider_config.api_key.as_deref(),
+        provider_config.api_key.as_ref(),
         adapter,
     )
     .await

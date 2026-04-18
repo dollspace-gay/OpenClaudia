@@ -80,9 +80,12 @@ impl ProviderAdapter for ZaiAdapter {
         "/chat/completions".to_string()
     }
 
-    fn get_headers(&self, api_key: &str) -> Vec<(String, String)> {
+    fn get_headers(&self, api_key: &super::ApiKey) -> Vec<(String, String)> {
         vec![
-            ("Authorization".to_string(), format!("Bearer {api_key}")),
+            (
+                "Authorization".to_string(),
+                format!("Bearer {}", api_key.as_str()),
+            ),
             ("content-type".to_string(), "application/json".to_string()),
         ]
     }

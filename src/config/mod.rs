@@ -159,32 +159,51 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
             .try_parsing(true),
     );
 
-    // Also check for provider API keys from standard env vars
+    // Also check for provider API keys from standard env vars.
+    //
+    // An empty env var is treated as "unset" (historical behavior): we skip
+    // `set_override` rather than feed `""` into `ApiKey::deserialize`,
+    // which would otherwise raise `ApiKeyError::Empty` and fail config load
+    // on a cosmetic `export FOO_API_KEY=""`. Non-empty env vars go through
+    // verbatim — `ApiKey::deserialize` runs full validation and surfaces a
+    // clear error for CRLF / control-char / non-ASCII values at
+    // config-load time rather than five layers deep in an HTTP call.
+    // Closes crosslink #256 mandated refactor point 2.
+    fn maybe_set_api_key(
+        builder: config::ConfigBuilder<config::builder::DefaultState>,
+        path: &str,
+        value: String,
+    ) -> Result<config::ConfigBuilder<config::builder::DefaultState>, ConfigError> {
+        if value.trim().is_empty() {
+            return Ok(builder);
+        }
+        builder.set_override(path, value)
+    }
+
     if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-        builder = builder.set_override("providers.anthropic.api_key", key)?;
+        builder = maybe_set_api_key(builder, "providers.anthropic.api_key", key)?;
     }
     if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-        builder = builder.set_override("providers.openai.api_key", key)?;
+        builder = maybe_set_api_key(builder, "providers.openai.api_key", key)?;
     }
     if let Ok(key) = std::env::var("GOOGLE_API_KEY") {
-        builder = builder.set_override("providers.google.api_key", key)?;
+        builder = maybe_set_api_key(builder, "providers.google.api_key", key)?;
     }
     if let Ok(key) = std::env::var("ZAI_API_KEY") {
-        builder = builder.set_override("providers.zai.api_key", key)?;
+        builder = maybe_set_api_key(builder, "providers.zai.api_key", key)?;
     }
     if let Ok(key) = std::env::var("DEEPSEEK_API_KEY") {
-        builder = builder.set_override("providers.deepseek.api_key", key)?;
+        builder = maybe_set_api_key(builder, "providers.deepseek.api_key", key)?;
     }
     if let Ok(key) = std::env::var("QWEN_API_KEY") {
-        builder = builder.set_override("providers.qwen.api_key", key)?;
+        builder = maybe_set_api_key(builder, "providers.qwen.api_key", key)?;
     }
 
-    let mut config: AppConfig = builder.build()?.try_deserialize()?;
-
-    // Filter out empty API key strings (treat "" as None)
-    for provider in config.providers.values_mut() {
-        provider.api_key = provider.api_key.take().filter(|k| !k.trim().is_empty());
-    }
+    // `ApiKey::deserialize` (invoked transitively here) enforces non-empty,
+    // ASCII, and control-char-free keys. The whitespace-only normalization
+    // previously performed post-load is redundant — the newtype simply
+    // refuses to exist in an invalid state. See crosslink #256.
+    let config: AppConfig = builder.build()?.try_deserialize()?;
 
     // Validate VDD config (adversary must differ from builder provider, etc.)
     if let Err(e) = config.vdd.validate(&config.proxy.target) {
@@ -210,6 +229,14 @@ impl AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::ApiKey;
+
+    fn test_api_key(raw: &str) -> ApiKey {
+        // Pad short test keys so they satisfy the 10-char redaction path
+        // and the non-empty validator. All still free of CRLF/non-ASCII.
+        let padded = format!("{raw}-0000000000");
+        ApiKey::try_from_string(padded).expect("valid test key")
+    }
 
     #[test]
     fn test_app_config_active_provider() {
@@ -217,7 +244,7 @@ mod tests {
         providers.insert(
             "anthropic".to_string(),
             ProviderConfig {
-                api_key: Some("key".to_string()),
+                api_key: Some(test_api_key("key")),
                 base_url: "https://api.anthropic.com".to_string(),
                 model: None,
                 headers: HashMap::new(),
@@ -242,7 +269,10 @@ mod tests {
 
         let active = config.active_provider();
         assert!(active.is_some());
-        assert_eq!(active.unwrap().api_key, Some("key".to_string()));
+        assert_eq!(
+            active.unwrap().api_key.as_ref().map(ApiKey::as_str),
+            Some("key-0000000000")
+        );
     }
 
     #[test]
@@ -251,7 +281,7 @@ mod tests {
         providers.insert(
             "openai".to_string(),
             ProviderConfig {
-                api_key: Some("openai-key".to_string()),
+                api_key: Some(test_api_key("openai-key")),
                 base_url: "https://api.openai.com".to_string(),
                 model: None,
                 headers: HashMap::new(),
@@ -261,7 +291,7 @@ mod tests {
         providers.insert(
             "anthropic".to_string(),
             ProviderConfig {
-                api_key: Some("anthropic-key".to_string()),
+                api_key: Some(test_api_key("anthropic-key")),
                 base_url: "https://api.anthropic.com".to_string(),
                 model: None,
                 headers: HashMap::new(),

@@ -1,6 +1,12 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
+// Re-export redaction/validation helpers from their home next to the
+// `ApiKey` newtype in `providers::api_key`. Keeps existing
+// `crate::config::provider::redact_api_key` call sites working while the
+// newtype itself does the load-bearing work. See crosslink #256.
+pub use crate::providers::api_key::{redact_api_key, validate_api_key, ApiKey};
+
 /// Thinking/reasoning mode configuration
 #[derive(Debug, Deserialize, Clone)]
 pub struct ThinkingConfig {
@@ -37,9 +43,16 @@ impl Default for ThinkingConfig {
 }
 
 /// Provider configuration (Anthropic, `OpenAI`, Google, etc.)
+///
+/// `api_key` is an [`ApiKey`] newtype whose own `Debug`/`Display` redact
+/// the value and whose `Deserialize` impl validates the structure
+/// (rejects empty / CRLF / non-ASCII). We keep the derived `Debug` on
+/// this struct because the redaction guarantee is now structural on the
+/// field type — one less place to regress. See crosslink #256.
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProviderConfig {
-    pub api_key: Option<String>,
+    #[serde(default)]
+    pub api_key: Option<ApiKey>,
     pub base_url: String,
     #[serde(default)]
     pub model: Option<String>,
@@ -115,10 +128,60 @@ mod tests {
 
         let config: ProviderConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.base_url, "https://api.example.com");
-        assert_eq!(config.api_key, Some("sk-test123".to_string()));
+        assert_eq!(
+            config.api_key.as_ref().map(ApiKey::as_str),
+            Some("sk-test123")
+        );
         assert_eq!(config.model, Some("gpt-4".to_string()));
         assert_eq!(config.headers.get("X-Custom"), Some(&"value".to_string()));
         assert!(config.thinking.enabled);
         assert_eq!(config.thinking.budget_tokens, Some(5000));
     }
+
+    // --- Regression tests for crosslink #256 ---
+
+    #[test]
+    fn provider_config_debug_does_not_leak_key() {
+        let cfg = ProviderConfig {
+            api_key: Some(
+                ApiKey::try_from_string("sk-ant-api03-SECRET_VALUE_HERE_XYZ".to_string())
+                    .expect("valid test key"),
+            ),
+            base_url: "https://api.anthropic.com".to_string(),
+            model: None,
+            headers: HashMap::new(),
+            thinking: ThinkingConfig::default(),
+        };
+        let s = format!("{cfg:?}");
+        assert!(!s.contains("SECRET_VALUE_HERE"), "Debug leaked middle: {s}");
+        assert!(
+            !s.contains("sk-ant-api03-SECRET"),
+            "Debug leaked prefix-middle: {s}"
+        );
+        assert!(
+            s.contains("sk-a") || s.contains("…"),
+            "no redaction fingerprint: {s}"
+        );
+    }
+
+    #[test]
+    fn provider_config_rejects_crlf_api_key_at_deserialize() {
+        let json = r#"{
+            "base_url": "https://api.example.com",
+            "api_key": "sk-legit\r\nX-Injected: evil"
+        }"#;
+        let result: Result<ProviderConfig, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "CRLF api_key must fail deserialize");
+    }
+
+    #[test]
+    fn provider_config_rejects_empty_api_key_at_deserialize() {
+        let json = r#"{
+            "base_url": "https://api.example.com",
+            "api_key": ""
+        }"#;
+        let result: Result<ProviderConfig, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "empty api_key must fail deserialize");
+    }
+
 }
