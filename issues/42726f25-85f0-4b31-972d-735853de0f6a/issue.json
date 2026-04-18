@@ -1,0 +1,11 @@
+{
+  "uuid": "42726f25-85f0-4b31-972d-735853de0f6a",
+  "display_id": 387,
+  "title": "Clippy: 14 unreadable long literals — insert digit separators",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Cognitive Readability\n**Lint:** clippy::unreadable_literal\n\n## Violation\nLong integer/float literals are written without underscore separators (`1000000` instead of `1_000_000`). Rust's lexer accepts both; pedantic clippy flags the unreadable form.\n\n## Locations\n- src/compaction.rs: 1127, 1131, 1203, 1210, 1217\n- src/hooks/mod.rs: 965, 973\n- src/tui/app.rs: 1034 (three times), 1036 (twice), 1039 (twice)\n\n## Mandated Refactor\nGroup digits every 3 from the right:\n```rust\n1_048_576   // not 1048576\n200_000_000 // not 200000000\n```\nAuto-fixable via `cargo clippy --fix -- -W clippy::unreadable_literal`. tui/app.rs lines 1034-1039 are a cluster (likely pixel/dimension constants) — consider extracting named constants with UPPER_SNAKE_CASE instead of magic numbers inline.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:37:53.664927709Z",
+  "updated_at": "2026-04-18T00:37:53.664927709Z"
+}
