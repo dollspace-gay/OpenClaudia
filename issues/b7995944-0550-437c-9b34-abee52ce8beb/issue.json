@@ -1,0 +1,11 @@
+{
+  "uuid": "b7995944-0550-437c-9b34-abee52ce8beb",
+  "display_id": 405,
+  "title": "Stringly-typed session messages (serde_json::Value) instead of typed Message struct",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Type Safety / Architectural Alignment\nLocation: src/tui/app.rs:274 session_messages: Vec<serde_json::Value>; src/tui/app.rs:37 TuiSession.messages: Vec<serde_json::Value>; src/acp.rs:579\nViolation: Conversation history is stored as untyped serde_json::Value across TUI, session-save format, and ACP server. Every consumer performs m.get(role).and_then(|r| r.as_str()).unwrap_or(?) (counted 22+ sites). Typos and schema drift are silent. ACP round-trips Value -> ChatMessage via serde_json::from_value and silently drops malformed messages with .ok(). Core domain depends on a serialization library — Dependency Inversion violation.\nMandated Refactor: pub struct Message { role: Role, content: Content, tool_calls: Vec<ToolCall>, tool_call_id: Option<String> } with pub enum Content { Text(String), Blocks(Vec<ContentBlock>) }. Reserve serde_json::Value for provider adapter boundary only. Consolidate on existing proxy::ChatMessage.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:38:44.835929260Z",
+  "updated_at": "2026-04-18T00:38:44.835929260Z"
+}
