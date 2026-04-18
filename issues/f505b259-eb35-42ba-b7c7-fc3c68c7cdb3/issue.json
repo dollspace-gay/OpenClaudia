@@ -1,0 +1,11 @@
+{
+  "uuid": "f505b259-eb35-42ba-b7c7-fc3c68c7cdb3",
+  "display_id": 462,
+  "title": "Clippy: 2 manual_string_new — use String::new() instead of String::from(\"\")",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Cognitive Readability\n**Lint:** clippy::manual_string_new\n\n## Violation\nIdiomatic empty-string construction uses `String::new()` (zero-alloc, explicit intent). `String::from(\"\")` and `\"\".to_string()` are verbose and semantically less clear.\n\n## Locations\n- src/vdd/mod.rs: 1504, 1608\n\n## Mandated Refactor\n```rust\n// Before\nlet s = String::from(\"\");\n// After\nlet s = String::new();\n```",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:42:53.377026818Z",
+  "updated_at": "2026-04-18T00:42:53.377026818Z"
+}
