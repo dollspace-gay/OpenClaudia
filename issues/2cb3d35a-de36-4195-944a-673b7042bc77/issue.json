@@ -1,0 +1,11 @@
+{
+  "uuid": "2cb3d35a-de36-4195-944a-673b7042bc77",
+  "display_id": 418,
+  "title": "Clippy: 2 match_same_arms — collapse identical arm bodies",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** DRY\n**Lint:** clippy::match_same_arms\n\n## Violation\nTwo arms in a `match` have byte-identical bodies. This is usually a copy-paste leftover or a refactor remnant; collapse them with `|` to state the shared behavior once.\n\n## Locations\n- src/tui/app.rs: 496\n- src/tui/events.rs: 119\n\n## Mandated Refactor\n```rust\n// Before\nKey::Enter => do_thing(),\nKey::Space => do_thing(),\n// After\nKey::Enter | Key::Space => do_thing(),\n```\nConfirm the two branches are intentionally alike — if one was meant to diverge in the future, leave it with a `// TODO: diverge when X` comment and `#[allow(clippy::match_same_arms)]`.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:39:38.244059615Z",
+  "updated_at": "2026-04-18T00:39:38.244059615Z"
+}
