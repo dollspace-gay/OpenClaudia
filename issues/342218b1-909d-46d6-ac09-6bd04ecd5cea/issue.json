@@ -4,10 +4,10 @@
   "title": "handle_key mixes permission-modal, streaming-cancel, and normal-input state machines",
   "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Cognitive Readability / SRP\nLocation: src/tui/app.rs:479-562 fn handle_key\nViolation: One 84-line function contains four mutually exclusive input contexts: ctrl-C dispatch that also knows about the permission modal (481-489), permission-modal key handling (492-524), streaming-cancel handling (527-540), normal-editing key dispatch (542-561). Cognitive complexity explodes because the reader must track which mode the App is in. Early-returns obscure that the blocks own different state (pending_permission, is_waiting, input).\nMandated Refactor: Make the mode explicit: enum InputMode { Editing, AwaitingPermission(PendingPermission), Streaming }. Then match self.input_mode for each key. Each handler is <30 lines and can be tested in isolation.",
   "status": "open",
-  "priority": "low",
+  "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:36:06.000870895Z",
-  "updated_at": "2026-04-18T00:36:20.572512003Z",
+  "updated_at": "2026-04-18T00:37:29.533706444Z",
   "labels": [
     "refactor",
     "qa-review-2026-04",
