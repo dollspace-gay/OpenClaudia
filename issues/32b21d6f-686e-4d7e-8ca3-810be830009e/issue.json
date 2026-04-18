@@ -7,9 +7,10 @@
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:35:46.477539558Z",
-  "updated_at": "2026-04-18T00:40:32.767711497Z",
+  "updated_at": "2026-04-18T00:47:40.623636875Z",
   "labels": [
     "bug",
-    "qa-review-2026-04"
+    "qa-review-2026-04",
+    "qa-seam-tui"
   ]
 }
