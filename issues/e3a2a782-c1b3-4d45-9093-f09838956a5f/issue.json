@@ -1,0 +1,11 @@
+{
+  "uuid": "e3a2a782-c1b3-4d45-9093-f09838956a5f",
+  "display_id": 479,
+  "title": "VDD: extract_response_text and extract_token_usage duplicate ProviderAdapter response parsing — stovepipe",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: DRY / Architectural Alignment. Location: src/vdd/parsing.rs:116-213 (extract_response_text, extract_token_usage). Violation: These functions hardcode OpenAI/Anthropic/Google response shapes inside VDD. The ProviderAdapter trait in providers.rs already exists to normalize responses across providers. By rolling its own extraction, VDD diverges silently: a new provider (DeepSeek, Qwen, Z.AI) works with the main proxy but returns empty text + zero tokens for VDD. The dup also misses Gemini's cachedContentTokenCount format variance that providers.rs may already handle. Mandated Refactor: Add trait methods on ProviderAdapter: extract_response_text(&Value) -> String and extract_token_usage(&Value) -> TokenUsage. Call through the adapter in send_to_adversary / send_to_builder. Delete the duplicate parsing code.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:44:35.857366604Z",
+  "updated_at": "2026-04-18T00:44:35.857366604Z"
+}
