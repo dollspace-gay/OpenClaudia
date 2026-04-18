@@ -1,0 +1,11 @@
+{
+  "uuid": "1c5b2b96-67d8-4153-b427-515d5a70bb9f",
+  "display_id": 389,
+  "title": "pdftotext/pdfinfo subprocess: missing '--' separator enables flag-injection via hostile filename",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension:** Security and Access / Functional Correctness\n\n**Location:** /home/doll/OpenClaudia/src/tools/file/read.rs lines 116-117 (pdfinfo), 143-155 (pdftotext)\n\n**Violation:**\nread_pdf_file invokes 'pdfinfo <path>' and 'pdftotext [-f F -l L] <path> -' supplying the path as a separate arg. Although Command::arg() avoids shell-level injection, it does NOT protect against pdftotext's own option parsing. A file named '-help', '--version', '-opw', or '-upw' is interpreted as a flag by the subprocess. An attacker able to name a file in the project (via git clone of adversarial repo, extracted archive, /tmp traversal) can cause pdftotext to accept owner/user password args, hang waiting for stdin, print version, or skip output entirely.\n\nSecondary issues:\n1. pdfinfo output parsing is loose: 'line.starts_with(\"Pages:\")' (line 121). A PDF whose metadata Title begins 'Pages:' or similar can spoof the count.\n2. No bound on pdftotext stdout size — the truncation guard at read_text_file (line 320) is not applied here.\n\n**Mandated Refactor:**\n1. Insert '--' as the option terminator before the path arg in both pdfinfo and pdftotext invocations: cmd.arg(\"--\").arg(path).\n2. Canonicalize path first so it always begins with '/' which pdftotext never parses as a flag.\n3. Anchor the pdfinfo regex: ^Pages:\\s+(\\d+)$.\n4. Enforce max output size by capturing stdout into a capped buffer.\n5. Reject page ranges that span >200 pages.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:37:58.309607263Z",
+  "updated_at": "2026-04-18T00:37:58.309607263Z"
+}
