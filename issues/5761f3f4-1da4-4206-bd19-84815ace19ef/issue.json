@@ -1,0 +1,11 @@
+{
+  "uuid": "5761f3f4-1da4-4206-bd19-84815ace19ef",
+  "display_id": 455,
+  "title": "accumulator.rs: AnthropicToolAccumulator finalize doesn't validate JSON completeness — partial tool_calls leak to dispatch",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension:** Functional Correctness\n\n**Location:** src/tools/accumulator.rs lines 64-82 (ToolCallAccumulator::finalize), 273-293 (to_openai_tool_calls_json), 36-39 (process_delta slot growth).\n\n**Violation:**\n(1) finalize filters only by !id.is_empty() && !function_name.is_empty(). An arguments string that was streamed as '{\"path\":' (and never completed) passes through. tools/mod.rs:805 from_str::<HashMap<String,Value>>(&args) falls back to unwrap_or_default() — a broken tool call silently becomes an empty-args invocation, producing confusing error messages downstream.\n(2) to_openai_tool_calls_json sets 'arguments': input_json as STRING without validating that input_json is well-formed JSON. Upstream Anthropic provider bugs or stream cancellation mid-delta produce bad JSON.\n(3) process_delta slot growth is unbounded: 'while self.tool_calls.len() <= index { push(default) }' — an out-of-range index from upstream allocates a huge Vec.\n\n**Mandated Refactor:**\n(1) Validate serde_json::from_str::<Value>(&input_json) at finalize; return ToolError::MalformedToolCall if it fails.\n(2) Cap index to 100; reject deltas beyond.\n(3) For Anthropic-shaped serialization, keep 'input' as Value rather than double-serializing.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:42:16.278245375Z",
+  "updated_at": "2026-04-18T00:42:16.278245375Z"
+}
