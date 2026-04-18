@@ -1,0 +1,11 @@
+{
+  "uuid": "b5bdc8fe-d7cc-483d-86d3-01cb37a6497b",
+  "display_id": 477,
+  "title": "ToolInterceptor::to_tool_call mixes dispatch-layer name mapping with a second parameter-name mapping — two sources of truth for aliasing",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** DRY / Cognitive Readability\n\n**Location:** /home/doll/OpenClaudia/src/tool_intercept.rs lines 28-73 (to_tool_call: tool-name map at 31-41, param-name map at 46-57)\n\n**Violation:**\nto_tool_call maintains TWO independent translation tables:\n1. Tool name map at lines 30-41 translating Claude-Code names ('bash', 'Read', 'write_file', 'glob', 'grep', 'webfetch') to internal names ('bash', 'read_file', 'write_file', 'list_files', 'grep', 'web_fetch').\n2. Parameter name map at lines 46-57 translating ('file_path','path') to 'path', ('content','contents') to 'content', etc.\n\nBoth tables hard-code the relationships. The CORRECT source of truth is the tool's own JSON schema (currently in mod.rs:104-789). When a new tool is added, FOUR places must agree: (a) the JSON schema in get_tool_definitions, (b) the execute_* match arm in mod.rs:807-856, (c) the name map here, (d) the param map here. This is a four-way Stovepipe system: if any one drifts, the feature silently breaks for intercepted (proxy-mode) calls but may still work for tool_use-mode calls.\n\nAdditionally, ask_user_question / enter_plan_mode / exit_plan_mode / task_* / lsp / cron_* / worktree_* tools have ZERO aliases here — a model using Claude-Code shorthand like <ask_user> cannot invoke them via the interceptor.\n\n**Mandated Refactor:**\n1. Each ToolHandler declares its aliases: fn names(&self) -> &[&str] { &[\"bash\"] }. The interceptor's registry lookup collapses the tool-name table.\n2. Similarly each handler declares parameter aliases per its schemars struct (#[serde(alias = \"file_path\")] on the path field). Deserialize via the handler's own schema rather than a hand-maintained map.\n3. Delete the two match blocks; replace with registry.resolve_name(claude_name) and registry.get(canonical).deserialize_args(&raw_kv).",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:44:20.534109586Z",
+  "updated_at": "2026-04-18T00:44:20.534109586Z"
+}
