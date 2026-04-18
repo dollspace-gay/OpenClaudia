@@ -22,9 +22,11 @@ pub mod install;
 pub mod manager;
 pub mod manifest;
 pub mod marketplace;
+pub mod validate;
 
 // Re-export all public types for backward compatibility
 pub use git::copy_dir_recursive;
+pub use validate::{derive_dir_name_from_url, validate_plugin_dir_name, validate_source_url};
 pub use install::{InstallScope, InstalledPlugins, PluginInstallEntry};
 pub use manager::PluginManager;
 pub use manifest::{

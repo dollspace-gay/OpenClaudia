@@ -2,14 +2,23 @@
 
 use std::path::Path;
 
+use super::validate::validate_source_url;
 use super::PluginError;
 
 /// Clone a git repository to a destination path.
 ///
+/// Validates the URL scheme (https / ssh, no file:// or http://) and
+/// rejects inline credentials — see crosslink #280. Every caller that
+/// reaches git clone is therefore guaranteed to have gone through the
+/// scheme allowlist regardless of which code path they came from.
+///
 /// # Errors
 ///
-/// Returns an error if git is not available or the clone operation fails.
+/// Returns an error if the URL fails validation, git is not available,
+/// or the clone operation fails.
 pub fn git_clone(url: &str, dest: &Path, git_ref: Option<&str>) -> Result<(), PluginError> {
+    validate_source_url(url)?;
+
     let mut cmd = std::process::Command::new("git");
     cmd.arg("clone").arg("--depth").arg("1");
     if let Some(r) = git_ref {

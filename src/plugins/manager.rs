@@ -348,17 +348,17 @@ impl PluginManager {
         url: &str,
         git_ref: Option<&str>,
     ) -> Result<MarketplaceManifest, PluginError> {
+        // Validate URL up front — git_clone also validates, but failing here
+        // avoids an early mkdir when the URL is going to be rejected.
+        super::validate::validate_source_url(url)?;
+
         let dest = Self::marketplaces_dir();
         fs::create_dir_all(&dest).map_err(|e| PluginError::IoError(e.to_string()))?;
 
-        // Determine the name from URL (last segment without .git)
-        let name = url
-            .trim_end_matches('/')
-            .trim_end_matches(".git")
-            .rsplit('/')
-            .next()
-            .unwrap_or("marketplace")
-            .to_string();
+        // Derive the destination name from the URL with the centralized
+        // validator — rejects `..`, empty segments, path separators, leading
+        // dots, NUL, and control chars. Closes crosslink #248.
+        let name = super::validate::derive_dir_name_from_url(url)?;
 
         let clone_dest = dest.join(&name);
         if clone_dest.exists() {
@@ -626,14 +626,17 @@ impl PluginManager {
         url: &str,
         git_ref: Option<&str>,
     ) -> Result<String, PluginError> {
-        // Determine plugin name from URL
-        let name = url
-            .trim_end_matches('/')
-            .trim_end_matches(".git")
-            .rsplit('/')
-            .next()
-            .unwrap_or("plugin")
-            .to_string();
+        // Reject disallowed URL schemes (http://, file://, git://, inline
+        // credentials) before any filesystem work. git_clone will validate
+        // again — deliberately redundant, cheap defense-in-depth.
+        super::validate::validate_source_url(url)?;
+
+        // Derive the plugins/ subdir name from the URL's last segment with
+        // full traversal protection — closes crosslink #248. Previously the
+        // url-last-segment extraction was raw and accepted `..`, leading
+        // dots, etc., so a crafted URL could place the clone outside the
+        // `.openclaudia/plugins/` jail.
+        let name = super::validate::derive_dir_name_from_url(url)?;
 
         let plugins_dir = PathBuf::from(".openclaudia/plugins");
         let dest = plugins_dir.join(&name);
