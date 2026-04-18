@@ -1,0 +1,11 @@
+{
+  "uuid": "c42c46c3-e478-462b-82c0-619de43b8589",
+  "display_id": 282,
+  "title": "Permissions bypass: permission check skipped when AppConfig.permissions.enabled=false by default",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension**: Security and Access (Least Privilege / Secure Defaults)\n\n**Location**:\n- src/config/permissions.rs:7-17 (PermissionsConfig: enabled defaults to false)\n- src/permissions.rs:112-114 (check() returns Allowed immediately if !enabled)\n\n**Violation**: The permission system defaults to DISABLED. PermissionsConfig::default() leaves `enabled: false`, so a fresh install with no permissions block in config.yaml means every bash/edit/write tool call is auto-allowed without prompting. This contradicts the 'principle of least privilege' and contradicts Claude Code's default behavior (which is prompt-on-first-use).\n\nAdditionally:\n- default_allow is stored as `Vec<String>` of glob patterns matched against the tool's first arg. There is NO toolname qualification in default_allow entries (unlike PermissionRule which has .tool). A pattern 'ls *' matches any Bash command AND any Edit/Write path that happens to match — cross-tool contamination.\n- The check() flow short-circuits on enabled=false BEFORE even consulting persisted_rules — a user's previously-saved Deny rules are silently ignored when the system is disabled.\n\n**Mandated Refactor**:\n1. Flip default to `enabled: true` OR add an explicit 'dangerously_disable_permissions' field that emits a startup warning.\n2. Change default_allow entries from Vec<String> to Vec<{tool: String, pattern: String}> so each entry is tool-scoped.\n3. Persisted Deny rules MUST be honored even when enabled=false — move the enabled gate below the persisted Deny check.\n4. Document the default posture in README and surface it at first-run.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:30:15.631726281Z",
+  "updated_at": "2026-04-18T00:30:15.631726281Z"
+}
