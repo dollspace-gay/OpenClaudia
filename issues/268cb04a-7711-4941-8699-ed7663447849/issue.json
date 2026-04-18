@@ -1,0 +1,11 @@
+{
+  "uuid": "268cb04a-7711-4941-8699-ed7663447849",
+  "display_id": 434,
+  "title": "Clippy singletons: 10 low-severity lint findings across the codebase",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Various (readability, correctness minor)\n**Lint:** Mixed — one-off findings from strict clippy\n\n## Findings (file:line — lint — remediation)\n\n1. **src/prompt.rs:247** — unused imports `Agency`, `Quality`, `Scope` — delete imports.\n2. **src/compaction.rs:1122** — redundant_clone — remove `.clone()` call.\n3. **src/memory.rs:158** — missing_panics_doc — add `# Panics` section to rustdoc.\n4. **src/pipeline.rs:576** — equatable_if_let — rewrite `if let X = y` as `if y == X`.\n5. **src/tui/app.rs:1205** — match_bool — replace `match x { true => A, false => B }` with `if x { A } else { B }`.\n6. **src/tui/app.rs:1583** — cast_possible_truncation (`usize as u16`) — add bounds check or use `u16::try_from(n).unwrap_or(u16::MAX)`.\n7. **src/tui/events.rs:114** — needless_pass_by_value — change parameter from `T` to `&T` if not consumed.\n8. **src/tui/mod.rs:667** — branches_sharing_code (all if-blocks end with same statements) — hoist shared suffix out of the if.\n9. **src/vdd/mod.rs:1033** — unnecessary_wraps (fn returns Result but never errors) — change return type to the inner success type.\n10. **src/vdd/mod.rs:1034** — unused_self (method takes `&self` but never uses it) — convert to associated fn.\n\n## Mandated Refactor\nFix each inline at its location. None of these are structural — they're all straightforward 1-5 line fixes and good candidates for a \"first clippy PR\" warm-up.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:40:43.927142416Z",
+  "updated_at": "2026-04-18T00:40:43.927142416Z"
+}
