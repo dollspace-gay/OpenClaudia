@@ -1,0 +1,11 @@
+{
+  "uuid": "ad781dca-f83a-4c94-8b1a-5c0cb194ecd2",
+  "display_id": 496,
+  "title": "VDD send_to_adversary: no request timeout — a hung provider blocks the entire loop indefinitely",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Defensive Programming / Error Orchestration. Location: src/vdd/mod.rs:1173-1246 (send_to_adversary), 1316-1355 (forward_request). Violation: The reqwest Client instance at VddEngine::new accepts no timeout. A slow or hung adversary provider blocks the entire blocking_loop — no request timeout, no total-time budget. In blocking mode the user's request is held hostage for as long as the upstream is unresponsive. Static analysis has a timeout; the adversary HTTP call does not. Mandated Refactor: (a) Set a per-request timeout on the Client (e.g. 120s default, config-overridable via vdd.adversary.request_timeout_seconds). (b) Additionally wrap send_to_adversary in tokio::time::timeout with a total iteration budget. (c) Track total wallclock in VddSession and surface it to the user — important because users need to know if VDD added 30 seconds of latency.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:45:58.964118584Z",
+  "updated_at": "2026-04-18T00:45:58.964118584Z"
+}
