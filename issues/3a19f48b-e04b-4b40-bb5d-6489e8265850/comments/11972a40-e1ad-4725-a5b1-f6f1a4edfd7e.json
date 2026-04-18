@@ -1,0 +1,10 @@
+{
+  "uuid": "11972a40-e1ad-4725-a5b1-f6f1a4edfd7e",
+  "issue_uuid": "3a19f48b-e04b-4b40-bb5d-6489e8265850",
+  "author": "lOrm",
+  "content": "Semantic refinement on the strict helper: `check_tool_permission_strict` previously denied on *both* `None` mgr AND `mgr.is_enabled() == false`. After adding `PermissionManager::unrestricted()` (which is an explicitly-disabled sentinel meaning 'allow everything'), the strict helper would have contradicted the new contract — calling `execute_tool_with_permission_required(..., &PermissionManager::unrestricted())` would have returned Denied, making the explicit allow-all unreachable.\n\nFix: strict now denies ONLY when `permission_mgr` is `None`. A disabled manager is an explicit allow-all override per the library contract. The renamed test `strict_permission_allows_when_manager_is_explicitly_disabled` locks this in. The original regression test `strict_permission_denies_when_manager_absent` (None case) is unchanged. This keeps the bypass-risk surface tight: the only way to 'accidentally allow' is to forget to supply a manager, which is exactly what the refactor is designed to catch.",
+  "created_at": "2026-04-18T02:31:55.100160596Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAj/ZU5kfG22SmIdmxpQAO9gY8HI8o6QjHC0RSzONb6qz0toP1HZLr+sI9i2oIxBk2lOy+Frhzy/1hnVdUOA7hDA=="
+}
