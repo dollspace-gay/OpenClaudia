@@ -2,9 +2,10 @@
   "uuid": "cd9fa7fd-628f-476b-9b2d-dbafabf16cf7",
   "display_id": 312,
   "title": "Test",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:32:16.268280183Z",
-  "updated_at": "2026-04-18T00:32:16.268280183Z"
+  "updated_at": "2026-04-18T00:32:24.818236559Z",
+  "closed_at": "2026-04-18T00:32:24.818236559Z"
 }
