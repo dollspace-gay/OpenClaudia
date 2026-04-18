@@ -1,0 +1,11 @@
+{
+  "uuid": "a35a0786-b064-42f1-a086-6ca68e53ba4c",
+  "display_id": 340,
+  "title": "VDD parsing: try_parse_relaxed silently swallows malformed JSON by pattern-matching free text",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Defensive Programming vs Contracts / Perimeter Defense. Location: src/vdd/parsing.rs:75-92 (try_parse_relaxed). Violation: When the adversary JSON fails to parse, this function substring-matches lowered text for phrases like 'no findings', 'no issues', 'looks good' and returns NO_FINDINGS — effectively whitelisting the builder regardless of actual content. An adversary that says: 'The code has a SQL injection on line 42. Note: no findings that are style-related.' would match 'no findings' and be converted to NO_FINDINGS, silently dropping a genuine security report. This is backwards-failing — on parse failure we must NOT optimistically assume safety. Mandated Refactor: Remove try_parse_relaxed entirely. If the adversary response is not parseable JSON after extract_json_from_response attempts, record a VddError::ParseError and surface it. Let the convergence math + error logging handle retry. NEVER conflate 'unparseable' with 'no findings'.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:34:14.113017171Z",
+  "updated_at": "2026-04-18T00:34:14.113017171Z"
+}
