@@ -1,0 +1,11 @@
+{
+  "uuid": "0e551723-5799-4a29-a52f-fe540c165fbd",
+  "display_id": 385,
+  "title": "Clippy: 33 missing backticks in doc comments (doc_markdown)",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Documentation & Intent\n**Lint:** clippy::doc_markdown\n\n## Violation\nIdentifiers, type names, and code-like tokens in doc comments are not wrapped in backticks. Pedantic clippy wants prose to cleanly distinguish code from English.\n\n## Locations\n- src/claude_credentials.rs: 75, 343\n- src/hooks/mod.rs: 467\n- src/modes/mod.rs: 1, 5, 503, 522 (twice), 535, 536, 688, 744, 939, 950 (twice), 958, 987, 1004\n- src/pipeline.rs: 115 (twice), 430\n- src/prompt.rs: 31, 575 (twice), 585 (twice), 770, 771\n- src/providers/anthropic.rs: 284\n- src/tui/app.rs: 25\n- src/tui/mod.rs: 1057\n- src/vdd/mod.rs: 884, 1032\n\n## Mandated Refactor\nWrap every flagged token in backticks. Examples: `CamelCase` type names, `snake_case` fn names, URL-like strings, crate names. Run `cargo clippy --fix -- -W clippy::doc_markdown` for a starting point; manually verify each — some flagged \"words\" are English prose that happen to contain an underscore or capital letter.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:37:43.367563506Z",
+  "updated_at": "2026-04-18T00:37:43.367563506Z"
+}
