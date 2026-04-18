@@ -1,0 +1,11 @@
+{
+  "uuid": "4e49d924-940b-46f1-b4c2-28c899f5fd61",
+  "display_id": 254,
+  "title": "Hook command execution via shell -c with no allowlist or sandboxing",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension**: Security and Access (OWASP Input Handling, Least Privilege)\n\n**Location**: src/hooks/mod.rs:603-659 (run_command_hook), src/guardrails.rs:492-541 (run_shell_command_sync)\n\n**Violation**: Hook commands loaded from user/project/plugin configs are executed via `sh -c` (or `cmd /C` on Windows) directly: `Command::new(shell).arg(shell_arg).arg(command)`. There is:\n- No allowlist of permitted executables\n- No per-hook sandboxing (no seccomp, no chroot, no cgroup isolation, no dropped capabilities)\n- No environment scrubbing — the hook inherits the full parent env INCLUDING api keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.) loaded in src/config/mod.rs:163-180\n- CLAUDE_PROJECT_DIR is injected (mod.rs:624-627) but no filtering otherwise\n- Plugin-supplied hooks (src/plugins/mod.rs:453-504) flow into the same executor without additional gating\n- Guardrails run_shell_command_sync wraps with 'timeout N cmd' — on macOS 'timeout' is not installed by default, causing silent failure\n- Plugin hooks even bypass the permissions.rs gate entirely (permissions only guard agent tool-use, not lifecycle hooks)\n\n**Mandated Refactor**:\n1. Introduce an explicit 'hook trust tier': project-level .openclaudia/config.yaml hooks require the managed_settings_path absent OR a signed allow; plugin-sourced hooks require explicit user consent on install.\n2. Scrub sensitive env vars before spawning — build a minimal allowlist: PATH, HOME, LANG, CLAUDE_PROJECT_DIR.\n3. Add an optional allowlist of executables (HooksConfig::allowed_commands: Vec<String>) and gate via first-token match of command after shell split.\n4. Replace 'timeout N' prefix with kill-on-drop + tokio::time::timeout (already correctly done in hooks/mod.rs; guardrails.rs:502 still uses the broken prefix — remove it).\n5. Consider dropping privileges via cap-std or running in a nsjail/bubblewrap wrapper on Linux.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:27:23.545108719Z",
+  "updated_at": "2026-04-18T00:27:23.545108719Z"
+}
