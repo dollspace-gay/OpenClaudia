@@ -1,0 +1,11 @@
+{
+  "uuid": "29f59304-df4c-48be-9132-0c75e5162b83",
+  "display_id": 401,
+  "title": "subagent.rs is a 1486-line multi-concern module: manager, worktree, transport, tool registry, execution loop",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Structural Modularity. Location: src/subagent.rs (entire file, 1486 lines). Violation: Single module owns: (1) AgentType enum + 5 system prompts, (2) BackgroundAgentManager + global LazyLock singleton, (3) TRANSCRIPT_STORE + TTL eviction, (4) WorktreeIsolation with git subprocess calls, (5) resolve_model_name hardcoded model map, (6) JSON tool definitions, (7) run_subagent 290-line loop with allow(too_many_lines), (8) transform_to_anthropic / transform_from_anthropic provider adapter logic duplicated from providers.rs, (9) execute_task_tool / execute_agent_output_tool tool-dispatch glue. At least five reasons to change. Mandated Refactor: Split into subagent/mod.rs (public API), subagent/manager.rs (BackgroundAgentManager + transcript store), subagent/worktree.rs (WorktreeIsolation), subagent/runner.rs (run_subagent loop), subagent/prompts.rs (AgentType prompts + allowed_tools), subagent/tools.rs (tool JSON + dispatch). Delete transform_to_anthropic/transform_from_anthropic in favor of the existing providers.rs adapters.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:38:33.573350012Z",
+  "updated_at": "2026-04-18T00:38:33.573350012Z"
+}
