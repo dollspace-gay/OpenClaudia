@@ -1,0 +1,11 @@
+{
+  "uuid": "5e4eab5b-ec26-4e64-892d-10ba7e6e399d",
+  "display_id": 398,
+  "title": "Clippy: 6 redundant closures — pass fn directly",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Cognitive Readability\n**Lint:** clippy::redundant_closure\n\n## Violation\nA closure that only forwards its arg to a single function (`|x| f(x)`) is equivalent to `f` itself. The closure layer adds visual noise without adding information.\n\n## Locations\n- src/modes/mod.rs: 954\n- src/pipeline.rs: 263 (twice), 268, 358\n- src/tui/app.rs: 1389\n\n## Mandated Refactor\n```rust\n// Before\niter.map(|x| transform(x))\n// After\niter.map(transform)\n```\nBe careful: only drop the closure when arg types match exactly. If `f` takes `&T` and closure arg is `T`, or vice versa, the closure is NOT redundant — clippy's suggestion is safe here by construction.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:38:31.517148809Z",
+  "updated_at": "2026-04-18T00:38:31.517148809Z"
+}
