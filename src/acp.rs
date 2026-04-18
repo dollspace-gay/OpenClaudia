@@ -129,6 +129,10 @@ pub struct AcpServer {
     model: String,
     /// API key (redacting newtype — see crosslink #256)
     api_key: crate::providers::ApiKey,
+    /// Library-layer permission manager. Every tool call dispatched from
+    /// `execute_tool_via_openclaudia` consults this gate — closes
+    /// crosslink #505 for the ACP path.
+    permission_mgr: crate::permissions::PermissionManager,
     /// Request ID counter for server→client requests
     next_request_id: AtomicU64,
     /// Pending responses for server→client requests
@@ -163,6 +167,11 @@ impl AcpServer {
         let merged_hooks = merge_hooks_config(config.hooks.clone(), claude_hooks);
         let hook_engine = HookEngine::new(merged_hooks);
         let rules_engine = RulesEngine::new(".openclaudia/rules");
+        let permission_mgr = crate::permissions::PermissionManager::new(
+            std::path::PathBuf::from(".openclaudia/permissions.json"),
+            true,
+            config.permissions.default_allow.clone(),
+        );
 
         Self {
             config,
@@ -173,6 +182,7 @@ impl AcpServer {
             messages: Vec::new(),
             model,
             api_key,
+            permission_mgr,
             next_request_id: AtomicU64::new(1),
             pending_responses: Arc::new(Mutex::new(HashMap::new())),
             cancel_flag: Arc::new(AtomicBool::new(false)),
@@ -1088,7 +1098,7 @@ impl AcpServer {
             },
         };
 
-        let result = crate::tools::execute_tool(&tc);
+        let result = crate::tools::execute_tool_with_memory(&tc, None, Some(&self.permission_mgr));
         AcpToolResult {
             content: result.content,
             is_error: result.is_error,

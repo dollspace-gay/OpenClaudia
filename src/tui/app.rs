@@ -270,6 +270,10 @@ pub struct App {
     pub claude_code_token: Option<String>,
     /// Memory database for auto-learning from tool execution.
     pub memory_db: Option<std::sync::Arc<crate::memory::MemoryDb>>,
+    /// Library-layer permission manager. When `Some`, every tool call routed
+    /// through `pipeline::run_turn` consults this gate in addition to the
+    /// UX-layer `PermissionResponse` flow — closes crosslink #505.
+    pub permission_mgr: Option<std::sync::Arc<crate::permissions::PermissionManager>>,
     /// Conversation messages in the provider's wire format.
     pub session_messages: Vec<serde_json::Value>,
     /// Async runtime handle for spawning API tasks from the sync event loop.
@@ -308,6 +312,7 @@ impl App {
             prompt_blocks: None,
             claude_code_token: None,
             memory_db: None,
+            permission_mgr: None,
             session_messages: Vec::new(),
             runtime_handle: None,
             chat_session: TuiSession::new(model, provider),
@@ -1361,6 +1366,7 @@ impl App {
         let prompt_blocks = self.prompt_blocks.clone();
         let hook_engine = self.hook_engine.clone();
         let memory_db = self.memory_db.clone();
+        let permission_mgr = self.permission_mgr.clone();
         // Clone session messages so the async task can build follow-up requests
         let mut session_messages = self.session_messages.clone();
 
@@ -1421,6 +1427,7 @@ impl App {
                 &request_body,
                 &provider,
                 memory_db.clone(),
+                permission_mgr.clone(),
                 tx.clone(),
             )
             .await
@@ -1480,6 +1487,7 @@ impl App {
                                 &followup_body,
                                 &provider,
                                 memory_db.clone(),
+                                permission_mgr.clone(),
                                 tx.clone(),
                             )
                             .await

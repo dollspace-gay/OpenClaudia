@@ -593,11 +593,19 @@ pub struct ToolExecutionResult {
     pub is_error: bool,
 }
 
-/// Execute intercepted tool calls locally and format results for Claude
+/// Execute intercepted tool calls locally and format results for Claude.
+///
+/// `permission_mgr` is threaded through to the library-level gate inside
+/// `execute_tool_with_memory`. Passing `None` preserves legacy behavior
+/// (warn-once) and is expected from callers that intentionally allow
+/// upstream-controlled tool calls; passing `Some(&mgr)` enforces the
+/// config's `default_allow` patterns even on the proxy-intercept path.
+/// See crosslink #505.
 #[must_use]
 pub fn execute_intercepted_tools(
     tools: &[InterceptedToolCall],
     memory_db: Option<&crate::memory::MemoryDb>,
+    permission_mgr: Option<&crate::permissions::PermissionManager>,
 ) -> Vec<ToolExecutionResult> {
     let mut results = Vec::new();
 
@@ -606,14 +614,8 @@ pub fn execute_intercepted_tools(
 
         println!("\n\x1b[36m⚡ Running {} locally...\x1b[0m", tool.name);
 
-        // Permission manager: intercepted tool calls come from a trusted
-        // upstream — the model chose to call them and the proxy intercepted
-        // for local execution. `None` preserves legacy fail-open; tracked
-        // by crosslink qa-followup-460.
-        let result = memory_db.map_or_else(
-            || crate::tools::execute_tool(&tool_call),
-            |db| crate::tools::execute_tool_with_memory(&tool_call, Some(db), None),
-        );
+        let result =
+            crate::tools::execute_tool_with_memory(&tool_call, memory_db, permission_mgr);
 
         // Show preview
         let preview: String = result

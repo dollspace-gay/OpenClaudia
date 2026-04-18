@@ -4,6 +4,7 @@
 //! from both the rustyline REPL and the ratatui TUI.
 
 use crate::memory::MemoryDb;
+use crate::permissions::PermissionManager;
 use crate::providers::{convert_messages_to_anthropic, convert_tools_to_anthropic, get_adapter};
 use crate::proxy::{self, normalize_base_url};
 use crate::session::TokenUsage;
@@ -256,6 +257,7 @@ pub async fn run_turn(
     request_body: &Value,
     provider: &str,
     memory_db: Option<Arc<MemoryDb>>,
+    permission_mgr: Option<Arc<PermissionManager>>,
     tx: mpsc::Sender<AppEvent>,
 ) -> Result<TurnResult, String> {
     tracing::info!(
@@ -324,17 +326,18 @@ pub async fn run_turn(
 
     // For Google, handle non-streaming JSON response
     if provider == "google" {
-        return handle_google_response(response, memory_db, &tx).await;
+        return handle_google_response(response, memory_db, permission_mgr, &tx).await;
     }
 
     // Stream SSE response (Anthropic / OpenAI format)
-    stream_sse_response(response, provider, memory_db, &tx).await
+    stream_sse_response(response, provider, memory_db, permission_mgr, &tx).await
 }
 
 /// Handle a non-streaming Google Gemini response.
 async fn handle_google_response(
     response: reqwest::Response,
     memory_db: Option<Arc<MemoryDb>>,
+    permission_mgr: Option<Arc<PermissionManager>>,
     tx: &mpsc::Sender<AppEvent>,
 ) -> Result<TurnResult, String> {
     let body = response.text().await.unwrap_or_default();
@@ -414,7 +417,7 @@ async fn handle_google_response(
 
     // Execute tool calls if any
     let (tool_results, needs_followup) =
-        execute_tool_calls_for_tui(&tool_calls, memory_db, tx).await;
+        execute_tool_calls_for_tui(&tool_calls, memory_db, permission_mgr, tx).await;
 
     if !needs_followup {
         send_event!(tx, AppEvent::ResponseDone);
@@ -439,6 +442,7 @@ async fn stream_sse_response(
     response: reqwest::Response,
     provider: &str,
     memory_db: Option<Arc<MemoryDb>>,
+    permission_mgr: Option<Arc<PermissionManager>>,
     tx: &mpsc::Sender<AppEvent>,
 ) -> Result<TurnResult, String> {
     let mut stream = response.bytes_stream();
@@ -530,7 +534,8 @@ async fn stream_sse_response(
     };
 
     // Execute tool calls if any
-    let (tool_results, has_tools) = execute_tool_calls_for_tui(&tool_calls, memory_db, tx).await;
+    let (tool_results, has_tools) =
+        execute_tool_calls_for_tui(&tool_calls, memory_db, permission_mgr, tx).await;
 
     // Only send ResponseDone if there are NO tool calls needing followup.
     // When there are tool calls, the caller (app.rs agentic loop) handles
@@ -670,6 +675,7 @@ pub fn tool_needs_permission(tool_name: &str) -> bool {
 async fn execute_tool_calls_for_tui(
     tool_calls: &[ToolCall],
     memory_db: Option<Arc<MemoryDb>>,
+    permission_mgr: Option<Arc<PermissionManager>>,
     tx: &mpsc::Sender<AppEvent>,
 ) -> (Vec<Value>, bool) {
     // Session-level "always allow/deny" cache (lives for this agentic loop)
@@ -857,16 +863,17 @@ async fn execute_tool_calls_for_tui(
         // the tool executes.
         let tool_call_clone = tool_call.clone();
         let mem_db = memory_db.clone();
-        // Permission manager: the TUI enforces permissions at the UX layer
-        // via the `PermissionResponse` event loop; the library-level gate is
-        // threaded as `None` here to preserve legacy fail-open semantics.
-        // Tracked by crosslink qa-followup-460 (pipeline needs a plumbed
-        // PermissionManager to replace the UX-layer gate).
+        let perm_mgr = permission_mgr.clone();
+        // Library-layer gate runs in addition to the TUI's UX-layer
+        // `PermissionResponse` flow. Closes crosslink #505 — previously
+        // threaded `None`, which emitted a one-shot warn and left the
+        // config-driven `default_allow` patterns unenforced.
         let result = tokio::task::spawn_blocking(move || {
+            let pm = perm_mgr.as_deref();
             if let Some(ref db) = mem_db {
-                tools::execute_tool_with_memory(&tool_call_clone, Some(db), None)
+                tools::execute_tool_with_memory(&tool_call_clone, Some(db), pm)
             } else {
-                tools::execute_tool(&tool_call_clone)
+                tools::execute_tool_with_memory(&tool_call_clone, None, pm)
             }
         })
         .await

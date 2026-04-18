@@ -26,7 +26,7 @@
 mod cli;
 
 use openclaudia::{
-    config, guardrails, memory, plugins, prompt, proxy,
+    config, guardrails, memory, permissions::PermissionManager, plugins, prompt, proxy,
     proxy::normalize_base_url,
     session, tool_intercept,
     tools::{self, safe_truncate},
@@ -780,6 +780,19 @@ async fn cmd_chat(
     // Populated when the user responds with 'a'/'always' at a permission prompt.
     let mut always_allowed_tools: std::collections::HashSet<String> =
         std::collections::HashSet::new();
+
+    // Library-layer PermissionManager — shares `default_allow` with the
+    // interactive gate. The manager is plumbed into every dispatch call
+    // (`execute_tool_with_memory` + `execute_tool`) so no tool can bypass
+    // the check, matching the gated-dispatch invariant introduced by
+    // crosslink #460 and closing follow-up #505. Kept in parallel with
+    // the interactive `always_allowed_tools` set for now — unifying them
+    // is a larger refactor tracked separately.
+    let permission_mgr = PermissionManager::new(
+        std::path::PathBuf::from(".openclaudia/permissions.json"),
+        true,
+        config.permissions.default_allow.clone(),
+    );
 
     // Initialize VDD engine if enabled
     let vdd_engine: Option<vdd::VddEngine> = if config.vdd.enabled {
@@ -1759,18 +1772,25 @@ async fn cmd_chat(
                                                 // Permission manager: the interactive gate above
                                                 // has already authorized this tool call at the
                                                 // UX layer; the library-level gate is threaded
-                                                // as `None` here to preserve legacy fail-open
-                                                // semantics. Tracked by crosslink qa-followup-460
-                                                // (CLI path needs a PermissionManager plumbed
-                                                // through to replace the interactive gate).
+                                                // Library-layer gate runs in addition to the
+                                                // interactive UX gate above — this enforces
+                                                // the config-driven `default_allow` patterns
+                                                // even when the interactive gate allowed the
+                                                // tool, and closes the fail-open surface
+                                                // tracked by crosslink #505 (follow-up to
+                                                // #460 mandated point 2).
                                                 let result = if let Some(ref db) = memory_db {
                                                     tools::execute_tool_with_memory(
                                                         tool_call,
                                                         Some(db),
-                                                        None,
+                                                        Some(&permission_mgr),
                                                     )
                                                 } else {
-                                                    tools::execute_tool(tool_call)
+                                                    tools::execute_tool_with_memory(
+                                                        tool_call,
+                                                        None,
+                                                        Some(&permission_mgr),
+                                                    )
                                                 };
 
                                                 // Auto-learn from tool result
@@ -2481,16 +2501,20 @@ async fn cmd_chat(
                                                     }),
                                                 );
 
-                                                // See note at the first execute_tool_with_memory
-                                                // call site above; tracked by qa-followup-460.
+                                                // Library-layer gate: see note at the first
+                                                // call site above. Closes crosslink #505.
                                                 let result = if let Some(ref db) = memory_db {
                                                     tools::execute_tool_with_memory(
                                                         tool_call,
                                                         Some(db),
-                                                        None,
+                                                        Some(&permission_mgr),
                                                     )
                                                 } else {
-                                                    tools::execute_tool(tool_call)
+                                                    tools::execute_tool_with_memory(
+                                                        tool_call,
+                                                        None,
+                                                        Some(&permission_mgr),
+                                                    )
                                                 };
 
                                                 // Auto-learn from tool result
@@ -2833,10 +2857,13 @@ async fn cmd_chat(
                                                 })
                                                 .collect();
 
-                                            // Execute ALL tools locally
+                                            // Execute ALL tools locally with the library-layer
+                                            // permission gate engaged. Closes crosslink #505 for
+                                            // the intercept-mode path.
                                             let results = tool_intercept::execute_intercepted_tools(
                                                 &all_tools,
                                                 memory_db.as_ref(),
+                                                Some(&permission_mgr),
                                             );
 
                                             // Format ALL results for Claude and add as user message
@@ -3204,16 +3231,21 @@ async fn cmd_chat(
                                             tool_call.function.name
                                         );
 
-                                        // Execute tool. See note at the first call site;
-                                        // tracked by qa-followup-460.
+                                        // Execute tool with library-layer permission gate
+                                        // in addition to the interactive UX gate above.
+                                        // Closes crosslink #505.
                                         let result = if let Some(ref db) = memory_db {
                                             tools::execute_tool_with_memory(
                                                 tool_call,
                                                 Some(db),
-                                                None,
+                                                Some(&permission_mgr),
                                             )
                                         } else {
-                                            tools::execute_tool(tool_call)
+                                            tools::execute_tool_with_memory(
+                                                tool_call,
+                                                None,
+                                                Some(&permission_mgr),
+                                            )
                                         };
 
                                         // Auto-learn from tool result

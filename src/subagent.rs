@@ -8,7 +8,7 @@
 //! - Background execution with async tracking
 
 use crate::config::AppConfig;
-use crate::tools::{execute_tool, safe_truncate, ToolCall};
+use crate::tools::{safe_truncate, ToolCall};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -743,6 +743,15 @@ pub async fn run_subagent(
     let mut final_output = String::new();
     let mut turns: u64;
 
+    // Library-layer permission gate — consulted by every
+    // `execute_tool_with_memory` call inside this subagent's tool loop.
+    // Closes crosslink #505 for the subagent path.
+    let permission_mgr = crate::permissions::PermissionManager::new(
+        std::path::PathBuf::from(".openclaudia/permissions.json"),
+        true,
+        app_config.permissions.default_allow.clone(),
+    );
+
     loop {
         turns = BACKGROUND_AGENTS.increment_turns(&agent_id);
 
@@ -867,7 +876,8 @@ pub async fn run_subagent(
                 continue;
             }
 
-            // Execute the tool
+            // Execute the tool with the library-layer permission gate
+            // engaged (crosslink #505).
             let tc = ToolCall {
                 id: tool_id.to_string(),
                 call_type: "function".to_string(),
@@ -877,7 +887,11 @@ pub async fn run_subagent(
                 },
             };
 
-            let result = execute_tool(&tc);
+            let result = crate::tools::execute_tool_with_memory(
+                &tc,
+                None,
+                Some(&permission_mgr),
+            );
 
             messages.push(json!({
                 "role": "tool",
