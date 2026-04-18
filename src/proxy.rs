@@ -439,9 +439,16 @@ fn extract_extensions_from_messages(messages: &[ChatMessage]) -> Vec<String> {
     extensions.into_iter().collect()
 }
 
-/// Proxy chat completions (`OpenAI` format)
+/// Prepare a chat completion request: run hooks, inject context, rules,
+/// MCP tools, plugins, VDD.
+///
+/// The `#[allow(clippy::too_many_lines)]` below is deliberately retained
+/// — this function is a long linear sequence of independent injection
+/// phases (hook, prompt-mod, context inject, rules, MCP tools, plugin
+/// tools, VDD context). Breaking it further without an enclosing
+/// orchestrator would just move line count around. A follow-up PR can
+/// formalize a `RequestContextPipeline` if it becomes worth the weight.
 #[allow(clippy::too_many_lines)]
-/// Prepare a chat completion request: run hooks, inject context, rules, MCP tools, plugins, VDD.
 async fn prepare_request_context(
     request: &mut ChatCompletionRequest,
     state: &ProxyState,
@@ -581,6 +588,179 @@ async fn prepare_request_context(
     Ok(())
 }
 
+/// Estimate turn tokens (input / system / tool-definition), record them on
+/// the active session, log the per-turn usage, and fire the
+/// `token_warning` notification when estimated input exceeds the
+/// configured warn threshold. Extracted from `proxy_chat_completions`
+/// per crosslink #247 (SRP decomposition).
+async fn record_turn_estimate(state: &ProxyState, request: &ChatCompletionRequest) {
+    let estimated_input = crate::compaction::estimate_request_tokens(request);
+
+    // Break down token components
+    let system_prompt_tokens: usize = request
+        .messages
+        .iter()
+        .filter(|m| m.role == "system")
+        .map(crate::compaction::estimate_message_tokens)
+        .sum();
+
+    let tool_def_tokens: usize = request.tools.as_ref().map_or(0, |tools| {
+        tools
+            .iter()
+            .map(|t| crate::compaction::estimate_tokens(&t.to_string()))
+            .sum()
+    });
+
+    let injected_context_tokens = system_prompt_tokens + tool_def_tokens;
+
+    let mut sm = state.session_manager.write().await;
+    let Some(session) = sm.get_session_mut() else {
+        return;
+    };
+
+    let turn = session.record_turn_estimate(
+        estimated_input,
+        injected_context_tokens,
+        system_prompt_tokens,
+        tool_def_tokens,
+    );
+    let context_window = crate::compaction::get_context_window(&request.model);
+    // Integer-safe utilization computation.
+    let utilization_pct_x10 = if context_window > 0 {
+        estimated_input.saturating_mul(1000) / context_window
+    } else {
+        0
+    };
+    #[allow(clippy::cast_possible_truncation)]
+    let usage_pct_f64 = f64::from(utilization_pct_x10 as u32) / 10.0;
+
+    if state.config.session.token_tracking.log_usage {
+        info!(
+            turn = turn,
+            estimated_input = estimated_input,
+            system_prompt = system_prompt_tokens,
+            tool_defs = tool_def_tokens,
+            context_window = context_window,
+            utilization_pct = format!("{usage_pct_f64:.1}%"),
+            "Turn token estimate"
+        );
+    }
+
+    let warn_threshold = state.config.session.token_tracking.warn_threshold;
+    // Integer threshold avoids usize→f32 precision loss.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let threshold_tokens = (f64::from(context_window as u32) * f64::from(warn_threshold)) as usize;
+    if estimated_input > threshold_tokens {
+        warn!(
+            estimated = estimated_input,
+            threshold = format!("{:.0}%", warn_threshold * 100.0),
+            context_window = context_window,
+            "Token usage approaching context window limit"
+        );
+        // Fire token warning notification
+        drop(sm); // release the write lock before the hook fires notifications
+        state
+            .hook_engine
+            .fire_notification(
+                "token_warning",
+                serde_json::json!({ "usage_pct": usage_pct_f64 }),
+            )
+            .await;
+    }
+}
+
+/// Run the VDD adversarial-review pipeline against a freshly-converted
+/// builder response and return the (possibly-revised) response.
+///
+/// Consolidates the four `Response::from_parts` reassembly sites
+/// previously inlined in `proxy_chat_completions` (one per VDD result
+/// variant plus the JSON-parse-failure fallthrough) into a single
+/// pattern-matched helper. See crosslink #247 point 5.
+///
+/// Bounded read closes crosslink #352: `max_response_bytes` (default
+/// 50 MiB) caps the buffered body; over-limit and other read errors
+/// log at `warn!` and return an empty passthrough rather than feeding
+/// an empty buffer to the VDD engine.
+async fn apply_vdd_review(
+    response_value: Response,
+    state: &ProxyState,
+    request: &ChatCompletionRequest,
+    provider_name: &str,
+    api_key: &ApiKey,
+) -> Result<Response, ProxyError> {
+    let Some(vdd_engine) = &state.vdd_engine else {
+        return Ok(response_value);
+    };
+
+    let (parts, body) = response_value.into_parts();
+    let max_bytes = state.config.proxy.max_response_bytes;
+    let response_bytes = match axum::body::to_bytes(body, max_bytes).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                max_bytes = max_bytes,
+                "Failed to read upstream response body for VDD review; \
+                 returning empty passthrough to the client (crosslink #352)."
+            );
+            return Ok(Response::from_parts(parts, Body::empty()));
+        }
+    };
+
+    // Parse the body as JSON. Non-JSON bodies are passed through verbatim.
+    let Ok(response_json) = serde_json::from_slice::<Value>(&response_bytes) else {
+        return Ok(Response::from_parts(parts, Body::from(response_bytes)));
+    };
+
+    let engine = vdd_engine.lock().await;
+    let vdd_result = engine
+        .process_response(&response_json, request, provider_name, Some(api_key))
+        .await;
+
+    // Decide which bytes to ship back. Only `Blocking` produces new bytes;
+    // every other path reuses the original response body.
+    let body_bytes: Vec<u8> = match vdd_result {
+        Ok(VddResult::Advisory(advisory)) => {
+            let genuine = advisory
+                .findings
+                .iter()
+                .filter(|f| f.status == crate::vdd::FindingStatus::Genuine)
+                .count();
+            if !advisory.context_injection.is_empty() {
+                let mut sm = state.session_manager.write().await;
+                sm.store_vdd_context(advisory.context_injection);
+            }
+            info!(
+                total = advisory.findings.len(),
+                genuine = genuine,
+                "VDD advisory review complete"
+            );
+            response_bytes.to_vec()
+        }
+        Ok(VddResult::Blocking(blocking)) => {
+            info!(
+                iterations = blocking.session.iterations.len(),
+                genuine = blocking.session.total_genuine,
+                converged = blocking.session.converged,
+                chainlink_issues = blocking.chainlink_issues.len(),
+                "VDD blocking loop complete"
+            );
+            serde_json::to_vec(&blocking.final_response)
+                .unwrap_or_else(|_| response_bytes.to_vec())
+        }
+        Ok(VddResult::Skipped(reason)) => {
+            debug!(reason = %reason, "VDD skipped");
+            response_bytes.to_vec()
+        }
+        Err(e) => {
+            warn!(error = %e, "VDD error (non-blocking, returning original response)");
+            response_bytes.to_vec()
+        }
+    };
+
+    Ok(Response::from_parts(parts, Body::from(body_bytes)))
+}
+
 async fn proxy_chat_completions(
     State(state): State<ProxyState>,
     headers: HeaderMap,
@@ -692,81 +872,7 @@ async fn proxy_chat_completions(
     // Pre-request token estimation and tracking
     let token_tracking_enabled = state.config.session.token_tracking.enabled;
     if token_tracking_enabled {
-        let estimated_input = crate::compaction::estimate_request_tokens(&request);
-
-        // Break down token components
-        let system_prompt_tokens: usize = request
-            .messages
-            .iter()
-            .filter(|m| m.role == "system")
-            .map(crate::compaction::estimate_message_tokens)
-            .sum();
-
-        let tool_def_tokens: usize = request.tools.as_ref().map_or(0, |tools| {
-            tools
-                .iter()
-                .map(|t| crate::compaction::estimate_tokens(&t.to_string()))
-                .sum()
-        });
-
-        let injected_context_tokens = system_prompt_tokens + tool_def_tokens;
-
-        // Record turn estimate in session
-        {
-            let mut sm = state.session_manager.write().await;
-            if let Some(session) = sm.get_session_mut() {
-                let turn = session.record_turn_estimate(
-                    estimated_input,
-                    injected_context_tokens,
-                    system_prompt_tokens,
-                    tool_def_tokens,
-                );
-                let context_window = crate::compaction::get_context_window(&request.model);
-                // Compute utilization percentage via integer-safe path
-                let utilization_pct_x10 = if context_window > 0 {
-                    estimated_input.saturating_mul(1000) / context_window
-                } else {
-                    0
-                };
-                #[allow(clippy::cast_possible_truncation)]
-                let usage_pct_f64 = f64::from(utilization_pct_x10 as u32) / 10.0;
-
-                if state.config.session.token_tracking.log_usage {
-                    info!(
-                        turn = turn,
-                        estimated_input = estimated_input,
-                        system_prompt = system_prompt_tokens,
-                        tool_defs = tool_def_tokens,
-                        context_window = context_window,
-                        utilization_pct = format!("{usage_pct_f64:.1}%"),
-                        "Turn token estimate"
-                    );
-                }
-
-                // Warn if approaching context limit
-                let warn_threshold = state.config.session.token_tracking.warn_threshold;
-                // Use integer threshold to avoid usize→f32 precision loss
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                let threshold_tokens =
-                    (f64::from(context_window as u32) * f64::from(warn_threshold)) as usize;
-                if estimated_input > threshold_tokens {
-                    warn!(
-                        estimated = estimated_input,
-                        threshold = format!("{:.0}%", warn_threshold * 100.0),
-                        context_window = context_window,
-                        "Token usage approaching context window limit"
-                    );
-                    // Fire token warning notification
-                    state
-                        .hook_engine
-                        .fire_notification(
-                            "token_warning",
-                            serde_json::json!({ "usage_pct": usage_pct_f64 }),
-                        )
-                        .await;
-                }
-            }
-        }
+        record_turn_estimate(&state, &request).await;
     }
 
     let is_stream = request.stream.unwrap_or(false);
@@ -803,7 +909,7 @@ async fn proxy_chat_completions(
 
     // Post-response: extract usage from non-streaming responses and convert
     if token_tracking_enabled && !is_stream {
-        let (mut response_value, usage) = convert_response_with_usage(raw_response).await?;
+        let (response_value, usage) = convert_response_with_usage(raw_response).await?;
         if let Some(usage) = usage {
             let mut sm = state.session_manager.write().await;
             if let Some(session) = sm.get_session_mut() {
@@ -820,84 +926,8 @@ async fn proxy_chat_completions(
             }
         }
 
-        // VDD: adversarial review of the builder's response.
-        //
-        // Bounded read closes the memory-DoS vector (crosslink #352): an
-        // upstream that streams > max_response_bytes (default 50 MiB)
-        // aborts the VDD path and returns an empty passthrough rather than
-        // OOM-ing the proxy. On any read error we do NOT silently fall
-        // through to `serde_json::from_slice` of an empty buffer — that
-        // used to yield VDD analysis of effectively `null`.
-        if let Some(vdd_engine) = &state.vdd_engine {
-            let (parts, body) = response_value.into_parts();
-            let max_bytes = state.config.proxy.max_response_bytes;
-            let response_bytes = match axum::body::to_bytes(body, max_bytes).await {
-                Ok(b) => b,
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        max_bytes = max_bytes,
-                        "Failed to read upstream response body for VDD review; \
-                         returning empty passthrough to the client (crosslink #352)."
-                    );
-                    return Ok(Response::from_parts(parts, Body::empty()));
-                }
-            };
-
-            if let Ok(response_json) = serde_json::from_slice::<Value>(&response_bytes) {
-                let engine = vdd_engine.lock().await;
-                match engine
-                    .process_response(&response_json, &request, &provider_name, Some(&api_key))
-                    .await
-                {
-                    Ok(VddResult::Advisory(advisory)) => {
-                        let genuine = advisory
-                            .findings
-                            .iter()
-                            .filter(|f| f.status == crate::vdd::FindingStatus::Genuine)
-                            .count();
-                        if !advisory.context_injection.is_empty() {
-                            let mut sm = state.session_manager.write().await;
-                            sm.store_vdd_context(advisory.context_injection);
-                        }
-                        info!(
-                            total = advisory.findings.len(),
-                            genuine = genuine,
-                            "VDD advisory review complete"
-                        );
-                        // Rebuild response with original body
-                        response_value = Response::from_parts(parts, Body::from(response_bytes));
-                    }
-                    Ok(VddResult::Blocking(blocking)) => {
-                        // Replace response with the final revised version
-                        info!(
-                            iterations = blocking.session.iterations.len(),
-                            genuine = blocking.session.total_genuine,
-                            converged = blocking.session.converged,
-                            chainlink_issues = blocking.chainlink_issues.len(),
-                            "VDD blocking loop complete"
-                        );
-                        // Rebuild response with revised JSON body
-                        let revised_bytes = serde_json::to_vec(&blocking.final_response)
-                            .unwrap_or_else(|_| response_bytes.to_vec());
-                        response_value = Response::from_parts(parts, Body::from(revised_bytes));
-                    }
-                    Ok(VddResult::Skipped(reason)) => {
-                        debug!(reason = %reason, "VDD skipped");
-                        // Rebuild response with original body
-                        response_value = Response::from_parts(parts, Body::from(response_bytes));
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "VDD error (non-blocking, returning original response)");
-                        // Rebuild response with original body
-                        response_value = Response::from_parts(parts, Body::from(response_bytes));
-                    }
-                }
-            } else {
-                // JSON parse failed, rebuild response with original body
-                response_value = Response::from_parts(parts, Body::from(response_bytes));
-            }
-        }
+        let response_value =
+            apply_vdd_review(response_value, &state, &request, &provider_name, &api_key).await?;
 
         Ok(response_value)
     } else {
