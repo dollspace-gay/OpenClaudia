@@ -1,8 +1,10 @@
 mod kill;
 mod output;
+mod policy;
 
 pub use kill::{execute_kill_shell, terminate_process_tree};
 pub use output::execute_bash_output;
+pub use policy::{apply_env_scrub, validate_command};
 
 use crate::tools::safe_truncate;
 use serde_json::Value;
@@ -44,28 +46,30 @@ impl BackgroundShellManager {
         }
     }
 
-    /// Spawn a new background shell and return its ID
+    /// Spawn a new background shell and return its ID.
+    ///
+    /// Enforces [`validate_command`] (length cap + denylist) and scrubs
+    /// credential-bearing env vars via [`apply_env_scrub`] before spawn.
+    /// See crosslink #257.
     pub(crate) fn spawn(&self, command: &str) -> Result<String, String> {
+        validate_command(command)?;
+
         let shell_id = safe_truncate(&Uuid::new_v4().to_string(), 8).to_string();
         // IMPORTANT: Set current_dir to ensure bash runs in the same directory as the process
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
         #[cfg(windows)]
         let child = {
-            match find_git_bash() {
-                Some(git_bash) => Command::new(git_bash)
-                    .args(["-c", command])
-                    .current_dir(&cwd)
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn(),
-                None => Command::new("bash")
-                    .args(["-c", command])
-                    .current_dir(&cwd)
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn(),
-            }
+            let mut cmd = match find_git_bash() {
+                Some(git_bash) => Command::new(git_bash),
+                None => Command::new("bash"),
+            };
+            cmd.args(["-c", command])
+                .current_dir(&cwd)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            apply_env_scrub(&mut cmd);
+            cmd.spawn()
         };
 
         #[cfg(not(windows))]
@@ -76,6 +80,7 @@ impl BackgroundShellManager {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .process_group(0); // Put child in its own process group for clean kill
+            apply_env_scrub(&mut cmd);
             cmd.spawn()
         };
 
@@ -305,11 +310,20 @@ pub(crate) fn find_git_bash() -> Option<std::path::PathBuf> {
     None
 }
 
-/// Execute a bash command
+/// Execute a bash command.
+///
+/// Applies the policy layer: length cap + denylist in [`validate_command`],
+/// and env scrubbing via [`apply_env_scrub`] so credential env vars
+/// (`ANTHROPIC_API_KEY`, `AWS_*`, `_TOKEN`/`_SECRET`/`_PASSWORD`, etc.)
+/// never flow into the child. See crosslink #257.
 pub fn execute_bash(args: &HashMap<String, Value>) -> (String, bool) {
     let Some(command) = args.get("command").and_then(|v| v.as_str()) else {
         return ("Missing 'command' argument".to_string(), true);
     };
+
+    if let Err(msg) = validate_command(command) {
+        return (msg, true);
+    }
 
     // Check if this should run in background
     let run_in_background = args
@@ -334,23 +348,22 @@ pub fn execute_bash(args: &HashMap<String, Value>) -> (String, bool) {
 
         #[cfg(windows)]
         let output = {
-            match find_git_bash() {
-                Some(git_bash) => Command::new(git_bash)
-                    .args(["-c", command])
-                    .current_dir(&cwd)
-                    .output(),
-                None => Command::new("bash")
-                    .args(["-c", command])
-                    .current_dir(&cwd)
-                    .output(),
-            }
+            let mut cmd = match find_git_bash() {
+                Some(git_bash) => Command::new(git_bash),
+                None => Command::new("bash"),
+            };
+            cmd.args(["-c", command]).current_dir(&cwd);
+            apply_env_scrub(&mut cmd);
+            cmd.output()
         };
 
         #[cfg(not(windows))]
-        let output = Command::new("bash")
-            .args(["-c", command])
-            .current_dir(&cwd)
-            .output();
+        let output = {
+            let mut cmd = Command::new("bash");
+            cmd.args(["-c", command]).current_dir(&cwd);
+            apply_env_scrub(&mut cmd);
+            cmd.output()
+        };
 
         match output {
             Ok(output) => {
