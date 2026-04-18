@@ -7,9 +7,10 @@
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:37:12.169200005Z",
-  "updated_at": "2026-04-18T00:37:33.096241991Z",
+  "updated_at": "2026-04-18T00:37:36.518357317Z",
   "labels": [
     "bug",
-    "qa-review-2026-04"
+    "qa-review-2026-04",
+    "clippy-strict"
   ]
 }
