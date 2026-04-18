@@ -1,0 +1,11 @@
+{
+  "uuid": "00648987-e445-4213-abbf-6faeef2a5244",
+  "display_id": 471,
+  "title": "TuiSession vs session::Session vs ChatSession — three session formats for the same conversation",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Stovepipe Systems / DRY\nLocation: src/tui/app.rs:27-127 TuiSession; src/session/mod.rs:78 Session, :52 SessionProgress, :352 SessionManager; src/cli/repl/mod.rs ChatSession (referenced via main.rs:56).\nViolation: Three parallel session types exist with overlapping fields (id, title, created_at, updated_at, model, provider, messages). The TuiSession comment explicitly says it must be 'compatible with the CLI's ChatSession JSON format' — compatibility maintained by hand. Adding a field (e.g. behavioral mode) requires syncing three definitions. Token estimation, undo stacks, and title derivation exist only on TuiSession but logically belong on every session.\nMandated Refactor: Consolidate on a single pub struct Session in src/session/mod.rs with all required fields. Delete TuiSession and CLI ChatSession; both seams use the same Session. Move sessions_dir(), save_session, list_sessions (currently in tui/app.rs) to src/session/io.rs shared by both. Per user's stated preference for TUI/Claude-Code parity, Claude Code's ~/.claude/sessions single-format store is the target.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:43:51.202261501Z",
+  "updated_at": "2026-04-18T00:43:51.202261501Z"
+}
