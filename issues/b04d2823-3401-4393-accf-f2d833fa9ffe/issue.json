@@ -1,0 +1,11 @@
+{
+  "uuid": "b04d2823-3401-4393-accf-f2d833fa9ffe",
+  "display_id": 390,
+  "title": "PluginManager.install_from_marketplace: 160-line function violates SRP",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension**: Structural Modularity (SRP / Cyclomatic complexity)\n\n**Location**: src/plugins/manager.rs:457-618 (install_from_marketplace — 160 lines, marked with #[allow(clippy::too_many_lines)])\n\n**Violation**: This function is explicitly annotated `#[allow(clippy::too_many_lines)]` with the hand-waving comment 'Complex installer, splitting would reduce readability'. Per CLAUDE.md global instructions (NEVER suppress lint warnings, fix the root cause) this allow is a smell. The function does:\n1. Lookup marketplace\n2. Lookup plugin in marketplace\n3. Validate plugin name for traversal\n4. Check destination exists\n5. Dispatch on PluginSource variant\n6. For Path: canonicalize, verify containment, copy\n7. For Structured(Url|GitHub): git clone, track, save, reload\n8. For Structured(Npm|Pip): error\n9. Re-track, re-save, re-reload for Path case\n\nThe structured-Url/GitHub branch does a FULL install+track+return INSIDE the match arm (manager.rs:537-582), duplicating tracking/save/reload logic with the path branch (manager.rs:589-614). DRY violation — identical 20-line block in two places.\n\nCyclomatic complexity is >15 (multiple match arms, nested error handling, early returns).\n\n**Mandated Refactor**:\n1. Extract private helpers:\n   - fn prepare_dest_dir(plugin_name: &str) -> Result<PathBuf>\n   - fn fetch_source(&self, mp_plugin: &MarketplacePlugin, marketplace_dir: &Path, dest: &Path) -> Result<()> that handles ALL PluginSource variants\n   - fn track_install(&mut self, plugin_id: &str, dest: &Path, version: Option<String>) -> Result<()>\n2. install_from_marketplace becomes ~30 lines calling the three helpers.\n3. Remove the `#[allow(clippy::too_many_lines)]`.\n4. The duplicated InstalledPlugins::load+upsert+save+reload pattern moves into track_install, invoked once.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:37:56.140518251Z",
+  "updated_at": "2026-04-18T00:37:56.140518251Z"
+}
