@@ -1,0 +1,11 @@
+{
+  "uuid": "9e3a1d39-c6e7-455c-aebc-fa014ca6123d",
+  "display_id": 495,
+  "title": "/cost model-price lookup uses string-contains matching and hardcoded rates",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: KISS / Functional Correctness / YAGNI\nLocation: src/tui/app.rs:1029-1051 (/cost arm)\nViolation: Price per token is computed via 'match self.model.as_str() { m if m.contains(\"opus\") => ..., m if m.contains(\"sonnet\") => ..., m if m.contains(\"haiku\") => ..., _ => 0.0 }'. This (a) silently returns /bin/bash.00 for any non-Anthropic model (GPT-4, Gemini, DeepSeek, GLM, Qwen) — a wrong answer, not a missing one; (b) does not distinguish input vs output tokens (the assumption is all tokens are half-in-half-out); (c) hardcodes rates that change regularly; (d) collapses claude-3-opus-20240229 and claude-opus-4-x pricing into one rate.\nMandated Refactor: (1) Move pricing data to a src/pricing/models.toml loaded at startup, keyed by exact model id. (2) Define pub fn estimate_cost(model: &str, input_tokens: u64, output_tokens: u64) -> Option<f64>. (3) Return None and display 'unknown pricing for model X' rather than /bin/bash.00. (4) Track input and output tokens separately — the pipeline already has this breakdown.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:45:56.171186034Z",
+  "updated_at": "2026-04-18T00:45:56.171186034Z"
+}
