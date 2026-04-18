@@ -1,0 +1,11 @@
+{
+  "uuid": "49c38102-2591-461e-9287-c3ed3b5c9a27",
+  "display_id": 284,
+  "title": "Boolean flag parameter: check_tool_permission_interactive(skip_permissions: bool, ...) must split",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Structural Modularity (Boolean Flag Argument)\nLocation: src/main.rs:405-495 fn check_tool_permission_interactive(tool_name, tool_args, skip_permissions: bool, always_allowed: &mut HashSet)\nViolation: The skip_permissions flag forcibly changes the function's behavior mode (auto-allow vs. prompt). The first operation in the body is 'if !needs_permission || skip_permissions { return Allowed }'. This is the canonical boolean-flag anti-pattern: the caller is asking the function to do one of two semantically distinct jobs. Additionally the function has FOUR parameters (limit is 0-2) and mutates its HashSet argument (side effect).\nMandated Refactor: Split into (a) fn classify_tool_risk(tool_name: &str) -> ToolRisk { Safe, Destructive } and (b) trait PermissionPolicy { fn authorize(&mut self, tool: &ToolContext) -> ToolPermissionResult }. Provide AutoAllowPolicy (dangerously_skip_permissions), InteractivePolicy (stdin-prompt, owns the always_allowed set), and NonInteractivePolicy (fail-fast). The caller chooses the policy at startup — no boolean passed per-call. Bonus: testable with MockPolicy.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:30:28.964923755Z",
+  "updated_at": "2026-04-18T00:30:28.964923755Z"
+}
