@@ -1,0 +1,11 @@
+{
+  "uuid": "0f5161a6-ec58-4110-a543-9bc5f3c1e20d",
+  "display_id": 469,
+  "title": "ACP handler is a 1607-line God struct shouldering transport, protocol, dispatch, and all tool implementations",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Structural Modularity (SRP)\nLocation: src/acp.rs:151-1543 AcpSession with 34 methods. handle_message dispatch (280) + 8 RPC handlers + run_prompt_loop (555) + stream_provider_response (775) + execute_tool_via_acp (1046) + execute_local_tool (1079) + 7 acp_* tool implementations (1100-1541). File is 1607 lines.\nViolation: One struct owns JSON-RPC transport (send_response, send_notification, send_error, client_request), ACP protocol handlers (handle_initialize/authenticate/session_new/load/cancel/set_mode/set_config_option/prompt), an agentic loop (run_prompt_loop), provider streaming (stream_provider_response), tool dispatch (execute_tool_via_acp), AND inline implementations for every tool (acp_read_file, acp_write_file, acp_edit_file, acp_bash, acp_bash_output, acp_kill_shell, acp_list_files, acp_search). Changes to any layer ripple across 1600 lines.\nMandated Refactor: Split into (1) src/acp/transport.rs: AcpTransport { stdout, stdin, pending_responses } for JSON-RPC framing; (2) src/acp/protocol.rs: dispatcher + typed handle_X request structs (serde-derived) replacing the raw params: Value pattern; (3) src/acp/tools.rs: each acp_* tool as a separate function taking &mut Workspace; (4) reuse the run_agentic_loop from #456 refactor instead of a local copy.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:43:26.589049494Z",
+  "updated_at": "2026-04-18T00:43:26.589049494Z"
+}
