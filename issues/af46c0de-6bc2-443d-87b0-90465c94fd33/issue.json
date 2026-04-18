@@ -1,0 +1,11 @@
+{
+  "uuid": "af46c0de-6bc2-443d-87b0-90465c94fd33",
+  "display_id": 416,
+  "title": "Clippy: 3 suboptimal_flops — use f.mul_add for fused-multiply-add",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Performance & Complexity, Functional Correctness\n**Lint:** clippy::suboptimal_flops\n\n## Violation\nExpressions of the form `a * b + c` on floats can be computed as a single fused-multiply-add via `a.mul_add(b, c)`. The FMA instruction is both faster on modern CPUs and numerically more accurate (single rounding instead of two).\n\n## Locations\n- src/tui/app.rs: 1034, 1036, 1039\n\n## Mandated Refactor\n```rust\n// Before\nlet y = slope * x + intercept;\n// After\nlet y = slope.mul_add(x, intercept);\n```\nThese three lines are clustered (same function, consecutive) — likely a coordinate or progress-bar computation. Bonus: the lines also have `unreadable_literal` findings; fix both together.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:39:30.234558381Z",
+  "updated_at": "2026-04-18T00:39:30.234558381Z"
+}
