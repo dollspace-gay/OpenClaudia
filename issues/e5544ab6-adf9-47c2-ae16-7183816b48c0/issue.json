@@ -1,0 +1,11 @@
+{
+  "uuid": "e5544ab6-adf9-47c2-ae16-7183816b48c0",
+  "display_id": 285,
+  "title": "Session.turn_metrics grows unbounded — memory leak in long-running sessions",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Performance & Complexity (6) / Functional Correctness (1)\n\nLocation: src/session/mod.rs:165-182 (record_turn_estimate pushes); src/session/state.rs:41-72 (TurnMetrics struct).\n\nViolation: Every API turn calls session.record_turn_estimate() which pushes a full TurnMetrics struct (11 fields including Option<TokenUsage>) onto Session.turn_metrics: Vec<TurnMetrics>. There is no truncation, no ring buffer, no compaction. The vector is serialized on every end_session() into JSON to disk (persist_session, mod.rs:494). For a 24-hour agent loop with a turn every 10 seconds, that is 8,640 entries, serialized and fsynced on every session save, and loaded into memory on every resume.\n\nWorse: Session itself is Clone (#[derive(Clone)]) and is cloned liberally — get_or_create_session().clone() in tests, and likely elsewhere in proxy.rs / tui / pipeline. Each clone duplicates the full turn history.\n\nRelated: Session.progress.files_modified (line 61) and Session.progress.completed_tasks (line 58) also grow unbounded with .push(), and add_modified_file does O(n) contains() check on every tool call (line 252).\n\nMandated Refactor:\n1. Cap turn_metrics at N=200 recent entries; when exceeding, summarize oldest into a rolling cumulative counter and drop them. Expose a TurnMetricsRing type.\n2. Replace files_modified: Vec<String> with HashSet<PathBuf> to make dedup O(1) and remove O(n^2) behavior on long sessions.\n3. Persist turn_metrics to SQLite (memory.rs has a DB already, use it) rather than rewriting the full JSON file every update. This also fixes the atomic_write-on-every-turn cost.\n4. Add a cap test: push 10,000 turns, assert bounded vector size.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:30:33.678383129Z",
+  "updated_at": "2026-04-18T00:30:33.678383129Z"
+}
