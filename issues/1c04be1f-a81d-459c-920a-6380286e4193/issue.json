@@ -1,0 +1,11 @@
+{
+  "uuid": "1c04be1f-a81d-459c-920a-6380286e4193",
+  "display_id": 468,
+  "title": "vdd/mod.rs: pub use confabulation::ConfabulationTracker leaks internal type — only used inside blocking_loop",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Structural Modularity / Encapsulation. Location: src/vdd/mod.rs:21-24 (public re-exports). Violation: ConfabulationTracker is re-exported publicly, but grep shows it is used only inside VddEngine::blocking_loop (line 411) — it is an implementation detail of the blocking mode, not a public abstraction consumers need. Same for VddIteration, AdversaryReview (these are serialization types for session persistence, not library-consumer types). The public re-exports pin the internal data model to the outside world, preventing refactors like splitting VddSession into domain+persistence types. Mandated Refactor: Narrow the pub use list to Finding, FindingStatus, Severity, VddError, VddResult, VddAdvisoryResult, VddBlockingResult, VddEngine — the entry-point types only. Make ConfabulationTracker, VddIteration, AdversaryReview pub(crate).",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:43:21.810654444Z",
+  "updated_at": "2026-04-18T00:43:21.810654444Z"
+}
