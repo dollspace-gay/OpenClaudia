@@ -727,18 +727,16 @@ pub async fn run_subagent(
                 .unwrap_or_else(|| "claude-sonnet-4-6".to_string())
         });
 
-    // Get provider config
+    // Get provider config. `api_key` is `Option<ApiKey>`: an unconfigured
+    // provider yields `None` and `make_api_call` omits the auth header —
+    // previously this was `String::new()` (an empty key sent as
+    // `Bearer <empty>`, which every upstream rejects). See crosslink #256.
     let (base_url, api_key) = app_config
         .providers
         .get(&app_config.proxy.target)
         .map_or_else(
-            || ("https://api.anthropic.com/v1".to_string(), String::new()),
-            |provider_config| {
-                (
-                    provider_config.base_url.clone(),
-                    provider_config.api_key.clone().unwrap_or_default(),
-                )
-            },
+            || ("https://api.anthropic.com/v1".to_string(), None),
+            |provider_config| (provider_config.base_url.clone(), provider_config.api_key.clone()),
         );
 
     // Run the agent loop
@@ -774,7 +772,7 @@ pub async fn run_subagent(
         });
 
         // Make the API call
-        let response = match make_api_call(client, &base_url, &api_key, &request_body).await {
+        let response = match make_api_call(client, &base_url, api_key.as_ref(), &request_body).await {
             Ok(r) => r,
             Err(e) => {
                 BACKGROUND_AGENTS.fail(&agent_id, e.clone());
@@ -913,21 +911,23 @@ pub async fn run_subagent(
     }
 }
 
-/// Make an API call to the LLM provider
+/// Make an API call to the LLM provider.
+///
+/// `api_key` is an optional [`crate::providers::ApiKey`]; when `None` the
+/// auth header is omitted rather than sent empty. See crosslink #256.
 async fn make_api_call(
     client: &Client,
     base_url: &str,
-    api_key: &str,
+    api_key: Option<&crate::providers::ApiKey>,
     request_body: &Value,
 ) -> Result<Value, String> {
     // Determine if this is Anthropic or OpenAI format
     let is_anthropic = base_url.contains("anthropic.com");
 
-    let (endpoint, headers) = if is_anthropic {
+    let (endpoint, mut headers) = if is_anthropic {
         (
             format!("{}/messages", base_url.trim_end_matches('/')),
             vec![
-                ("x-api-key".to_string(), api_key.to_string()),
                 ("anthropic-version".to_string(), "2023-06-01".to_string()),
                 ("content-type".to_string(), "application/json".to_string()),
             ],
@@ -935,12 +935,21 @@ async fn make_api_call(
     } else {
         (
             format!("{}/chat/completions", base_url.trim_end_matches('/')),
-            vec![
-                ("Authorization".to_string(), format!("Bearer {api_key}")),
-                ("Content-type".to_string(), "application/json".to_string()),
-            ],
+            vec![("Content-type".to_string(), "application/json".to_string())],
         )
     };
+
+    // Auth header — unredacted access is confined to `.as_str()`.
+    if let Some(key) = api_key {
+        if is_anthropic {
+            headers.push(("x-api-key".to_string(), key.as_str().to_string()));
+        } else {
+            headers.push((
+                "Authorization".to_string(),
+                format!("Bearer {}", key.as_str()),
+            ));
+        }
+    }
 
     // Transform request for Anthropic if needed
     let body = if is_anthropic {

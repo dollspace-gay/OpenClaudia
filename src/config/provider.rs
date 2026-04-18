@@ -1,11 +1,12 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
-// Re-export redaction/validation helpers from their home next to the
-// `ApiKey` newtype in `providers::api_key`. Keeps existing
-// `crate::config::provider::redact_api_key` call sites working while the
-// newtype itself does the load-bearing work. See crosslink #256.
-pub use crate::providers::api_key::{redact_api_key, validate_api_key, ApiKey};
+// Re-export `ApiKey` so `crate::config::provider::ApiKey` resolves for
+// the ProviderConfig field type declaration below. The free-function
+// redaction/validation helpers live at `crate::providers::api_key` and
+// are not re-exported here — no call site needed them through
+// `config::provider`. See crosslink #256.
+pub use crate::providers::api_key::ApiKey;
 
 /// Thinking/reasoning mode configuration
 #[derive(Debug, Deserialize, Clone)]

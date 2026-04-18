@@ -69,9 +69,11 @@ pub struct VddAdversaryConfig {
     /// Model override for adversary (uses provider default if None)
     #[serde(default)]
     pub model: Option<String>,
-    /// Separate API key for adversary (falls back to provider's key if None)
+    /// Separate API key for adversary (falls back to provider's key if None).
+    /// Uses the [`crate::providers::ApiKey`] newtype so Debug/Display redact
+    /// and CRLF-injection is rejected at config load — see crosslink #256.
     #[serde(default)]
-    pub api_key: Option<String>,
+    pub api_key: Option<crate::providers::ApiKey>,
     /// Temperature for adversary responses (lower = more deterministic critique)
     #[serde(default = "default_adversary_temperature")]
     pub temperature: f32,

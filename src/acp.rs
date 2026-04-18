@@ -127,8 +127,8 @@ pub struct AcpServer {
     messages: Vec<Value>,
     /// Model name
     model: String,
-    /// API key
-    api_key: String,
+    /// API key (redacting newtype — see crosslink #256)
+    api_key: crate::providers::ApiKey,
     /// Request ID counter for server→client requests
     next_request_id: AtomicU64,
     /// Pending responses for server→client requests
@@ -151,7 +151,7 @@ impl AcpServer {
     pub fn new(
         config: AppConfig,
         model: String,
-        api_key: String,
+        api_key: crate::providers::ApiKey,
         stdout_tx: mpsc::UnboundedSender<String>,
     ) -> Self {
         let persist_dir = dirs::data_dir()
@@ -1540,7 +1540,11 @@ struct AcpToolResult {
 ///
 /// # Errors
 /// Returns an error if the server fails to start or encounters an I/O error.
-pub async fn run_acp_server(config: AppConfig, model: String, api_key: String) -> Result<()> {
+pub async fn run_acp_server(
+    config: AppConfig,
+    model: String,
+    api_key: crate::providers::ApiKey,
+) -> Result<()> {
     // Set up stdout writer channel — all writes go through this to avoid interleaving
     let (stdout_tx, mut stdout_rx) = mpsc::unbounded_channel::<String>();
 

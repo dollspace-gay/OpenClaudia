@@ -102,6 +102,26 @@ impl PermissionManager {
         }
     }
 
+    /// Build an explicitly unrestricted manager that allows every tool call.
+    ///
+    /// This is the migration target for call sites that previously passed
+    /// `None` through `Option<&PermissionManager>`: the new strict dispatch
+    /// entry points demand a concrete manager, and constructing
+    /// `PermissionManager::unrestricted()` documents the intent ("allow
+    /// everything") at the call site rather than smuggling it in via a
+    /// missing argument. See crosslink #460.
+    #[must_use]
+    pub fn unrestricted() -> Self {
+        // `enabled = false` short-circuits `check()` to `CheckResult::Allowed`.
+        Self {
+            persisted_rules: Vec::new(),
+            session_rules: Vec::new(),
+            default_allow: Vec::new(),
+            persist_path: PathBuf::new(),
+            enabled: false,
+        }
+    }
+
     /// Check whether a tool invocation is allowed.
     ///
     /// - `tool_name`: e.g. "bash", "`edit_file`", "`write_file`"

@@ -266,43 +266,48 @@ async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
     // Resolve API key (same logic as cmd_chat)
     let mut claude_code_token: Option<String> = None;
 
-    let api_key = if config.proxy.target == "anthropic" && provider.api_key.is_none() {
-        if openclaudia::claude_credentials::has_claude_code_credentials() {
-            match openclaudia::claude_credentials::load_credentials().await {
-                Ok(creds) => {
-                    claude_code_token = Some(creds.access_token);
-                    "claude-code-oauth".to_string()
+    // `api_key` is `Option<ApiKey>` rather than a raw String to keep the
+    // log-safe newtype semantics (crosslink #256). In the OAuth/Claude-Code
+    // path it's `None` — `resolve_headers` ignores it when `claude_code_token`
+    // is provided. Otherwise we require a real key from provider config.
+    let api_key: Option<openclaudia::providers::ApiKey> =
+        if config.proxy.target == "anthropic" && provider.api_key.is_none() {
+            if openclaudia::claude_credentials::has_claude_code_credentials() {
+                match openclaudia::claude_credentials::load_credentials().await {
+                    Ok(creds) => {
+                        claude_code_token = Some(creds.access_token);
+                        None
+                    }
+                    Err(e) => {
+                        eprintln!("Error: Claude Code credentials unusable: {e}");
+                        eprintln!(
+                            "Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY."
+                        );
+                        return Ok(());
+                    }
                 }
-                Err(e) => {
-                    eprintln!("Error: Claude Code credentials unusable: {e}");
-                    eprintln!(
-                        "Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY."
-                    );
-                    return Ok(());
-                }
+            } else {
+                eprintln!("No API key configured for Anthropic.");
+                eprintln!("Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY.");
+                return Ok(());
             }
+        } else if let Some(k) = &provider.api_key {
+            Some(k.clone())
         } else {
-            eprintln!("No API key configured for Anthropic.");
-            eprintln!("Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY.");
+            let env_var = match config.proxy.target.as_str() {
+                "openai" => "OPENAI_API_KEY",
+                "google" => "GOOGLE_API_KEY",
+                "zai" => "ZAI_API_KEY",
+                "deepseek" => "DEEPSEEK_API_KEY",
+                "qwen" => "QWEN_API_KEY",
+                _ => "API_KEY",
+            };
+            eprintln!(
+                "No API key configured for '{}'. Set {} or add to config.",
+                config.proxy.target, env_var
+            );
             return Ok(());
-        }
-    } else if let Some(k) = &provider.api_key {
-        k.clone()
-    } else {
-        let env_var = match config.proxy.target.as_str() {
-            "openai" => "OPENAI_API_KEY",
-            "google" => "GOOGLE_API_KEY",
-            "zai" => "ZAI_API_KEY",
-            "deepseek" => "DEEPSEEK_API_KEY",
-            "qwen" => "QWEN_API_KEY",
-            _ => "API_KEY",
         };
-        eprintln!(
-            "No API key configured for '{}'. Set {} or add to config.",
-            config.proxy.target, env_var
-        );
-        return Ok(());
-    };
 
     let model = model_override
         .or_else(|| provider.model.clone())
@@ -327,7 +332,7 @@ async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
     // Resolve headers
     let headers = openclaudia::pipeline::resolve_headers(
         &config.proxy.target,
-        &api_key,
+        api_key.as_ref(),
         claude_code_token.as_deref(),
         &provider
             .headers
@@ -587,51 +592,53 @@ async fn cmd_chat(
     // 2. API key from config/env
     let mut claude_code_token: Option<String> = None;
 
-    let api_key = if config.proxy.target == "anthropic" && provider.api_key.is_none() {
-        // No API key — try Claude Code credentials first
-        if openclaudia::claude_credentials::has_claude_code_credentials() {
-            match openclaudia::claude_credentials::load_credentials().await {
-                Ok(creds) => {
-                    eprintln!(
-                        "✓ Authenticated via Claude Code ({}, {})",
-                        creds.subscription_type.as_deref().unwrap_or("unknown"),
-                        creds.rate_limit_tier.as_deref().unwrap_or("default"),
-                    );
-                    claude_code_token = Some(creds.access_token);
-                    "claude-code-oauth".to_string()
+    // `api_key` is `Option<ApiKey>` rather than a raw String for log-safe
+    // newtype semantics (crosslink #256). `None` in the OAuth path, where
+    // the Claude-Code token supplies auth instead.
+    let api_key: Option<openclaudia::providers::ApiKey> =
+        if config.proxy.target == "anthropic" && provider.api_key.is_none() {
+            // No API key — try Claude Code credentials first
+            if openclaudia::claude_credentials::has_claude_code_credentials() {
+                match openclaudia::claude_credentials::load_credentials().await {
+                    Ok(creds) => {
+                        eprintln!(
+                            "✓ Authenticated via Claude Code ({}, {})",
+                            creds.subscription_type.as_deref().unwrap_or("unknown"),
+                            creds.rate_limit_tier.as_deref().unwrap_or("default"),
+                        );
+                        claude_code_token = Some(creds.access_token);
+                        None
+                    }
+                    Err(e) => {
+                        eprintln!("Error: Claude Code credentials unusable: {e}");
+                        eprintln!(
+                            "Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY."
+                        );
+                        return Ok(());
+                    }
                 }
-                Err(e) => {
-                    eprintln!("Error: Claude Code credentials unusable: {e}");
-                    eprintln!(
-                        "Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY."
-                    );
-                    return Ok(());
-                }
+            } else {
+                eprintln!("No API key configured for Anthropic.");
+                eprintln!("Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY.");
+                return Ok(());
             }
+        } else if let Some(k) = &provider.api_key {
+            Some(k.clone())
         } else {
-            eprintln!("No API key configured for Anthropic.");
-            eprintln!("Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY.");
+            let env_var = match config.proxy.target.as_str() {
+                "openai" => "OPENAI_API_KEY",
+                "google" => "GOOGLE_API_KEY",
+                "zai" => "ZAI_API_KEY",
+                "deepseek" => "DEEPSEEK_API_KEY",
+                "qwen" => "QWEN_API_KEY",
+                _ => "API_KEY",
+            };
+            eprintln!(
+                "No API key configured for '{}'. Set {} or add to config.",
+                config.proxy.target, env_var
+            );
             return Ok(());
-        }
-    } else if let Some(k) = &provider.api_key {
-        // API key configured - use it directly
-        k.clone()
-    } else {
-        // Non-Anthropic provider with no API key
-        let env_var = match config.proxy.target.as_str() {
-            "openai" => "OPENAI_API_KEY",
-            "google" => "GOOGLE_API_KEY",
-            "zai" => "ZAI_API_KEY",
-            "deepseek" => "DEEPSEEK_API_KEY",
-            "qwen" => "QWEN_API_KEY",
-            _ => "API_KEY",
         };
-        eprintln!(
-            "No API key configured for '{}'. Set {} or add to config.",
-            config.proxy.target, env_var
-        );
-        return Ok(());
-    };
 
     // Determine model
     let mut model = model_override
@@ -1483,8 +1490,13 @@ async fn cmd_chat(
                 let headers: Vec<(String, String)> = if let Some(ref token) = claude_code_token {
                     // Claude Code OAuth: Bearer token directly to Anthropic API
                     openclaudia::claude_credentials::get_oauth_headers(token)
+                } else if let Some(ref key) = api_key {
+                    adapter.get_headers(key)
                 } else {
-                    adapter.get_headers(&api_key)
+                    // Neither OAuth token nor api_key — earlier validation
+                    // guarantees this is unreachable, but we handle it
+                    // defensively rather than panicking.
+                    Vec::new()
                 };
 
                 // Merge in any custom headers from provider config
@@ -1744,10 +1756,18 @@ async fn cmd_chat(
                                                     }),
                                                 );
 
+                                                // Permission manager: the interactive gate above
+                                                // has already authorized this tool call at the
+                                                // UX layer; the library-level gate is threaded
+                                                // as `None` here to preserve legacy fail-open
+                                                // semantics. Tracked by crosslink qa-followup-460
+                                                // (CLI path needs a PermissionManager plumbed
+                                                // through to replace the interactive gate).
                                                 let result = if let Some(ref db) = memory_db {
                                                     tools::execute_tool_with_memory(
                                                         tool_call,
                                                         Some(db),
+                                                        None,
                                                     )
                                                 } else {
                                                     tools::execute_tool(tool_call)
@@ -1975,7 +1995,7 @@ async fn cmd_chat(
                                                     &full_content,
                                                     user_task,
                                                     &config.proxy.target,
-                                                    &api_key,
+                                                    api_key.as_ref(),
                                                 )
                                                 .await
                                             {
@@ -2461,10 +2481,13 @@ async fn cmd_chat(
                                                     }),
                                                 );
 
+                                                // See note at the first execute_tool_with_memory
+                                                // call site above; tracked by qa-followup-460.
                                                 let result = if let Some(ref db) = memory_db {
                                                     tools::execute_tool_with_memory(
                                                         tool_call,
                                                         Some(db),
+                                                        None,
                                                     )
                                                 } else {
                                                     tools::execute_tool(tool_call)
@@ -2999,7 +3022,7 @@ async fn cmd_chat(
                                                 &full_content,
                                                 user_task,
                                                 &config.proxy.target,
-                                                &api_key,
+                                                api_key.as_ref(),
                                             )
                                             .await
                                         {
@@ -3181,9 +3204,14 @@ async fn cmd_chat(
                                             tool_call.function.name
                                         );
 
-                                        // Execute tool
+                                        // Execute tool. See note at the first call site;
+                                        // tracked by qa-followup-460.
                                         let result = if let Some(ref db) = memory_db {
-                                            tools::execute_tool_with_memory(tool_call, Some(db))
+                                            tools::execute_tool_with_memory(
+                                                tool_call,
+                                                Some(db),
+                                                None,
+                                            )
                                         } else {
                                             tools::execute_tool(tool_call)
                                         };
@@ -3543,7 +3571,7 @@ async fn cmd_chat(
                                                     vdd_content,
                                                     user_task,
                                                     &config.proxy.target,
-                                                    &api_key,
+                                                    api_key.as_ref(),
                                                 )
                                                 .await
                                             {

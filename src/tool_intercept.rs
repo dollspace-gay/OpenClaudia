@@ -606,9 +606,13 @@ pub fn execute_intercepted_tools(
 
         println!("\n\x1b[36m⚡ Running {} locally...\x1b[0m", tool.name);
 
+        // Permission manager: intercepted tool calls come from a trusted
+        // upstream — the model chose to call them and the proxy intercepted
+        // for local execution. `None` preserves legacy fail-open; tracked
+        // by crosslink qa-followup-460.
         let result = memory_db.map_or_else(
             || crate::tools::execute_tool(&tool_call),
-            |db| crate::tools::execute_tool_with_memory(&tool_call, Some(db)),
+            |db| crate::tools::execute_tool_with_memory(&tool_call, Some(db), None),
         );
 
         // Show preview

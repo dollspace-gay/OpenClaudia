@@ -29,7 +29,7 @@ use crate::hooks::{
 use crate::mcp::McpManager;
 use crate::oauth::OAuthStore;
 use crate::plugins::PluginManager;
-use crate::providers::get_adapter;
+use crate::providers::{get_adapter, ApiKey};
 use crate::rules::{extract_extensions_from_tool_input, RulesEngine};
 use crate::session::{get_session_context, SessionManager, TokenUsage};
 use crate::vdd::{VddEngine, VddResult};
@@ -830,7 +830,7 @@ async fn proxy_chat_completions(
             if let Ok(response_json) = serde_json::from_slice::<Value>(&response_bytes) {
                 let engine = vdd_engine.lock().await;
                 match engine
-                    .process_response(&response_json, &request, &provider_name, &api_key)
+                    .process_response(&response_json, &request, &provider_name, Some(&api_key))
                     .await
                 {
                     Ok(VddResult::Advisory(advisory)) => {
@@ -1194,9 +1194,16 @@ fn strip_cache_control_ttl(value: &mut Value) {
     }
 }
 
-/// Extract API key from Authorization header
-fn extract_api_key(headers: &HeaderMap) -> Option<String> {
-    headers
+/// Extract API key from `Authorization` or `x-api-key` header.
+///
+/// Returns `Some(ApiKey)` if the header value parses AND passes
+/// [`ApiKey::try_from_string`] validation (non-empty, ASCII, no control
+/// chars). A header that fails validation is silently dropped to `None`
+/// rather than returning an error — the header may be someone else's
+/// garbage (malformed client, stale cookie) and the caller's fallback to
+/// `provider.api_key` is the correct recovery. See crosslink #256.
+fn extract_api_key(headers: &HeaderMap) -> Option<ApiKey> {
+    let raw = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
@@ -1207,7 +1214,9 @@ fn extract_api_key(headers: &HeaderMap) -> Option<String> {
                 .get("x-api-key")
                 .and_then(|v| v.to_str().ok())
                 .map(std::string::ToString::to_string)
-        })
+        })?;
+
+    ApiKey::try_from_string(raw).ok()
 }
 
 /// Convert reqwest response to axum response, also extracting token usage if present
@@ -1367,11 +1376,14 @@ pub fn extract_usage_from_sse_event(json: &Value) -> Option<TokenUsage> {
 /// the stream is considered stalled.
 pub const SSE_STREAM_TIMEOUT_SECS: u64 = 30;
 
-/// Forward request to upstream provider
+/// Forward request to upstream provider.
+///
+/// `api_key` is an [`ApiKey`] newtype — the raw secret only leaves it at
+/// the `.as_str()` calls in this function. See crosslink #256.
 async fn forward_to_provider<T: Serialize + Sync>(
     client: &Client,
     provider: &ProviderConfig,
-    api_key: &str,
+    api_key: &ApiKey,
     path: &str,
     body: &T,
     is_stream: bool,
@@ -1381,13 +1393,14 @@ async fn forward_to_provider<T: Serialize + Sync>(
 
     let mut req = client.post(&url).json(body);
 
-    // Set provider-specific auth headers
+    // Set provider-specific auth headers. `.as_str()` is the audited
+    // boundary where the raw key leaves the ApiKey newtype.
     if provider.base_url.contains("anthropic") {
         req = req
-            .header("x-api-key", api_key)
+            .header("x-api-key", api_key.as_str())
             .header("anthropic-version", "2023-06-01");
     } else {
-        req = req.header(header::AUTHORIZATION, format!("Bearer {api_key}"));
+        req = req.header(header::AUTHORIZATION, format!("Bearer {}", api_key.as_str()));
     }
 
     // Add any custom headers from config
@@ -1399,18 +1412,21 @@ async fn forward_to_provider<T: Serialize + Sync>(
     convert_response(response).await
 }
 
-/// Set authentication header based on provider type
+/// Set authentication header based on provider type.
+///
+/// Takes `&ApiKey` so the raw secret never escapes the newtype except at
+/// the `.as_str()` call within. See crosslink #256.
 fn set_auth_header(
     mut req: reqwest::RequestBuilder,
     provider_name: &str,
-    api_key: &str,
+    api_key: &ApiKey,
 ) -> reqwest::RequestBuilder {
     if provider_name == "anthropic" {
         req = req
-            .header("x-api-key", api_key)
+            .header("x-api-key", api_key.as_str())
             .header("anthropic-version", "2023-06-01");
     } else {
-        req = req.header(header::AUTHORIZATION, format!("Bearer {api_key}"));
+        req = req.header(header::AUTHORIZATION, format!("Bearer {}", api_key.as_str()));
     }
     req
 }
@@ -1420,7 +1436,7 @@ fn set_auth_header(
 async fn forward_to_provider_raw_reqwest(
     client: &Client,
     provider: &ProviderConfig,
-    _api_key: &str,
+    _api_key: &ApiKey,
     path: &str,
     body: &Value,
     is_stream: bool,

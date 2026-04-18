@@ -788,19 +788,81 @@ pub fn get_tool_definitions() -> Value {
     ])
 }
 
-/// Execute a tool call and return the result (non-stateful mode)
+/// Execute a tool call and return the result (non-stateful mode).
 ///
-/// This is a convenience wrapper around `execute_tool_with_memory` for
-/// when memory tools are not needed. Memory-related tool calls will
-/// return an error indicating stateful mode is required.
+/// Legacy back-compat entry: no [`PermissionManager`] supplied. The permission
+/// gate is still consulted internally — it will bypass fail-open with a
+/// structured `tracing::debug!` (and a one-time `tracing::warn!` per
+/// session — see [`warn_missing_permission_manager_once`]). New call sites
+/// should migrate to [`execute_tool_with_permission_required`] which takes
+/// `&PermissionManager` by reference. See crosslink #460.
 #[must_use]
 pub fn execute_tool(tool_call: &ToolCall) -> ToolResult {
-    execute_tool_with_memory(tool_call, None)
+    execute_tool_with_memory(tool_call, None, None)
 }
 
-/// Execute a tool call (`memory_db` kept for API compatibility with `execute_tool_full`)
+/// Warn exactly once per process when a dispatch entry point is called
+/// without a [`PermissionManager`]. This keeps logs from drowning while
+/// still surfacing the migration target for call sites that haven't yet
+/// threaded a manager through. See crosslink #460.
+fn warn_missing_permission_manager_once(entry_point: &'static str) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            entry_point,
+            "{entry_point} called without PermissionManager. Legacy fail-open posture preserved \
+             for back-compat. New call sites should use execute_tool_with_permission_required(). \
+             See crosslink #460."
+        );
+    }
+}
+
+/// Gate a tool call through the permission system and return either a
+/// ready-to-return [`ToolResult`] (for Denied / NeedsPrompt in legacy
+/// string form) or `None` to signal "continue with normal dispatch".
+///
+/// This is the internal choke point used by every `execute_tool*` dispatch
+/// entry point. It guarantees that no dispatch body runs without the
+/// permission check having been consulted first. See crosslink #460.
+fn gate_or_legacy_result(
+    tool_call: &ToolCall,
+    permission_mgr: Option<&PermissionManager>,
+) -> Option<ToolResult> {
+    match check_tool_permission_outcome(tool_call, permission_mgr) {
+        PermissionOutcome::Allowed => None,
+        PermissionOutcome::Denied(result) => Some(result),
+        PermissionOutcome::NeedsPrompt {
+            tool_call_id,
+            tool,
+            target,
+        } => Some(ToolResult {
+            tool_call_id,
+            content: format!("PERMISSION_PROMPT: Allow {tool} on '{target}'? [y/n/a(lways)]"),
+            is_error: true,
+        }),
+    }
+}
+
+/// Execute a tool call with optional memory and permission manager.
+///
+/// The permission gate runs BEFORE the tool body; passing `None` preserves
+/// the historical fail-open posture for back-compat and emits a one-time
+/// migration warning. New callers should prefer
+/// [`execute_tool_with_permission_required`]. See crosslink #460.
 #[must_use]
-pub fn execute_tool_with_memory(tool_call: &ToolCall, _memory_db: Option<&MemoryDb>) -> ToolResult {
+pub fn execute_tool_with_memory(
+    tool_call: &ToolCall,
+    _memory_db: Option<&MemoryDb>,
+    permission_mgr: Option<&PermissionManager>,
+) -> ToolResult {
+    if permission_mgr.is_none() {
+        warn_missing_permission_manager_once("execute_tool_with_memory");
+    }
+    if let Some(gated) = gate_or_legacy_result(tool_call, permission_mgr) {
+        return gated;
+    }
+
     let args: HashMap<String, Value> =
         serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
 
@@ -862,13 +924,25 @@ pub fn execute_tool_with_memory(tool_call: &ToolCall, _memory_db: Option<&Memory
     }
 }
 
-/// Execute a tool call with full context (memory + config for subagents)
+/// Execute a tool call with full context (memory + config for subagents).
+///
+/// The permission gate runs BEFORE the tool body. Passing `None` for
+/// `permission_mgr` preserves the historical fail-open posture and emits
+/// a one-time migration warning. See crosslink #460.
 #[must_use]
 pub fn execute_tool_full(
     tool_call: &ToolCall,
     memory_db: Option<&MemoryDb>,
     app_config: Option<&AppConfig>,
+    permission_mgr: Option<&PermissionManager>,
 ) -> ToolResult {
+    if permission_mgr.is_none() {
+        warn_missing_permission_manager_once("execute_tool_full");
+    }
+    if let Some(gated) = gate_or_legacy_result(tool_call, permission_mgr) {
+        return gated;
+    }
+
     let args: HashMap<String, Value> =
         serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
 
@@ -884,9 +958,12 @@ pub fn execute_tool_full(
             |config| subagent::execute_task_tool(&args, config),
         ),
         "agent_output" => subagent::execute_agent_output_tool(&args),
-        // For all other tools, delegate to the existing function
+        // For all other tools, delegate to the existing function.
+        // The permission check has already run at the top of this function;
+        // the inner `execute_tool_with_memory` call will re-consult the gate
+        // with the same manager — Allowed is idempotent, so this is safe.
         _ => {
-            let result = execute_tool_with_memory(tool_call, memory_db);
+            let result = execute_tool_with_memory(tool_call, memory_db, permission_mgr);
             return result;
         }
     };
@@ -968,55 +1045,178 @@ pub fn parse_exit_plan_mode_prompts(content: &str) -> Vec<crate::session::Allowe
 // Permission-Checked Tool Execution
 // =========================================================================
 
-/// Check permissions before executing a tool. Returns a `ToolResult` with an
-/// error if permission is denied, or None if the tool should proceed.
+/// Structured outcome of a permission check, suitable for typed dispatch
+/// at the caller. Replaces the previous stringly-typed
+/// `PERMISSION_PROMPT: ...` signal that required callers to regex-parse
+/// a tool result's content string to know a user prompt was required.
+///
+/// See crosslink #460.
+#[derive(Debug, Clone)]
+pub enum PermissionOutcome {
+    /// Tool may proceed.
+    Allowed,
+    /// Tool is denied; `ToolResult` is ready to return to the model.
+    Denied(ToolResult),
+    /// Caller must interactively prompt the user before proceeding.
+    /// `tool_call_id` is preserved so the final result can be stitched back
+    /// onto the originating call.
+    NeedsPrompt {
+        tool_call_id: String,
+        tool: String,
+        target: String,
+    },
+}
+
+/// Check permissions before executing a tool and return a structured outcome.
+///
+/// **Fail-open posture when `permission_mgr` is None** — matches the library
+/// contract today; callers that want strict "no manager means deny" should
+/// use [`check_tool_permission_strict`]. A disabled manager (`is_enabled()`
+/// returns false) is also allowed — operators opted out explicitly.
+///
+/// Emits a structured tracing event at every decision point (allowed,
+/// denied, needs-prompt, bypass) so the audit trail is queryable without
+/// re-running the session. See crosslink #460 mandated point 4.
 #[must_use]
-pub fn check_tool_permission(
+pub fn check_tool_permission_outcome(
     tool_call: &ToolCall,
     permission_mgr: Option<&PermissionManager>,
-) -> Option<ToolResult> {
-    let mgr = match permission_mgr {
-        Some(m) if m.is_enabled() => m,
-        _ => return None, // No permission manager or disabled -- allow everything
+) -> PermissionOutcome {
+    let tool_name = tool_call.function.name.as_str();
+    let Some(mgr) = permission_mgr else {
+        tracing::debug!(
+            tool = %tool_name,
+            "permission check bypassed: no PermissionManager supplied by caller"
+        );
+        return PermissionOutcome::Allowed;
     };
+    if !mgr.is_enabled() {
+        tracing::debug!(
+            tool = %tool_name,
+            "permission check bypassed: PermissionManager is disabled"
+        );
+        return PermissionOutcome::Allowed;
+    }
 
     let args: Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
 
-    match mgr.check(&tool_call.function.name, &args) {
-        CheckResult::Allowed => None, // Proceed with execution
-        CheckResult::Denied(reason) => Some(ToolResult {
-            tool_call_id: tool_call.id.clone(),
-            content: format!("Permission denied: {reason}"),
-            is_error: true,
-        }),
-        CheckResult::NeedsPrompt { tool, target } => {
-            // In the library layer, we can't prompt the user directly.
-            // We return a structured message that the caller (main.rs / TUI)
-            // can intercept to show a prompt.
-            Some(ToolResult {
+    match mgr.check(tool_name, &args) {
+        CheckResult::Allowed => {
+            tracing::debug!(tool = %tool_name, "permission allowed");
+            PermissionOutcome::Allowed
+        }
+        CheckResult::Denied(reason) => {
+            tracing::warn!(
+                tool = %tool_name,
+                reason = %reason,
+                "permission DENIED"
+            );
+            PermissionOutcome::Denied(ToolResult {
                 tool_call_id: tool_call.id.clone(),
-                content: format!("PERMISSION_PROMPT: Allow {tool} on '{target}'? [y/n/a(lways)]"),
+                content: format!("Permission denied: {reason}"),
+                is_error: true,
+            })
+        }
+        CheckResult::NeedsPrompt { tool, target } => {
+            tracing::info!(
+                tool = %tool,
+                target = %target,
+                "permission needs user prompt"
+            );
+            PermissionOutcome::NeedsPrompt {
+                tool_call_id: tool_call.id.clone(),
+                tool,
+                target,
+            }
+        }
+    }
+}
+
+/// Strict variant that fails closed when no permission manager is
+/// provided. A disabled manager is treated as an **explicit** allow-all
+/// override (that's the semantic meaning of
+/// [`PermissionManager::unrestricted`]): the caller constructed a concrete
+/// manager and chose disabled-posture deliberately, so the strict check
+/// defers to the normal outcome path which returns `Allowed` on disabled.
+///
+/// Use this from new dispatch paths that want certainty that no tool call
+/// can bypass the gate due to a forgotten argument. See crosslink #460
+/// mandated point 1.
+#[must_use]
+pub fn check_tool_permission_strict(
+    tool_call: &ToolCall,
+    permission_mgr: Option<&PermissionManager>,
+) -> PermissionOutcome {
+    let tool_name = tool_call.function.name.as_str();
+    match permission_mgr {
+        Some(m) => check_tool_permission_outcome(tool_call, Some(m)),
+        None => {
+            tracing::warn!(
+                tool = %tool_name,
+                "strict permission check DENIED: no PermissionManager supplied"
+            );
+            PermissionOutcome::Denied(ToolResult {
+                tool_call_id: tool_call.id.clone(),
+                content: format!(
+                    "Permission denied: no permission manager is configured for tool '{tool_name}'. \
+                     Construct PermissionManager::unrestricted() if you explicitly want allow-all."
+                ),
                 is_error: true,
             })
         }
     }
 }
 
+/// Back-compat wrapper. Returns `None` on Allowed, `Some(ToolResult)` on
+/// Denied, and a `PERMISSION_PROMPT:` stringly-typed result on NeedsPrompt.
+/// New code should call [`check_tool_permission_outcome`] and switch on the
+/// enum instead.
+#[must_use]
+pub fn check_tool_permission(
+    tool_call: &ToolCall,
+    permission_mgr: Option<&PermissionManager>,
+) -> Option<ToolResult> {
+    match check_tool_permission_outcome(tool_call, permission_mgr) {
+        PermissionOutcome::Allowed => None,
+        PermissionOutcome::Denied(result) => Some(result),
+        PermissionOutcome::NeedsPrompt {
+            tool_call_id,
+            tool,
+            target,
+        } => Some(ToolResult {
+            tool_call_id,
+            content: format!("PERMISSION_PROMPT: Allow {tool} on '{target}'? [y/n/a(lways)]"),
+            is_error: true,
+        }),
+    }
+}
+
 /// Execute a tool call with task manager support.
 ///
 /// This is the highest-level execution function that handles:
-/// - Permission checking (via the caller using `check_tool_permission`)
+/// - Permission checking (internal; runs BEFORE any tool body)
 /// - Task management tools (`task_create`, `task_update`, `task_get`, `task_list`)
 /// - Subagent tools (via config)
 /// - Memory tools (via `memory_db`)
 /// - All standard tools
+///
+/// Passing `None` for `permission_mgr` preserves the historical fail-open
+/// posture and emits a one-time migration warning. See crosslink #460.
 #[must_use]
 pub fn execute_tool_with_tasks(
     tool_call: &ToolCall,
     memory_db: Option<&MemoryDb>,
     app_config: Option<&AppConfig>,
     task_mgr: Option<&mut TaskManager>,
+    permission_mgr: Option<&PermissionManager>,
 ) -> ToolResult {
+    if permission_mgr.is_none() {
+        warn_missing_permission_manager_once("execute_tool_with_tasks");
+    }
+    if let Some(gated) = gate_or_legacy_result(tool_call, permission_mgr) {
+        return gated;
+    }
+
     let args: HashMap<String, Value> =
         serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
 
@@ -1085,8 +1285,110 @@ pub fn execute_tool_with_tasks(
         _ => {}
     }
 
-    // Fall through to existing execution path
-    execute_tool_full(tool_call, memory_db, app_config)
+    // Fall through to existing execution path. Gate was already consulted at
+    // the top of this function; re-invoking it inside `execute_tool_full`
+    // with the same manager is idempotent (Allowed stays Allowed).
+    execute_tool_full(tool_call, memory_db, app_config, permission_mgr)
+}
+
+/// New canonical dispatch: takes a required [`PermissionManager`] by
+/// reference and uses the strict fail-closed check. Prefer this in all new
+/// code. If you explicitly want "allow every tool call", construct
+/// [`PermissionManager::unrestricted`] at the call site — the intent is
+/// then documented in source, not smuggled via a missing argument. See
+/// crosslink #460 mandated point 1.
+#[must_use]
+pub fn execute_tool_with_permission_required(
+    tool_call: &ToolCall,
+    memory_db: Option<&MemoryDb>,
+    app_config: Option<&AppConfig>,
+    task_mgr: Option<&mut TaskManager>,
+    permission_mgr: &PermissionManager,
+) -> ToolResult {
+    // Strict gate: no Option, no bypass path.
+    match check_tool_permission_strict(tool_call, Some(permission_mgr)) {
+        PermissionOutcome::Denied(result) => return result,
+        PermissionOutcome::NeedsPrompt {
+            tool_call_id,
+            tool,
+            target,
+        } => {
+            return ToolResult {
+                tool_call_id,
+                content: format!(
+                    "PERMISSION_PROMPT: Allow {tool} on '{target}'? [y/n/a(lways)]"
+                ),
+                is_error: true,
+            };
+        }
+        PermissionOutcome::Allowed => {}
+    }
+    // Gate has already succeeded; delegate to the legacy path. We pass the
+    // same manager in so the inner re-check is a no-op fast path rather
+    // than a fail-open None.
+    execute_tool_with_tasks(
+        tool_call,
+        memory_db,
+        app_config,
+        task_mgr,
+        Some(permission_mgr),
+    )
+}
+
+/// Typed-outcome dispatch: runs the permission gate, executes the tool
+/// body on Allowed, and returns a structured [`ExecutionOutcome`] instead
+/// of a stringly-typed `PERMISSION_PROMPT:` message on NeedsPrompt. New
+/// call sites that want to interactively handle the prompt path should
+/// use this. See crosslink #460 mandated point 3.
+#[must_use]
+pub fn execute_tool_gated(
+    tool_call: &ToolCall,
+    memory_db: Option<&MemoryDb>,
+    app_config: Option<&AppConfig>,
+    task_mgr: Option<&mut TaskManager>,
+    permission_mgr: Option<&PermissionManager>,
+) -> ExecutionOutcome {
+    match check_tool_permission_outcome(tool_call, permission_mgr) {
+        PermissionOutcome::Denied(result) => ExecutionOutcome::Result(result),
+        PermissionOutcome::NeedsPrompt {
+            tool_call_id,
+            tool,
+            target,
+        } => ExecutionOutcome::NeedsPrompt {
+            tool_call_id,
+            tool,
+            target,
+        },
+        PermissionOutcome::Allowed => {
+            // Gate already succeeded; delegate. Thread the manager through
+            // so the nested re-check is a fast-path Allowed rather than a
+            // fail-open None + migration warning.
+            let result =
+                execute_tool_with_tasks(tool_call, memory_db, app_config, task_mgr, permission_mgr);
+            ExecutionOutcome::Result(result)
+        }
+    }
+}
+
+/// Structured outcome of a gated dispatch. Either the tool ran (or was
+/// denied and the denial `ToolResult` is returned to the model), or the
+/// caller must prompt the user interactively and retry.
+///
+/// Replaces the stringly-typed `PERMISSION_PROMPT:` content signal.
+/// See crosslink #460 mandated point 3.
+#[derive(Debug, Clone)]
+pub enum ExecutionOutcome {
+    /// Tool completed (allowed path) or was denied (rule-denied path).
+    /// In both cases the `ToolResult` is ready to hand back to the model.
+    Result(ToolResult),
+    /// No rule matched; the caller must interactively prompt the user and
+    /// then retry the dispatch (typically after recording the user's
+    /// decision on the `PermissionManager`).
+    NeedsPrompt {
+        tool_call_id: String,
+        tool: String,
+        target: String,
+    },
 }
 
 #[cfg(test)]
@@ -1914,7 +2216,246 @@ mod tests {
                 arguments: r#"{"command": "ls"}"#.to_string(),
             },
         };
-        // No permission manager -- should return None (allow)
+        // No permission manager -- should return None (allow) in legacy fail-open mode
         assert!(check_tool_permission(&tool_call, None).is_none());
+    }
+
+    // --- Regression tests for crosslink #460 ---
+
+    #[test]
+    fn strict_permission_denies_when_manager_absent() {
+        let tool_call = ToolCall {
+            id: "call_1".to_string(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "bash".to_string(),
+                arguments: r#"{"command": "ls"}"#.to_string(),
+            },
+        };
+        match check_tool_permission_strict(&tool_call, None) {
+            PermissionOutcome::Denied(r) => {
+                assert!(r.is_error);
+                assert!(r.content.contains("no permission manager"));
+            }
+            other => panic!("expected Denied, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn strict_permission_allows_when_manager_is_explicitly_disabled() {
+        // Under crosslink #460's refined contract, an explicitly disabled
+        // PermissionManager is an explicit "allow all" override rather than
+        // a reason to deny. The strict helper only denies when the caller
+        // supplied NO manager at all (the true bypass risk).
+        let tool_call = ToolCall {
+            id: "call_1".to_string(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "bash".to_string(),
+                arguments: r#"{"command": "ls"}"#.to_string(),
+            },
+        };
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mgr = PermissionManager::new(tmp.path().join("p.json"), false, vec![]);
+        match check_tool_permission_strict(&tool_call, Some(&mgr)) {
+            PermissionOutcome::Allowed => {}
+            other => panic!(
+                "expected Allowed for explicitly-disabled (unrestricted) mgr, got {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn outcome_enum_allowed_for_enabled_manager_matching_rule() {
+        let tool_call = ToolCall {
+            id: "call_1".to_string(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "bash".to_string(),
+                arguments: r#"{"command": "echo hi"}"#.to_string(),
+            },
+        };
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mgr =
+            PermissionManager::new(tmp.path().join("p.json"), true, vec!["echo *".to_string()]);
+        match check_tool_permission_outcome(&tool_call, Some(&mgr)) {
+            PermissionOutcome::Allowed => {}
+            other => panic!("expected Allowed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn outcome_enum_needs_prompt_when_no_rule_matches() {
+        let tool_call = ToolCall {
+            id: "call_1".to_string(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "bash".to_string(),
+                arguments: r#"{"command": "rm -rf ./foo"}"#.to_string(),
+            },
+        };
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mgr = PermissionManager::new(tmp.path().join("p.json"), true, vec![]);
+        match check_tool_permission_outcome(&tool_call, Some(&mgr)) {
+            PermissionOutcome::NeedsPrompt {
+                tool_call_id, tool, ..
+            } => {
+                assert_eq!(tool_call_id, "call_1");
+                assert_eq!(tool, "Bash");
+            }
+            other => panic!("expected NeedsPrompt, got {other:?}"),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Gated-dispatch tests — crosslink #460 mandated point 2.
+    // ------------------------------------------------------------------
+
+    /// Build a permission manager with a session rule that denies every
+    /// bash invocation. Used to prove the gated dispatch short-circuits
+    /// before the tool body runs.
+    fn deny_all_bash_manager() -> (PermissionManager, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut mgr = PermissionManager::new(tmp.path().join("p.json"), true, vec![]);
+        mgr.add_session_rule(crate::permissions::PermissionRule {
+            tool: "Bash".to_string(),
+            pattern: "*".to_string(),
+            decision: crate::permissions::PermissionDecision::Deny,
+        });
+        (mgr, tmp)
+    }
+
+    #[test]
+    fn execute_tool_gated_denies_when_rule_denies() {
+        // A bash command that WOULD have side-effects if it ran; the rule
+        // denies it, and we assert no ToolResult from the body leaks out.
+        let tool_call = ToolCall {
+            id: "gated_deny_1".to_string(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "bash".to_string(),
+                arguments: r#"{"command": "echo SHOULD_NOT_RUN"}"#.to_string(),
+            },
+        };
+        let (mgr, _tmp) = deny_all_bash_manager();
+        match execute_tool_gated(&tool_call, None, None, None, Some(&mgr)) {
+            ExecutionOutcome::Result(r) => {
+                assert!(r.is_error, "denial should mark the result as error");
+                assert!(
+                    r.content.to_lowercase().contains("denied"),
+                    "expected 'denied' in content, got: {}",
+                    r.content
+                );
+                assert!(
+                    !r.content.contains("SHOULD_NOT_RUN"),
+                    "tool body ran despite denial — gate bypassed: {}",
+                    r.content
+                );
+            }
+            other => panic!("expected Result(Denied), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn execute_tool_gated_allows_when_rule_allows() {
+        let tool_call = ToolCall {
+            id: "gated_allow_1".to_string(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "bash".to_string(),
+                arguments: r#"{"command": "echo HELLO_GATED"}"#.to_string(),
+            },
+        };
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mgr =
+            PermissionManager::new(tmp.path().join("p.json"), true, vec!["echo *".to_string()]);
+        match execute_tool_gated(&tool_call, None, None, None, Some(&mgr)) {
+            ExecutionOutcome::Result(r) => {
+                assert!(
+                    !r.is_error,
+                    "allowed bash echo should not error; content={}",
+                    r.content
+                );
+                assert!(
+                    r.content.contains("HELLO_GATED"),
+                    "expected tool body to have run; got: {}",
+                    r.content
+                );
+            }
+            other => panic!("expected Result(Allowed-executed), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn execute_tool_gated_needs_prompt_returns_structured_outcome() {
+        let tool_call = ToolCall {
+            id: "gated_prompt_1".to_string(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "bash".to_string(),
+                arguments: r#"{"command": "rm -rf ./foo"}"#.to_string(),
+            },
+        };
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // enabled manager, no matching rule -> NeedsPrompt
+        let mgr = PermissionManager::new(tmp.path().join("p.json"), true, vec![]);
+        match execute_tool_gated(&tool_call, None, None, None, Some(&mgr)) {
+            ExecutionOutcome::NeedsPrompt {
+                tool_call_id,
+                tool,
+                target,
+            } => {
+                assert_eq!(tool_call_id, "gated_prompt_1");
+                assert_eq!(tool, "Bash");
+                assert!(
+                    target.contains("rm"),
+                    "target should carry the command, got: {target}"
+                );
+            }
+            ExecutionOutcome::Result(r) => {
+                panic!("expected structured NeedsPrompt, got Result({r:?})");
+            }
+        }
+    }
+
+    #[test]
+    fn execute_tool_gated_strict_no_mgr_is_denied() {
+        // Construct a tool call and run through the strict entry point with
+        // a PermissionManager::unrestricted — then verify the *strict*
+        // helper itself denies when None is passed.
+        let tool_call = ToolCall {
+            id: "gated_strict_1".to_string(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "bash".to_string(),
+                arguments: r#"{"command": "echo strict"}"#.to_string(),
+            },
+        };
+        // Direct assertion of the strict-check gate: no manager -> Denied.
+        match check_tool_permission_strict(&tool_call, None) {
+            PermissionOutcome::Denied(r) => {
+                assert!(r.is_error);
+                assert!(
+                    r.content.contains("no permission manager"),
+                    "expected strict-denial message; got {}",
+                    r.content
+                );
+            }
+            other => panic!("expected strict Denied for None mgr, got {other:?}"),
+        }
+
+        // And the strict-dispatch entry point with an unrestricted manager
+        // should execute normally — proving the fail-closed posture only
+        // fires when there is genuinely no manager, not when the intent of
+        // the caller is an explicit "allow all".
+        let mgr = PermissionManager::unrestricted();
+        let result =
+            execute_tool_with_permission_required(&tool_call, None, None, None, &mgr);
+        assert!(
+            !result.is_error,
+            "unrestricted manager should pass through; got: {}",
+            result.content
+        );
+        assert!(result.content.contains("strict"));
     }
 }

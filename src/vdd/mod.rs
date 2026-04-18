@@ -211,7 +211,7 @@ impl VddEngine {
         builder_text: &str,
         user_task: &str,
         builder_provider: &str,
-        builder_api_key: &str,
+        builder_api_key: Option<&crate::providers::ApiKey>,
     ) -> Result<VddAdvisoryResult, VddError> {
         if !self.config.enabled {
             return Ok(VddAdvisoryResult {
@@ -290,7 +290,7 @@ impl VddEngine {
         builder_response: &Value,
         original_request: &ChatCompletionRequest,
         builder_provider: &str,
-        builder_api_key: &str,
+        builder_api_key: Option<&crate::providers::ApiKey>,
     ) -> Result<VddResult, VddError> {
         if !self.config.enabled {
             return Ok(VddResult::Skipped("VDD disabled".to_string()));
@@ -350,7 +350,7 @@ impl VddEngine {
         builder_text: &str,
         original_request: &ChatCompletionRequest,
         builder_provider: &str,
-        builder_api_key: &str,
+        builder_api_key: Option<&crate::providers::ApiKey>,
     ) -> Result<VddAdvisoryResult, VddError> {
         // Run static analysis
         let static_results = self.run_static_analysis().await;
@@ -405,7 +405,7 @@ impl VddEngine {
         initial_builder_text: &str,
         original_request: &ChatCompletionRequest,
         builder_provider: &str,
-        builder_api_key: &str,
+        builder_api_key: Option<&crate::providers::ApiKey>,
     ) -> Result<VddBlockingResult, VddError> {
         let mut session = VddSession::new(VddMode::Blocking);
         let mut tracker = ConfabulationTracker::new(
@@ -806,7 +806,7 @@ impl VddEngine {
         previous_fps: &[String],
         builder_code: &str,
         builder_provider: &str,
-        builder_api_key: &str,
+        builder_api_key: Option<&crate::providers::ApiKey>,
     ) {
         // Layer 1: Duplicate detection — cheap, catches re-reported FPs
         for finding in findings.iter_mut() {
@@ -887,7 +887,7 @@ impl VddEngine {
         findings: &[&Finding],
         builder_code: &str,
         builder_provider: &str,
-        builder_api_key: &str,
+        builder_api_key: Option<&crate::providers::ApiKey>,
     ) -> Result<std::collections::HashMap<String, String>, VddError> {
         if findings.is_empty() {
             return Ok(std::collections::HashMap::new());
@@ -985,7 +985,7 @@ impl VddEngine {
         &self,
         request: &ChatCompletionRequest,
         provider_name: &str,
-        api_key: &str,
+        api_key: Option<&crate::providers::ApiKey>,
     ) -> Result<(String, TokenUsage), VddError> {
         let provider_config = self
             .app_config
@@ -1003,7 +1003,9 @@ impl VddEngine {
             .transform_request(request)
             .map_err(|e| VddError::AdversaryRequestFailed(format!("verifier transform: {e}")))?;
 
-        let headers = adapter.get_headers(api_key);
+        let headers = api_key
+            .map(|k| adapter.get_headers(k))
+            .unwrap_or_default();
         let endpoint = adapter.chat_endpoint(&request.model);
 
         let response = forward_request(
@@ -1190,8 +1192,8 @@ impl VddEngine {
             .config
             .adversary
             .api_key
-            .as_deref()
-            .or(provider_config.api_key.as_deref())
+            .as_ref()
+            .or(provider_config.api_key.as_ref())
             .ok_or_else(|| {
                 VddError::ConfigError(format!(
                     "No API key for adversary provider '{}'",
@@ -1250,7 +1252,7 @@ impl VddEngine {
         &self,
         request: &ChatCompletionRequest,
         provider_name: &str,
-        api_key: &str,
+        api_key: Option<&crate::providers::ApiKey>,
     ) -> Result<(String, Value, TokenUsage), VddError> {
         let provider_config = self
             .app_config
@@ -1267,7 +1269,9 @@ impl VddEngine {
             .transform_request(request)
             .map_err(|e| VddError::BuilderRevisionFailed(e.to_string()))?;
 
-        let headers = adapter.get_headers(api_key);
+        let headers = api_key
+            .map(|k| adapter.get_headers(k))
+            .unwrap_or_default();
         let endpoint = adapter.chat_endpoint(&request.model);
 
         let response = forward_request(

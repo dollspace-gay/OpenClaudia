@@ -215,18 +215,25 @@ pub fn resolve_endpoint(
 }
 
 /// Build the headers needed for the API request.
+///
+/// `api_key` is `Option<&ApiKey>`: `None` is valid only when
+/// `claude_code_token` is `Some(_)` (OAuth path doesn't need an API key).
+/// If both are `None` the function returns an empty auth set — the caller
+/// is expected to have validated the combination. See crosslink #256.
 #[must_use]
 pub fn resolve_headers(
     provider: &str,
-    api_key: &str,
+    api_key: Option<&crate::providers::ApiKey>,
     claude_code_token: Option<&str>,
     extra_headers: &[(String, String)],
 ) -> Vec<(String, String)> {
     let mut headers = if let Some(token) = claude_code_token {
         crate::claude_credentials::get_oauth_headers(token)
-    } else {
+    } else if let Some(key) = api_key {
         let adapter = get_adapter(provider);
-        adapter.get_headers(api_key)
+        adapter.get_headers(key)
+    } else {
+        Vec::new()
     };
     headers.extend(extra_headers.iter().cloned());
     headers
@@ -850,9 +857,14 @@ async fn execute_tool_calls_for_tui(
         // the tool executes.
         let tool_call_clone = tool_call.clone();
         let mem_db = memory_db.clone();
+        // Permission manager: the TUI enforces permissions at the UX layer
+        // via the `PermissionResponse` event loop; the library-level gate is
+        // threaded as `None` here to preserve legacy fail-open semantics.
+        // Tracked by crosslink qa-followup-460 (pipeline needs a plumbed
+        // PermissionManager to replace the UX-layer gate).
         let result = tokio::task::spawn_blocking(move || {
             if let Some(ref db) = mem_db {
-                tools::execute_tool_with_memory(&tool_call_clone, Some(db))
+                tools::execute_tool_with_memory(&tool_call_clone, Some(db), None)
             } else {
                 tools::execute_tool(&tool_call_clone)
             }
