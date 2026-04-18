@@ -7,9 +7,10 @@
   "priority": "critical",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:27:35.033298296Z",
-  "updated_at": "2026-04-18T00:27:43.676938251Z",
+  "updated_at": "2026-04-18T00:27:45.316501398Z",
   "labels": [
     "bug",
-    "qa-review-2026-04"
+    "qa-review-2026-04",
+    "qa-seam-proxy"
   ]
 }
