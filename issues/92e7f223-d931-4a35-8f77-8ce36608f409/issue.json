@@ -1,0 +1,11 @@
+{
+  "uuid": "92e7f223-d931-4a35-8f77-8ce36608f409",
+  "display_id": 264,
+  "title": "Env var injection: OPENCLAUDIA_ prefix with underscore separator collides with nested keys",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension**: Functional Correctness + Security and Access\n\n**Location**: src/config/mod.rs:156-160\n\n**Violation**: The env-var loader uses:\n```rust\nEnvironment::with_prefix(\"OPENCLAUDIA\").separator(\"_\").try_parsing(true)\n```\nBecause underscore is both the word separator AND the key separator, an attacker who controls any env var can inject or shadow nested config keys ambiguously. For example:\n- OPENCLAUDIA_SESSION_TIMEOUT_MINUTES maps to session.timeout.minutes (3 levels) or session.timeout_minutes? The config crate can not disambiguate; result depends on prefix handling.\n- Provider keys like OPENCLAUDIA_PROVIDERS_ANTHROPIC_API_KEY vs OPENCLAUDIA_PROVIDERS_ANTHROPIC_BASE_URL — these work by accident because 'api_key' and 'base_url' are the only underscored fields at that depth.\n- Attacker who can set env (e.g. via a CI compromise or malicious .envrc) can override managed_settings by setting OPENCLAUDIA_PERMISSIONS_ENABLED=false — since managed_settings_path is #[serde(skip)] (mod.rs:62-65), it CANNOT be overridden back.\n\nFurthermore try_parsing(true) + a string field can surprise-coerce e.g. OPENCLAUDIA_PROXY_HOST=\"0.0.0.0\" OK but OPENCLAUDIA_PROVIDERS_ANTHROPIC_MODEL=\"true\" would deserialize as bool then fail Option<String> parse.\n\n**Mandated Refactor**:\n1. Change separator to '__' (double underscore) matching the viper/spf13 convention and rename internal config keys so no field uses '__' natively.\n2. Document the env var schema precisely; add an integration test that asserts each supported env var parses correctly.\n3. For managed_settings layer, enforce that its values take final precedence OVER environment variables — currently Environment source is added AFTER project and home config but managed settings layering (hooks/claude_compat.rs) operates on a different Value pipeline. Unify into a single precedence chain.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:28:11.493880123Z",
+  "updated_at": "2026-04-18T00:28:11.493880123Z"
+}
