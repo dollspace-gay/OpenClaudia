@@ -1,0 +1,11 @@
+{
+  "uuid": "5c4a255d-52f8-4fe9-91e1-fc69e9f9c356",
+  "display_id": 288,
+  "title": "read_text_file: unbounded fs::read_to_string enables OOM via /dev/zero or oversized files",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension:** Security and Access / Performance\n\n**Location:** /home/doll/OpenClaudia/src/tools/file/read.rs line 289 (read_text_file), line 41 (read_image_file), line 178 (read_notebook_file)\n\n**Violation:**\nread_text_file calls fs::read_to_string(path) which slurps the ENTIRE file into memory before the offset/limit slicing at lines 295-299. Consequences:\n1. read_file on /dev/zero, /dev/random, /proc/kcore allocates until OOM-kill.\n2. A legitimate 10 GB log file causes a multi-second freeze and virtual alloc spike even if the caller asked for limit=10 lines — the offset/limit is applied AFTER the full read.\n3. The truncation guard at line 320 ('if result.len() > 100_000') fires AFTER allocation — useless for preventing OOM.\n4. read_image_file (line 41) fs::read()s the whole file before base64-encoding — a 2 GB png triggers a 2.7 GB base64 allocation.\n5. read_notebook_file (line 178) fs::read_to_string is equally unbounded.\n\n**Mandated Refactor:**\n1. fs::metadata(path) first; reject files whose len() exceeds MAX_READ_BYTES (e.g. 50 MiB). Return a helpful error directing the model to use offset+limit or grep.\n2. If limit is specified, switch to BufReader::new(fs::File::open(path)?) and read line-by-line with .lines().skip(offset).take(limit), bounding memory to O(limit * max_line_len).\n3. Reject special files at the perimeter: metadata.file_type().is_file() — not is_fifo, not char_device. Use std::os::unix::fs::FileTypeExt on Unix. This alone stops /dev/zero attacks.\n4. Apply identical metadata-first checks to read_image_file and read_notebook_file.\n5. Add image dimension/size cap — reject images >5 MB before base64-encoding.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:30:46.281531220Z",
+  "updated_at": "2026-04-18T00:30:46.281531220Z"
+}
