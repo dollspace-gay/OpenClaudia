@@ -1,0 +1,11 @@
+{
+  "uuid": "4c3507fc-59cb-47f9-bfc5-6c0c410e5720",
+  "display_id": 481,
+  "title": "execute_list_files uses read_dir().flatten() — silently drops unreadable entries",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Error Orchestration / Functional Correctness\n\n**Location:** /home/doll/OpenClaudia/src/tools/file/list.rs lines 15-27\n\n**Violation:**\nfs::read_dir(&path).flatten() silently skips any DirEntry that errored. When the directory has permission-denied entries (common under /root, /etc/ssl/private, or SELinux-confined paths), the tool reports a clean list that omits the failures. The caller has no signal that entries were hidden. The model then acts on incomplete information.\n\nAdditionally:\n1. No size limit. A directory with 10 million entries allocates a 10M-element Vec<String>. Should paginate or cap.\n2. The '/' suffix convention (line 23) is ad-hoc and doesn't distinguish symlinks from files, executables from data, or sockets/fifos. A model reading 'foo/' cannot tell if it's a directory or a symlink to elsewhere.\n3. entry.file_type() fallback 'unwrap_or(\"\")' (line 23) treats errors identically to 'regular file', hiding real IO problems.\n\n**Mandated Refactor:**\n1. Use .collect::<Result<Vec<_>, _>>(), report the first error, and include a '(N entries could not be read)' footer listing how many were skipped.\n2. Cap at MAX_DIR_ENTRIES (e.g. 2000); if exceeded, return a message instructing the model to use glob or a more specific subpath.\n3. Distinguish symlink, dir, file, fifo, socket, blockdev: use ls-style suffix ('/', '@', '*', '|', '=') per POSIX convention.\n4. Separate counts by type in the output footer.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:44:40.095204066Z",
+  "updated_at": "2026-04-18T00:44:40.095204066Z"
+}
