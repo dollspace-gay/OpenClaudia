@@ -1,0 +1,11 @@
+{
+  "uuid": "999d1806-3f4d-4e21-b021-fef07b9ced9a",
+  "display_id": 433,
+  "title": "get_adapter boxes zero-sized types per-request and silently falls back on typos",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Architectural Alignment / DIP\n\nLocation: src/providers/mod.rs line 120 (fn get_adapter).\n\nViolation: get_adapter returns `Box<dyn ProviderAdapter>` constructed fresh on every call via `Box::new(AnthropicAdapter::new())`. This is called from proxy_chat_completions at line 688 on every single incoming request. Since each adapter is a zero-sized struct (e.g., `pub struct AnthropicAdapter;`), the Box allocation is wasteful BUT the bigger problem is that the trait objects are unnecessarily owned — callers cannot share a single static adapter. No caching layer exists.\n\nAlso:\n  - Line 133-139: unknown provider silently falls back to OpenAIAdapter with a WARN log. This violates 'fail fast at system boundaries' — a typo in proxy.target (e.g., `anthrpic`) results in silently wrong behavior. The user pays for calls to the wrong endpoint.\n  - The enum-like dispatch is hardcoded; adding a new provider requires editing this match. DIP violation.\n\nMandated Refactor:\n  1. Make each adapter a `pub static ANTHROPIC: AnthropicAdapter = AnthropicAdapter;` (constructible at compile time — they're all ZSTs).\n  2. Change get_adapter signature to `fn get_adapter(name: &str) -> Result<&'static dyn ProviderAdapter, ProviderError>`. No allocation, no Box.\n  3. Return Err(ProviderError::Unsupported(format!(\"Unknown provider: {name}\"))) for unrecognized names. No silent fallback. The proxy maps this to a 400 Bad Request with a helpful message listing supported providers.\n  4. If a 'custom' OpenAI-compatible provider is needed (for LM Studio, LocalAI), make it an explicit config option (`providers.custom.api_format: openai`) rather than implicit fallback.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:40:35.676161693Z",
+  "updated_at": "2026-04-18T00:40:35.676161693Z"
+}
