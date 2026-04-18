@@ -1,0 +1,11 @@
+{
+  "uuid": "857faa83-e518-4e69-a896-5f068221afe4",
+  "display_id": 414,
+  "title": "Clippy: 4 option_if_let_else — use Option::map_or_else",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Cognitive Readability\n**Lint:** clippy::option_if_let_else\n\n## Violation\n`if let Some(x) = opt { f(x) } else { g() }` is more concisely `opt.map_or_else(g, f)`.\n\n## Locations\n- src/modes/mod.rs: 379, 398\n- src/pipeline.rs: 225, 854\n\n## Mandated Refactor\n```rust\n// Before\nlet v = if let Some(x) = opt { compute(x) } else { default() };\n// After\nlet v = opt.map_or_else(|| default(), compute);\n// Or for a plain value default: opt.map_or(default_value, compute);\n```",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:39:20.739390437Z",
+  "updated_at": "2026-04-18T00:39:20.739390437Z"
+}
