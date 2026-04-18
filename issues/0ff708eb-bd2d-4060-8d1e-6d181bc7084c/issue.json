@@ -1,6 +1,6 @@
 {
   "uuid": "0ff708eb-bd2d-4060-8d1e-6d181bc7084c",
-  "display_id": 382,
+  "display_id": 383,
   "title": "modes/fragments.rs: 18 include_str! + 18 match arms — fragment registry is stringly replicated across enum, map, and test list",
   "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: DRY / KISS. Location: src/modes/fragments.rs:12-50 (const definitions), 57-93 (accessor match arms), 217-243 (test fragment list). Violation: Three separate hand-maintained lists of the same fragment identity: (1) the include_str! consts, (2) the four accessor match arms, (3) the test suite's all_fragments vec. Adding a new modifier requires touching all three plus modes/mod.rs Modifier enum plus list_modifiers() plus the match arms in mod.rs — six places to keep in sync. Test no_unsubstituted_template_variables will only catch regressions for items that someone remembers to add. Mandated Refactor: Use a phf! or LazyLock<HashMap<Modifier, &'static str>> built from a single const array: const MODIFIERS: &[(Modifier, &str)] = &[(Modifier::Bold, include_str!(...)), ...]. Accessor becomes a map lookup. Tests iterate the array. Enum-to-fragment mapping lives in exactly one place.",
   "status": "open",
