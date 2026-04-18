@@ -1,0 +1,11 @@
+{
+  "uuid": "7d7c474d-ebe0-4ae9-9616-01d971c50046",
+  "display_id": 386,
+  "title": "proxy_anthropic_messages is 109-line God function with duplicated OAuth logic",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Architectural Alignment / SRP\n\nLocation: src/proxy.rs lines 989-1097 (fn proxy_anthropic_messages).\n\nViolation: This 109-line function performs: (1) body parse, (2) cookie-based OAuth session lookup with find-strip chain, (3) any-valid-session fallback, (4) if OAuth: Claude Code system-prompt injection with three-way match on existing 'system' shape, (5) cache_control TTL stripping, (6) raw URL construction + reqwest call with hardcoded anthropic-beta header string, (7) fallback to API key extraction + forward_to_provider. Cyclomatic complexity high. Two completely separate request-completion paths (OAuth branch returns at line 1077; api-key branch falls through at 1081+).\n\nThe OAuth-specific logic (system prompt injection, cache_control stripping, beta header construction) duplicates what claude_credentials.rs::inject_system_prompt and get_oauth_headers already do. There are now THREE functions that know how to construct Anthropic OAuth headers (claude_credentials.rs, proxy.rs::proxy_anthropic_messages, and AnthropicAdapter via x-api-key). Adding a new beta flag requires modifying all three.\n\nMandated Refactor:\n  1. Extract the session resolution into `async fn resolve_anthropic_auth(headers: &HeaderMap, oauth_store: &OAuthStore) -> AnthropicAuth` where AnthropicAuth is an enum { OAuth(OAuthSession), ApiKey(String), None }.\n  2. Move the OAuth branch into AnthropicAdapter::oauth_send(client, request, session) — a new method that injects the system prompt via claude_credentials::inject_system_prompt, strips cache_control TTL, and uses claude_credentials::get_oauth_headers.\n  3. Delete strip_cache_control_ttl from proxy.rs; move it into claude_credentials.rs alongside inject_system_prompt since they are co-requisites of OAuth requests.\n  4. proxy_anthropic_messages becomes ~30 lines: parse, resolve_auth, dispatch to adapter, forward. No inline magic-string headers, no three-way system-shape match.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:37:42.279389388Z",
+  "updated_at": "2026-04-18T00:37:42.279389388Z"
+}
