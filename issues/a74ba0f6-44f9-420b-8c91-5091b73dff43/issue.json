@@ -1,0 +1,11 @@
+{
+  "uuid": "a74ba0f6-44f9-420b-8c91-5091b73dff43",
+  "display_id": 464,
+  "title": "memory_save tags are stored as comma-joined TEXT — cannot query, comma in tag corrupts round-trip",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Functional Correctness (1) / Architectural Alignment (2)\n\nLocation: src/memory.rs:356-364 memory_save; 390-407 memory_search split(',') parse; schema at line 231 'tags TEXT DEFAULT'.\n\nViolation: memory_save takes tags: &[String] and stores them as tags.join(\",\") in a single TEXT column. Every read path splits on ','. Problems:\n\n1. A tag containing a literal comma (e.g. tag='rust, tokio') is split into two fake tags on read. No escaping. Data corruption on round-trip.\n2. Cannot query 'all memories tagged X' efficiently — no index, only substring LIKE which yields false matches (e.g. LIKE '%rust%' matches 'rustaceans').\n3. First normal form violation. Tags are a many-to-many — should be a junction table archival_memory_tags(memory_id, tag).\n4. FTS5 is indexing the tag blob as one giant term. Searching for a tag via FTS uses substring semantics instead of exact match.\n5. Empty tag list = empty string — split(',') returns [''], which is then filtered at line 398 with 'filter(|s| !s.is_empty())'. OK but wasteful allocation.\n\nMandated Refactor:\n1. Schema v4: CREATE TABLE archival_memory_tags (memory_id INTEGER REFERENCES archival_memory(id) ON DELETE CASCADE, tag TEXT NOT NULL, PRIMARY KEY(memory_id, tag)); CREATE INDEX ON archival_memory_tags(tag).\n2. memory_save wraps the INSERT + N tag-INSERTs in a single transaction.\n3. memory_search JOINs to filter by tag explicitly via a parameter.\n4. Backfill migration: parse the old tags column, write into the new table, drop the old column.\n5. Keep the FTS index on archival_memory.content only; tags filter is a separate JOIN.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:42:58.969108394Z",
+  "updated_at": "2026-04-18T00:42:58.969108394Z"
+}
