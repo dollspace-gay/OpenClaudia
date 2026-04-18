@@ -1,0 +1,11 @@
+{
+  "uuid": "aa54ef92-a855-4c30-8fd3-6d70af6d0d23",
+  "display_id": 412,
+  "title": "cron.rs ScheduleStore: lost-update race, non-atomic write, hardcoded relative path, short UUID collisions",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension:** Functional Correctness / State Management\n\n**Location:** /home/doll/OpenClaudia/src/tools/cron.rs lines 33-55 (load/save), 168-193 (execute_cron_create), 213-228 (execute_cron_delete)\n\n**Violation:**\n1. Lost-update race: two concurrent cron_create calls both load, both mutate, both save — one overwrites the other silently.\n2. Non-atomic write: save() at line 54 does fs::write (open+truncate+write). A crash mid-write leaves schedules.json truncated. Next load() falls back to Default — schedules vanish.\n3. Path hardcoded to '.openclaudia/schedules.json' relative to CWD. If CWD mutates (see worktree tool CWD side effect), schedules move directories.\n4. 8-hex-char ID from Uuid::new_v4().to_string()[..8] (line 179) gives 32 bits. Duplicate check is against NAME only, not ID — birthday collisions cascade.\n5. No schema_version field — future migrations break existing stores with unhelpful serde errors.\n\n**Mandated Refactor:**\n1. Acquire advisory lock on schedules.json (fs2 crate, flock/LockFileEx) spanning load..save.\n2. Atomic write: fs::write to schedules.json.tmp then fs::rename.\n3. Capture absolute schedules_path at Session init, pass via ToolContext.\n4. Use full UUID or 16-hex chars, and check ID uniqueness on insert.\n5. Add schema_version: u32.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:39:17.399217774Z",
+  "updated_at": "2026-04-18T00:39:17.399217774Z"
+}
