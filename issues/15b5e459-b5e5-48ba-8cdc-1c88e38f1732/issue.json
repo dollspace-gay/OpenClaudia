@@ -1,0 +1,11 @@
+{
+  "uuid": "15b5e459-b5e5-48ba-8cdc-1c88e38f1732",
+  "display_id": 443,
+  "title": "auto_learn.rs: prune_old_data uses string-interpolated table names in SQL — technically safe but bypasses parameterization for future-safety",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Security and Access / KISS. Location: src/auto_learn.rs:98-120 (prune_old_data). Violation: The four tables are hardcoded string constants so this is currently not a live injection surface, but the pattern — format!'ing SQL with {table} and {max_rows} — sets a precedent. If a future contributor passes a computed table name or a config-derived limit, it silently becomes an injection. The MAX_ROWS values are also not parameterized; they're formatted into SQL. execute_raw is called rather than a prepared statement. Mandated Refactor: Replace execute_raw with a prepared statement keyed by table enum. Use sqlite bound parameters for max_rows. Prohibit constructing SQL via string interpolation in the auto_learn module — add a lint/comment at module top.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:41:26.848546068Z",
+  "updated_at": "2026-04-18T00:41:26.848546068Z"
+}
