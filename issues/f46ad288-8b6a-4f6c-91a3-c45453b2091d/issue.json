@@ -1,0 +1,11 @@
+{
+  "uuid": "f46ad288-8b6a-4f6c-91a3-c45453b2091d",
+  "display_id": 391,
+  "title": "DisplayMessage construction boilerplate duplicated ~30 times across tui/app.rs (DRY)",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: DRY\nLocation: src/tui/app.rs — every slash-command arm and every event handler builds: DisplayMessage { role: system.to_string(), content: ..., tool_name: None, is_error: false, is_thinking: false }. Counted 30+ occurrences.\nViolation: Every branch repeats the same five-field literal, differing only in role/content/is_error. Any future field addition to DisplayMessage requires touching 30 sites. Archetype DRY violation.\nMandated Refactor: After finding #275 (MessageKind enum) lands, add constructors: impl DisplayMessage { pub fn info(text: impl Into<String>), pub fn error(text), pub fn user(text), pub fn assistant(text), pub fn tool_ok(name, content), pub fn tool_err(name, content), pub fn thinking(text) }. Collapses 7-line blocks into 1-liner: self.messages.add(DisplayMessage::error(format!(Failed: {e}))). Reduces tui/app.rs by ~400 lines.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:38:00.404137612Z",
+  "updated_at": "2026-04-18T00:38:00.404137612Z"
+}

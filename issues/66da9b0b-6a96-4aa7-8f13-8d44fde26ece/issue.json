@@ -1,0 +1,11 @@
+{
+  "uuid": "66da9b0b-6a96-4aa7-8f13-8d44fde26ece",
+  "display_id": 448,
+  "title": "auto_learn: detect_preferences records on every user message whose lowered text starts with always/never/prefer/use/don't — false-positive prone",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Functional Correctness. Location: src/auto_learn.rs:275-314 (detect_preferences). Violation: The function flags any message under 200 chars starting with 'always ', 'never ', 'prefer ', 'use ', 'dont use ' as a preference; any 300-char message starting with 'no,', 'wrong', 'dont', 'stop', 'actually,', 'instead,' as a correction. Examples that silently pollute the preference DB: 'use the read_file tool to check config.yaml', 'prefer we skip testing for now', 'never mind, try a different approach'. Contextual intent is lost. This adds garbage to learned_preferences that later gets injected into every system prompt as 'Learned Preferences'. Mandated Refactor: Gate with an explicit heuristic: require the user message to be exclusively a preference statement (no tool invocations, no imperatives to the agent). Better: make this model-in-the-loop — periodically ask a small model to summarize session-long 'preferences the user stated' rather than regex-triggering. Or require an explicit /prefer slash command for recording.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:41:54.457991781Z",
+  "updated_at": "2026-04-18T00:41:54.457991781Z"
+}

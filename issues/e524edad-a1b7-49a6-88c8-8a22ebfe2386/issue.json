@@ -1,0 +1,11 @@
+{
+  "uuid": "e524edad-a1b7-49a6-88c8-8a22ebfe2386",
+  "display_id": 483,
+  "title": "VDD blocking_loop: builder tokens accumulated from revision responses but initial builder cost never charged",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Functional Correctness. Location: src/vdd/mod.rs:402-613 (blocking_loop). Violation: session.builder_tokens.accumulate(&builder_tokens) at L544 adds only revision costs to the session ledger. The initial builder response (which caused us to enter the loop) passes builder_tokens through initial_builder_response: &Value but is never accumulated. For a loop that terminates on iteration 1 with no revisions needed, session.builder_tokens reports zero — misleading cost accounting shown to the user. Mandated Refactor: Extract initial builder TokenUsage from initial_builder_response via extract_token_usage (or via the adapter, see dup-parsing issue) at the top of blocking_loop and accumulate it. Add an assertion that session.builder_tokens >= initial response tokens at session end.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:44:54.755501231Z",
+  "updated_at": "2026-04-18T00:44:54.755501231Z"
+}
