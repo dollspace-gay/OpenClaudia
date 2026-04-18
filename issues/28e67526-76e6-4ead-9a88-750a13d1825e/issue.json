@@ -1,0 +1,11 @@
+{
+  "uuid": "28e67526-76e6-4ead-9a88-750a13d1825e",
+  "display_id": 327,
+  "title": "Compaction permanently drops context — no archival fallback for summarized messages",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Functional Correctness (1) / Architectural Alignment (2)\n\nLocation: src/compaction.rs:423 (ContextCompactor::build_compacted_messages replaces request.messages); 498-551 (generate_summary).\n\nViolation: When compaction fires, messages_to_summarize are concatenated, truncated to 500 chars each (truncate_for_summary, line 520), wrapped in a <context-summary> block, and the originals are discarded from the request. There is NO persistence of the dropped messages. If the user later asks about something from the summarized region, the information is either heavily compressed or gone entirely. Worse, truncate_for_summary hard-cuts at 500 chars per turn and 200 chars per part, so long file contents (e.g., a read_file result showing a 2000-line file) are sliced to the first 500 chars — the tail is silently lost.\n\nThe project already has MemoryDb with an archival_memory table and FTS5 — the architecturally correct move is: on compaction, ALSO insert each summarized message into archival_memory tagged with session_id and turn_number, so the model can memory_search() for details later. Currently the module doesn't even import MemoryDb.\n\nMandated Refactor:\n1. Pass Arc<MemoryDb> into ContextCompactor; on compact(), before replacing request.messages, archive each summarized message to archival_memory with tags ['auto-compacted', session_id, turn_number].\n2. Augment the summary block to include a hint: 'Earlier messages archived — use memory_search with tag auto-compacted:<session_id> to retrieve full detail.'\n3. Raise per-message truncation: the goal is to REDUCE tokens, not amputate content. Compute a per-message budget from tokens_to_free instead of hardcoded 500 chars.\n4. Add a test that compacts, then searches archival memory for a sentence from the dropped region and asserts retrievability.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:33:04.709192376Z",
+  "updated_at": "2026-04-18T00:33:04.709192376Z"
+}
