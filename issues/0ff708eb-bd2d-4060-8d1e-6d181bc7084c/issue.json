@@ -7,8 +7,9 @@
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:37:35.120660623Z",
-  "updated_at": "2026-04-18T00:37:44.762638530Z",
+  "updated_at": "2026-04-18T00:38:09.828992512Z",
   "labels": [
-    "qa-review-2026-04"
+    "qa-review-2026-04",
+    "qa-seam-vdd"
   ]
 }
