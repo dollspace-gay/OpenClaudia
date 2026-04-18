@@ -7,9 +7,10 @@
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:41:22.151254169Z",
-  "updated_at": "2026-04-18T00:41:28.063947284Z",
+  "updated_at": "2026-04-18T00:41:33.652817888Z",
   "labels": [
     "refactor",
-    "qa-review-2026-04"
+    "qa-review-2026-04",
+    "qa-seam-tui"
   ]
 }
