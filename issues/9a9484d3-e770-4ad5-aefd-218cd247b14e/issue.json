@@ -1,0 +1,11 @@
+{
+  "uuid": "9a9484d3-e770-4ad5-aefd-218cd247b14e",
+  "display_id": 458,
+  "title": "Session is #[derive(Clone)] + cloned on every read — deep-copies turn_metrics/progress on every access",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Performance & Complexity (6) / State Management Tell-Don't-Ask (3.3)\n\nLocation: src/session/mod.rs:77-101 (derive Clone on Session), callers do session.clone() in tui/cli/proxy.\n\nViolation: The Session struct holds Vec<TurnMetrics>, Vec<String> x3, String (handoff_notes), and 3 Option<u32>+Vec<String> for VDD tracking. Every field is heap-allocated. Session implements Clone (line 78). Test code does 'let session = manager.get_or_create_session().clone()' (mod.rs:658, 675, 680); production code in tui/app.rs and proxy.rs likely does the same to escape mutable-borrow constraints.\n\nEach clone deep-copies every turn_metrics entry (TurnMetrics is Clone-derived). A 1-hour session with 360 turns cloned three times per turn allocates ~1000 TurnMetrics copies per minute. This is Tell-Don't-Ask inverted: callers ASK the manager for the Session, then act on a snapshot, then the mutation vanishes because nobody wrote it back.\n\nRelated: SessionManager is itself Clone (line 351-352) and owns TaskManager (also Clone with Vec<Task>). Cloning a manager clones every task and every session file path — not cheap.\n\nMandated Refactor:\n1. Remove #[derive(Clone)] from Session. Force callers to request specific pieces (get_stats() -> SessionStats struct with Copy fields; get_handoff() -> String by reference).\n2. Where async tasks need 'own' a session snapshot, introduce Arc<Session> with interior mutability via Mutex<SessionInner> — single-copy sharing.\n3. Apply Tell-Don't-Ask: let callers send commands to the session (session.complete_task(...)) rather than cloning-mutating-discarding.\n4. Identify every session.clone() call site (git grep), audit intent, replace with Arc or targeted read-only accessors.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:42:26.353930587Z",
+  "updated_at": "2026-04-18T00:42:26.353930587Z"
+}
