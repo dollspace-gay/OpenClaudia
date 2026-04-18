@@ -486,6 +486,88 @@ fn check_tool_permission_interactive(
 }
 
 /// Interactive chat mode (default command)
+/// Read multiline continuation lines after the initial input ends
+/// with a trailing backslash. Replaces each trailing `\\` with a
+/// newline and appends the next prompted line, stopping when the user
+/// submits a line that does NOT end with `\\` or when readline errors
+/// (EOF / interrupt).
+///
+/// Extracted from `cmd_chat` per crosslink #262.
+fn read_multiline_continuation(input: &mut String, rl: &mut rustyline::DefaultEditor) {
+    while input.ends_with('\\') {
+        input.pop(); // remove the trailing backslash
+        match rl.readline("... ") {
+            Ok(cont_line) => {
+                input.push('\n');
+                input.push_str(cont_line.trim());
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+/// Check whether the session has grown close to the model's context
+/// window and auto-compact or warn accordingly.
+///
+/// Invariants preserved from the inline version:
+/// - Skips entirely when the session has 6 or fewer messages (the
+///   compaction heuristic needs a minimum message count).
+/// - `should_compact` implies compaction runs AND the message pops to
+///   log the before/after counts.
+/// - `should_warn` (without compact) prints a hint about `/compact`.
+///
+/// Extracted from `cmd_chat` per crosslink #262.
+fn maybe_auto_compact(chat_session: &mut ChatSession, model: &str) {
+    if chat_session.messages.len() <= 6 {
+        return;
+    }
+    let est = estimate_session_tokens(chat_session);
+    let (should_warn, should_compact, pct) =
+        openclaudia::compaction::check_context_budget(est, model);
+    if should_compact {
+        eprintln!("\x1b[33m⚠ Context at {pct:.0}% — auto-compacting...\x1b[0m");
+        let (before, after) = compact_chat_session(chat_session);
+        eprintln!("\x1b[32m✓ Compacted: {before} → {after} messages\x1b[0m");
+    } else if should_warn {
+        eprintln!("\x1b[33m⚠ Context at {pct:.0}% — use /compact to free space\x1b[0m");
+    }
+}
+
+/// Build a hook engine from config + Claude Code settings.json.
+///
+/// Extracted from `cmd_chat` per crosslink #262.
+fn build_hook_engine(config: &config::AppConfig) -> openclaudia::hooks::HookEngine {
+    let claude_hooks = openclaudia::hooks::load_claude_code_hooks();
+    let merged_hooks = openclaudia::hooks::merge_hooks_config(config.hooks.clone(), claude_hooks);
+    openclaudia::hooks::HookEngine::new(merged_hooks)
+}
+
+/// Clear the screen, render the TUI welcome panel, and fall back to a
+/// plain-text banner when the TUI fails to render (e.g. non-TTY).
+///
+/// Extracted from `cmd_chat` per crosslink #262.
+fn render_welcome_or_fallback(target: &str, model: &str) {
+    let _ = tui::clear_screen();
+    let welcome = tui::WelcomeScreen::new(env!("CARGO_PKG_VERSION"), target, model);
+    if let Err(e) = welcome.render() {
+        eprintln!("TUI render failed: {e}, using simple output");
+        println!("OpenClaudia v{}", env!("CARGO_PKG_VERSION"));
+        println!("Provider: {target} | Model: {model}");
+        println!("Type /help for commands, /sessions to list saved chats");
+        println!("Tip: {}\n", get_random_tip());
+    }
+}
+
+/// Construct the library-layer `PermissionManager` with the config's
+/// `default_allow` patterns. Extracted from `cmd_chat` per #262.
+fn init_permission_manager(config: &config::AppConfig) -> PermissionManager {
+    PermissionManager::new(
+        std::path::PathBuf::from(".openclaudia/permissions.json"),
+        true,
+        config.permissions.default_allow.clone(),
+    )
+}
+
 /// Apply `--resume` / `--session-id` to select a prior chat session.
 ///
 /// If `resume` is true OR `session_id` is `Some`, looks up the saved
@@ -804,9 +886,7 @@ async fn cmd_chat(
     mode_override: Option<String>,
 ) -> anyhow::Result<()> {
     use indicatif::{ProgressBar, ProgressStyle};
-    use openclaudia::hooks::{
-        load_claude_code_hooks, merge_hooks_config, HookEngine, HookEvent, HookInput,
-    };
+    use openclaudia::hooks::{HookEvent, HookInput};
     use openclaudia::providers::{
         convert_messages_to_anthropic, convert_tools_to_anthropic, get_adapter,
     };
@@ -884,29 +964,14 @@ async fn cmd_chat(
     let adapter = get_adapter(&config.proxy.target);
     let client = reqwest::Client::new();
 
-    // Initialize hook engine with merged hooks (config + Claude Code hooks)
-    let claude_hooks = load_claude_code_hooks();
-    let merged_hooks = merge_hooks_config(config.hooks.clone(), claude_hooks);
-    let hook_engine = HookEngine::new(merged_hooks);
-
-    // Initialize rules engine
+    let hook_engine = build_hook_engine(&config);
     let rules_engine = RulesEngine::new(".openclaudia/rules");
 
     let mut plugin_manager = init_plugin_manager();
 
     let (mut rl, history_path) = init_rustyline_with_history()?;
 
-    // Clear screen and render TUI welcome screen
-    let _ = tui::clear_screen();
-    let welcome = tui::WelcomeScreen::new(env!("CARGO_PKG_VERSION"), &config.proxy.target, &model);
-    if let Err(e) = welcome.render() {
-        // Fallback to simple output if TUI fails
-        eprintln!("TUI render failed: {e}, using simple output");
-        println!("OpenClaudia v{}", env!("CARGO_PKG_VERSION"));
-        println!("Provider: {} | Model: {}", config.proxy.target, model);
-        println!("Type /help for commands, /sessions to list saved chats");
-        println!("Tip: {}\n", get_random_tip());
-    }
+    render_welcome_or_fallback(&config.proxy.target, &model);
 
     // Set up pinned bottom bar using ANSI scroll region
     let _ = tui::setup_pinned_bar();
@@ -945,17 +1010,11 @@ async fn cmd_chat(
         std::collections::HashSet::new();
 
     // Library-layer PermissionManager — shares `default_allow` with the
-    // interactive gate. The manager is plumbed into every dispatch call
-    // (`execute_tool_with_memory` + `execute_tool`) so no tool can bypass
-    // the check, matching the gated-dispatch invariant introduced by
-    // crosslink #460 and closing follow-up #505. Kept in parallel with
-    // the interactive `always_allowed_tools` set for now — unifying them
-    // is a larger refactor tracked separately.
-    let permission_mgr = PermissionManager::new(
-        std::path::PathBuf::from(".openclaudia/permissions.json"),
-        true,
-        config.permissions.default_allow.clone(),
-    );
+    // interactive gate. Every dispatch call threads it through so no
+    // tool can bypass the check (crosslink #460 + #505). Kept in
+    // parallel with `always_allowed_tools` for now — unifying them is
+    // a larger refactor tracked separately.
+    let permission_mgr = init_permission_manager(&config);
 
     let vdd_engine: Option<vdd::VddEngine> = init_vdd_engine_if_enabled(&config);
 
@@ -1004,19 +1063,7 @@ async fn cmd_chat(
                     continue;
                 }
 
-                // Handle multiline input (lines ending with \)
-                while input.ends_with('\\') {
-                    // Remove trailing backslash
-                    input.pop();
-                    // Read continuation line
-                    match rl.readline("... ") {
-                        Ok(cont_line) => {
-                            input.push('\n');
-                            input.push_str(cont_line.trim());
-                        }
-                        Err(_) => break,
-                    }
-                }
+                read_multiline_continuation(&mut input, &mut rl);
 
                 // Add to history
                 let _ = rl.add_history_entry(&input);
@@ -3873,21 +3920,7 @@ async fn cmd_chat(
                 // Autosave session after each response (protects against terminal close)
                 save_session_to_short_term_memory(&chat_session, memory_db.as_ref());
 
-                // Auto-compact check: warn at 85%, compact at 90% of context window
-                if chat_session.messages.len() > 6 {
-                    let est = estimate_session_tokens(&chat_session);
-                    let (should_warn, should_compact, pct) =
-                        openclaudia::compaction::check_context_budget(est, &model);
-                    if should_compact {
-                        eprintln!("\x1b[33m⚠ Context at {pct:.0}% — auto-compacting...\x1b[0m");
-                        let (before, after) = compact_chat_session(&mut chat_session);
-                        eprintln!("\x1b[32m✓ Compacted: {before} → {after} messages\x1b[0m");
-                    } else if should_warn {
-                        eprintln!(
-                            "\x1b[33m⚠ Context at {pct:.0}% — use /compact to free space\x1b[0m"
-                        );
-                    }
-                }
+                maybe_auto_compact(&mut chat_session, &model);
             }
             Err(ReadlineError::Interrupted) => {
                 // Ctrl+C - graceful exit (save session before exiting)
@@ -3971,5 +4004,22 @@ mod tests {
             .expect_err("unknown preset should fail");
         // The error string must be user-facing — cmd_chat prints it.
         assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn maybe_auto_compact_is_noop_for_small_sessions() {
+        // Under the 6-message short-circuit, auto-compact must not touch
+        // the session. Build the smallest possible ChatSession with an
+        // empty message history.
+        let mut session = ChatSession::new(
+            "claude-sonnet-4-6",
+            "anthropic",
+            openclaudia::modes::BehaviorMode::default(),
+        );
+        let before_len = session.messages.len();
+        // Any model name is fine — the short-circuit fires before the
+        // model lookup.
+        maybe_auto_compact(&mut session, "claude-sonnet-4-6");
+        assert_eq!(session.messages.len(), before_len);
     }
 }
