@@ -1,0 +1,11 @@
+{
+  "uuid": "56ea4dfe-2e7e-49cf-849c-5fa766bfb291",
+  "display_id": 372,
+  "title": "prompt.rs magic capacity constants 12288 and 4096 lack documentation",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Cognitive Readability. Location: src/prompt.rs:133 and 158. Violation: Both String::with_capacity values are magic numbers with no comment explaining derivation. Mandated Refactor: Extract as const PREFIX_CAPACITY_BYTES: usize = 12 * 1024 and SUFFIX_CAPACITY_BYTES: usize = 4 * 1024 at module level with doc comments.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:36:38.917480429Z",
+  "updated_at": "2026-04-18T00:36:38.917480429Z"
+}
