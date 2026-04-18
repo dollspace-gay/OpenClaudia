@@ -1,0 +1,11 @@
+{
+  "uuid": "a5981680-6556-4b66-a4db-5f7aa07a2a5f",
+  "display_id": 379,
+  "title": "modes: Preset::Extend and Preset::Refactor differ only by scope — both Autonomous/Pragmatic make them near-duplicates",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Structural Modularity / DRY. Location: src/modes/mod.rs:292-315 (from_preset Extend and Refactor). Violation: Both presets are Autonomous + Pragmatic, differing only in scope (Adjacent vs Unrestricted). Their assembled prompts share 2 of 3 axis fragments. This is a very thin differentiation and forces users to know the subtle difference. The test all_presets_produce_unique_modes passes only because of the scope difference. Mandated Refactor: (a) Merge into a single 'Extend' preset with an optional 'refactor' modifier that expands scope; or (b) Document clearly in description() why both exist with a concrete example of when to pick each. Current description strings 'Extend and improve incrementally' vs 'Restructure freely across the codebase' do not clearly articulate the decision boundary.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:37:06.239925354Z",
+  "updated_at": "2026-04-18T00:37:06.239925354Z"
+}
