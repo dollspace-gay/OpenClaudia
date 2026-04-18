@@ -3408,3 +3408,74 @@ tracking:
         assert!(progress.vdd_sessions.is_empty());
     }
 }
+
+// ===========================================================================
+// Gated-dispatch integration tests — crosslink #460 mandated point 2.
+//
+// This module is intentionally small and self-contained so that concurrent
+// test additions (e.g. api_key tests from another subagent) don't collide
+// with it. Added line range: ~3410-end.
+// ===========================================================================
+mod gated_dispatch_460 {
+    use openclaudia::permissions::{
+        PermissionDecision, PermissionManager, PermissionRule,
+    };
+    use openclaudia::tools::{
+        execute_tool_gated, ExecutionOutcome, FunctionCall, ToolCall,
+    };
+    use tempfile::TempDir;
+
+    fn deny_bash_mgr() -> (PermissionManager, TempDir) {
+        let tmp = TempDir::new().expect("tempdir");
+        let mut mgr = PermissionManager::new(tmp.path().join("p.json"), true, vec![]);
+        mgr.add_session_rule(PermissionRule {
+            tool: "Bash".to_string(),
+            pattern: "*".to_string(),
+            decision: PermissionDecision::Deny,
+        });
+        (mgr, tmp)
+    }
+
+    /// End-to-end: a bash tool call goes through the new gated dispatch
+    /// entry point and the permission gate blocks it BEFORE the tool body
+    /// runs. The denial payload is returned to the caller as a ToolResult
+    /// with `is_error=true` and a message mentioning the denial, with no
+    /// trace of the would-be command output.
+    #[test]
+    fn execute_tool_gated_blocks_denied_bash_invocation() {
+        let tc = ToolCall {
+            id: "it_gate_deny".to_string(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "bash".to_string(),
+                arguments: r#"{"command": "echo SIDE_EFFECT_THAT_SHOULD_NOT_PRINT"}"#
+                    .to_string(),
+            },
+        };
+        let (mgr, _tmp) = deny_bash_mgr();
+        match execute_tool_gated(&tc, None, None, None, Some(&mgr)) {
+            ExecutionOutcome::Result(r) => {
+                assert!(
+                    r.is_error,
+                    "denial path must mark result as error, got: {:?}",
+                    r
+                );
+                assert!(
+                    r.content.to_lowercase().contains("denied"),
+                    "expected 'denied' in content, got: {}",
+                    r.content
+                );
+                assert!(
+                    !r.content.contains("SIDE_EFFECT_THAT_SHOULD_NOT_PRINT"),
+                    "tool body ran despite rule denial — gate BYPASSED. content: {}",
+                    r.content
+                );
+            }
+            ExecutionOutcome::NeedsPrompt { tool, target, .. } => {
+                panic!(
+                    "expected Result(Denied) but got NeedsPrompt tool={tool} target={target}"
+                );
+            }
+        }
+    }
+}
