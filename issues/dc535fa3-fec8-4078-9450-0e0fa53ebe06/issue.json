@@ -1,0 +1,11 @@
+{
+  "uuid": "dc535fa3-fec8-4078-9450-0e0fa53ebe06",
+  "display_id": 456,
+  "title": "Agentic tool loop duplicated across TUI, ACP, and REPL (Stovepipe)",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Stovepipe Systems / DRY\nLocation: src/tui/app.rs:1457-1522 (max_iterations=25); src/acp.rs:555-775 run_prompt_loop (max_iterations=50); src/main.rs::cmd_chat third copy; src/pipeline builds but has no loop.\nViolation: Three isolated implementations of the agentic tool-calling loop. Each builds its own follow-up request, enforces its own iteration cap (25 vs 50 — functional-correctness drift), handles error events differently. Provider-specific assistant-message construction also duplicated.\nMandated Refactor: Extract pub async fn run_agentic_loop(initial_request, max_iterations, event_sink: &dyn AgentEventSink, client, endpoint, headers, provider, memory_db) -> Result. Define trait AgentEventSink { stream_text, tool_start, tool_done, response_done, api_error }. Implement AgentEventSink for each seam (TUI mpsc, ACP stdio, REPL stdout).",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:42:20.057541124Z",
+  "updated_at": "2026-04-18T00:42:20.057541124Z"
+}
