@@ -1,0 +1,11 @@
+{
+  "uuid": "03ac3f85-0c2e-438b-90b5-2bde35252c37",
+  "display_id": 248,
+  "title": "Plugin install_from_git: URL-derived plugin name path traversal",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension**: Security and Access (OWASP Input Handling)\n\n**Location**: src/plugins/manager.rs:624-689 (install_from_git), src/plugins/manager.rs:346-394 (add_marketplace_from_git)\n\n**Violation**: The plugin/marketplace name is derived from the URL by splitting on '/' and stripping '.git':\n```rust\nlet name = url.trim_end_matches('/').trim_end_matches(\".git\").rsplit('/').next().unwrap_or(\"plugin\").to_string();\nlet dest = plugins_dir.join(&name);\n```\nA URL like 'https://evil.example.com/foo/..%2F..%2Fsecrets.git' or one containing path separators in the last segment (e.g. 'https://host/a%2Fb') can be crafted so that after unwrap the 'name' contains traversal sequences that join() resolves outside .openclaudia/plugins/. Unlike install_from_marketplace (manager.rs:483-488) which explicitly rejects '..' and '/' in the plugin name, install_from_git and add_marketplace_from_git perform NO such validation. git itself then creates arbitrary directories on disk.\n\n**Mandated Refactor**:\n1. Apply the same validation pattern as install_from_marketplace: reject names containing '..', '/', '\\\\', or leading '.'.\n2. After computing `name`, call `Path::new(&name).components().count() == 1 && matches!(components.next(), Some(Component::Normal(_)))`.\n3. After clone, canonicalize `dest` and verify `dest.starts_with(plugins_dir.canonicalize()?)`.\n4. Sanitize to [A-Za-z0-9._-]+ character class and fail fast on violation.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:26:43.539932661Z",
+  "updated_at": "2026-04-18T00:26:43.539932661Z"
+}
