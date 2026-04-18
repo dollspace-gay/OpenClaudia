@@ -1,0 +1,11 @@
+{
+  "uuid": "37b34904-d977-4719-867a-be005bc47785",
+  "display_id": 279,
+  "title": "Stringly-typed roles throughout TUI — introduce Role enum",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Cognitive Readability / Type Safety\nLocation: src/tui/messages.rs:11 (role: String), src/tui/app.rs:393, 410, 431, 510, 593+ (~60 hits across app.rs), .as_str() == Some(\"user\") / == Some(\"system\") / == Some(\"assistant\") patterns\nViolation: The message role is stored as a String and compared to string literals everywhere. Typos are undetectable (\"assisant\" would silently route to the _ arm). DisplayMessage and TuiSession both pay this cost. This is the textbook 'stringly typed' anti-pattern.\nMandated Refactor: pub enum Role { User, Assistant, System, Tool } with serde(rename_all = \"lowercase\") + FromStr for wire-format boundaries only. Internally every comparison becomes exhaustive. Combine with finding #275 (MessageKind enum). Also replace TuiSession.mode: String with pub enum Mode { Build, Plan } (see toggle_mode at src/tui/app.rs:78) and effort_level: String with pub enum EffortLevel { Low, Medium, High } (see src/tui/app.rs:923-946 cycle logic).",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:29:35.619816925Z",
+  "updated_at": "2026-04-18T00:29:35.619816925Z"
+}
