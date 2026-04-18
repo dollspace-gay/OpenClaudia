@@ -80,6 +80,15 @@ pub struct VddAdversaryConfig {
     /// Max output tokens for adversary responses
     #[serde(default = "default_adversary_max_tokens")]
     pub max_tokens: u32,
+    /// Per-request timeout for adversary HTTP calls, in seconds.
+    ///
+    /// Guards against a hung or slow adversary provider blocking the
+    /// entire VDD loop (blocking mode holds the user's request
+    /// hostage). Default: 120 s — generous enough for reasoning-heavy
+    /// models, short enough to fail fast when the provider is down.
+    /// See crosslink #496.
+    #[serde(default = "default_adversary_request_timeout_seconds")]
+    pub request_timeout_seconds: u64,
 }
 
 fn default_adversary_provider() -> String {
@@ -94,6 +103,10 @@ const fn default_adversary_max_tokens() -> u32 {
     4096
 }
 
+const fn default_adversary_request_timeout_seconds() -> u64 {
+    120
+}
+
 impl Default for VddAdversaryConfig {
     fn default() -> Self {
         Self {
@@ -102,6 +115,7 @@ impl Default for VddAdversaryConfig {
             api_key: None,
             temperature: default_adversary_temperature(),
             max_tokens: default_adversary_max_tokens(),
+            request_timeout_seconds: default_adversary_request_timeout_seconds(),
         }
     }
 }

@@ -1209,21 +1209,40 @@ impl VddEngine {
         let headers = adapter.get_headers(api_key);
         let endpoint = adapter.chat_endpoint(&request.model);
 
-        let response = forward_request(
-            &self.client,
-            provider_config,
-            &self.config.adversary.provider,
-            &request.model,
-            &endpoint,
-            &transformed,
-            headers,
+        // Per-request timeout — guards against a hung adversary blocking
+        // the whole VDD loop. See crosslink #496.
+        let timeout_secs = self.config.adversary.request_timeout_seconds;
+        let timeout = std::time::Duration::from_secs(timeout_secs);
+
+        let response = tokio::time::timeout(
+            timeout,
+            forward_request(
+                &self.client,
+                provider_config,
+                &self.config.adversary.provider,
+                &request.model,
+                &endpoint,
+                &transformed,
+                headers,
+            ),
         )
         .await
+        .map_err(|_| {
+            VddError::AdversaryRequestFailed(format!(
+                "adversary request timed out after {timeout_secs}s"
+            ))
+        })?
         .map_err(|e| VddError::AdversaryRequestFailed(e.to_string()))?;
 
-        let response_json: Value = response
-            .json()
+        // Same timeout wraps the body-read to prevent a slow-drip
+        // payload from exceeding the total budget.
+        let response_json: Value = tokio::time::timeout(timeout, response.json())
             .await
+            .map_err(|_| {
+                VddError::AdversaryRequestFailed(format!(
+                    "adversary response body read timed out after {timeout_secs}s"
+                ))
+            })?
             .map_err(|e| VddError::AdversaryRequestFailed(e.to_string()))?;
 
         let text = extract_response_text(&response_json);
