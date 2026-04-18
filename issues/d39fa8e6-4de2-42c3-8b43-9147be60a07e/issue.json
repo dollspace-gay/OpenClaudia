@@ -1,0 +1,11 @@
+{
+  "uuid": "d39fa8e6-4de2-42c3-8b43-9147be60a07e",
+  "display_id": 465,
+  "title": "lib.rs: every module pub-exported at top level with no crate-internal boundary — public API leaks internals",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Structural Modularity / ISP. Location: src/lib.rs:13-41. Violation: All 28 modules are declared pub without distinction between stable public API and internal machinery. Modules like compaction, guardrails, context, pipeline, streaming, auto_learn, tool_intercept should be pub(crate) — they are implementation details that should not form the public surface of the openclaudia library crate. The lib.rs provides zero re-export curation: consumers (including integration tests) bypass any intended entry points and import internals directly. This makes every internal refactor a breaking API change. Mandated Refactor: Audit each module and mark internals as pub(crate). Expose only the stable surface at lib.rs top level as curated re-exports: pub use config::AppConfig; pub use proxy::start_proxy; etc. Keep submodules pub mod only if they're part of the documented API.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:43:04.795954255Z",
+  "updated_at": "2026-04-18T00:43:04.795954255Z"
+}
