@@ -1,0 +1,11 @@
+{
+  "uuid": "2800f4ef-2a97-4ffa-a9fa-caa4d5694926",
+  "display_id": 474,
+  "title": "web_fetch/web_browser: trust raw Jina/headless output without size cap on network side (reqwest text() unbounded)",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension:** Security and Access / Performance\n\n**Location:** /home/doll/OpenClaudia/src/web.rs lines 131-134 (fetch_url .text()), 471-474 (fetch_with_browser get_content), 351-353 (search_duckduckgo get_content)\n\n**Violation:**\n1. fetch_url: response.text() at line 131 is UNBOUNDED. reqwest will buffer the entire HTTP body into a String in memory before returning. A malicious or compromised Jina Reader (or a MITM if TLS is stripped) can serve a multi-gigabyte response and OOM the agent. The 50_000-char truncation guard in execute_web_fetch (tools/web.rs:47) fires AFTER the full buffer is built.\n2. fetch_with_browser's tab.get_content() returns the full page HTML with no size limit. A SPA that infinite-scrolls or a malicious page with a 500 MB data-uri'd image triggers unbounded memory.\n3. search_duckduckgo's get_content() has the same problem.\n4. The timeout on fetch_url is 30s (line 113). This is LONG for a blocking call inside a sync tool path; combined with the new-Runtime-per-call issue, a single slow URL can pin a worker thread for 30s.\n\n**Mandated Refactor:**\n1. Use response.bytes_stream() + tokio::io::copy_buf into a tokio::io::Take<AsyncWrite> with a 5 MiB cap. Reject with 'response too large' if cap exceeded.\n2. For browser flows, read content via tab.evaluate(\"document.body.innerText.slice(0, 5000000)\") rather than full HTML — and add a page timeout.\n3. Reduce fetch_url timeout to 10s default, exposing via config.\n4. Validate response Content-Type before read; reject application/octet-stream and anything > 5 MiB by Content-Length header if present.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:44:05.676109819Z",
+  "updated_at": "2026-04-18T00:44:05.676109819Z"
+}
