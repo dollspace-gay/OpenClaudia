@@ -16,7 +16,7 @@ pub use read::{
 pub use write::execute_write_file;
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 /// Maximum number of entries in the read tracker before eviction kicks in
 const READ_TRACKER_MAX_ENTRIES: usize = 10_000;
@@ -71,14 +71,56 @@ impl ReadFileTracker {
     }
 }
 
-/// Resolve a path argument to an absolute path.
+/// Snapshot of the project root, captured the first time [`resolve_path`] runs.
 ///
-/// If the path is already absolute, return it as-is.
-/// If relative, resolve it against the current working directory.
-/// Rejects paths containing `..` components to prevent traversal.
+/// Pinned at startup so that later `cd`s (via the worktree tool, shell
+/// commands, etc.) cannot move the jail underneath us.
+static PROJECT_ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
+    std::env::current_dir()
+        .and_then(|cwd| cwd.canonicalize())
+        .unwrap_or_else(|_| PathBuf::from("."))
+});
+
+/// Process temp directory, canonicalized. Used as a second allowed jail for
+/// tests (tempfile creates paths under `/tmp/...`) and for legitimate
+/// intermediate-file workflows.
+static TEMP_ROOT: LazyLock<Option<PathBuf>> =
+    LazyLock::new(|| std::env::temp_dir().canonicalize().ok());
+
+/// Returns `true` when the strict jail is active (the default).
+///
+/// Disabled only when the operator explicitly sets
+/// `OPENCLAUDIA_ALLOW_OUT_OF_ROOT=1`. Any other value keeps strict mode on,
+/// matching the secure-by-default posture.
+fn strict_mode() -> bool {
+    !matches!(std::env::var("OPENCLAUDIA_ALLOW_OUT_OF_ROOT"), Ok(ref v) if v == "1")
+}
+
+/// Returns `true` if `canonical` is inside `root` (including `root` itself).
+fn path_is_within(canonical: &Path, root: &Path) -> bool {
+    canonical == root || canonical.starts_with(root)
+}
+
+/// Resolve a path argument to a canonical absolute path inside the project-root jail.
+///
+/// Defenses applied, in order:
+///  1. Early rejection of `..` components (clearer error than letting `canonicalize` eat them).
+///  2. `canonicalize()` follows symlinks; if the target does not yet exist,
+///     the first existing ancestor is canonicalized and the non-existent
+///     suffix rejoined — this closes the symlink-escape-on-read hole while
+///     still supporting write/edit of new files.
+///  3. Containment check against `PROJECT_ROOT` OR the process temp dir.
+///     Anything outside both is rejected unless
+///     `OPENCLAUDIA_ALLOW_OUT_OF_ROOT=1` is set.
+///
+/// The previous implementation returned absolute paths as-is, which allowed
+/// a prompt-injected model to read `/etc/passwd`, `/root/.ssh/id_rsa`, etc.
+/// See crosslink issue #269.
 fn resolve_path(path: &str) -> Result<PathBuf, String> {
     let p = Path::new(path);
-    let resolved = if p.is_absolute() {
+
+    // Step 1: absolutize (pure string join — does NOT follow symlinks yet).
+    let absolute = if p.is_absolute() {
         p.to_path_buf()
     } else {
         std::env::current_dir()
@@ -86,15 +128,67 @@ fn resolve_path(path: &str) -> Result<PathBuf, String> {
             .join(p)
     };
 
-    // Reject path traversal attempts (../ in path)
-    if resolved
+    // Step 2: reject `..` components upfront with a clearer error.
+    if absolute
         .components()
         .any(|c| c == std::path::Component::ParentDir)
     {
         return Err(format!("Path traversal not allowed: '{path}'"));
     }
 
-    Ok(resolved)
+    // Step 3: canonicalize (resolves symlinks). For paths to files that do not
+    // yet exist (write_file's target, deeply nested new directories), walk up
+    // the chain to the first existing ancestor, canonicalize THAT, then
+    // rejoin the virtual suffix — this closes the symlink-escape-on-read hole
+    // while still supporting `write_file path/to/newly/created/file.txt`.
+    let canonical = match absolute.canonicalize() {
+        Ok(c) => c,
+        Err(_) => {
+            let mut ancestor = absolute.as_path();
+            let mut suffix_components: Vec<&std::ffi::OsStr> = Vec::new();
+            let canonical_ancestor = loop {
+                match ancestor.canonicalize() {
+                    Ok(c) => break c,
+                    Err(_) => {
+                        let file_name = ancestor.file_name().ok_or_else(|| {
+                            format!(
+                                "Cannot resolve any ancestor of '{path}' — reached filesystem root"
+                            )
+                        })?;
+                        suffix_components.push(file_name);
+                        ancestor = ancestor.parent().ok_or_else(|| {
+                            format!("Cannot resolve parent while walking up '{path}'")
+                        })?;
+                    }
+                }
+            };
+            let mut built = canonical_ancestor;
+            for comp in suffix_components.iter().rev() {
+                built.push(comp);
+            }
+            built
+        }
+    };
+
+    // Step 4: enforce jail containment.
+    if strict_mode() {
+        let in_project = path_is_within(&canonical, &PROJECT_ROOT);
+        let in_temp = TEMP_ROOT
+            .as_ref()
+            .is_some_and(|t| path_is_within(&canonical, t));
+
+        if !in_project && !in_temp {
+            return Err(format!(
+                "Path '{path}' resolves to '{}' which is outside the project root ('{}') \
+                 and outside the process temp directory. Set \
+                 OPENCLAUDIA_ALLOW_OUT_OF_ROOT=1 to disable this jail (not recommended).",
+                canonical.display(),
+                PROJECT_ROOT.display(),
+            ));
+        }
+    }
+
+    Ok(canonical)
 }
 
 /// Read a file's contents

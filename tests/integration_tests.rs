@@ -107,12 +107,18 @@ mod file_tools {
         let result = execute_tool(&tool_call);
 
         assert!(result.is_error, "Read of nonexistent file should fail");
+        // The path-jail (crosslink #269) rejects out-of-root paths before
+        // attempting the read, so any of these error phrasings is acceptable:
+        // strict-jail rejection, legacy not-found error, or a generic failure.
+        let c = result.content.to_lowercase();
         assert!(
-            result.content.to_lowercase().contains("not found")
-                || result.content.to_lowercase().contains("no such file")
-                || result.content.to_lowercase().contains("cannot find")
-                || result.content.to_lowercase().contains("failed"),
-            "Error should mention file not found: {}",
+            c.contains("not found")
+                || c.contains("no such file")
+                || c.contains("cannot find")
+                || c.contains("failed")
+                || c.contains("outside the project root")
+                || c.contains("path traversal"),
+            "Error should describe a path/file-access failure: {}",
             result.content
         );
     }
