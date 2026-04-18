@@ -1,0 +1,11 @@
+{
+  "uuid": "9a565812-cbfd-4445-8fe5-2b38fc858436",
+  "display_id": 349,
+  "title": "VDD confabulation: string_similarity is Jaccard-over-whitespace-tokens — fragile for finding dedup",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Functional Correctness. Location: src/vdd/confabulation.rs:128-147 (string_similarity). Violation: Similarity is split_whitespace + HashSet intersection over union, then compared at 0.7 in triage_findings:815. Two findings describing the same SQL injection but worded differently ('SQL injection in users query' vs 'String concat vulnerability in the users table lookup') have Jaccard ~0.1 and are NOT detected as dupes. Conversely, a long finding with many shared stop-words ('the', 'is', 'in', 'a') accidentally trips the threshold. No stemming, no stop-word filtering, no normalization of synonyms. Mandated Refactor: Either (a) use a proper text similarity like Levenshtein-ratio + length-normalization via the strsim crate, or (b) hash normalized (file_path, severity, cwe, line_range) tuples for dedup instead of description text. Option (b) is deterministic and sufficient for re-reported FPs.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:35:02.258909657Z",
+  "updated_at": "2026-04-18T00:35:02.258909657Z"
+}
