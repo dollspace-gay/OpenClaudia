@@ -1,0 +1,11 @@
+{
+  "uuid": "a0c36d23-28bb-4388-949d-6f13e46b5ea8",
+  "display_id": 454,
+  "title": "auto_learn: detect_preferences records on any user message starting with always/never/prefer/use — false positives pollute DB",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Functional Correctness. Location: src/auto_learn.rs:275-314. Violation: Flags any message under 200 chars starting with always/never/prefer/use/dont as preference; under 300 starting with no/wrong/stop/actually/instead as correction. False positives like 'use the read_file tool', 'prefer we skip tests', 'never mind' silently pollute learned_preferences which is injected into every system prompt. Refactor: gate with explicit heuristic requiring message to be pure preference, or route through an explicit /prefer slash command.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:42:14.377457139Z",
+  "updated_at": "2026-04-18T00:42:14.377457139Z"
+}
