@@ -1,0 +1,11 @@
+{
+  "uuid": "d0f06472-ce20-4d78-b948-4337a35925cc",
+  "display_id": 428,
+  "title": "file write/edit/notebook_edit: canonicalize races against fs::write (symlink swap TOCTOU)",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension:** Security and Access (TOCTOU)\n\n**Location:** src/tools/file/write.rs:20-34,62; src/tools/file/edit.rs:20-40,98; src/tools/file/notebook.rs:77-85,198.\n\n**Violation:** Each write/edit/notebook_edit canonicalize()s, then later calls fs::write on a path-based re-open. Between the canonicalize and write, another process can replace the path with a symlink. fs::write follows symlinks on open. The canonicalized path is the inode-at-canonicalize, not inode-at-write. For any attacker with write access to an intermediate directory (/tmp, shared worktrees), this is trivially exploitable. The guardrails::check_file_access gate also operates on the canonicalized string and is bypassable via the same TOCTOU window. edit_file's read-then-write (lines 69, 98) can observe content X and write Y to inode Z.\n\n**Mandated Refactor:**\n1. Open ONCE with OpenOptions().read(true).write(true).custom_flags(libc::O_NOFOLLOW) on Unix / FILE_FLAG_OPEN_REPARSE_POINT on Windows. All subsequent reads/writes go through the SAME file handle — no path-based re-open.\n2. For write_file new-file case use .create_new(true).custom_flags(O_NOFOLLOW) to refuse a pre-existing symlink.\n3. Derive the path-for-logging from fstat(fd) or /proc/self/fd/N (Unix) — not from the user input.\n4. Apply guardrails::check_file_access AFTER open, against the fstat-derived path.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:40:04.082166866Z",
+  "updated_at": "2026-04-18T00:40:04.082166866Z"
+}
