@@ -1,0 +1,11 @@
+{
+  "uuid": "15607fb5-8ab0-4aa9-a2b1-ad9e9deeb984",
+  "display_id": 494,
+  "title": "CHAINLINK_INSTALL_SHOWN global AtomicBool — no way to reset, leaks 'once' state across tests and sessions",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** State Management / Testability\n\n**Location:** /home/doll/OpenClaudia/src/tools/chainlink.rs line 7 (CHAINLINK_INSTALL_SHOWN), lines 43-51 (swap-and-branch)\n\n**Violation:**\nA process-global AtomicBool controls whether the 'chainlink not found, install from github' message has been shown. Once the swap fires, future chainlink-missing errors return the shorter 'Chainlink not available.' message (line 51). Consequences:\n1. **Tests interact.** Running test A before test B changes the message test B sees. Bandaid: #[serial_test].\n2. **Long-running sessions never re-show the helpful message** even after a plausible event (system update, PATH change) that might have reinstalled chainlink.\n3. **There is no supply-chain hygiene on the install URL** — the message hard-codes https://github.com/dollspace-gay/chainlink and directs the model (and by extension the user) to trust that URL. If the repo is ever transferred, the message still points to the old URL.\n\n**Mandated Refactor:**\n1. Move the 'shown' flag onto SessionState (removing the global).\n2. Re-check PATH for chainlink every 5 minutes or at session start; show the install message whenever chainlink is actually absent, not 'first time per process'.\n3. Make the install URL configurable via AppConfig — agents deploying in restricted environments can point at an internal mirror.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:45:48.762586785Z",
+  "updated_at": "2026-04-18T00:45:48.762586785Z"
+}
