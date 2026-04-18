@@ -1,6 +1,6 @@
 {
   "uuid": "97144394-3790-4c47-9daf-41907d8b56d4",
-  "display_id": 420,
+  "display_id": 421,
   "title": "subagent: BACKGROUND_AGENTS HashMap never removes finished agents — unbounded growth over session",
   "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Performance and Complexity / Memory. Location: src/subagent.rs:234-322 (BackgroundAgentManager, register/finish/list). Violation: register inserts, finish marks atomic flag, but nothing removes entries. remove() exists but is never called by the runtime — only potentially by test code. A long-running session that spawns 10 agents per hour over 8 hours leaks 80 finished BackgroundAgent Arcs, each holding a full output string and task description. list() scans them all on every agent_output listing. Mandated Refactor: (a) On finish, mark with a completion Instant; on register, sweep entries older than a TTL. (b) Separately, cap the manager at a max concurrent + max retained; oldest finished first to evict. (c) Provide a cleanup_finished() public API that tui.rs can call on session shutdown.",
   "status": "open",
