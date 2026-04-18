@@ -1,0 +1,11 @@
+{
+  "uuid": "dd7d263e-1fe2-4121-abe9-88fed251cb39",
+  "display_id": 336,
+  "title": "ping-unblock-test-2",
+  "description": "verifying after gpg config repair",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:33:35.219838051Z",
+  "updated_at": "2026-04-18T00:33:35.219838051Z"
+}
