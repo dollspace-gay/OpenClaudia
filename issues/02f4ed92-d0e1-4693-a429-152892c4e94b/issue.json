@@ -1,0 +1,11 @@
+{
+  "uuid": "02f4ed92-d0e1-4693-a429-152892c4e94b",
+  "display_id": 478,
+  "title": "VDD: parse_findings uses Uuid::new_v4 per finding and Finding.id as HashMap key — test determinism broken",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Testability Coverage. Location: src/vdd/mod.rs:777 (Uuid::new_v4 in parse_findings) and 1037-1056 (verdicts map keyed by finding.id). Violation: Every parse_findings call generates fresh UUIDs, so the verification agent receives a new finding_id on every iteration. There is no stable identity for a finding across iterations: if the adversary re-reports the same SQL-injection on iteration 2 and 3, they get different UUIDs, making FP-history-based deduplication by ID impossible (which is why the code uses string_similarity — see issue on Jaccard weakness). More critically, tests cannot assert specific finding IDs because they are randomised every run. Mandated Refactor: Compute finding.id as a deterministic hash of (severity, cwe, file, line_range, description_hash). This enables cross-iteration dedup by ID (replacing the weak Jaccard), makes tests assertable, and gives Chainlink a stable natural key.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:44:29.017742192Z",
+  "updated_at": "2026-04-18T00:44:29.017742192Z"
+}
