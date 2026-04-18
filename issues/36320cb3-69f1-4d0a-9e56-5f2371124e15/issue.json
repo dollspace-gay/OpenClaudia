@@ -3,9 +3,10 @@
   "display_id": 300,
   "title": "Compaction token estimator under-counts CJK/emoji/images — context exhaustion risk",
   "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nToken estimation in src/compaction.rs is a 4-chars-per-token heuristic with only a 0.5x adjustment for non-ASCII. CJK real tokens are ~1 per char so this under-counts by ~33 percent. Images hardcoded at 1000 (line 153) — Anthropic bills ~1600 for hi-res. COMPACTION_THRESHOLD 0.85 + RESPONSE_RESERVE 4096 cannot absorb the error — compaction fires late, provider returns context_length_exceeded. Fix: integrate tiktoken-rs for OpenAI; call Anthropic count_tokens endpoint; widen RESPONSE_RESERVE to 16K for heuristic fallback; property-test within 15 percent of tokenizer truth.",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:31:34.961825779Z",
-  "updated_at": "2026-04-18T00:31:34.961825779Z"
+  "updated_at": "2026-04-18T00:40:43.771606975Z",
+  "closed_at": "2026-04-18T00:40:43.771606975Z"
 }
