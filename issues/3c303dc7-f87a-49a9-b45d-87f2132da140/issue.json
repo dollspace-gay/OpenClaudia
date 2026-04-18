@@ -1,0 +1,11 @@
+{
+  "uuid": "3c303dc7-f87a-49a9-b45d-87f2132da140",
+  "display_id": 487,
+  "title": "VDD blocking_loop: initial builder tokens never accumulated into session.builder_tokens",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Functional Correctness. Location: src/vdd/mod.rs:402-613. Violation: Only revision costs accumulate via L544. Initial builder response tokens never added; session reports 0 builder tokens on iteration-1 termination. Refactor: Extract initial builder TokenUsage from initial_builder_response and accumulate at top of blocking_loop.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:45:03.437130918Z",
+  "updated_at": "2026-04-18T00:45:03.437130918Z"
+}
