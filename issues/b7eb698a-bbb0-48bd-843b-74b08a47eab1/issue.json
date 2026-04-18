@@ -1,0 +1,11 @@
+{
+  "uuid": "b7eb698a-bbb0-48bd-843b-74b08a47eab1",
+  "display_id": 406,
+  "title": "Clippy: 4 missing const fn opportunities",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Performance & Complexity\n**Lint:** clippy::missing_const_for_fn\n\n## Violation\nFunctions whose body is a trivially-const expression (only const-eligible operations, no trait calls beyond Copy, no heap allocation) should be marked `const fn` so callers can use them in const contexts (array sizes, static initializers, match arms).\n\n## Locations\n- src/tools/file/mod.rs: 36\n- src/tui/messages.rs: 46, 52\n- src/tui/mod.rs: 1052\n\n## Mandated Refactor\nAdd `const` to the fn signature:\n```rust\n// Before\npub fn default_limit() -> usize { 100 }\n// After\npub const fn default_limit() -> usize { 100 }\n```\nThen verify no callsite regressed — const fns are strictly more permissive, so this is almost always safe.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:38:53.694941923Z",
+  "updated_at": "2026-04-18T00:38:53.694941923Z"
+}
