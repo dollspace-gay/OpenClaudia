@@ -1,0 +1,11 @@
+{
+  "uuid": "18210022-3d0f-469d-a94a-2b03367f989f",
+  "display_id": 442,
+  "title": "Hardcoded RGB color literals scattered across TUI rendering",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: DRY / Maintainability\nLocation: src/tui/app.rs lines 1565, 1604, 1632, 1637, 1642, 1644, 1646, 1648, 1663, 1679, 1684, 1690, 1732, 1736, 1748, 1756, 1762; src/tui/messages.rs:109, 114, 120, 125, 156, 168, 227, 236. Colors 147,112,219 (purple), 218,165,32 (gold), 128,128,128 (gray) are literal RGB tuples repeated in every render call.\nViolation: src/tui/mod.rs:39-43 already defines PURPLE/GOLD/DIM constants as ratatui::Color — the render code in app.rs and messages.rs ignores them and re-types Color::Rgb(147, 112, 219) inline. Changing the brand color requires grepping and editing ~25 sites. The existing constants prove the abstraction exists but is not used.\nMandated Refactor: Export PURPLE, GOLD, DIM, USER_BLUE from src/tui/mod.rs (or a new src/tui/theme.rs) as ratatui::style::Color. Replace every Color::Rgb(147,112,219) with PURPLE, etc. Also move SPINNER_FRAMES (app.rs:23) to the theme module.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:41:22.151254169Z",
+  "updated_at": "2026-04-18T00:41:22.151254169Z"
+}
