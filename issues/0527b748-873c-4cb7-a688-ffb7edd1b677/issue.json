@@ -1,0 +1,11 @@
+{
+  "uuid": "0527b748-873c-4cb7-a688-ffb7edd1b677",
+  "display_id": 480,
+  "title": "expires_in.cast_signed() and unwrap_or(3600) mask OAuth protocol violations",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Functional Correctness / Defensive Programming\n\nLocation: src/oauth.rs line 233: `expires_at: Utc::now() + Duration::seconds(response.expires_in.cast_signed())`.\n\nViolation: `response.expires_in` is declared u64 (line 163 TokenExchangeResponse). Calling .cast_signed() on a u64 larger than i64::MAX wraps to a negative value, producing a duration in the past. If Anthropic were to return `expires_in: 2^63` (improbable but not impossible with a misconfigured endpoint or a man-in-the-middle), the session would be instantly expired. More realistically:\n  - No validation that expires_in > 0. A zero or missing-field-with-default value creates a session that is immediately expired, but the store accepts it and get_session returns it, leading to infinite 401-retry loops.\n  - No sanity bound. A malicious or misconfigured OAuth server could return `expires_in: 31536000000` (1000 years), resulting in an effectively permanent token stored on disk with no re-check.\n\nSimilar issue in src/claude_credentials.rs line 247: `expires_in = refresh_response[\"expires_in\"].as_i64().unwrap_or(3600);` — defaults to 1 hour on parse failure, masking a protocol deviation.\n\nMandated Refactor:\n  1. Validate expires_in at the TokenExchangeResponse deserialization: reject values < 60 (absurdly short) or > 86400 * 7 (longer than a week is suspect for an OAuth access token). Return a structured error.\n  2. Remove .cast_signed() — use i64::try_from(response.expires_in).map_err(|_| ...)? to propagate overflow as an error, not a silent wrap.\n  3. claude_credentials.rs refresh_and_load: if `expires_in` is missing, Err, do not default to 3600.\n  4. Add test: malformed token response with expires_in=0 should cause from_token_response to propagate an error rather than constructing an always-expired session.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:44:40.734849792Z",
+  "updated_at": "2026-04-18T00:44:40.734849792Z"
+}
