@@ -1,0 +1,10 @@
+{
+  "uuid": "631c5540-c74a-47cd-b716-a8fccaec7e5d",
+  "issue_uuid": "a74f0f4e-db19-4096-9e1d-7de5a824e90a",
+  "author": "lOrm",
+  "content": "Partial resolution in commit 9c20dac. Extracted `record_turn_estimate` and `apply_vdd_review` helpers — function shrunk from 308 to ~174 lines and the four duplicate Response-reassembly sites (VDD result variants) are now a single pattern-matched helper. Resolve_provider, compact_if_needed, and transform_and_forward extractions remain as follow-ups — each would be net-neutral without a broader pipeline API.",
+  "created_at": "2026-04-18T13:12:37.473409704Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAV+skSJQ2d0EbcNr5KTcZVksq3/ybw2UOEGGnhyBaF+AnC4VoBB+ewM3XvIzjh0PG9IVyNiacFgeWKHvO++nQCg=="
+}
