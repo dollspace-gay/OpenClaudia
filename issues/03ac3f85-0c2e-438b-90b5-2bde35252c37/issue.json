@@ -7,9 +7,10 @@
   "priority": "critical",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:26:43.539932661Z",
-  "updated_at": "2026-04-18T00:26:48.967825923Z",
+  "updated_at": "2026-04-18T00:26:50.613015733Z",
   "labels": [
     "bug",
-    "qa-review-2026-04"
+    "qa-review-2026-04",
+    "qa-seam-config"
   ]
 }
