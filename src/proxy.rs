@@ -340,8 +340,9 @@ async fn auth_status(State(state): State<ProxyState>, headers: HeaderMap) -> imp
         })
         .and_then(|session_id| state.oauth_store.get_session(&session_id));
 
-    // If no cookie, check for ANY valid session (for CLI polling during OAuth flow)
-    let session = session.or_else(|| state.oauth_store.get_any_valid_session());
+    // No "any valid session" fallback — an absent cookie returns
+    // `authenticated: false`. The previous fallback let any unauth
+    // caller learn another user's session id. See crosslink #375.
 
     match session {
         Some(s) => Json(serde_json::json!({
@@ -1019,11 +1020,13 @@ async fn proxy_anthropic_messages(
             state.oauth_store.get_session(&session_id)
         });
 
-    // Fallback: check for ANY valid session if no cookie provided
-    let session = session.or_else(|| {
-        debug!("[/v1/messages] No cookie session, checking for any valid session...");
-        state.oauth_store.get_any_valid_session()
-    });
+    // No "any valid session" fallback here. An absent cookie falls through
+    // to API-key auth below (extract_api_key / provider.api_key), rather
+    // than silently impersonating another client's OAuth session. See
+    // crosslink #375 (critical) — the prior fallback let any unauth
+    // caller (local malicious process, compromised plugin, network-adjacent
+    // attacker when bound to 0.0.0.0) charge requests to the first valid
+    // session in the store.
 
     // If we have an OAuth session, use Bearer token auth with Claude Code prompt injection
     if let Some(session) = session {

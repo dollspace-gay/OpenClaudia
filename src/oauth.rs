@@ -27,6 +27,79 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 use tracing::{debug, error, info};
 
+/// Sanitize an OAuth error-response body before surfacing it to the caller.
+///
+/// Anthropic's OAuth endpoint echoes submitted `refresh_token`, `code`,
+/// `client_secret`, and similar credential material inside error bodies.
+/// This helper extracts ONLY the short `error` / `error_description` fields
+/// (the safe OAuth spec fields) and discards everything else. Non-JSON
+/// bodies return the hard-coded string
+/// `"<redacted: body contains sensitive fields>"`.
+/// See crosslink #263.
+pub(crate) fn redact_oauth_error_body(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return "<empty body>".to_string();
+    }
+
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        let error_code = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        let error_desc = v
+            .get("error_description")
+            .and_then(|e| e.as_str())
+            .unwrap_or("");
+
+        let desc = if description_looks_safe(error_desc) {
+            error_desc
+        } else {
+            "<redacted>"
+        };
+
+        return match (error_code.is_empty(), desc.is_empty()) {
+            (false, false) => format!("{error_code}: {desc}"),
+            (false, true) => error_code.to_string(),
+            (true, false) => desc.to_string(),
+            (true, true) => "<redacted: body contains sensitive fields>".to_string(),
+        };
+    }
+
+    "<redacted: body contains sensitive fields>".to_string()
+}
+
+/// True when an error_description is safe to surface (does not look like
+/// it carries a token, code, or long base64/hex run).
+fn description_looks_safe(desc: &str) -> bool {
+    if desc.is_empty() {
+        return false;
+    }
+    let lower = desc.to_ascii_lowercase();
+    const FORBIDDEN_NEEDLES: &[&str] = &[
+        "refresh_token",
+        "access_token",
+        "client_secret",
+        "id_token",
+        "bearer ",
+        "code=",
+        "state=",
+    ];
+    if FORBIDDEN_NEEDLES.iter().any(|n| lower.contains(n)) {
+        return false;
+    }
+    // Reject any contiguous base64/hex run ≥ 24 chars — likely a token value.
+    let mut run = 0;
+    for c in desc.chars() {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '+' || c == '/' || c == '=' {
+            run += 1;
+            if run >= 24 {
+                return false;
+            }
+        } else {
+            run = 0;
+        }
+    }
+    true
+}
+
 /// Anthropic's fixed OAuth client identifier
 pub const ANTHROPIC_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 
@@ -328,26 +401,11 @@ impl OAuthStore {
         sessions.get(id).cloned()
     }
 
-    /// Get any valid (non-expired) session - used when no specific session ID is provided
-    pub fn get_any_valid_session(&self) -> Option<OAuthSession> {
-        let sessions = self
-            .sessions
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for (id, session) in sessions.iter() {
-            let expired = session.credentials.is_expired();
-            tracing::debug!(
-                "Session {}: expired={}, expires_at={:?}",
-                id,
-                expired,
-                session.credentials.expires_at
-            );
-        }
-        sessions
-            .values()
-            .find(|s| !s.credentials.is_expired())
-            .cloned()
-    }
+    // `get_any_valid_session` was deleted as part of crosslink #375 (critical).
+    // It returned the first valid OAuth session regardless of caller identity,
+    // which let any unauthenticated request impersonate an authenticated one.
+    // Callers must now look up sessions by explicit `anthropic_session` cookie
+    // via `get_session(&id)`; no ambient-session fallback remains.
 
     /// Load sessions from disk, filtering out expired ones
     fn load_from_disk(&self) {
@@ -593,7 +651,16 @@ impl OAuthClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Token exchange failed ({status}): {body}");
+            // Anthropic's OAuth endpoint echoes submitted `refresh_token` /
+            // `code` values inside error bodies. Log the raw body at debug!
+            // (operator-only) and propagate only the sanitized form to the
+            // caller — otherwise the bail! string lands in an axum response
+            // body (proxy.rs:297) and ships to the client. See crosslink #263.
+            debug!("token_exchange_failed body (not shipped to caller): {body}");
+            anyhow::bail!(
+                "Token exchange failed ({status}): {}",
+                redact_oauth_error_body(&body)
+            );
         }
 
         let body = response
@@ -651,7 +718,11 @@ impl OAuthClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("API key creation failed ({status}): {body}");
+            debug!("api_key_creation_failed body (not shipped to caller): {body}");
+            anyhow::bail!(
+                "API key creation failed ({status}): {}",
+                redact_oauth_error_body(&body)
+            );
         }
 
         let body = response
@@ -693,6 +764,69 @@ pub fn parse_auth_code(input: &str) -> (String, Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- Regression tests for crosslink #263: OAuth error body redaction ---
+
+    #[test]
+    fn redact_drops_refresh_token_in_description() {
+        let body = serde_json::json!({
+            "error": "invalid_grant",
+            "error_description": "refresh_token ey.AbCdEf1234567890XYZ is expired"
+        })
+        .to_string();
+        let sanitized = redact_oauth_error_body(&body);
+        assert!(!sanitized.contains("AbCdEf1234567890XYZ"));
+        assert!(!sanitized.contains("refresh_token"));
+        assert!(sanitized.contains("invalid_grant"));
+    }
+
+    #[test]
+    fn redact_drops_access_token_mention() {
+        let body = serde_json::json!({
+            "error": "invalid_token",
+            "error_description": "access_token sk-ant-oat01-abcdefghijklmnopqrstuvwx is revoked"
+        })
+        .to_string();
+        let sanitized = redact_oauth_error_body(&body);
+        assert!(!sanitized.contains("sk-ant-oat01"));
+        assert!(!sanitized.contains("abcdefghijklmnopqrstuvwx"));
+        assert!(sanitized.contains("invalid_token"));
+    }
+
+    #[test]
+    fn redact_drops_long_base64_run() {
+        let body = serde_json::json!({
+            "error": "server_error",
+            "error_description": "context: AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKKK"
+        })
+        .to_string();
+        let sanitized = redact_oauth_error_body(&body);
+        assert!(!sanitized.contains("AAAABBBBCCCCDDDD"));
+    }
+
+    #[test]
+    fn redact_preserves_safe_description() {
+        let body = serde_json::json!({
+            "error": "invalid_scope",
+            "error_description": "scope org:manage is unknown"
+        })
+        .to_string();
+        let sanitized = redact_oauth_error_body(&body);
+        assert_eq!(sanitized, "invalid_scope: scope org:manage is unknown");
+    }
+
+    #[test]
+    fn redact_non_json_body_is_hard_coded() {
+        let s = redact_oauth_error_body("Internal Server Error: stacktrace refresh_token=abcd...");
+        assert!(!s.contains("abcd"));
+        assert_eq!(s, "<redacted: body contains sensitive fields>");
+    }
+
+    #[test]
+    fn redact_empty_body_handled() {
+        assert_eq!(redact_oauth_error_body(""), "<empty body>");
+        assert_eq!(redact_oauth_error_body("   \n\t"), "<empty body>");
+    }
 
     #[test]
     fn test_pkce_generation() {

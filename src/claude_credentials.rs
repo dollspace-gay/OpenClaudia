@@ -226,7 +226,14 @@ async fn refresh_and_load(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Token refresh failed ({status}): {body}"));
+        // Never propagate the raw body — Anthropic echoes `refresh_token`
+        // values in its validation errors (crosslink #263). Log at debug
+        // for operators, return the sanitized form to the caller.
+        tracing::debug!("token_refresh_failed body (not shipped to caller): {body}");
+        return Err(format!(
+            "Token refresh failed ({status}): {}",
+            crate::oauth::redact_oauth_error_body(&body)
+        ));
     }
 
     let refresh_response: serde_json::Value = response
