@@ -820,13 +820,29 @@ async fn proxy_chat_completions(
             }
         }
 
-        // VDD: adversarial review of the builder's response
+        // VDD: adversarial review of the builder's response.
+        //
+        // Bounded read closes the memory-DoS vector (crosslink #352): an
+        // upstream that streams > max_response_bytes (default 50 MiB)
+        // aborts the VDD path and returns an empty passthrough rather than
+        // OOM-ing the proxy. On any read error we do NOT silently fall
+        // through to `serde_json::from_slice` of an empty buffer — that
+        // used to yield VDD analysis of effectively `null`.
         if let Some(vdd_engine) = &state.vdd_engine {
-            // Decompose response to get owned body for reading
             let (parts, body) = response_value.into_parts();
-            let response_bytes = axum::body::to_bytes(body, usize::MAX)
-                .await
-                .unwrap_or_default();
+            let max_bytes = state.config.proxy.max_response_bytes;
+            let response_bytes = match axum::body::to_bytes(body, max_bytes).await {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        max_bytes = max_bytes,
+                        "Failed to read upstream response body for VDD review; \
+                         returning empty passthrough to the client (crosslink #352)."
+                    );
+                    return Ok(Response::from_parts(parts, Body::empty()));
+                }
+            };
 
             if let Ok(response_json) = serde_json::from_slice::<Value>(&response_bytes) {
                 let engine = vdd_engine.lock().await;

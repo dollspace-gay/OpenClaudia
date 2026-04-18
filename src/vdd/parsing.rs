@@ -16,54 +16,76 @@ use super::review::AdversaryResponse;
 // ==========================================================================
 
 /// Try to extract JSON from a response that may contain markdown code blocks.
+///
+/// Every slice into `text` goes through [`str::get`] so an offset that
+/// somehow lands mid-codepoint returns `None` instead of panicking. The
+/// previous implementation used direct `text[a..b]` indexing; today's
+/// delimiters are all ASCII so the arithmetic stays on char boundaries,
+/// but a single future non-ASCII fence token would turn adversary output
+/// into a VDD-loop kill via a single multibyte codepoint.
+/// See crosslink #337.
 pub(crate) fn extract_json_from_response(text: &str) -> Option<String> {
     // Look for ```json ... ``` blocks
     if let Some(start) = text.find("```json") {
-        let json_start = start + 7;
-        if let Some(end) = text[json_start..].find("```") {
-            return Some(text[json_start..json_start + end].trim().to_string());
+        let json_start = start + "```json".len();
+        if let Some(rest) = text.get(json_start..) {
+            if let Some(end) = rest.find("```") {
+                if let Some(inner) = rest.get(..end) {
+                    return Some(inner.trim().to_string());
+                }
+            }
         }
     }
 
     // Look for ``` ... ``` blocks
     if let Some(start) = text.find("```") {
         let json_start = start + 3;
-        // Skip optional language identifier on the same line
-        let line_end = text[json_start..].find('\n').unwrap_or(0);
-        let actual_start = json_start + line_end;
-        if let Some(end) = text[actual_start..].find("```") {
-            return Some(text[actual_start..actual_start + end].trim().to_string());
+        if let Some(after_fence) = text.get(json_start..) {
+            // Skip optional language identifier on the same line
+            let line_end = after_fence.find('\n').unwrap_or(0);
+            if let Some(after_lang) = after_fence.get(line_end..) {
+                if let Some(end) = after_lang.find("```") {
+                    if let Some(inner) = after_lang.get(..end) {
+                        return Some(inner.trim().to_string());
+                    }
+                }
+            }
         }
     }
 
-    // Try to find raw JSON object starting with {"findings"
+    // Try to find raw JSON object starting with `{"findings"`
     if let Some(start) = text.find(r#"{"findings""#) {
-        // Find the matching closing brace
-        let mut depth = 0;
-        let mut end_pos = start;
-        for (i, c) in text[start..].char_indices() {
+        let tail = text.get(start..)?;
+        let mut depth = 0i32;
+        let mut end_rel: Option<usize> = None;
+        for (i, c) in tail.char_indices() {
             match c {
                 '{' => depth += 1,
                 '}' => {
                     depth -= 1;
                     if depth == 0 {
-                        end_pos = start + i;
+                        end_rel = Some(i + c.len_utf8());
                         break;
                     }
                 }
                 _ => {}
             }
         }
-        if end_pos > start {
-            return Some(text[start..=end_pos].to_string());
+        if let Some(len) = end_rel {
+            if let Some(inner) = tail.get(..len) {
+                return Some(inner.to_string());
+            }
         }
     }
 
-    // Try to find raw JSON object (any)
+    // Try to find any raw JSON object
     if let Some(start) = text.find('{') {
         if let Some(end) = text.rfind('}') {
             if end > start {
-                return Some(text[start..=end].to_string());
+                // `end + 1` is guaranteed to be a char boundary because `}` is ASCII.
+                if let Some(inner) = text.get(start..=end) {
+                    return Some(inner.to_string());
+                }
             }
         }
     }
@@ -220,6 +242,66 @@ pub(crate) fn extract_token_usage(response: &Value) -> TokenUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    // --- Regression tests for crosslink #337 (UTF-8 safety) ---
+
+    #[test]
+    fn extract_json_survives_leading_emoji() {
+        // 4-byte UTF-8 codepoint immediately before the fence (🔥 = U+1F525).
+        let text = "🔥```json\n{\"findings\": []}\n```";
+        let json = extract_json_from_response(text).expect("parser should not panic");
+        let parsed: Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed["findings"].is_array());
+    }
+
+    #[test]
+    fn extract_json_survives_cjk_prose() {
+        let text = "分析结果如下:\n```json\n{\"assessment\": \"NO_FINDINGS\"}\n```\n";
+        let json = extract_json_from_response(text).expect("parser should not panic");
+        let parsed: Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["assessment"], "NO_FINDINGS");
+    }
+
+    #[test]
+    fn extract_json_survives_smart_quotes_in_prose() {
+        let text = "\u{201C}Note:\u{201D} nothing to report.\n```json\n{\"findings\": []}\n```";
+        let json = extract_json_from_response(text).expect("parser should not panic");
+        let parsed: Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed["findings"].is_array());
+    }
+
+    #[test]
+    fn extract_json_survives_emoji_inside_json_string() {
+        let text = r#"```json
+{"findings": [{"desc": "contains 🚀 and 💥"}]}
+```"#;
+        let json = extract_json_from_response(text).expect("parser should not panic");
+        let parsed: Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["findings"][0]["desc"], "contains 🚀 and 💥");
+    }
+
+    #[test]
+    fn extract_json_from_raw_findings_object_with_emoji() {
+        let text = r#"preamble 🎯 {"findings": [{"desc": "hello"}]} trailing"#;
+        let json = extract_json_from_response(text).expect("parser should not panic");
+        let parsed: Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["findings"][0]["desc"], "hello");
+    }
+
+    #[test]
+    fn extract_json_returns_none_for_empty_input() {
+        assert!(extract_json_from_response("").is_none());
+        assert!(extract_json_from_response("no braces here").is_none());
+    }
+
+    #[test]
+    fn extract_json_survives_unclosed_fence() {
+        // Adversarial malformed output: opening fence but no closing fence.
+        // Must not panic.
+        let text = "```json\n{\"findings\": []"; // missing }
+        let _ = extract_json_from_response(text);
+    }
 
     #[test]
     fn test_parse_severity() {
