@@ -1,0 +1,11 @@
+{
+  "uuid": "c6c81688-d8c2-448a-9977-58bc205a5a08",
+  "display_id": 258,
+  "title": "TOCTOU in plugin path-traversal canonicalization check",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension**: Security and Access (TOCTOU race condition)\n\n**Location**: src/plugins/manager.rs:500-534 (install_from_marketplace path check)\n\n**Violation**: The path-traversal guard canonicalizes `full` and `marketplace_dir`, checks `canonical.starts_with(&canonical_marketplace)`, then copies `source_path` to `dest`. Between canonicalize() and copy_dir_recursive(), an attacker with write access to the marketplace directory can swap a symlink such that copy_dir_recursive follows it outside the marketplace. copy_dir_recursive (src/plugins/git.rs:61-74) uses `entry.path()` with `is_dir()` which FOLLOWS SYMLINKS — the 'already canonicalized' parent offers no protection for subdirectory entries.\n\nAdditionally: marketplace directory writes are typically user-controlled (~/.claude/marketplaces), so any compromised marketplace metadata can redirect to arbitrary paths.\n\n**Mandated Refactor**:\n1. In copy_dir_recursive, use `symlink_metadata()` instead of `is_dir()` and explicitly reject symlinks (or resolve & revalidate containment on every entry).\n2. Perform the path-containment check inside the copy walker per-entry, not just at the top.\n3. Use std::fs::canonicalize on each resolved entry.path() and verify starts_with(canonical_marketplace) before every copy.\n4. Document that symlinks within marketplace directories are rejected by policy.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:27:44.050557215Z",
+  "updated_at": "2026-04-18T00:27:44.050557215Z"
+}
