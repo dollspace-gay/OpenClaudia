@@ -1,0 +1,11 @@
+{
+  "uuid": "9f2ff59a-54a9-478c-99f1-1a1cb3e93eaf",
+  "display_id": 423,
+  "title": "Clippy: 2 first doc paragraphs too long — split summary from body",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Documentation & Intent\n**Lint:** clippy::too_long_first_doc_paragraph\n\n## Violation\nThe first doc paragraph is used by rustdoc as the summary shown in crate-level module lists. A too-long first paragraph produces unreadable summary cards.\n\n## Locations\n- src/claude_credentials.rs: 329\n- src/tui/mod.rs: 554\n\n## Mandated Refactor\nBreak the first paragraph at the first natural sentence boundary by inserting a blank comment line:\n```rust\n/// Short summary sentence.\n///\n/// Longer explanation continues here across multiple sentences...\n```",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:39:51.946612331Z",
+  "updated_at": "2026-04-18T00:39:51.946612331Z"
+}
