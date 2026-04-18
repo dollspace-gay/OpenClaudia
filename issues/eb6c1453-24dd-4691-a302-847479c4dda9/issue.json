@@ -1,0 +1,11 @@
+{
+  "uuid": "eb6c1453-24dd-4691-a302-847479c4dda9",
+  "display_id": 415,
+  "title": "subagent: transcript store global LazyLock leaks memory — TTL eviction only on insert/load, no periodic sweep",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Performance and Complexity / Memory. Location: src/subagent.rs:346-378 (TRANSCRIPT_STORE, store_transcript, load_transcript). Violation: The TTL eviction loop runs only inside store_transcript and load_transcript. If no agents are spawned or loaded, dead transcripts never evict. Worse, a transcript can be huge (messages Vec<Value> with tool outputs). Hundreds of agents over a long session = bounded only by TTL * creation rate; but the insert path itself iterates the whole HashMap on every store — O(N) per insert. Mandated Refactor: (a) Run eviction on a background tokio::spawn loop with an interval timer. (b) Hard-cap number of stored transcripts (LRU with a max of 50). (c) Hard-cap per-transcript message list size. This is a silent 'agent pool of 10 over 24h' memory explosion.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:39:29.413576190Z",
+  "updated_at": "2026-04-18T00:39:29.413576190Z"
+}
