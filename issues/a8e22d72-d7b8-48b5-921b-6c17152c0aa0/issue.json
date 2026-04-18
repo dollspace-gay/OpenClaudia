@@ -1,0 +1,11 @@
+{
+  "uuid": "a8e22d72-d7b8-48b5-921b-6c17152c0aa0",
+  "display_id": 408,
+  "title": "git worktree branch arg: no git-check-ref-format validation; also boolean flag apply_changes",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension:** Security / Structural Modularity\n\n**Location:** src/tools/worktree.rs lines 84 (worktree_dir join), 97 (git add -b &branch), 168 (apply_changes bool), 203-208 (git commit), 231/244 (duplicate cleanup).\n\n**Violation:** (1) branch arg from model has no validation — relies on git's own (post-2.17) flag-prefix rejection; the PathBuf at worktree_dir = git_root.join(\".worktrees\").join(&branch) escapes when branch contains '../'. (2) exit_worktree uses apply_changes: bool — violates the boolean-flag split rule (matches execute_bash run_in_background). (3) git commit -m runs hooks with agent privileges; a malicious .git/hooks/pre-commit in the cloned worktree runs on exit_worktree(apply_changes=true). (4) worktree remove --force is duplicated verbatim at lines 231 and 244 — DRY violation.\n\n**Mandated Refactor:** (1) Validate branch via git2::Reference::is_valid_name or reject '..', '//', '@{', ASCII control, leading '-' or '/'. (2) Split into exit_worktree_discard() / exit_worktree_merge(). (3) Set GIT_CONFIG_COUNT/KEY/VALUE to pin core.hooksPath=/dev/null during auto-commit. (4) Extract cleanup_worktree() helper.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:39:00.325220004Z",
+  "updated_at": "2026-04-18T00:39:00.325220004Z"
+}
