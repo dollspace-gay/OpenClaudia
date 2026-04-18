@@ -1,0 +1,11 @@
+{
+  "uuid": "81ca948a-cdee-4ed1-86ad-0a4e20947c97",
+  "display_id": 252,
+  "title": "VDD triage: 3-layer pipeline hardcoded, cannot inject custom layers (OCP)",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Architectural Alignment / OCP\n**Location:** src/vdd/mod.rs:803-878 (triage_findings)\n**Violation:** `triage_findings` hardcodes three layers (duplicate detection, pattern matching, AI verification) inline with match-style branching. Adding a new triage layer (e.g., a CVE database lookup, a git blame check, or a user-specific allowlist) requires editing this 75-line method. This violates Open/Closed: the module should be extensible without modification.\n**Mandated Refactor:** Define `trait TriageLayer { async fn classify(&self, finding: &Finding, ctx: &TriageCtx) -> Option<FindingStatus>; }`. Build a `Vec<Box<dyn TriageLayer>>` in order and drive with a single loop that short-circuits once a finding is classified non-Genuine. Existing layers become three structs: DuplicateDetector, CommonPatternDetector, AiVerifier. The engine composes the pipeline at construction time from config.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:27:08.081603085Z",
+  "updated_at": "2026-04-18T00:27:08.081603085Z"
+}
