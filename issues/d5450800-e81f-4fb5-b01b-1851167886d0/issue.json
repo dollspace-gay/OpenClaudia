@@ -1,0 +1,11 @@
+{
+  "uuid": "d5450800-e81f-4fb5-b01b-1851167886d0",
+  "display_id": 437,
+  "title": "skills.rs: load_skills is not cached across turns",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Performance. Location: src/skills.rs:59-120 called by src/prompt.rs:174. Every prompt assembly walks the skills dirs and parses YAML. parse_skill_file silently returns None on YAML error. Refactor: cache with mtime invalidation; log parse errors.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:40:56.383448995Z",
+  "updated_at": "2026-04-18T00:40:56.383448995Z"
+}
