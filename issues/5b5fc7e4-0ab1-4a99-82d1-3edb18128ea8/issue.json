@@ -1,0 +1,11 @@
+{
+  "uuid": "5b5fc7e4-0ab1-4a99-82d1-3edb18128ea8",
+  "display_id": 342,
+  "title": "VDD config validates but filesystem paths are not canonicalized",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension**: Security and Access + Error Orchestration\n\n**Location**: src/config/vdd.rs:178-203 (VddTracking), src/config/session.rs:59-61 (default_persist_path)\n\n**Violation**: VddTracking.path and SessionConfig.persist_path both accept PathBuf directly from user/env/yaml with NO canonicalization or safety checks. User-controlled path values flow into `std::fs::write` and `std::fs::create_dir_all` calls throughout the codebase. A managed (enterprise) settings file specifying `vdd.tracking.path: /etc/cron.d` silently makes the VDD session logger write to system-privileged directories when the harness runs with elevated privileges.\n\nNo validation that:\n- The path is inside the project or user home\n- The path exists (or that its parent exists with correct perms)\n- The path is not a symlink to somewhere sensitive\n- The path does not contain `..` components\n\nFurther, VddConfig::validate() (vdd.rs:212-254) validates thresholds, temperatures, and providers but NOT paths.\n\n**Mandated Refactor**:\n1. Add path validation in VddConfig::validate(): canonicalize tracking.path and verify it starts with env::current_dir() OR home_dir().\n2. Reject absolute paths outside those trees by default; require an explicit `allow_external_path: true` opt-in.\n3. Likewise for SessionConfig::persist_path — validate at load time in load_config().\n4. Return ConfigError if validation fails — do not silently continue.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:34:24.608456943Z",
+  "updated_at": "2026-04-18T00:34:24.608456943Z"
+}
