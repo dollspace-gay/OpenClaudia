@@ -1,6 +1,6 @@
 {
   "uuid": "662c558a-baeb-41be-86bb-a93940f43fea",
-  "display_id": 393,
+  "display_id": 394,
   "title": "Clippy: 9 needless raw string hashes — remove unneeded # from r#\"\"#",
   "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Cognitive Readability\n**Lint:** clippy::needless_raw_string_hashes\n\n## Violation\nRaw-string hashes `r#\"...\"#` are present without any `\"` inside the string. A plain `r\"...\"` would suffice — the hashes are noise.\n\n## Locations\n- src/claude_credentials.rs: 416\n- src/plugins/mod.rs: 1569, 1590, 1642\n- src/tool_intercept.rs: 847, 870, 889, 909, 939\n\n## Mandated Refactor\nDrop the `#`:\n```rust\n// Before\nlet s = r#\"some text without embedded quotes\"#;\n// After\nlet s = r\"some text without embedded quotes\";\n```\nAuto-fix with `cargo clippy --fix -- -W clippy::needless_raw_string_hashes`. Verify no later edit adds quotes requiring hashes again.",
   "status": "open",
