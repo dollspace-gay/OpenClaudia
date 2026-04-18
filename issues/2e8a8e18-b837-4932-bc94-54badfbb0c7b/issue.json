@@ -1,0 +1,11 @@
+{
+  "uuid": "2e8a8e18-b837-4932-bc94-54badfbb0c7b",
+  "display_id": 497,
+  "title": "Tool execution: no tracing spans, no structured logs, no metrics — agent runs are opaque",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Observability / Error Orchestration\n\n**Location:** All execute_* functions in /home/doll/OpenClaudia/src/tools/ — bash/mod.rs, file/{read,write,edit,list,notebook}.rs, chainlink.rs, web.rs, worktree.rs, cron.rs, task.rs, ask_user.rs, plan_mode.rs, lsp.rs\n\n**Violation:**\nOnly MCP (mcp.rs) uses tracing::{debug, info, warn}. Every other tool path is silent:\n1. No tracing::info_span!(\"bash\", command = %cmd) — impossible to correlate a tool call with downstream provider requests or database queries.\n2. No metrics (prometheus, opentelemetry). Cannot measure p99 latency of read_file, bash timeouts, cron execution frequency, or denial rate from the permission manager.\n3. No structured error logging. All errors bubble as (String, true); no 'tool_failure' counter exists to alert on.\n4. tool_intercept.rs line 607 prints '\\n\\x1b[36m⚡ Running {} locally...\\x1b[0m' with println! — directly to stdout with ANSI escapes. This is a debug aid that shouldn't be in production paths; it pollutes piped output and doesn't respect RUST_LOG.\n\n**Mandated Refactor:**\n1. Wrap every execute_* in #[tracing::instrument(skip(args), fields(tool = %NAME))] — automatic span per call.\n2. Emit a structured tracing::info event at span close with {duration_ms, is_error, output_size}.\n3. Replace println!-with-escape at tool_intercept.rs:607 with tracing::info!. Output colouring belongs in the TUI layer, not the tool layer.\n4. Expose counters via metrics crate: openclaudia.tool.calls_total {tool, outcome}; openclaudia.tool.duration_seconds {tool}.\n5. Document minimum RUST_LOG=openclaudia=info to observe tool activity.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:46:01.104683828Z",
+  "updated_at": "2026-04-18T00:46:01.104683828Z"
+}
