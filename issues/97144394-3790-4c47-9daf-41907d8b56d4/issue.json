@@ -7,8 +7,9 @@
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:39:45.317549844Z",
-  "updated_at": "2026-04-18T00:39:49.706548157Z",
+  "updated_at": "2026-04-18T00:45:30.109079785Z",
   "labels": [
-    "bug"
+    "bug",
+    "qa-seam-vdd"
   ]
 }
