@@ -21,7 +21,6 @@ use openclaudia::{
 };
 
 use clap::{Parser, Subcommand};
-use std::fs;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 // Re-import extracted types and functions used heavily in cmd_chat
@@ -487,6 +486,222 @@ fn check_tool_permission_interactive(
 }
 
 /// Interactive chat mode (default command)
+/// Chat-session cleanup: finalize auto-learner, autosave session,
+/// persist readline history, restore terminal scroll region.
+///
+/// Each step is best-effort — failures in any one are logged at
+/// `warn!` but do not propagate, because the CLI is already about to
+/// exit. Extracted from `cmd_chat` per crosslink #262.
+fn finalize_chat(
+    auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner>,
+    chat_session: &ChatSession,
+    memory_db: Option<&memory::MemoryDb>,
+    rl: &mut rustyline::DefaultEditor,
+    history_path: &std::path::Path,
+) {
+    // Finalize auto-learning (compute file relationships, etc.).
+    if let Some(learner) = auto_learner.as_mut() {
+        learner.on_session_end();
+    }
+
+    // Autosave to short-term memory so a future resume can pick up.
+    save_session_to_short_term_memory(chat_session, memory_db);
+
+    // Persist readline history — missing file is a warning, not an error.
+    if let Err(e) = rl.save_history(history_path) {
+        tracing::warn!("Failed to save history: {}", e);
+    }
+
+    // Restore the terminal scroll region before returning control.
+    let _ = tui::teardown_pinned_bar();
+}
+
+/// Discover plugins and log a one-line status banner.
+///
+/// Wraps `PluginManager::new()` + `.discover()` + the "N plugin(s)
+/// loaded" print + per-error `tracing::warn!`. Returns the manager
+/// for the caller to use. Extracted from `cmd_chat` per crosslink #262.
+fn init_plugin_manager() -> plugins::PluginManager {
+    let mut plugin_manager = plugins::PluginManager::new();
+    let plugin_errors = plugin_manager.discover();
+    if plugin_manager.count() > 0 {
+        println!("\x1b[90m{} plugin(s) loaded\x1b[0m", plugin_manager.count());
+    }
+    for err in &plugin_errors {
+        tracing::warn!("Plugin error: {}", err);
+    }
+    plugin_manager
+}
+
+/// Initialize the rustyline editor with history file loaded.
+///
+/// Creates the history directory on a best-effort basis, logging a
+/// warning (but never failing) if creation or load fails. Extracted
+/// from `cmd_chat` per crosslink #262.
+///
+/// # Errors
+/// Propagates errors from `DefaultEditor::new()` — these are
+/// terminal-initialization failures that mean the CLI cannot run.
+fn init_rustyline_with_history() -> anyhow::Result<(rustyline::DefaultEditor, std::path::PathBuf)> {
+    let mut rl = rustyline::DefaultEditor::new()?;
+    let history_path = get_history_path();
+
+    if let Some(parent) = history_path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            tracing::warn!(error = %e, path = ?parent, "Failed to create history directory");
+        }
+    }
+
+    // Missing history file on first run is expected; ignore load errors.
+    let _ = rl.load_history(&history_path);
+
+    Ok((rl, history_path))
+}
+
+/// Auto-detect the project's git root and `chdir` into it.
+///
+/// Silent on failure — non-git directories or missing `git` binary are
+/// both valid reasons to just use the caller's current working
+/// directory. Extracted from `cmd_chat` per crosslink #262
+/// (god-function decomposition).
+fn chdir_to_git_root() {
+    let Ok(output) = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+    else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+    let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !root.is_empty() {
+        let _ = std::env::set_current_dir(&root);
+    }
+}
+
+/// Resolve the model name to use for a chat session.
+///
+/// Priority: explicit `-m` flag > provider's configured model > a
+/// per-target hard-coded default. Pure function — no I/O, no mutation.
+/// Extracted from `cmd_chat` per crosslink #262.
+fn resolve_model_name(
+    model_override: Option<String>,
+    provider_model: Option<String>,
+    target: &str,
+) -> String {
+    model_override
+        .or(provider_model)
+        .unwrap_or_else(|| match target {
+            "anthropic" => "claude-sonnet-4-6".to_string(),
+            "openai" => "gpt-5.2".to_string(),
+            "google" => "gemini-2.5-flash".to_string(),
+            "zai" => "glm-5".to_string(),
+            "deepseek" => "deepseek-chat".to_string(),
+            "qwen" => "qwen3.5-plus".to_string(),
+            _ => "gpt-5.2".to_string(),
+        })
+}
+
+/// Parse a behavioral-mode string (`--mode`) into a `BehaviorMode`.
+/// `None` yields the default preset.
+///
+/// Extracted from `cmd_chat` per crosslink #262.
+///
+/// # Errors
+/// Returns the `String` error produced by `Preset::FromStr` when the
+/// user supplied an unknown preset name. The CLI layer prints it and
+/// exits `Ok(())` — this helper surfaces the error rather than
+/// coupling to stderr.
+fn parse_initial_behavior_mode(
+    mode_override: Option<&str>,
+) -> Result<openclaudia::modes::BehaviorMode, String> {
+    let Some(s) = mode_override else {
+        return Ok(openclaudia::modes::BehaviorMode::default());
+    };
+    let preset: openclaudia::modes::Preset = s.parse()?;
+    Ok(openclaudia::modes::BehaviorMode::from_preset(preset))
+}
+
+/// Outcome of resolving authentication for a chat session.
+///
+/// Exactly one of `api_key` or `claude_code_token` is set (or both
+/// `None` when `cmd_chat` has already printed an error and is about to
+/// return). See [`resolve_chat_auth`].
+struct ChatAuth {
+    /// Provider API key (newtype — Debug/Display redact).
+    api_key: Option<openclaudia::providers::ApiKey>,
+    /// Claude Code OAuth Bearer token, when auth came from the
+    /// `~/.claude/.credentials.json` store.
+    claude_code_token: Option<String>,
+}
+
+/// Resolve which authentication mechanism the chat session should use.
+///
+/// Priority for Anthropic:
+///  1. Claude Code credentials (`~/.claude/.credentials.json`) — zero
+///     config, uses the active subscription.
+///  2. API key from provider config / env.
+///
+/// Returns `Ok(None)` when authentication is impossible AND
+/// `cmd_chat` should exit cleanly — each such branch prints a
+/// user-facing `eprintln!` before returning. Returns `Ok(Some(_))`
+/// with the chosen auth material. Returns `Err(_)` only for
+/// unexpected I/O errors. Extracted from `cmd_chat` per crosslink #262.
+async fn resolve_chat_auth(
+    target: &str,
+    provider: &openclaudia::config::ProviderConfig,
+) -> anyhow::Result<Option<ChatAuth>> {
+    // Anthropic / no API-key branch: try Claude Code first.
+    if target == "anthropic" && provider.api_key.is_none() {
+        if !openclaudia::claude_credentials::has_claude_code_credentials() {
+            eprintln!("No API key configured for Anthropic.");
+            eprintln!(
+                "Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY."
+            );
+            return Ok(None);
+        }
+        match openclaudia::claude_credentials::load_credentials().await {
+            Ok(creds) => {
+                eprintln!(
+                    "✓ Authenticated via Claude Code ({}, {})",
+                    creds.subscription_type.as_deref().unwrap_or("unknown"),
+                    creds.rate_limit_tier.as_deref().unwrap_or("default"),
+                );
+                return Ok(Some(ChatAuth {
+                    api_key: None,
+                    claude_code_token: Some(creds.access_token),
+                }));
+            }
+            Err(e) => {
+                eprintln!("Error: Claude Code credentials unusable: {e}");
+                eprintln!(
+                    "Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY."
+                );
+                return Ok(None);
+            }
+        }
+    }
+
+    if let Some(k) = &provider.api_key {
+        return Ok(Some(ChatAuth {
+            api_key: Some(k.clone()),
+            claude_code_token: None,
+        }));
+    }
+
+    let env_var = match target {
+        "openai" => "OPENAI_API_KEY",
+        "google" => "GOOGLE_API_KEY",
+        "zai" => "ZAI_API_KEY",
+        "deepseek" => "DEEPSEEK_API_KEY",
+        "qwen" => "QWEN_API_KEY",
+        _ => "API_KEY",
+    };
+    eprintln!("No API key configured for '{target}'. Set {env_var} or add to config.");
+    Ok(None)
+}
+
 async fn cmd_chat(
     model_override: Option<String>,
     resume: bool,
@@ -506,18 +721,7 @@ async fn cmd_chat(
     use rustyline::error::ReadlineError;
     use rustyline::{Config, DefaultEditor, EditMode, Editor};
 
-    // Auto-detect project root (git root) and change to it
-    if let Ok(output) = std::process::Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-    {
-        if output.status.success() {
-            let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !root.is_empty() {
-                let _ = std::env::set_current_dir(&root);
-            }
-        }
-    }
+    chdir_to_git_root();
 
     // Compile regex once for file extension extraction
     let ext_regex = regex::Regex::new(r"[\w/\\.-]+\.([a-zA-Z0-9]{1,10})\b").unwrap();
@@ -548,17 +752,12 @@ async fn cmd_chat(
         }
     }
 
-    // Parse behavioral mode from --mode flag
-    let initial_behavior_mode = if let Some(ref mode_str) = mode_override {
-        match mode_str.parse::<openclaudia::modes::Preset>() {
-            Ok(preset) => openclaudia::modes::BehaviorMode::from_preset(preset),
-            Err(e) => {
-                eprintln!("{e}");
-                return Ok(());
-            }
+    let initial_behavior_mode = match parse_initial_behavior_mode(mode_override.as_deref()) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("{e}");
+            return Ok(());
         }
-    } else {
-        openclaudia::modes::BehaviorMode::default()
     };
 
     // Initialize guardrails engine from config
@@ -574,71 +773,20 @@ async fn cmd_chat(
         return Ok(());
     };
 
-    // Authentication priority for Anthropic:
-    // 1. Claude Code credentials (~/.claude/.credentials.json) — zero-config
-    // 2. API key from config/env
-    let mut claude_code_token: Option<String> = None;
+    let Some(ChatAuth {
+        api_key,
+        claude_code_token,
+    }) = resolve_chat_auth(&config.proxy.target, provider).await?
+    else {
+        // `resolve_chat_auth` already printed a user-facing error.
+        return Ok(());
+    };
 
-    // `api_key` is `Option<ApiKey>` rather than a raw String for log-safe
-    // newtype semantics (crosslink #256). `None` in the OAuth path, where
-    // the Claude-Code token supplies auth instead.
-    let api_key: Option<openclaudia::providers::ApiKey> =
-        if config.proxy.target == "anthropic" && provider.api_key.is_none() {
-            // No API key — try Claude Code credentials first
-            if openclaudia::claude_credentials::has_claude_code_credentials() {
-                match openclaudia::claude_credentials::load_credentials().await {
-                    Ok(creds) => {
-                        eprintln!(
-                            "✓ Authenticated via Claude Code ({}, {})",
-                            creds.subscription_type.as_deref().unwrap_or("unknown"),
-                            creds.rate_limit_tier.as_deref().unwrap_or("default"),
-                        );
-                        claude_code_token = Some(creds.access_token);
-                        None
-                    }
-                    Err(e) => {
-                        eprintln!("Error: Claude Code credentials unusable: {e}");
-                        eprintln!(
-                            "Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY."
-                        );
-                        return Ok(());
-                    }
-                }
-            } else {
-                eprintln!("No API key configured for Anthropic.");
-                eprintln!("Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY.");
-                return Ok(());
-            }
-        } else if let Some(k) = &provider.api_key {
-            Some(k.clone())
-        } else {
-            let env_var = match config.proxy.target.as_str() {
-                "openai" => "OPENAI_API_KEY",
-                "google" => "GOOGLE_API_KEY",
-                "zai" => "ZAI_API_KEY",
-                "deepseek" => "DEEPSEEK_API_KEY",
-                "qwen" => "QWEN_API_KEY",
-                _ => "API_KEY",
-            };
-            eprintln!(
-                "No API key configured for '{}'. Set {} or add to config.",
-                config.proxy.target, env_var
-            );
-            return Ok(());
-        };
-
-    // Determine model
-    let mut model = model_override
-        .or_else(|| provider.model.clone())
-        .unwrap_or_else(|| match config.proxy.target.as_str() {
-            "anthropic" => "claude-sonnet-4-6".to_string(),
-            "openai" => "gpt-5.2".to_string(),
-            "google" => "gemini-2.5-flash".to_string(),
-            "zai" => "glm-5".to_string(),
-            "deepseek" => "deepseek-chat".to_string(),
-            "qwen" => "qwen3.5-plus".to_string(),
-            _ => "gpt-5.2".to_string(),
-        });
+    let mut model = resolve_model_name(
+        model_override,
+        provider.model.clone(),
+        &config.proxy.target,
+    );
 
     let adapter = get_adapter(&config.proxy.target);
     let client = reqwest::Client::new();
@@ -651,29 +799,9 @@ async fn cmd_chat(
     // Initialize rules engine
     let rules_engine = RulesEngine::new(".openclaudia/rules");
 
-    // Initialize plugin manager
-    let mut plugin_manager = plugins::PluginManager::new();
-    let plugin_errors = plugin_manager.discover();
-    if plugin_manager.count() > 0 {
-        println!("\x1b[90m{} plugin(s) loaded\x1b[0m", plugin_manager.count());
-    }
-    for err in &plugin_errors {
-        tracing::warn!("Plugin error: {}", err);
-    }
+    let mut plugin_manager = init_plugin_manager();
 
-    // Initialize rustyline editor with history
-    let mut rl = DefaultEditor::new()?;
-    let history_path = get_history_path();
-
-    // Create history directory if it doesn't exist
-    if let Some(parent) = history_path.parent() {
-        if let Err(e) = fs::create_dir_all(parent) {
-            tracing::warn!(error = %e, path = ?parent, "Failed to create history directory");
-        }
-    }
-
-    // Load history (ignore errors if file doesn't exist)
-    let _ = rl.load_history(&history_path);
+    let (mut rl, history_path) = init_rustyline_with_history()?;
 
     // Clear screen and render TUI welcome screen
     let _ = tui::clear_screen();
@@ -3742,22 +3870,71 @@ async fn cmd_chat(
         }
     }
 
-    // Save session to short-term memory on any exit
-    // Finalize auto-learning (compute file relationships, etc.)
-    if let Some(ref mut learner) = auto_learner {
-        learner.on_session_end();
-    }
-
-    save_session_to_short_term_memory(&chat_session, memory_db.as_ref());
-
-    // Save history
-    if let Err(e) = rl.save_history(&history_path) {
-        tracing::warn!("Failed to save history: {}", e);
-    }
-
-    // Restore full scroll region before exit
-    let _ = tui::teardown_pinned_bar();
+    finalize_chat(
+        &mut auto_learner,
+        &chat_session,
+        memory_db.as_ref(),
+        &mut rl,
+        &history_path,
+    );
 
     println!("\nGoodbye!");
     Ok(())
+}
+
+// ============================================================================
+// Tests for cmd_chat helpers (crosslink #262 decomposition).
+//
+// These pure-function tests would have been impossible when the logic
+// lived inline inside cmd_chat — the 3200-line function made unit
+// testing of any slice impossible. Each extraction enables the test
+// cases below.
+// ============================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_model_prefers_explicit_override() {
+        let got = resolve_model_name(
+            Some("custom-model".to_string()),
+            Some("provider-default".to_string()),
+            "anthropic",
+        );
+        assert_eq!(got, "custom-model");
+    }
+
+    #[test]
+    fn resolve_model_falls_back_to_provider_config() {
+        let got = resolve_model_name(None, Some("provider-default".to_string()), "openai");
+        assert_eq!(got, "provider-default");
+    }
+
+    #[test]
+    fn resolve_model_per_target_defaults() {
+        assert_eq!(resolve_model_name(None, None, "anthropic"), "claude-sonnet-4-6");
+        assert_eq!(resolve_model_name(None, None, "openai"), "gpt-5.2");
+        assert_eq!(resolve_model_name(None, None, "google"), "gemini-2.5-flash");
+        assert_eq!(resolve_model_name(None, None, "zai"), "glm-5");
+        assert_eq!(resolve_model_name(None, None, "deepseek"), "deepseek-chat");
+        assert_eq!(resolve_model_name(None, None, "qwen"), "qwen3.5-plus");
+        // Unknown target falls back to the OpenAI default.
+        assert_eq!(resolve_model_name(None, None, "unknown-provider"), "gpt-5.2");
+    }
+
+    #[test]
+    fn parse_initial_mode_none_is_default() {
+        let got = parse_initial_behavior_mode(None).expect("default always succeeds");
+        let default = openclaudia::modes::BehaviorMode::default();
+        // Compare via display name rather than relying on `Eq`.
+        assert_eq!(got.display_name(), default.display_name());
+    }
+
+    #[test]
+    fn parse_initial_mode_unknown_preset_returns_err() {
+        let err = parse_initial_behavior_mode(Some("this-preset-does-not-exist"))
+            .expect_err("unknown preset should fail");
+        // The error string must be user-facing — cmd_chat prints it.
+        assert!(!err.is_empty());
+    }
 }
