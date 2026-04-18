@@ -486,6 +486,99 @@ fn check_tool_permission_interactive(
 }
 
 /// Interactive chat mode (default command)
+/// Apply `--resume` / `--session-id` to select a prior chat session.
+///
+/// If `resume` is true OR `session_id` is `Some`, looks up the saved
+/// sessions and replaces the passed-in session in-place with the best
+/// match (prefix match on `session_id`, else the most-recent one).
+/// Prints a user-facing status line in either case.
+///
+/// Extracted from `cmd_chat` per crosslink #262.
+fn maybe_resume_session(
+    chat_session: &mut ChatSession,
+    resume: bool,
+    session_id: Option<&str>,
+) {
+    if !resume && session_id.is_none() {
+        return;
+    }
+    let sessions = list_chat_sessions();
+    let target = if let Some(id) = session_id {
+        sessions.iter().find(|s| s.id.starts_with(id)).cloned()
+    } else {
+        sessions.into_iter().next()
+    };
+    if let Some(loaded) = target {
+        eprintln!("Resuming session: {} ({})", loaded.title, &loaded.id[..8]);
+        *chat_session = loaded;
+    } else {
+        eprintln!("No session found to resume. Starting new session.");
+    }
+}
+
+/// Open the project-scoped memory database and print one-line status
+/// banners for recent-session count and auto-learning stats.
+///
+/// Returns `None` if the database cannot be opened — the caller then
+/// runs without memory (a tracing::warn! is logged, but the session
+/// still starts). Extracted from `cmd_chat` per crosslink #262.
+fn init_memory_with_banner() -> Option<memory::MemoryDb> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    match memory::MemoryDb::open_for_project(&cwd) {
+        Ok(db) => {
+            let recent_count = db.get_recent_sessions(10).map(|s| s.len()).unwrap_or(0);
+            if recent_count > 0 {
+                println!("\x1b[90m📝 {recent_count} recent session(s) loaded from memory\x1b[0m");
+            }
+
+            if let Ok(stats) = db.auto_learn_stats() {
+                let total = stats.coding_patterns
+                    + stats.error_patterns
+                    + stats.learned_preferences
+                    + stats.file_relationships;
+                if total > 0 {
+                    println!(
+                        "\x1b[90m🧠 Auto-learned: {} patterns, {} error fixes, {} preferences, {} file relationships\x1b[0m",
+                        stats.coding_patterns,
+                        stats.errors_resolved,
+                        stats.learned_preferences,
+                        stats.file_relationships
+                    );
+                }
+            }
+
+            tracing::debug!("Memory database: {}", db.path().display());
+            Some(db)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to initialize memory database: {}", e);
+            None
+        }
+    }
+}
+
+/// Build the VDD engine if VDD is enabled in config, printing a status
+/// banner. Returns `None` when disabled — `cmd_chat` passes that
+/// through to every review call site so VDD is a no-op.
+///
+/// Uses a 120-second reqwest timeout (the per-request timeout added
+/// in crosslink #496 applies inside the engine itself — this is the
+/// outer transport timeout). Extracted from `cmd_chat` per #262.
+fn init_vdd_engine_if_enabled(config: &config::AppConfig) -> Option<vdd::VddEngine> {
+    if !config.vdd.enabled {
+        return None;
+    }
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    println!(
+        "\x1b[33m🔍 VDD enabled ({} mode) - adversary: {}\x1b[0m",
+        config.vdd.mode, config.vdd.adversary.provider
+    );
+    Some(vdd::VddEngine::new(&config.vdd, config, http_client))
+}
+
 /// Chat-session cleanup: finalize auto-learner, autosave session,
 /// persist readline history, restore terminal scroll region.
 ///
@@ -821,21 +914,7 @@ async fn cmd_chat(
     // Initialize chat session with behavioral mode
     let mut chat_session = ChatSession::new(&model, &config.proxy.target, initial_behavior_mode);
 
-    // Resume a previous session if --resume or --session-id was specified
-    if resume || session_id.is_some() {
-        let sessions = list_chat_sessions();
-        let target = if let Some(ref id) = session_id {
-            sessions.iter().find(|s| s.id.starts_with(id)).cloned()
-        } else {
-            sessions.into_iter().next()
-        };
-        if let Some(loaded) = target {
-            eprintln!("Resuming session: {} ({})", loaded.title, &loaded.id[..8]);
-            chat_session = loaded;
-        } else {
-            eprintln!("No session found to resume. Starting new session.");
-        }
-    }
+    maybe_resume_session(&mut chat_session, resume, session_id.as_deref());
 
     // Load saved theme (or default)
     let mut active_theme = tui::Theme::load();
@@ -850,38 +929,7 @@ async fn cmd_chat(
     // Initialize audit logger for this session
     let mut audit_logger = openclaudia::session::AuditLogger::new(&chat_session.id);
 
-    // Initialize memory database (always-on for auto-learning)
-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let memory_db: Option<memory::MemoryDb> = match memory::MemoryDb::open_for_project(&cwd) {
-        Ok(db) => {
-            // Show short-term memory status
-            let recent_count = db.get_recent_sessions(10).map(|s| s.len()).unwrap_or(0);
-            if recent_count > 0 {
-                println!("\x1b[90m📝 {recent_count} recent session(s) loaded from memory\x1b[0m");
-            }
-
-            // Show auto-learning stats
-            if let Ok(stats) = db.auto_learn_stats() {
-                let total = stats.coding_patterns
-                    + stats.error_patterns
-                    + stats.learned_preferences
-                    + stats.file_relationships;
-                if total > 0 {
-                    println!(
-                        "\x1b[90m🧠 Auto-learned: {} patterns, {} error fixes, {} preferences, {} file relationships\x1b[0m",
-                        stats.coding_patterns, stats.errors_resolved, stats.learned_preferences, stats.file_relationships
-                    );
-                }
-            }
-
-            tracing::debug!("Memory database: {}", db.path().display());
-            Some(db)
-        }
-        Err(e) => {
-            tracing::warn!("Failed to initialize memory database: {}", e);
-            None
-        }
-    };
+    let memory_db: Option<memory::MemoryDb> = init_memory_with_banner();
 
     // Initialize auto-learner (captures knowledge from tool signals)
     let mut auto_learner: Option<openclaudia::auto_learn::AutoLearner> = memory_db
@@ -909,20 +957,7 @@ async fn cmd_chat(
         config.permissions.default_allow.clone(),
     );
 
-    // Initialize VDD engine if enabled
-    let vdd_engine: Option<vdd::VddEngine> = if config.vdd.enabled {
-        let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-        println!(
-            "\x1b[33m🔍 VDD enabled ({} mode) - adversary: {}\x1b[0m",
-            config.vdd.mode, config.vdd.adversary.provider
-        );
-        Some(vdd::VddEngine::new(&config.vdd, &config, http_client))
-    } else {
-        None
-    };
+    let vdd_engine: Option<vdd::VddEngine> = init_vdd_engine_if_enabled(&config);
 
     loop {
         // Render separator, status bar, then prompt appears on next line
