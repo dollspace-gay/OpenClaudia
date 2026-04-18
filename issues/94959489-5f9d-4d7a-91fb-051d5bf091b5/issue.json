@@ -7,9 +7,10 @@
   "priority": "critical",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:26:10.415792897Z",
-  "updated_at": "2026-04-18T00:26:14.076786292Z",
+  "updated_at": "2026-04-18T00:26:15.589635713Z",
   "labels": [
     "refactor",
-    "qa-review-2026-04"
+    "qa-review-2026-04",
+    "qa-seam-proxy"
   ]
 }
