@@ -1,0 +1,11 @@
+{
+  "uuid": "25098b1d-1641-4788-bdf1-ec9c2774a768",
+  "display_id": 370,
+  "title": "Clippy: 7 float equality comparisons (f32/f64 strict ==)",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension:** Functional Correctness\n**Severity:** WARNING (pedantic but correctness-adjacent)\n**Lint:** clippy::float_cmp\n\n## Violation\nStrict equality comparison on floating-point values. IEEE-754 floats rarely compare exactly equal after arithmetic, and code that relies on `==` on floats is usually a latent bug: thresholds will misfire, test assertions will be flaky, and rounding drift silently produces wrong branches.\n\n## Locations\n- src/compaction.rs:1108\n- src/config/vdd.rs:268, 271, 313, 316\n- src/vdd/confabulation.rs:199, 200\n\n## Mandated Refactor\n1. For threshold/configuration checks, compare against an epsilon:\n   ```rust\n   (actual - expected).abs() < f64::EPSILON * 4.0\n   // or a domain epsilon: (a - b).abs() < 1e-6\n   ```\n2. For \"is this a sentinel/default\" checks, use `.to_bits() == OTHER.to_bits()` (exact bit equality — explicit about what you want).\n3. For enum-like float constants (e.g. confidence scores of exactly 0.0/1.0), convert the field to an enum so the equality check becomes structural.\n\nAudit each site individually — config/vdd.rs is likely comparing deserialized config values which should use an epsilon helper; confabulation.rs compares confidence scores which should likely be classified by range.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:36:34.447182132Z",
+  "updated_at": "2026-04-18T00:36:34.447182132Z"
+}
