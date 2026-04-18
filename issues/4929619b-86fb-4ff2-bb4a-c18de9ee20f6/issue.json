@@ -1,0 +1,11 @@
+{
+  "uuid": "4929619b-86fb-4ff2-bb4a-c18de9ee20f6",
+  "display_id": 472,
+  "title": "VDD: ADVERSARY_SYSTEM_PROMPT and VERIFIER_SYSTEM_PROMPT are 60+ lines of hardcoded English in Rust source",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Documentation and Intent / Structural Modularity. Location: src/vdd/mod.rs:55-116. Violation: Two multi-dozen-line string literals embedded in Rust source. They cannot be edited without recompiling. They cannot be A/B tested at runtime. They cannot be localized or versioned independently of the binary. They drift silently from the user-visible behavior described in the module doc. The output_style.rs and skills.rs modules already load prompts from external markdown files — VDD prompts should follow the same pattern. Mandated Refactor: Move to prompts/vdd/adversary.md and prompts/vdd/verifier.md. Use include_str! at module level with a const (matches modes/fragments.rs pattern). Bonus: allow config override via vdd.adversary.system_prompt_path so users can customize. Test that the files compile to valid non-empty strings.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:43:52.226881567Z",
+  "updated_at": "2026-04-18T00:43:52.226881567Z"
+}
