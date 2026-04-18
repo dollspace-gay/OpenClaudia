@@ -1,0 +1,11 @@
+{
+  "uuid": "46c4da74-c0dc-4d10-a388-5c75c9c8c14b",
+  "display_id": 453,
+  "title": "auto_learn::prune_tables uses format!() to build DELETE statements with table names — pattern encourages SQLi",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Security and Access (5) / Code Organization (3.2)\n\nLocation: src/auto_learn.rs:112-119.\n\n    for (table, max_rows) in prune_queries {\n        let sql = format!(\n            \"DELETE FROM {table} WHERE rowid NOT IN (SELECT rowid FROM {table} ORDER BY rowid DESC LIMIT {max_rows})\"\n        );\n        if let Err(e) = self.db.execute_raw(&sql) { ... }\n\nViolation: The CURRENT call site passes only hardcoded const table names and u32 maxima, so this is not exploitable TODAY. However:\n\n1. The pattern is EXACTLY what the codebase-wide rule 'always use parameterized queries' forbids.\n2. The technique normalizes format!()+execute_raw(). A future developer, refactoring to accept a user-configurable 'prune which table?' setting, will copy this pattern and introduce real SQLi.\n3. SQLite doesn't let you bind table names as parameters, but the RIGHT way is an enum of allowed tables, not string interpolation.\n4. max_rows is a u32 which CAN be bound via params![]. There's no excuse for interpolating the LIMIT.\n\nMandated Refactor:\n1. Introduce enum PruneTable { CodingPatterns, ErrorPatterns, LearnedPreferences, FileRelationships } with a to_static_str() returning a hardcoded &'static str — match arms keep allowlist explicit.\n2. For each variant, call a dedicated prune method on MemoryDb that has its SQL text embedded in the function body (not constructed at runtime), taking only the LIMIT as a bound parameter.\n3. Delete MemoryDb::execute_raw entirely (depends on #255).\n4. Add a clippy rule (via clippy.toml disallowed_methods) against calling format!() whose result gets passed to any *execute* fn.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:42:04.045236486Z",
+  "updated_at": "2026-04-18T00:42:04.045236486Z"
+}
