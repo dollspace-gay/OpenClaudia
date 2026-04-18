@@ -27,6 +27,50 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 use tracing::{debug, error, info};
 
+/// Clamp an OAuth `expires_in` value to a plausible window and convert
+/// it to an absolute `DateTime<Utc>`.
+///
+/// The spec says `expires_in` is a positive integer number of seconds
+/// but doesn't bound the value. Misconfigured or malicious servers
+/// have returned:
+///  * `0` / missing field — produces a session that is immediately
+///    expired, leading to infinite 401-retry loops.
+///  * `2^63` — would wrap via `.cast_signed()` to a negative duration
+///    landing the session in the past.
+///  * absurdly long values (e.g. 31_536_000_000 = 1000 years) — stores
+///    a token on disk with no re-check.
+///
+/// We clamp to `[MIN_EXPIRES_IN_SECS, MAX_EXPIRES_IN_SECS]` and emit
+/// `tracing::warn!` on any clamp so operators can diagnose a broken
+/// upstream. See crosslink #480.
+pub(crate) fn clamped_expires_at(expires_in: u64) -> DateTime<Utc> {
+    const MIN_EXPIRES_IN_SECS: u64 = 60;
+    const MAX_EXPIRES_IN_SECS: u64 = 30 * 24 * 3600; // 30 days
+
+    let clamped = if expires_in < MIN_EXPIRES_IN_SECS {
+        tracing::warn!(
+            received = expires_in,
+            clamped_to = MIN_EXPIRES_IN_SECS,
+            "OAuth expires_in too small (< 60s); clamping to avoid 401-retry loop"
+        );
+        MIN_EXPIRES_IN_SECS
+    } else if expires_in > MAX_EXPIRES_IN_SECS {
+        tracing::warn!(
+            received = expires_in,
+            clamped_to = MAX_EXPIRES_IN_SECS,
+            "OAuth expires_in too large (> 30d); clamping to refuse multi-year tokens"
+        );
+        MAX_EXPIRES_IN_SECS
+    } else {
+        expires_in
+    };
+
+    // `clamped` is now in [60, 2_592_000] — well within i64 range.
+    #[allow(clippy::cast_possible_wrap)]
+    let as_i64 = clamped as i64;
+    Utc::now() + Duration::seconds(as_i64)
+}
+
 /// Sanitize an OAuth error-response body before surfacing it to the caller.
 ///
 /// Anthropic's OAuth endpoint echoes submitted `refresh_token`, `code`,
@@ -303,7 +347,12 @@ impl OAuthSession {
             credentials: OAuthCredentials {
                 access_token: response.access_token,
                 refresh_token: response.refresh_token,
-                expires_at: Utc::now() + Duration::seconds(response.expires_in.cast_signed()),
+                // Clamped conversion — rejects 0/implausibly-short (prevents
+                // 401-retry loops), rejects decade-long expiries (prevents
+                // permanent on-disk tokens), and avoids the `cast_signed`
+                // u64→i64 wrap that would put a 2^63 expiry in the past.
+                // See crosslink #480.
+                expires_at: clamped_expires_at(response.expires_in),
             },
             api_key: None, // Set after calling create_api_key if auth_mode is ApiKey
             auth_mode,
@@ -826,6 +875,49 @@ mod tests {
     fn redact_empty_body_handled() {
         assert_eq!(redact_oauth_error_body(""), "<empty body>");
         assert_eq!(redact_oauth_error_body("   \n\t"), "<empty body>");
+    }
+
+    // --- Regression tests for crosslink #480 ---
+
+    #[test]
+    fn clamped_expires_at_accepts_normal_value() {
+        let before = Utc::now();
+        let at = clamped_expires_at(3600);
+        let after = Utc::now();
+        // Should be roughly 3600 seconds in the future.
+        let lower = before + Duration::seconds(3600);
+        let upper = after + Duration::seconds(3600);
+        assert!(at >= lower && at <= upper);
+    }
+
+    #[test]
+    fn clamped_expires_at_rejects_zero_value() {
+        // 0 would produce an immediately-expired session → 401 loop.
+        let before = Utc::now();
+        let at = clamped_expires_at(0);
+        // Clamped to 60s, so must be at least 60s in the future.
+        assert!(at >= before + Duration::seconds(60));
+    }
+
+    #[test]
+    fn clamped_expires_at_caps_implausibly_large_value() {
+        // u64::MAX should not produce a DateTime overflow or a past
+        // timestamp (as `.cast_signed()` used to).
+        let before = Utc::now();
+        let at = clamped_expires_at(u64::MAX);
+        let cap_upper = before + Duration::seconds(30 * 24 * 3600 + 5);
+        assert!(at <= cap_upper, "expires_at {at:?} exceeded 30-day cap");
+        assert!(at > before, "expires_at {at:?} is not in the future");
+    }
+
+    #[test]
+    fn clamped_expires_at_caps_thousand_year_value() {
+        // 1000 years in seconds ≈ 3.15e10 — a real bug shape from the
+        // issue description.
+        let before = Utc::now();
+        let at = clamped_expires_at(31_536_000_000);
+        let cap_upper = before + Duration::seconds(30 * 24 * 3600 + 5);
+        assert!(at <= cap_upper);
     }
 
     #[test]

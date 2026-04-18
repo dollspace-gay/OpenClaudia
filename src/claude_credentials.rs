@@ -251,7 +251,39 @@ async fn refresh_and_load(
         .unwrap_or(refresh_token)
         .to_string();
 
-    let expires_in = refresh_response["expires_in"].as_i64().unwrap_or(3600);
+    // `expires_in` is required by the OAuth spec — refuse to silently
+    // default to 3600 when the field is missing or malformed. A missing
+    // field indicates a protocol deviation the operator needs to see.
+    // Clamp the received value to [60s, 30d] with a tracing warn on any
+    // clamp to avoid 401-retry loops (too short) and multi-year tokens
+    // (too long). See crosslink #480.
+    let expires_in_raw = refresh_response["expires_in"]
+        .as_i64()
+        .ok_or("Refresh response missing required 'expires_in' field")?;
+    if expires_in_raw <= 0 {
+        return Err(format!(
+            "Refresh response returned non-positive 'expires_in' ({expires_in_raw})"
+        ));
+    }
+    const MIN_EXPIRES_IN_SECS: i64 = 60;
+    const MAX_EXPIRES_IN_SECS: i64 = 30 * 24 * 3600;
+    let expires_in = if expires_in_raw < MIN_EXPIRES_IN_SECS {
+        tracing::warn!(
+            received = expires_in_raw,
+            clamped_to = MIN_EXPIRES_IN_SECS,
+            "Refresh expires_in too small; clamping to avoid 401-retry loop"
+        );
+        MIN_EXPIRES_IN_SECS
+    } else if expires_in_raw > MAX_EXPIRES_IN_SECS {
+        tracing::warn!(
+            received = expires_in_raw,
+            clamped_to = MAX_EXPIRES_IN_SECS,
+            "Refresh expires_in too large; clamping to refuse multi-year tokens"
+        );
+        MAX_EXPIRES_IN_SECS
+    } else {
+        expires_in_raw
+    };
 
     let new_expires_at = chrono::Utc::now().timestamp_millis() + (expires_in * 1000);
 
