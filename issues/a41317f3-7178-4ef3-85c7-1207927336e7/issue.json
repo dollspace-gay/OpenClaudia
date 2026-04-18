@@ -1,0 +1,11 @@
+{
+  "uuid": "a41317f3-7178-4ef3-85c7-1207927336e7",
+  "display_id": 450,
+  "title": "Cargo.toml: missing keywords + categories metadata for crate discoverability",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Documentation & Intent\n**Lint:** clippy::cargo_common_metadata\n\n## Violation\nCargo.toml lacks `package.keywords` and `package.categories` fields, both flagged by clippy at the cargo level. Required for crates.io publishing and improves discoverability.\n\n## Locations\n- Cargo.toml [package] section\n\n## Mandated Refactor\n```toml\n[package]\nkeywords = [\"agent\", \"llm\", \"claude\", \"proxy\", \"cli\"]\ncategories = [\"command-line-utilities\", \"development-tools\"]\n```\nConstraint: ≤5 keywords, each ≤20 ASCII-alnum-hyphen chars. Categories must match the crates.io slug list.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:41:57.681443798Z",
+  "updated_at": "2026-04-18T00:41:57.681443798Z"
+}
