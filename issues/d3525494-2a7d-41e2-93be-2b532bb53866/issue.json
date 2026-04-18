@@ -1,0 +1,11 @@
+{
+  "uuid": "d3525494-2a7d-41e2-93be-2b532bb53866",
+  "display_id": 441,
+  "title": "skills.rs: parse_skill_file does not strip BOM or normalize line endings — Windows-saved skill files silently fail",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Functional Correctness / Documentation. Location: src/skills.rs:37-55 (parse_skill_file). Violation: A skill file saved on Windows with a UTF-8 BOM (0xEF 0xBB 0xBF) fails the  check because the content starts with the BOM. Likewise, a CRLF-terminated --- delimiter fails on some path. The function silently returns None. No log, no error surfaced to user. Mandated Refactor: Strip BOM at read time (content.trim_start_matches('\\u{FEFF}')); normalize \\r\\n to \\n before frontmatter parsing; return Result<SkillDefinition, SkillParseError> so load_skills can log the specific failure per file.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:41:15.233606074Z",
+  "updated_at": "2026-04-18T00:41:15.233606074Z"
+}
