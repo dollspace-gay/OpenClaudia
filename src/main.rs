@@ -2,26 +2,13 @@
 //!
 //! Provides Claude Code-like capabilities for any AI agent.
 
-// Binary crate: large CLI handler functions are inherently long and splitting
-// them hurts readability. Allow these pedantic lints for the binary entry point.
-#![allow(
-    clippy::too_many_lines,
-    clippy::option_if_let_else,
-    clippy::or_fun_call,
-    clippy::manual_let_else,
-    clippy::match_same_arms,
-    clippy::items_after_statements,
-    clippy::used_underscore_binding,
-    clippy::trivially_copy_pass_by_ref,
-    clippy::similar_names,
-    clippy::cast_precision_loss,
-    clippy::map_unwrap_or,
-    clippy::literal_string_with_formatting_args,
-    clippy::default_trait_access,
-    clippy::assigning_clones,
-    clippy::collection_is_never_read,
-    clippy::format_push_string
-)]
+// Per project policy (CLAUDE.md "no_allow_dead_code" rule + crosslink
+// #461), blanket pedantic-lint suppressions are not allowed here. Each
+// individual offense surfaced by `cargo clippy -W clippy::pedantic` is
+// tracked in the clippy-strict issue batch (#384 uninlined_format_args,
+// #385 doc_markdown, #387 unreadable_literal, #394 needless_raw_string_hashes,
+// #402 must_use_candidate, #424 too_many_lines / god-functions, etc.).
+// Default `cargo build` and non-pedantic `cargo clippy` are unaffected.
 
 mod cli;
 
