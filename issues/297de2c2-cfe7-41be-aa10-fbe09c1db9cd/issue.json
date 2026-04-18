@@ -1,0 +1,11 @@
+{
+  "uuid": "297de2c2-cfe7-41be-aa10-fbe09c1db9cd",
+  "display_id": 409,
+  "title": "files_modified/issues_worked stored as newline-joined TEXT blobs — cannot be queried or indexed",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Architectural Alignment (2) / Performance & Complexity (6)\n\nLocation: src/memory.rs:672-690 save_session_summary (joins Vec<String> with '\\n'), lines 715-738 get_recent_sessions (splits on '\\n' to rebuild Vec<String>).\n\nViolation: Session summaries serialize files_modified: &[String] and issues_worked: &[String] by joining with newlines and storing in a TEXT column (v2 schema, line 273). Problems:\n\n1. Cannot query: 'which sessions touched src/foo.rs?' requires LIKE '%src/foo.rs%' — table scan, no index, false positives for files whose paths contain another file's path as substring.\n2. No escaping: a file path containing a literal newline (valid on Unix) corrupts the serialization and the split round-trip returns the wrong Vec. Unlikely but reachable via malicious tool arg.\n3. Breaks first normal form. The intent is a many-to-many (session, file) and (session, issue) relationship — there is already a recent_activity table that represents this correctly. save_session_summary just denormalizes redundantly.\n4. Round-trip brittleness: an entry containing \\r\\n on Windows splits differently on the reader side.\n\nMandated Refactor:\n1. Delete the files_modified and issues_worked TEXT columns from recent_sessions. Query the existing recent_activity table on demand via get_session_files_modified (already exists at line 807) and get_session_issues (line 829).\n2. Add a view: CREATE VIEW session_with_files AS SELECT rs.*, group_concat(ra.target, CHAR(10)) AS files_modified FROM recent_sessions rs LEFT JOIN recent_activity ra ON ra.session_id = rs.session_id AND ra.activity_type IN ('file_write','file_edit') GROUP BY rs.session_id — lets legacy callers keep the string API while using the normalized storage.\n3. Migration v4: backfill recent_activity from the TEXT blobs on upgrade, then drop the columns.\n4. get_recent_sessions now JOINs instead of splitting strings.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:39:00.348617842Z",
+  "updated_at": "2026-04-18T00:39:00.348617842Z"
+}

@@ -1,0 +1,11 @@
+{
+  "uuid": "e36ea994-8221-4608-8615-e003121d0e49",
+  "display_id": 410,
+  "title": "Clippy: 4 assigning_clones — use Clone::clone_from for re-use",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Performance & Complexity\n**Lint:** clippy::assigning_clones\n\n## Violation\n`x = y.clone()` when `x` already exists allocates a new value and drops the old one. `x.clone_from(&y)` reuses `x`'s allocated buffer (for `String`, `Vec`, etc.), avoiding allocator churn.\n\n## Locations\n- src/tui/app.rs: 707, 708, 709, 710 (cluster — likely a state-copy block)\n\n## Mandated Refactor\n```rust\n// Before\nself.status = other.status.clone();\n// After\nself.status.clone_from(&other.status);\n```\nFour consecutive lines strongly suggest a state-update block — consider extracting a `clone_from_other(&mut self, other: &Self)` helper method to encapsulate the field-by-field copy.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:39:06.315829982Z",
+  "updated_at": "2026-04-18T00:39:06.315829982Z"
+}

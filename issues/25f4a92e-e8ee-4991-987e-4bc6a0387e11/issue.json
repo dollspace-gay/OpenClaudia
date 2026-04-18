@@ -1,0 +1,11 @@
+{
+  "uuid": "25f4a92e-e8ee-4991-987e-4bc6a0387e11",
+  "display_id": 409,
+  "title": "Anthropic adapter silently drops malformed fields via filter_map and default sentinels",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Error Orchestration / Defensive Programming\n\nLocation: src/providers/anthropic.rs lines 120-153 (transform_request), 180-264 (transform_response).\n\nViolation: Perimeter defense is inverted. The convert_messages / convert_tools helpers aggressively use Option chaining that silently drops malformed fields:\n  - anthropic.rs line 88-93: tool conversion `let func = tool.get(\"function\")?; ... func.get(\"name\")?` — if a tool is missing \"function\" or \"name\", it is silently filtered OUT of the returned list via filter_map. The caller has no signal.\n  - anthropic.rs line 202-211: tool_calls extraction in transform_response uses `filter_map` + `?` short-circuit. A malformed tool_use block disappears silently.\n  - anthropic.rs line 239-241: three `default_id`, `default_model`, `default_zero` JSON values injected into the OpenAI-format response if the upstream lacks those fields. Returns \"msg_unknown\" and \"unknown\" to the caller — the downstream client has no way to tell that the upstream response was incomplete.\n\nThese defaults mask upstream API contract violations. If Anthropic changes the response shape, tests pass (because conversion 'succeeds') but the proxy silently returns malformed-ish data.\n\nMandated Refactor:\n  1. Transform_request: when a tool lacks function.name, return Err(ProviderError::RequestFailed(\"Tool missing required 'function.name' field\")). Do not filter_map.\n  2. Transform_response: when content lacks id/model/stop_reason, log at WARN level with the missing field name, but propagate a distinct ProviderError::InvalidResponse instead of returning 'unknown'.\n  3. Remove default_id/default_model/default_zero literals. They are symptoms of a defensive-programming anti-pattern: internal logic is silently correcting for broken upstream.\n  4. Add a test case that feeds transform_response an empty JSON object; assert it returns Err, not a successful response with 'unknown' fields.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:38:56.408879381Z",
+  "updated_at": "2026-04-18T00:38:56.408879381Z"
+}
