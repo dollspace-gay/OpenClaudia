@@ -1,6 +1,6 @@
 {
   "uuid": "a151dc01-8c62-435c-bf9f-878c393db1a7",
-  "display_id": 430,
+  "display_id": 431,
   "title": "Cargo: 36 transitive dep duplications (multiple_crate_versions)",
   "description": "Question: \n\nContext: \n\nFindings: \n\n**Dimension:** Performance & Complexity\n**Lint:** clippy::multiple_crate_versions\n\n## Violation\n36 crates have multiple versions in the dep tree (bitflags 1.3.2 + 2.11.1, block-buffer 0.10 + 0.12, core-foundation 0.9 + 0.10, cpufeatures 0.2 + 0.3, crypto-common 0.1 + 0.2, darling 0.20 + 0.23, etc.). Each duplication inflates build time and binary size; some cause subtle API-incompatibility bugs when types from different versions are mixed.\n\n## Mandated Refactor\n1. Run `cargo tree -d` to see each duplicate's dependency path.\n2. For each duplicate, identify which direct dep pulls in the old version. Common culprits: outdated versions of crypto crates held back by `sha2` or `hmac`, and `darling` held back by `serde_derive`-family crates.\n3. File follow-up upstream-pins when no direct fix exists (e.g., waiting for `foo` to bump `bar`).\n4. Candidates to audit: bitflags (likely `rusqlite` vs others), hashbrown, darling, windows-sys family. Some are unavoidable today; note which.\n\n## Scope note\nThis is research rather than a single refactor because resolution depends on upstream crates. Expect to split this into per-duplicate follow-up issues.",
   "status": "open",
