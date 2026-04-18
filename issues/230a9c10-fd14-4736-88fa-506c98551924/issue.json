@@ -1,0 +1,11 @@
+{
+  "uuid": "230a9c10-fd14-4736-88fa-506c98551924",
+  "display_id": 500,
+  "title": "modes/fragments.rs: accessor fns duplicate enum-match code across four variants — boilerplate registry",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: DRY. Location: src/modes/fragments.rs:57-93 (four accessor fns). Violation: agency_fragment, quality_fragment, scope_fragment, modifier_fragment are four near-identical match-on-enum-to-const functions. They exist purely to dispatch enum variant to const &str. This is the kind of boilerplate a proc macro or a derive would eliminate. Mandated Refactor: Define a trait PromptFragment { const FRAGMENT: &'static str; } or method fn fragment(&self) -> &'static str on each enum, implemented via a small macro_rules! that takes (variant, path) pairs. Or use the strum crate's EnumDiscriminants with an associated-const attribute. Result: adding a modifier is one line change, not four.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:46:41.378899614Z",
+  "updated_at": "2026-04-18T00:46:41.378899614Z"
+}
