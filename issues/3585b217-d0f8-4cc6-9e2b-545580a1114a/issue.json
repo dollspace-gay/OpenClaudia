@@ -3,9 +3,10 @@
   "display_id": 311,
   "title": "Clippy pedantic: 45 uninlined_format_args violations",
   "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Cognitive Readability, DRY\n**Severity:** NITPICK (pedantic)\n**Lint:** clippy::uninlined_format_args\n**Count:** 45 occurrences\n\n## Violation\nVariables are passed as positional args to format macros (`format!(\"{}\", x)`) instead of being inlined (`format!(\"{x}\")`). Clippy pedantic requires inlined format args for readability and to reduce parameter tracking overhead.\n\n## Locations\n- src/compaction.rs: 1187, 1190\n- src/hooks/mod.rs: 1066, 1072, 1078, 1084, 1090, 1301, 1306\n- src/modes/mod.rs: 630, 635, 640, 645, 650\n- src/permissions.rs: 585\n- src/plugins/mod.rs: 1068, 1417\n- src/prompt.rs: 480, 485\n- src/streaming.rs: 377, 388, 399, 419, 432, 459, 495, 526, 548, 653, 677, 725, 774, 838\n- src/tools/mod.rs: 1139, 1178, 1492, 1535, 1583, 1634, 1771, 1804, 1824, 1877\n- src/tui/mod.rs: 1024 (twice)\n\n## Mandated Refactor\nRewrite every flagged call site to inline the variable:\n```rust\n// Before\nformat!(\"Error: {}\", err)\ntracing::info!(\"loaded {}\", count);\n// After\nformat!(\"Error: {err}\")\ntracing::info!(\"loaded {count}\");\n```\nRun `cargo clippy --fix --all-targets --all-features -- -W clippy::uninlined_format_args` to auto-apply most of these, then review the diff for correctness (macro calls with side-effects or expressions rather than plain identifiers won't auto-fix).",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:32:14.436800164Z",
-  "updated_at": "2026-04-18T00:32:14.436800164Z"
+  "updated_at": "2026-04-18T00:43:25.839319677Z",
+  "closed_at": "2026-04-18T00:43:25.839319677Z"
 }
