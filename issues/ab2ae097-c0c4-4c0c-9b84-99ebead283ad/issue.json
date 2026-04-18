@@ -1,0 +1,11 @@
+{
+  "uuid": "ab2ae097-c0c4-4c0c-9b84-99ebead283ad",
+  "display_id": 350,
+  "title": "HookEngine.run: matcher_context conflates tool_name, prompt, event - leaks prompt into regex",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension**: Cognitive Readability + Security\n\n**Location**: src/hooks/mod.rs:441-451 (get_matcher_context), 453-464 (matches_entry)\n\n**Violation**: get_matcher_context returns one of: tool_name | prompt | event config_key. This means a hook configured for PreToolUse with matcher='rm' might match when:\n- The user enters 'I want to rm a file' as a prompt (UserPromptSubmit event firing with same matcher)\n- The hook was semantically intended for tool-name-matching only\n\nA matcher intended to be a TOOL NAME regex (the typical case) can accidentally fire against user-submitted free-form text. This is a semantic confusion that can cause production hook firings on arbitrary user content — both a correctness and a privacy issue (the prompt is sent into the hook regex engine, where a log of the match context might persist).\n\nAdditionally this violates SRP: the function switches matcher semantics based on which field is populated. Callers cannot tell, at config time, what their matcher will actually see.\n\n**Mandated Refactor**:\n1. Change HookEntry to have an EXPLICIT `matcher_target` field: enum { ToolName, Prompt, EventKey } so authors declare intent.\n2. Split HookEngine::get_matcher_context into three typed accessors: match_tool(entry, tool), match_prompt(entry, prompt), match_event(entry, event).\n3. In the run() dispatcher, pick the accessor based on HookEvent variant.\n4. Default matcher_target per event (PreToolUse→ToolName, UserPromptSubmit→Prompt) but require explicit field if non-default.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:35:09.583485563Z",
+  "updated_at": "2026-04-18T00:35:09.583485563Z"
+}
