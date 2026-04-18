@@ -1,0 +1,11 @@
+{
+  "uuid": "4daca27e-b7c9-4006-bdc9-1d6da2bd142e",
+  "display_id": 436,
+  "title": "FileIndex::walk_dir is recursive, unbounded — symlink loops cause stack overflow or infinite walk",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension:** Functional Correctness / Performance\n\n**Location:** /home/doll/OpenClaudia/src/tools/file_index.rs lines 51-78 (walk_dir)\n\n**Violation:**\nFileIndex::walk_dir recurses via self.walk_dir(root, &path) at line 71. There is NO symlink guard: std::fs::read_dir follows symlinks by default, so a symlink cycle (e.g. /proc/1/cwd -> /, or user-created .worktrees/loop -> ..) sends the walk into infinite recursion and stack overflow. Additional defects:\n1. **No depth limit.** A pathological filesystem with 1000 nested dirs blows the stack.\n2. **Skip list is hardcoded and incomplete.** Line 60 skips names starting with '.', node_modules, target, __pycache__, dist, build — but MISSES vendor (Go, PHP), .venv (Python), venv, coverage, .next, .nuxt, bazel-bin, .tox, .pytest_cache, .gradle, DerivedData, Pods. A large monorepo will index GBs of artifacts.\n3. **No cancellation.** Build() blocks for however long the walk takes, with no timeout or interrupt.\n4. **Stored as rel + lower_rel strings** (line 74-75). A codebase with 1M files uses 2x memory; better to store lower once and compute relative-to-root on demand.\n5. **Uses read_dir().flatten()** (line 55) which silently swallows I/O errors — permission-denied directories vanish without a warning.\n\n**Mandated Refactor:**\n1. Use the ignore crate (same engine as ripgrep) which handles gitignore, symlink cycles, depth limits, parallel walking, and a well-tuned default skip list out of the box.\n2. Add max_depth: Option<usize> parameter, default 50.\n3. Track visited inodes via HashSet<(dev, ino)> (Unix) to break cycles.\n4. Emit I/O errors through tracing::warn rather than dropping them.\n5. Build in a background thread; expose a progress counter so the TUI can show 'Indexed 2458 files...'.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:40:53.796906115Z",
+  "updated_at": "2026-04-18T00:40:53.796906115Z"
+}
