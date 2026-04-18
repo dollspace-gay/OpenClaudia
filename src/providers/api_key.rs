@@ -47,7 +47,26 @@ pub enum ApiKeyError {
         /// The offending control character's Unicode scalar value.
         codepoint: u32,
     },
+
+    /// The value exceeded [`MAX_API_KEY_LEN`] bytes. Legitimate API keys are
+    /// well under this cap (Anthropic: ~108 chars, OpenAI: ~56); an
+    /// 8 KiB header is an attack shape, not a real key. See crosslink #452.
+    #[error(
+        "API key is {actual} bytes, exceeding the {max}-byte cap"
+    )]
+    TooLong {
+        /// Observed length of the rejected value.
+        actual: usize,
+        /// The cap that was exceeded.
+        max: usize,
+    },
 }
+
+/// Upper bound on the byte length of an accepted API key. Anthropic,
+/// OpenAI, Google, and Z.AI keys are all well under 200 bytes; 512 gives
+/// the occasional long session/project-scoped key enough room while
+/// refusing 8 KiB attack payloads. See crosslink #452.
+pub const MAX_API_KEY_LEN: usize = 512;
 
 /// A provider API key whose `Debug` and `Display` impls redact the middle of
 /// the value.
@@ -70,6 +89,12 @@ impl ApiKey {
     pub fn try_from_string(raw: String) -> Result<Self, ApiKeyError> {
         if raw.trim().is_empty() {
             return Err(ApiKeyError::Empty);
+        }
+        if raw.len() > MAX_API_KEY_LEN {
+            return Err(ApiKeyError::TooLong {
+                actual: raw.len(),
+                max: MAX_API_KEY_LEN,
+            });
         }
         if !raw.is_ascii() {
             return Err(ApiKeyError::NonAscii);
@@ -125,6 +150,9 @@ pub fn validate_api_key(raw: &str) -> Result<(), String> {
         }
         Err(ApiKeyError::ControlChar { codepoint }) => Err(format!(
             "API key contains control character U+{codepoint:04X} (CRLF injection guard)"
+        )),
+        Err(ApiKeyError::TooLong { actual, max }) => Err(format!(
+            "API key is {actual} bytes, exceeding the {max}-byte cap"
         )),
     }
 }
@@ -268,5 +296,32 @@ mod tests {
         assert!(validate_api_key("sk-ant-api03-valid").is_ok());
         assert!(validate_api_key("").is_err());
         assert!(validate_api_key("sk-legit\r\n").is_err());
+    }
+
+    // --- Regression tests for crosslink #452 ---
+
+    #[test]
+    fn try_from_rejects_over_max_length() {
+        // Anything beyond MAX_API_KEY_LEN is an attack shape, not a key.
+        let long = "a".repeat(MAX_API_KEY_LEN + 1);
+        let err = ApiKey::try_from_string(long).unwrap_err();
+        assert!(
+            matches!(err, ApiKeyError::TooLong { actual, max }
+                if actual == MAX_API_KEY_LEN + 1 && max == MAX_API_KEY_LEN),
+            "expected TooLong, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn try_from_accepts_exactly_max_length() {
+        let at_cap = "a".repeat(MAX_API_KEY_LEN);
+        assert!(ApiKey::try_from_string(at_cap).is_ok());
+    }
+
+    #[test]
+    fn try_from_accepts_realistic_anthropic_key_length() {
+        // Representative Anthropic-style key is ~108 chars — must pass.
+        let key = format!("sk-ant-api03-{}", "X".repeat(96));
+        assert!(ApiKey::try_from_string(key).is_ok());
     }
 }

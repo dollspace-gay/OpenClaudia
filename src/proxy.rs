@@ -1254,20 +1254,44 @@ fn strip_cache_control_ttl(value: &mut Value) {
 /// garbage (malformed client, stale cookie) and the caller's fallback to
 /// `provider.api_key` is the correct recovery. See crosslink #256.
 fn extract_api_key(headers: &HeaderMap) -> Option<ApiKey> {
-    let raw = headers
+    // Authorization header — must use `Bearer <key>` form. A raw key
+    // without the prefix is rejected with a structured warn! so the
+    // operator can diagnose mis-configured clients (previously this
+    // silently returned None — crosslink #452 mandated point 3).
+    let authz = headers
         .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(std::string::ToString::to_string)
-        .or_else(|| {
-            // Also check x-api-key header (Anthropic style)
-            headers
-                .get("x-api-key")
-                .and_then(|v| v.to_str().ok())
-                .map(std::string::ToString::to_string)
-        })?;
+        .and_then(|v| v.to_str().ok());
+    let from_authz = authz.and_then(|v| {
+        v.strip_prefix("Bearer ")
+            .map(std::string::ToString::to_string)
+            .or_else(|| {
+                warn!(
+                    "Authorization header present but lacks 'Bearer ' prefix; \
+                     refusing to use it as an API key"
+                );
+                None
+            })
+    });
 
-    ApiKey::try_from_string(raw).ok()
+    let raw = from_authz.or_else(|| {
+        // Also check x-api-key header (Anthropic style)
+        headers
+            .get("x-api-key")
+            .and_then(|v| v.to_str().ok())
+            .map(std::string::ToString::to_string)
+    })?;
+
+    match ApiKey::try_from_string(raw) {
+        Ok(key) => Some(key),
+        Err(e) => {
+            // Structured log — never the raw value.
+            warn!(
+                error = %e,
+                "Rejected malformed api_key supplied via request header"
+            );
+            None
+        }
+    }
 }
 
 /// Convert reqwest response to axum response, also extracting token usage if present
