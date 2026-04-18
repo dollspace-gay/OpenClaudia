@@ -1,0 +1,11 @@
+{
+  "uuid": "0e5f9b85-4d61-4490-9adf-0d9b53c6ac58",
+  "display_id": 250,
+  "title": "VDD: vdd/mod.rs is a 1723-line God module conflating orchestration, HTTP, parsing, persistence",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Structural Modularity / SRP\n**Location:** src/vdd/mod.rs (entire file, 1723 lines)\n**Violation:** The `VddEngine` impl block mixes at least six reasons-to-change: (1) advisory/blocking orchestration loops (advisory_review, blocking_loop), (2) HTTP transport to adversary and builder (send_to_adversary, send_to_builder, send_to_builder_for_verification, forward_request), (3) prompt assembly (build_adversary_request, build_revision_request, VERIFIER_SYSTEM_PROMPT, ADVERSARY_SYSTEM_PROMPT), (4) triage logic (triage_findings, verify_findings, parse_verification_verdicts), (5) chainlink/persistence side effects (create_chainlink_issues, persist_session), (6) helpers (truncate_output, extract_user_task, format_findings_for_injection). Cyclomatic complexity of `blocking_loop` (L402-L613, ~210 lines with `#[allow(clippy::too_many_lines)]`) exceeds the 15-path threshold mandated by 3.5.\n**Mandated Refactor:** Split into (a) `vdd/engine.rs` — just the orchestration state machine with both advisory_review and blocking_loop lifted out; (b) `vdd/transport.rs` — forward_request, send_to_adversary, send_to_builder, send_to_builder_for_verification consolidated behind a `VddTransport` trait; (c) `vdd/prompts.rs` — both system prompts as pub const + build_adversary_request + build_revision_request; (d) `vdd/triage.rs` — triage_findings, verify_findings, parse_verification_verdicts (Layer 1-2-3 pipeline); (e) `vdd/sink.rs` — create_chainlink_issues + persist_session. Remove `#[allow(clippy::too_many_lines)]` after extraction.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:26:58.971899019Z",
+  "updated_at": "2026-04-18T00:26:58.971899019Z"
+}
