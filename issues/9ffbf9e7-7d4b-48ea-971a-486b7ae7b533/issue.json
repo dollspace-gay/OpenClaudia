@@ -1,0 +1,11 @@
+{
+  "uuid": "9ffbf9e7-7d4b-48ea-971a-486b7ae7b533",
+  "display_id": 369,
+  "title": "Guardrails module singleton: LazyLock<Mutex<Option<...>>> anti-pattern",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension**: Architectural Alignment (Dependency Inversion) + Error Orchestration\n\n**Location**: src/guardrails.rs:26-99 (global GUARDRAILS + wrapper fns)\n\n**Violation**: The guardrails engine is exposed as a global LazyLock<Mutex<Option<GuardrailsEngine>>> accessed via free functions (check_file_access, record_file_modification, check_diff_thresholds, etc.). This is a textbook DIP violation:\n- Callers cannot inject a test double\n- The module has HIDDEN global state — calling configure() at startup is a temporal-coupling requirement\n- If configure() is not called, every wrapper silently no-ops (guardrails.rs:44-49) — violating 'fail fast at perimeters'\n- Mutex locking on EVERY file access and modification is a hot-path synchronization cost; the guard only holds an Option read\n- The Mutex itself is unnecessary because GuardrailsEngine is set once at startup and never mutated; an RwLock or std::sync::OnceLock would be more appropriate\n- Errors in lock acquisition (PoisonError) are silently swallowed (`if let Ok(guard) = ...`) — if any thread panics while holding the lock, ALL subsequent guardrail checks pass with Ok(()) silently\n\n**Mandated Refactor**:\n1. Replace with `OnceLock<GuardrailsEngine>` — set once, lock-free reads forever after.\n2. Pass &GuardrailsEngine explicitly to call sites (via AppContext struct) instead of a global.\n3. If global is unavoidable, at least return Result from each wrapper so an unconfigured engine is a loud panic/error, not silent allow.\n4. Add a startup assertion: in main.rs, after guardrails::configure(), probe GUARDRAILS.lock() and panic if empty.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:36:04.390370570Z",
+  "updated_at": "2026-04-18T00:36:04.390370570Z"
+}
