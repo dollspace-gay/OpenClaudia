@@ -1,0 +1,11 @@
+{
+  "uuid": "c2f0d146-573b-461d-9ca4-61e2ec745434",
+  "display_id": 270,
+  "title": "Render, state mutation, and I/O tangled in App::handle_slash_command",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Architectural Alignment (Dependency Inversion)\nLocation: src/tui/app.rs handle_slash_command branches for /diff (1094), /init (1204), /doctor (1138), /review (1169), /files (1054), /export (883), /load (702)\nViolation: Slash commands directly invoke std::process::Command (git, bash, openclaudia subprocess), std::fs::{read_dir, read_to_string, write}, std::fs::canonicalize, and config::load_config from *inside the TUI synchronous event loop*. These block the rendering thread — typing lags visibly while git diff runs. Moreover the domain (conversation logic) is shot through with infrastructure calls (shell, filesystem, config). The TUI UI layer should never directly import std::process.\nMandated Refactor: Define trait SystemGateway { fn git_diff(&self) -> Result<String>; fn git_diff_head(&self) -> Result<String>; fn list_dir(&self, path: &str) -> Result<Vec<Entry>>; fn run_shell(&self, cmd: &str) -> Result<ShellOutput>; fn export_markdown(&self, session: &TuiSession) -> Result<PathBuf>; } with a SyncSystemGateway impl. Dispatch long-running gateway calls via handle.spawn() so the TUI never blocks. Unit-test by providing a MockSystemGateway.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:28:44.345205596Z",
+  "updated_at": "2026-04-18T00:28:44.345205596Z"
+}
