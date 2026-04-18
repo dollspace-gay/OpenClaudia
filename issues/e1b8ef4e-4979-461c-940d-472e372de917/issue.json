@@ -1,0 +1,11 @@
+{
+  "uuid": "e1b8ef4e-4979-461c-940d-472e372de917",
+  "display_id": 475,
+  "title": "Anthropic adapter has TWO message converters; transform_request uses the broken one",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Structural Modularity / DRY\n\nLocation: src/providers/anthropic.rs has TWO independent message-conversion paths:\n  (1) AnthropicAdapter::convert_messages (private, lines 37-79) — takes `&[ChatMessage]`, used by AnthropicAdapter::transform_request.\n  (2) convert_messages_to_anthropic (pub fn, lines 338-445) — takes `&[Value]`, used by... (per Grep unused internally — it's re-exported from mod.rs line 32 for external consumers).\n\nThese two functions do the SAME job (OpenAI -> Anthropic message format) with different input types and DIFFERENT behaviors:\n  - (1) doesn't handle role='tool' as tool_result — it bucket-maps everything non-assistant to 'user' with plain text.\n  - (2) DOES handle role='tool' with tool_use_id / tool_result blocks, assistant tool_calls split into tool_use content blocks.\nThe path actually used for Anthropic requests (AnthropicAdapter::transform_request line 123) calls the simpler (1), which silently DROPS tool-result semantics. Any agentic loop where a model produces tool_calls and the next turn sends back role='tool' messages will be mis-translated: the tool result becomes a bare 'user' message with no tool_use_id linkage. Anthropic rejects this with a 400 error ('each tool_use must have a matching tool_result').\n\nMandated Refactor:\n  1. Delete AnthropicAdapter::convert_messages (private). Route through the public convert_messages_to_anthropic, converting ChatMessage to Value via serde_json::to_value first (or by reading the ChatMessage directly — prefer a typed path).\n  2. Better: change the signature of convert_messages_to_anthropic to take &[ChatMessage] and eliminate the Value intermediary. Keep the richer behavior.\n  3. Add integration test: simulate a full agentic loop round trip: user query -> Anthropic tool_use -> our proxy returns assistant with tool_calls -> client sends role='tool' message -> proxy's transform_request -> body that Anthropic accepts.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:44:09.284796213Z",
+  "updated_at": "2026-04-18T00:44:09.284796213Z"
+}
