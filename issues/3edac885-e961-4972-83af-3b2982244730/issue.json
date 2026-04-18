@@ -1,0 +1,11 @@
+{
+  "uuid": "3edac885-e961-4972-83af-3b2982244730",
+  "display_id": 492,
+  "title": "File I/O error messages swallowed to String via map_err(|e| e.to_string()) — stringly-typed errors",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Error Orchestration\nLocation: src/tui/app.rs:214-220 save_session returns Result<(), String>; AppEvent::ApiError(String) at src/tui/events.rs:43; multiple places in tui/app.rs use .unwrap_or_else(|e| format!(...))\nViolation: Throughout the TUI seam, structured errors (io::Error, serde_json::Error, reqwest::Error) are eagerly flattened to String. This loses: error source chain (io::Error::kind), actionable discrimination (NotFound vs PermissionDenied), and prevents programmatic handling. The TUI displays the string, but the pattern also propagates up: AppEvent::ApiError(String) means the event loop cannot distinguish network errors from invalid-responses. Conflicts with project policy (CLAUDE.md: 'Use thiserror for library errors with structured variants').\nMandated Refactor: Define pub enum TuiError in src/tui/error.rs with #[derive(thiserror::Error)] variants { SessionIo(#[from] io::Error), SessionParse(#[from] serde_json::Error), Api(#[from] ApiError), HookBlocked { reason: String } }. Replace String payloads on AppEvent::ApiError with AppEvent::Error(TuiError). Only stringify at the render boundary.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:45:37.057292319Z",
+  "updated_at": "2026-04-18T00:45:37.057292319Z"
+}
