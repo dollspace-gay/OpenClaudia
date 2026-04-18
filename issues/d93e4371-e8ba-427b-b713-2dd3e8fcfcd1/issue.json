@@ -4,10 +4,10 @@
   "title": "Temporal coupling: App::set_api_config must be called before App::run",
   "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Cognitive Readability (Temporal Coupling) / Error Orchestration\nLocation: src/tui/app.rs:322-335 set_api_config and src/tui/app.rs:348-477 run. Also affected: set_memory_db, set_hook_engine, set_rules_content (inferred; called from main.rs::cmd_tui).\nViolation: App::new() produces an App with endpoint=\"\", headers=Vec::new(), claude_code_token=None. If run() is called without prior set_api_config, spawn_api_turn will send an empty endpoint to reqwest and fail obscurely (line 1355: self.endpoint.clone() -> empty). There is no contract enforcing the required initialization sequence. The compiler cannot help.\nMandated Refactor: Eliminate the two-phase init. Introduce AppBuilder { model, provider, endpoint, headers, system_prompt, ... } with builder methods that finalize into App via fn build(self) -> App. App::new without the required params must not exist. Alternative: take ApiConfig, Hooks, Rules, Memory as constructor parameters so missing wiring is a compile error. This pattern matches Claude Code's session construction.",
   "status": "open",
-  "priority": "low",
+  "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:40:57.393136594Z",
-  "updated_at": "2026-04-18T00:41:08.050682135Z",
+  "updated_at": "2026-04-18T00:46:58.892432911Z",
   "labels": [
     "refactor",
     "qa-review-2026-04",
