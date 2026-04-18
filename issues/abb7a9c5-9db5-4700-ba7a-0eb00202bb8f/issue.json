@@ -1,0 +1,11 @@
+{
+  "uuid": "abb7a9c5-9db5-4700-ba7a-0eb00202bb8f",
+  "display_id": 378,
+  "title": "Clippy: 4 function-call-inside-unwrap_or (eager evaluation bug risk)",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension:** Functional Correctness, Performance\n**Lint:** clippy::or_fun_call\n\n## Violation\n`x.unwrap_or(some_function())` evaluates `some_function()` UNCONDITIONALLY, even when `x` is `Some` — the unwrap never uses the value. This is wasted work at best; at worst it's a bug (side effects, expensive allocation, or panics in the default path fire even on the happy path).\n\n## Locations\n- src/pipeline.rs: 138, 139, 299\n- src/vdd/mod.rs: 1040\n\nAdditionally: `or(fn())` same category:\n- src/tui/app.rs: 143\n\n## Mandated Refactor\nReplace eager `unwrap_or(f())` with lazy `unwrap_or_else(|| f())`:\n```rust\n// Before (eager, always runs f())\nx.unwrap_or(expensive_default())\n// After (lazy, only runs f() if x is None)\nx.unwrap_or_else(|| expensive_default())\n```\nSame fix for `.or(f())` → `.or_else(|| f())`. Each of the 5 sites requires a case-by-case audit — if `f()` is a pure `const` literal or trivial value, `unwrap_or` is fine; only when it's a fn call/allocation/computation is this wasteful.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:37:12.169200005Z",
+  "updated_at": "2026-04-18T00:37:12.169200005Z"
+}
