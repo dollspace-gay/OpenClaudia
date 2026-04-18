@@ -1,0 +1,11 @@
+{
+  "uuid": "cd49b48a-bf26-4021-8747-0cf2ad5700ce",
+  "display_id": 310,
+  "title": "web_fetch SSRF guard bypassed by hostnames, DNS rebinding, decimal IPs",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDim: Security. File: src/web.rs:15-49. validate_url string-prefix check unsound. Bypasses: hostnames bypass entirely; DNS rebinding between validate and send; decimal IPv4 'http://2130706433/'; IPv6 ULA/link-local/mapped not blocked; starts_with('172.2') matches 172.200.x public. Refactor: resolve with trust-dns-resolver, check each IpAddr vs ip_network IANA registry, custom reqwest resolver re-validates at dial-time, block metadata endpoints (169.254.169.254, metadata.google.internal, fd00:ec2::254).",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:32:04.246465882Z",
+  "updated_at": "2026-04-18T00:32:04.246465882Z"
+}

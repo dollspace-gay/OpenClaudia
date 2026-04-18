@@ -1,0 +1,11 @@
+{
+  "uuid": "a91f9dcc-b9af-4384-ba12-001262a8445e",
+  "display_id": 289,
+  "title": "VDD static_analysis: run_shell_command executes arbitrary config strings via sh -c",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Security and Access. Location: src/vdd/static_analysis.rs:32-73 (run_shell_command) and src/vdd/mod.rs:688-724 (caller). Violation: VddEngine::run_static_analysis pulls command strings from config.static_analysis.commands or auto-detected guardrails and passes each to sh -c. No allowlist, no escaping audit, no sandboxing. Tampered config.yaml runs arbitrary commands on every VDD pass. No warning banner. Mandated Refactor: Parse command with shlex, execute via argv (no shell). Reject pipes, logical operators, command substitution. Add warning banner listing commands on config load. Consider unshare or seccomp on Linux.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:30:54.993676636Z",
+  "updated_at": "2026-04-18T00:30:54.993676636Z"
+}

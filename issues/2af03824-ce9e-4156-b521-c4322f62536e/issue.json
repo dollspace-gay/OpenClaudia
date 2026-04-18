@@ -1,0 +1,11 @@
+{
+  "uuid": "2af03824-ce9e-4156-b521-c4322f62536e",
+  "display_id": 293,
+  "title": "web_fetch SSRF guard is IP-prefix string match — trivially bypassed by DNS rebinding and encodings",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension:** Security and Access (SSRF / OWASP A10)\n\n**Location:** /home/doll/OpenClaudia/src/web.rs lines 15-49 (validate_url)\n\n**Violation:**\nvalidate_url blocks private ranges via host.starts_with('172.16.') / '10.' / '192.168.' / etc. This is unsound:\n1. Hostnames bypass entirely. 'http://internal-server.corp/' or 'http://metadata.google.internal/' do not match any IP prefix and pass validation.\n2. DNS rebinding. An attacker-controlled domain whose DNS A record flips between public and 169.254.169.254 bypasses static checks; reqwest resolves at send-time and validate runs at parse-time.\n3. IPv6 coverage is incomplete. Only [::1] is blocked. ::ffff:127.0.0.1 (IPv4-mapped), fc00::/7 (ULA), fe80::/10 (link-local) are all reachable.\n4. Decimal-encoded IPv4. 'http://2130706433/' (= 127.0.0.1) parses as a URL with host '2130706433', matches none of the prefixes, and reqwest dials localhost.\n5. 172.16/12 prefix logic is wrong. 'host.starts_with(\"172.2\")' at line 36 matches 172.20-172.29 but also 172.200.x (public); 172.30-172.31 are PUBLIC per RFC1918 (only 16-31 private), the code at lines 37-38 BLOCKS public 172.30-172.31 but NOT private 172.26-172.29 reliably.\n\n**Mandated Refactor:**\n1. Replace string-prefix checks with IpAddr::from_str + resolved-IP checks. Resolve the hostname with trust-dns-resolver; validate ALL returned addresses.\n2. Use the ip_network crate with IANA special-purpose address registry: reject private, loopback, link-local, multicast, benchmarking, documentation, reserved, shared-address-space.\n3. Connect using a custom reqwest resolver that re-validates at dial-time — closes DNS-rebinding.\n4. Explicitly block cloud metadata services: 169.254.169.254, fd00:ec2::254, metadata.google.internal, 100.100.100.200.\n5. Add regression tests: decimal-IPv4 bypass, metadata.google.internal, IPv6 ULA.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:31:14.287741308Z",
+  "updated_at": "2026-04-18T00:31:14.287741308Z"
+}

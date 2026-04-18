@@ -1,0 +1,11 @@
+{
+  "uuid": "44cf2687-5226-4c8c-8d0b-590a6db8f5f5",
+  "display_id": 298,
+  "title": "web_fetch SSRF guard is IP-prefix string match — trivially bypassed by DNS rebinding and encodings",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension:** Security and Access (SSRF / OWASP A10) **Location:** /home/doll/OpenClaudia/src/web.rs lines 15-49 (validate_url). **Violation:** validate_url blocks private ranges via host.starts_with('172.16.') etc. Unsound: (1) Hostnames bypass entirely — 'internal-server.corp' or 'metadata.google.internal' match no prefix. (2) DNS rebinding — attacker flips A record public->169.254.169.254 between validate and reqwest send. (3) IPv6 only [::1] blocked; ::ffff:127.0.0.1, fc00::/7 ULA, fe80::/10 all reachable. (4) Decimal IPv4 'http://2130706433/' = 127.0.0.1, host string is '2130706433', matches no prefix. (5) starts_with('172.2') at line 36 matches 172.200.x (public) AND lines 37-38 BLOCK public 172.30-172.31. **Mandated Refactor:** (1) Resolve hostname with trust-dns-resolver, validate ALL resolved IPs with IpAddr enum and ip_network IANA registry; reject private/loopback/link-local/multicast/benchmarking/documentation/reserved/shared-address-space. (2) Custom reqwest resolver re-validates at dial-time (closes rebinding window). (3) Explicitly block metadata.google.internal, 169.254.169.254, fd00:ec2::254, 100.100.100.200. (4) Add regression tests for decimal-IPv4 and metadata endpoints.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:31:24.734530561Z",
+  "updated_at": "2026-04-18T00:31:24.734530561Z"
+}

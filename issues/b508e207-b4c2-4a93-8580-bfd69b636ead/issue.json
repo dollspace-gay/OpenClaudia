@@ -1,0 +1,11 @@
+{
+  "uuid": "b508e207-b4c2-4a93-8580-bfd69b636ead",
+  "display_id": 303,
+  "title": "web_fetch SSRF guard is prefix-match — bypassed by DNS rebinding, hostnames, decimal IPs",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDim: Security. File: src/web.rs:15-49. validate_url's string-prefix check on host is unsound. Bypasses: (1) hostnames not matching IP prefix ('metadata.google.internal'); (2) DNS rebinding between validate and send; (3) decimal-encoded IPv4 'http://2130706433/' = 127.0.0.1; (4) IPv6 coverage missing ULA fc00::/7, link-local fe80::/10, IPv4-mapped ::ffff:127.0.0.1; (5) starts_with('172.2') matches public 172.200.x and blocks public 172.30.x. Refactor: resolve hostname with trust-dns-resolver at connect time, validate each IpAddr against ip_network IANA special-purpose registry, use custom reqwest resolver to re-check at dial-time. Explicitly block cloud metadata endpoints. Add regression tests for decimal IPv4 and metadata.google.internal.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:31:37.872702095Z",
+  "updated_at": "2026-04-18T00:31:37.872702095Z"
+}

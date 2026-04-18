@@ -1,0 +1,11 @@
+{
+  "uuid": "190c354a-1a3e-4c0f-ad13-4a4bbb1288aa",
+  "display_id": 296,
+  "title": "VDD parsing: extract_json_from_response uses byte slicing that can panic on multibyte input",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Functional Correctness / Error Orchestration. Location: src/vdd/parsing.rs:19-72 (extract_json_from_response). Violation: Line 24 uses text[json_start..json_start + end] where json_start = start + 7 (raw byte offset past ```json). If an adversary response contains multibyte UTF-8 (emoji, CJK, smart quotes) before the fence, the byte offset may fall inside a codepoint. str slicing on a non-char-boundary panics. Same issue on L35 text[actual_start..actual_start + end], L40-L58 the depth-counted object extraction (which uses char_indices — OK there), L68 text[start..=end]. The adversary prompt contains markdown-like text and produces natural-language prose with emoji possible. A single emoji before the JSON crashes parse_findings which crashes blocking_loop. Mandated Refactor: Replace all byte-index slicing with char-boundary-safe access via .char_indices() or text.get(range) which returns Option. Use memchr-based searches or regex. Add a unit test with a response containing 4-byte UTF-8 before the JSON fence.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:31:18.836523233Z",
+  "updated_at": "2026-04-18T00:31:18.836523233Z"
+}

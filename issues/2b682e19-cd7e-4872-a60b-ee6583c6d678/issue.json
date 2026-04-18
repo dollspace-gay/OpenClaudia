@@ -1,0 +1,11 @@
+{
+  "uuid": "2b682e19-cd7e-4872-a60b-ee6583c6d678",
+  "display_id": 305,
+  "title": "canary5",
+  "description": "test probe",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:31:51.329869733Z",
+  "updated_at": "2026-04-18T00:31:51.329869733Z"
+}

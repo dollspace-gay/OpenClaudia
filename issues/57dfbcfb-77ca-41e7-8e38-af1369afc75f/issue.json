@@ -1,0 +1,11 @@
+{
+  "uuid": "57dfbcfb-77ca-41e7-8e38-af1369afc75f",
+  "display_id": 292,
+  "title": "expand_file_refs panics on regex unwrap() — TUI crash risk from user input",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Defensive Programming / Functional Correctness\nLocation: src/tui/app.rs:130-205 fn expand_file_refs\nViolation: Lines 134, 142, 143 call .unwrap() on regex compilation and capture groups. Line 134 'Regex::new(...).unwrap()' rebuilds the regex on every keystroke that contains '@' — O(N) allocation in the hot path. Lines 142-143 assume 'cap.get(0)' and 'cap.get(1).or(cap.get(2))' are always Some; a malformed capture would panic the TUI. Additionally the function silently eats PathBuf variants from dirs::data_local_dir() via unwrap_or_default.\nMandated Refactor: (1) Hoist the regex to a once_cell / LazyLock static at module scope. (2) Replace .unwrap() with explicit match; an unmatched capture group is 'continue'. (3) The fail-fast policy at perimeter is correct for regex compile (that's a programmer error, build-time verifiable with const regex crate) but runtime matching must never panic. (4) Add a unit test feeding adversarial input like '@\"unclosed, '@@', '@/etc/passwd' and assert no panic.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:31:10.576851207Z",
+  "updated_at": "2026-04-18T00:31:10.576851207Z"
+}
