@@ -1,0 +1,11 @@
+{
+  "uuid": "7e148b52-30fb-45a2-90e3-8630a50e608b",
+  "display_id": 346,
+  "title": "VDD confabulation: regex patterns compiled inside hot loop",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Performance and Complexity. Location: src/vdd/confabulation.rs:110-123 (is_common_false_positive). Violation: The two regex patterns are compiled inside the function every call — and is_common_false_positive is called once per finding per iteration inside triage_findings. With 10 iterations and 20 findings per iteration, that is 400 regex compilations. regex::Regex::new is heavyweight (parsing, NFA construction). Additionally, the Regex is discarded if compilation fails with no log — silently treated as non-match. Mandated Refactor: Promote patterns to static LazyLock<Vec<Regex>> or use regex::RegexSet to match all patterns in one pass. Panic at startup if a pattern fails to compile (these are constants — compilation failure is a bug, not a runtime condition).",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:34:45.105487757Z",
+  "updated_at": "2026-04-18T00:34:45.105487757Z"
+}
