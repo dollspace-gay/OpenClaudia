@@ -1,0 +1,11 @@
+{
+  "uuid": "152ff7ef-baba-4d49-ad3a-73d1593503b4",
+  "display_id": 407,
+  "title": "subagent.rs duplicates provider transformation logic of providers.rs — stovepipe",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: DRY / Architectural Alignment. Location: src/subagent.rs:986-1163 (transform_to_anthropic, transform_from_anthropic). Violation: OpenClaudia already has a ProviderAdapter trait (providers.rs) with transform_request / get_headers / chat_endpoint implementations for every supported provider. Subagent rolls its own Anthropic transformer, with the specific logic duplicated (and likely drifting from) the canonical adapter. It only handles Anthropic and OpenAI formats — Google/Gemini/DeepSeek/Qwen/Z.AI subagents are broken by construction. Mandated Refactor: Delete both functions. Make run_subagent use providers::get_adapter(name).transform_request(...) exactly like vdd/mod.rs send_to_adversary does. This also auto-fixes subagent tokenization, cache headers, thinking budget, and all the subtle differences currently missing.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:38:55.681826897Z",
+  "updated_at": "2026-04-18T00:38:55.681826897Z"
+}
