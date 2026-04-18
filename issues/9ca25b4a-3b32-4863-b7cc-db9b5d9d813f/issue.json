@@ -1,0 +1,11 @@
+{
+  "uuid": "9ca25b4a-3b32-4863-b7cc-db9b5d9d813f",
+  "display_id": 357,
+  "title": "Keybindings: 22KB single-file config module is a God Module",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension**: Structural Modularity (God Object / SRP)\n\n**Location**: src/config/keybindings.rs (22,845 bytes in one file)\n\n**Violation**: keybindings.rs is 22KB in a single module housing: KeyAction enum, KeybindingsConfig, ParsedKeystroke, KeyContext, KeybindingResolver, ChordResolveResult, parse_chord, plus tests. This is a classic God Module: a config file (config/keybindings.rs) holding a runtime resolver (KeybindingResolver) that performs logic far beyond configuration schema. It violates SRP — the config/ directory should contain only schema types; resolver logic belongs in a sibling keybindings/ module.\n\nComparing file sizes in src/config/:\n- keybindings.rs: 22,845 bytes (resolver + schema + parser)\n- vdd.rs: 14,027 bytes (schema + validation)\n- mod.rs: 10,413 bytes (loader)\n- hooks.rs: 5,723 bytes (schema only — CORRECT size)\n- guardrails.rs: 5,531 bytes (schema only — CORRECT size)\n- provider.rs: 3,975 bytes (schema only — CORRECT size)\n\nkeybindings.rs alone is bigger than guardrails + provider + proxy + permissions combined.\n\n**Mandated Refactor**:\n1. Create src/keybindings/ module with:\n   - src/keybindings/parser.rs (parse_chord, ParsedKeystroke)\n   - src/keybindings/resolver.rs (KeybindingResolver, ChordResolveResult, KeyContext)\n   - src/keybindings/actions.rs (KeyAction enum)\n2. Keep src/config/keybindings.rs as a thin schema module (<2KB) containing only the YAML-deserializable KeybindingsConfig struct.\n3. The config module imports from keybindings as needed; the converse import (keybindings depending on config) is also permitted but should be minimized.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:35:44.672159360Z",
+  "updated_at": "2026-04-18T00:35:44.672159360Z"
+}
