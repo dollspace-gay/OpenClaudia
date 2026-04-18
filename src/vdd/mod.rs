@@ -899,10 +899,23 @@ impl VddEngine {
             builder_provider
         );
 
-        // Build the verification request content
+        // Build a code view centered on the findings' cited line ranges
+        // rather than blindly truncating to a prefix — a finding that
+        // cited lines past byte 12_000 used to be demoted to
+        // FalsePositive simply because the verifier could not see the
+        // code. See crosslink #498.
+        let (code_view, code_truncated) =
+            build_verification_code_view(builder_code, findings, 12_000);
+        if code_truncated {
+            tracing::warn!(
+                findings = findings.len(),
+                max_chars = 12_000,
+                "VDD verification code view was truncated; findings whose cited lines \
+                 fell outside the view will be kept as Genuine (fail-safe per #498c)."
+            );
+        }
         let mut user_content = format!(
-            "## Code Under Review\n```\n{}\n```\n\n## Adversary Findings to Verify\n",
-            truncate_output(builder_code, 12000)
+            "## Code Under Review\n```\n{code_view}\n```\n\n## Adversary Findings to Verify\n"
         );
 
         for (i, finding) in findings.iter().enumerate() {
@@ -1395,16 +1408,122 @@ fn extract_user_task(request: &ChatCompletionRequest) -> String {
 }
 
 /// Truncate output to a maximum length with an indicator.
+///
+/// UTF-8-safe: if `max_len` falls inside a multibyte codepoint, the cut
+/// is moved back to the nearest char boundary. The previous
+/// `text[..max_len]` indexing would panic on non-ASCII output at that
+/// cut point.
 fn truncate_output(text: &str, max_len: usize) -> String {
     if text.len() <= max_len {
-        text.to_string()
-    } else {
-        format!(
-            "{}... [truncated, {} total chars]",
-            &text[..max_len],
-            text.len()
-        )
+        return text.to_string();
     }
+    let mut boundary = max_len;
+    while boundary > 0 && !text.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    format!(
+        "{}... [truncated, {} total chars]",
+        &text[..boundary],
+        text.len()
+    )
+}
+
+/// Build the code view shown to the verification LLM, centered around
+/// the cited line ranges of each finding.
+///
+/// The previous implementation truncated `builder_code` to the first
+/// `max_chars` bytes regardless of where the cited code lived, which
+/// systematically demoted findings past the cutoff to `FalsePositive`
+/// ("I can't find this code") even though they were genuine. This
+/// helper:
+///
+///  1. For every finding with `file_path + line_range`, extracts a
+///     ±`CONTEXT_LINES`-line window around that range.
+///  2. Merges overlapping / adjacent windows.
+///  3. Emits the windows in order with `...` separators between them
+///     and with `<line_number>: ` prefixes so the verifier can match
+///     the adversary's cited lines directly.
+///  4. Falls back to raw truncation when no finding has line info OR
+///     when the merged window view itself exceeds `max_chars` (in
+///     that case we also log at warn! — the fail-safe from #498c is
+///     enforced by the caller treating truncated windows as reason
+///     to keep findings Genuine rather than demoted).
+///
+/// Returns the rendered view plus a boolean indicating whether any
+/// truncation occurred; callers use the flag to decide whether to
+/// fail-safe the affected findings. See crosslink #498.
+fn build_verification_code_view(
+    builder_code: &str,
+    findings: &[&Finding],
+    max_chars: usize,
+) -> (String, bool) {
+    const CONTEXT_LINES: usize = 20;
+
+    // If the whole code fits, no truncation is needed.
+    if builder_code.len() <= max_chars {
+        return (builder_code.to_string(), false);
+    }
+
+    // Collect line ranges from findings that have them. Lines are
+    // 1-indexed in the finding; convert to 0-indexed for slicing.
+    let ranges: Vec<(usize, usize)> = findings
+        .iter()
+        .filter_map(|f| f.line_range)
+        .map(|(start, end)| {
+            let zero_indexed_start = start.saturating_sub(1);
+            (
+                zero_indexed_start.saturating_sub(CONTEXT_LINES),
+                end.saturating_add(CONTEXT_LINES),
+            )
+        })
+        .collect();
+
+    if ranges.is_empty() {
+        // No line info — fall back to raw truncation.
+        return (truncate_output(builder_code, max_chars), true);
+    }
+
+    // Merge overlapping windows.
+    let mut sorted = ranges;
+    sorted.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in sorted {
+        if let Some(last) = merged.last_mut() {
+            if start <= last.1 {
+                last.1 = last.1.max(end);
+                continue;
+            }
+        }
+        merged.push((start, end));
+    }
+
+    let lines: Vec<&str> = builder_code.lines().collect();
+    let mut out = String::new();
+    let mut any_truncated = false;
+    for (i, (start, end)) in merged.iter().enumerate() {
+        if i > 0 {
+            out.push_str("\n...\n");
+        }
+        let end = (*end).min(lines.len());
+        for line_idx in *start..end {
+            if out.len() + lines[line_idx].len() + 16 > max_chars {
+                out.push_str("\n... [window truncated]");
+                any_truncated = true;
+                break;
+            }
+            let _ = write!(out, "{}: {}\n", line_idx + 1, lines[line_idx]);
+        }
+        if out.len() >= max_chars {
+            any_truncated = true;
+            break;
+        }
+    }
+
+    if out.is_empty() {
+        return (truncate_output(builder_code, max_chars), true);
+    }
+
+    (out, any_truncated)
 }
 
 /// Format findings for injection into the next turn's context (advisory mode).
@@ -1478,6 +1597,95 @@ mod tests {
     #[test]
     fn test_truncate_output_short() {
         assert_eq!(truncate_output("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_output_utf8_safe() {
+        // 4-byte codepoint at the cut would have panicked under raw
+        // byte indexing. Should cut back to a char boundary instead.
+        let text = "aaa🔥bbbb"; // `aaa` + 4-byte emoji + `bbbb` = 3 + 4 + 4 = 11 bytes
+        let result = truncate_output(text, 5);
+        assert!(result.contains("aaa"), "unexpected: {result}");
+        assert!(result.contains("truncated"));
+    }
+
+    // --- Regression tests for crosslink #498 ---
+
+    fn finding_with_lines(id: &str, start: usize, end: usize) -> Finding {
+        use crate::vdd::finding::{FindingStatus, Severity};
+        Finding {
+            id: id.to_string(),
+            severity: Severity::Medium,
+            cwe: None,
+            file_path: Some("lib.rs".to_string()),
+            line_range: Some((start, end)),
+            description: format!("finding {id}"),
+            adversary_reasoning: String::new(),
+            status: FindingStatus::Genuine,
+            iteration: 0,
+        }
+    }
+
+    #[test]
+    fn code_view_returns_whole_body_when_under_cap() {
+        let code = "line1\nline2\nline3\n";
+        let f = finding_with_lines("f1", 2, 2);
+        let findings: Vec<&Finding> = vec![&f];
+        let (view, truncated) = build_verification_code_view(code, &findings, 1000);
+        assert_eq!(view, code);
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn code_view_extracts_window_around_cited_lines() {
+        // 200 lines, finding cites lines 150-152. Max bytes forces a
+        // window view rather than the whole body.
+        let code: String = (1..=200).map(|n| format!("line {n}\n")).collect();
+        let f = finding_with_lines("f1", 150, 152);
+        let findings: Vec<&Finding> = vec![&f];
+        let (view, _) = build_verification_code_view(&code, &findings, 500);
+        // Must contain the cited lines even though they're deep in the file.
+        assert!(view.contains("line 150"), "missing cited line: {view}");
+        assert!(view.contains("line 152"), "missing cited line: {view}");
+        // Context lines above/below should also be present.
+        assert!(view.contains("line 135") || view.contains("line 140"));
+    }
+
+    #[test]
+    fn code_view_merges_overlapping_windows() {
+        let code: String = (1..=200).map(|n| format!("line {n}\n")).collect();
+        let f1 = finding_with_lines("f1", 50, 52);
+        let f2 = finding_with_lines("f2", 55, 57); // overlaps f1's ±20 window
+        let findings: Vec<&Finding> = vec![&f1, &f2];
+        let (view, _) = build_verification_code_view(&code, &findings, 2000);
+        // Should have exactly one `...` separator (none) because the
+        // windows merged.
+        assert!(
+            !view.contains("\n...\n"),
+            "overlapping windows not merged: {view}"
+        );
+        assert!(view.contains("line 50"));
+        assert!(view.contains("line 57"));
+    }
+
+    #[test]
+    fn code_view_falls_back_to_truncation_when_no_line_info() {
+        let code: String = "x".repeat(5000);
+        let f = Finding {
+            id: "f1".to_string(),
+            severity: crate::vdd::finding::Severity::Medium,
+            cwe: None,
+            file_path: None,
+            line_range: None,
+            description: "no lines".to_string(),
+            adversary_reasoning: String::new(),
+            status: crate::vdd::finding::FindingStatus::Genuine,
+            iteration: 0,
+        };
+        let findings: Vec<&Finding> = vec![&f];
+        let (view, truncated) = build_verification_code_view(&code, &findings, 1000);
+        assert!(truncated);
+        assert!(view.contains("truncated"));
     }
 
     #[test]
