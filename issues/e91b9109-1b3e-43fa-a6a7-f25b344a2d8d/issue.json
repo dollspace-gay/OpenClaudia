@@ -1,0 +1,11 @@
+{
+  "uuid": "e91b9109-1b3e-43fa-a6a7-f25b344a2d8d",
+  "display_id": 491,
+  "title": "execute_tool_full returns inside match — bypasses the wrapping ToolResult construction at line 894",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Functional Correctness / Cognitive Readability\n\n**Location:** /home/doll/OpenClaudia/src/tools/mod.rs lines 866-899 (execute_tool_full)\n\n**Violation:**\nexecute_tool_full's match block has three arms:\n  'task'        => (content, is_error) — falls through to wrap at lines 893-898\n  'agent_output' => (content, is_error) — falls through to wrap at lines 893-898\n  _             => { let result = execute_tool_with_memory(...); return result; }  // line 890\n\nLines 888-891 ARE the default arm and they 'return' directly, creating asymmetric control flow: two arms fall through to the single wrap at lines 893-898, the third returns mid-match. A future maintainer who adds new match arms cannot tell by glancing whether they should 'return' or 'fall through'. The same code pattern recurs in execute_tool_with_tasks (lines 1023-1086) which has FIVE match arms, four of which 'return' early — making the final 'Fall through' call (line 1089) essentially the dead-letter default.\n\nAdditionally:\n1. **Return type (String, bool) is implicit in tuple destructuring.** Refactor in issue #445 fixes this.\n2. **app_config.map_or_else(|| (\"Task tool requires application configuration\", true), |config| subagent::execute_task_tool(...))** (line 877-884) nests two closures deep for a trivial null-check. Would be clearer as:\n   let Some(config) = app_config else { return ToolResult::error(call.id, \"Task tool requires ...\"); };\n   subagent::execute_task_tool(&args, config)\n\n**Mandated Refactor:**\n1. Use early-return uniformly: every branch constructs and returns ToolResult directly. Delete the shared wrap at lines 893-898.\n2. Extract a helper: fn tool_result_err(id: &str, msg: impl Into<String>) -> ToolResult and call it consistently.\n3. When the registry refactor (#251) lands, this function collapses to 20 lines.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:45:31.829190865Z",
+  "updated_at": "2026-04-18T00:45:31.829190865Z"
+}
