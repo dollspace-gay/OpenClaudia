@@ -1,0 +1,11 @@
+{
+  "uuid": "d533f94c-12c8-4481-bc0d-ecedeb971ebe",
+  "display_id": 419,
+  "title": "Clippy: 2 useless vec! — use array literal for stack-only data",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Performance & Complexity\n**Lint:** clippy::useless_vec\n\n## Violation\nA `vec![a, b, c]` used only by-reference (e.g. `.iter()` / `.contains()` / slice coercion) heap-allocates pointlessly. A stack array `[a, b, c]` provides the same slice API with zero allocation.\n\n## Locations\n- src/compaction.rs: 777, 1051\n\n## Mandated Refactor\n```rust\n// Before\nfor x in vec![1, 2, 3] { ... }\n// After\nfor x in [1, 2, 3] { ... }\n// Or if a slice is needed:\nlet slice: &[T] = &[a, b, c];\n```",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:39:43.134607341Z",
+  "updated_at": "2026-04-18T00:39:43.134607341Z"
+}
