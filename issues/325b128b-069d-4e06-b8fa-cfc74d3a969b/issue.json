@@ -1,0 +1,11 @@
+{
+  "uuid": "325b128b-069d-4e06-b8fa-cfc74d3a969b",
+  "display_id": 373,
+  "title": "parse_command_front_matter: fragile string slicing can panic on multibyte chars",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension**: Functional Correctness (off-by-one / panics on adversarial input)\n\n**Location**: src/plugins/mod.rs:158-202 (parse_command_front_matter)\n\n**Violation**:\n```rust\nlet after_first = &trimmed[3..].trim_start_matches(['\\r', '\\n']);\nafter_first.find(\"\\n---\").map_or_else(..., |end_pos| {\n    let yaml_block = &after_first[..end_pos];\n    let body_start = end_pos + 4; // skip \\n---\n    let body = after_first[body_start..]...\n})\n```\nByte-index slicing into Rust strings panics if the index lands mid-UTF-8-codepoint. A command markdown file with '---' in the middle of a multibyte character sequence — while unusual — can cause a runtime panic. More realistically:\n- If after_first has length exactly end_pos+3 (ends with \"\\n---\" and nothing after), body_start = end_pos+4 OVERFLOWS the buffer length by 1 → panic.\n- trim_start_matches(['\\r', '\\n']) returns a &str, but then after_first[body_start..] is indexed as bytes; if the trimmed slice contains any non-ASCII bytes between the --- markers, the start-of-yaml assumption fails.\n\n**Mandated Refactor**:\n1. Use `str::split_once(\"\\n---\")` returning Option<(&str, &str)> — works entirely on char boundaries.\n2. Bounds-check body_start <= after_first.len() before indexing.\n3. Add a fuzzer input corpus (`cargo fuzz`) for parse_command_front_matter with adversarial markdown.\n4. Add property tests ensuring no panic for arbitrary UTF-8 content around the --- delimiter.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:36:44.726540578Z",
+  "updated_at": "2026-04-18T00:36:44.726540578Z"
+}
