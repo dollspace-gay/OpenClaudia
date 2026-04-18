@@ -1,0 +1,11 @@
+{
+  "uuid": "f2e372cf-85a2-4c5d-930d-e8392608374d",
+  "display_id": 263,
+  "title": "OAuth error bodies leak refresh tokens and auth codes to end users",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Security and Access / Error Orchestration\n\nLocation: src/oauth.rs line 596 (send_token_request) and line 654 (create_api_key), plus src/claude_credentials.rs line 229 (refresh_and_load).\n\nViolation: When a token exchange, refresh, or API-key creation fails, the full response body is interpolated directly into the error message via anyhow::bail! and the format! macro:\n  - oauth.rs:596: bail!(\"Token exchange failed ({status}): {body}\");\n  - oauth.rs:654: bail!(\"API key creation failed ({status}): {body}\");\n  - claude_credentials.rs:229: return Err(format!(\"Token refresh failed ({status}): {body}\"));\nAnthropic's OAuth endpoint routinely echoes back the submitted grant_type, client_id, redirect_uri, scope, AND — critically — the authorization code or refresh_token as part of a validation error (e.g., \"invalid_grant: refresh_token 'xxx...yyy' is expired\"). This message then propagates upstream: the ProxyError::InvalidBody variant that swallows it ultimately lands in an axum Response body (proxy.rs line 297 \"Token exchange failed: {e}\") and goes to the end user's browser or CLI — meaning REFRESH TOKENS OR AUTH CODES CAN LEAK TO ANY CLIENT THAT TRIGGERED THE FAILURE. This is a critical credential-exfiltration path.\n\nMandated Refactor:\n  1. In oauth.rs and claude_credentials.rs, replace the body interpolation with a dedicated sanitized error:\n     - Extract only the short error code field (`error`, `error_description`) from a JSON parse attempt.\n     - Log the full body at debug! level ONLY (tracing will not ship to the user).\n     - Return an anyhow/String error containing ONLY status code + short error code.\n  2. Add a test that injects a mock 400 response containing 'refresh_token_XXX' and asserts the returned Err string does NOT contain that substring.\n  3. Similar fix for any other response.text().await.unwrap_or_default() on an auth path — grep for this pattern as a follow-up audit.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:28:03.529234207Z",
+  "updated_at": "2026-04-18T00:28:03.529234207Z"
+}
