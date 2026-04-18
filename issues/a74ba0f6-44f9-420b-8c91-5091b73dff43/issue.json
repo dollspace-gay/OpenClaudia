@@ -7,9 +7,10 @@
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:42:58.969108394Z",
-  "updated_at": "2026-04-18T00:43:11.271969630Z",
+  "updated_at": "2026-04-18T00:43:21.518646589Z",
   "labels": [
     "bug",
-    "qa-review-2026-04"
+    "qa-review-2026-04",
+    "qa-seam-memory"
   ]
 }
