@@ -1,0 +1,11 @@
+{
+  "uuid": "229161ac-804a-46d0-bd0f-7db135965396",
+  "display_id": 457,
+  "title": "auto_learn: compute_file_relationships is O(N^2) SQLite INSERTs at session end",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Performance. Location: src/auto_learn.rs:319-338. Violation: N files = N*(N-1)/2 save_file_relationship DB calls. No batching, no transaction wrap. Refactor: wrap in single transaction, batch INSERTs, cap session_files_modified size.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:42:26.751862512Z",
+  "updated_at": "2026-04-18T00:42:26.751862512Z"
+}
