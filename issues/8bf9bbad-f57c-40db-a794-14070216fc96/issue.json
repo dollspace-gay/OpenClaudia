@@ -1,0 +1,11 @@
+{
+  "uuid": "8bf9bbad-f57c-40db-a794-14070216fc96",
+  "display_id": 280,
+  "title": "Marketplace Url source: no URL scheme validation, allows file:// and http://",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension**: Security and Access (SSRF / local file disclosure)\n\n**Location**:\n- src/plugins/marketplace.rs:146-151 (MarketplaceSource::Url)\n- src/plugins/marketplace.rs:45-60 (PluginSourceDef::Url)\n- src/plugins/manager.rs:346-394 (add_marketplace_from_git — accepts raw url)\n- src/plugins/manager.rs:538-548 (git_clone from url)\n\n**Violation**: Marketplace and plugin Url sources accept any string as URL with no scheme allowlist:\n- `file:///` URLs passed to git_clone succeed and can clone from any local path — circumventing the path-traversal validation elsewhere.\n- `http://` (cleartext) URLs are accepted — MITM can substitute malicious plugin payload.\n- `ssh://`, `git://` protocols equally accepted — git:// over an attacker-controlled port can MITM.\n- MarketplaceSource::Url variant carries arbitrary `headers: HashMap<String, String>` that would be injected into an HTTP fetch (marketplace.rs:150); no sanitization for CRLF injection in header values.\n- No TLS pinning, no certificate validation override tracking.\n\n**Mandated Refactor**:\n1. Add `validate_source_url(url: &str) -> Result<(), PluginError>` that enforces: scheme ∈ {https, ssh}, host non-empty, no userinfo component (reject user:pass@host).\n2. Reject file:// outright — require explicit use of `MarketplaceSource::File { path }`/`Directory { path }` which go through path-canonicalization.\n3. Sanitize header values via `http::HeaderValue::from_str` which rejects CTLs, and allowlist header names to User-Agent, Authorization, Accept.\n4. Consider using the `url` crate for parsing and scheme checks.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:29:35.387864711Z",
+  "updated_at": "2026-04-18T00:29:35.387864711Z"
+}
