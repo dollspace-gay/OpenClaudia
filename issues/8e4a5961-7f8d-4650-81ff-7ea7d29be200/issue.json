@@ -1,0 +1,11 @@
+{
+  "uuid": "8e4a5961-7f8d-4650-81ff-7ea7d29be200",
+  "display_id": 384,
+  "title": "Clippy: 45 uninlined format! args — inline variables into the format string",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Cognitive Readability\n**Lint:** clippy::uninlined_format_args\n**Count:** 45\n\n## Violation\nVariables are passed as positional args (`format!(\"{}\", x)`) instead of being inlined (`format!(\"{x}\")`). Pedantic clippy mandates inlining for clarity — eliminates positional-to-name mapping the reader has to do, and reduces refactor breakage when args are reordered.\n\n## Locations\n- src/compaction.rs: 1187, 1190\n- src/hooks/mod.rs: 1066, 1072, 1078, 1084, 1090, 1301, 1306\n- src/modes/mod.rs: 630, 635, 640, 645, 650\n- src/permissions.rs: 585\n- src/plugins/mod.rs: 1068, 1417\n- src/prompt.rs: 480, 485\n- src/streaming.rs: 377, 388, 399, 419, 432, 459, 495, 526, 548, 653, 677, 725, 774, 838\n- src/tools/mod.rs: 1139, 1178, 1492, 1535, 1583, 1634, 1771, 1804, 1824, 1877\n- src/tui/mod.rs: 1024 (twice)\n\n## Mandated Refactor\nRun `cargo clippy --fix --all-targets --all-features -- -W clippy::uninlined_format_args` for the auto-fix, then review diff. Expression-valued args (non-identifier) won't auto-fix — manually inline identifier references only:\n```rust\n// Before: format!(\"Error at {}: {}\", location, msg)\n// After:  format!(\"Error at {location}: {msg}\")\n// Leave alone: format!(\"count={}\", items.len())  -- expressions stay positional\n```",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:37:38.485516973Z",
+  "updated_at": "2026-04-18T00:37:38.485516973Z"
+}
