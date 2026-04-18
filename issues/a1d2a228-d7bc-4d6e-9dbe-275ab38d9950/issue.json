@@ -1,0 +1,11 @@
+{
+  "uuid": "a1d2a228-d7bc-4d6e-9dbe-275ab38d9950",
+  "display_id": 356,
+  "title": "SessionManager::end_session temporal coupling — no RAII, silent persist-failure",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Cognitive Readability (4) / Error Orchestration (7)\n\nLocation: src/session/mod.rs:467-488 (SessionManager::end_session) and callers across main.rs/tui/app.rs.\n\nViolation:\n1. Temporal coupling: The lifecycle is 'get_or_create_session() -> mutate -> end_session()'. If the program panics, is SIGKILLed, or the caller forgets to call end_session, ALL in-memory session state (turn_metrics, files_modified, decisions, cumulative_usage) is lost. There is no Drop impl and no RAII guard. The comment on atomic_write (line 492) only protects writes that actually happen.\n2. Error swallowing: persist_session failure is logged via warn!() (line 475) then Some(session) is returned anyway. The caller has no signal that the session was NOT durably stored. This is exactly the 'swallowed internal exception' anti-pattern from 3.4.\n3. end_session returns Option<Session> where None means 'no session was active' — a distinct condition from 'persist failed'. Caller cannot tell them apart.\n4. persist_session writes THREE files (session.id.json, latest.json, handoff.md) non-atomically relative to each other. If the process dies between writes, latest.json can point to a session whose .json file was never written, or handoff.md can lag the session JSON.\n\nMandated Refactor:\n1. Introduce an OwnedSession RAII guard returned by get_or_create_session() that auto-calls persist() on Drop.\n2. persist_session returns Result; end_session returns Result<Option<Session>, PersistError> so the caller can decide how to handle failure.\n3. Write all three files into a temp directory then rename the directory atomically (or use a single index file listing current session id + serial number).\n4. Contract assertion: after end_session, no further mutation methods on the Session should be possible (consume by value).",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:35:33.030120746Z",
+  "updated_at": "2026-04-18T00:35:33.030120746Z"
+}
