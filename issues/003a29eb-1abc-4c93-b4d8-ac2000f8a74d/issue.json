@@ -1,6 +1,6 @@
 {
   "uuid": "003a29eb-1abc-4c93-b4d8-ac2000f8a74d",
-  "display_id": 396,
+  "display_id": 397,
   "title": "DisplayMessage construction boilerplate duplicated ~30 times (DRY)",
   "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: DRY\nLocation: src/tui/app.rs — every slash-command arm and event handler builds: DisplayMessage { role: system.to_string(), content: ..., tool_name: None, is_error: false, is_thinking: false }. Counted 30+ occurrences.\nViolation: Every branch repeats the same five-field literal, differing only in role/content/is_error. Any future field addition requires touching 30 sites.\nMandated Refactor: After finding #275 lands, add constructors impl DisplayMessage { pub fn info, error, user, assistant, tool_ok, tool_err, thinking }. Collapses 7-line literal blocks into one-liners. Reduces tui/app.rs by ~400 lines.",
   "status": "open",
