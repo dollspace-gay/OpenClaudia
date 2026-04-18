@@ -1,0 +1,11 @@
+{
+  "uuid": "5948f828-fb59-463e-a47c-296378c1f7c6",
+  "display_id": 424,
+  "title": "God functions: 7 functions exceed clippy's 100-line threshold (too_many_lines)",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Structural Modularity, SRP, Testability Coverage\n**Lint:** clippy::too_many_lines\n\n## Violation\nSeven functions blow past clippy's 100-line limit. A function this long almost certainly violates SRP — it mixes responsibilities, cannot be understood without scrolling, and defies unit testing (cyclomatic complexity correlates with length). These are the top architectural offenders in the codebase.\n\n## The offenders (longest first)\n1. **src/tui/app.rs:586** — **613 lines** (!). Likely the main event loop / update function. Must be broken up with extreme prejudice into per-event handlers, per-screen update functions, and a dispatcher.\n2. **src/pipeline.rs:663** — 216 lines.\n3. **src/proxy.rs:583** — 247 lines. Proxy request-handler doing translation + dispatch + response shaping in one block. Split by stage: parse → authorize → transform → dispatch → reshape → respond.\n4. **src/tui/app.rs:1335** — 179 lines.\n5. **src/tui/messages.rs:92** — 138 lines.\n6. **src/tui/app.rs:348** — 106 lines.\n7. **src/tui/mod.rs:611** — 102 lines.\n\n## Mandated Refactor\nFor each function:\n1. Identify the 2-5 distinct phases (often marked by blank lines, comments, or early returns).\n2. Extract each phase into a `fn phase_name(&mut self, ...) -> PhaseResult` helper.\n3. The outer function becomes a sequencer: declare intermediate state, call each phase, return.\n4. Target: no helper >60 lines; outer orchestrator <30 lines.\n5. Add a unit test per extracted phase — this is the acceptance criterion for the refactor (untested extraction is just moving code).\n\n## Priority order\n`tui/app.rs:586` first — 613 lines is a smell-index-ten god-function. Everything else is downstream of getting this under control.\n\n## Related\nThis is the clippy signal that corroborates the architectural QA findings from the TUI seam subagent and complements existing issue #232 (decompose handle_slash_command).",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:39:57.924487423Z",
+  "updated_at": "2026-04-18T00:39:57.924487423Z"
+}
