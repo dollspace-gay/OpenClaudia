@@ -1,0 +1,11 @@
+{
+  "uuid": "8529f6b6-ce94-43d1-be98-0fd67a913eab",
+  "display_id": 449,
+  "title": "Agentic tool loop duplicated: tui/app.rs::spawn_api_turn vs pipeline vs main::cmd_chat (Stovepipe)",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Stovepipe Systems / DRY\nLocation: src/tui/app.rs:1457-1522 (agentic follow-up loop with max_iterations=25); src/acp.rs:555-775 run_prompt_loop (max_iterations=50); src/main.rs::cmd_chat contains a third copy; src/pipeline (run_turn builds but has no loop).\nViolation: Three isolated implementations of the agentic tool-calling loop exist: one in the TUI async spawn, one in ACP, one in the rustyline REPL. Each builds its own follow-up request, handles its own iteration cap (25 vs 50), sends its own error events. The iteration cap drift is a functional correctness hazard: the TUI and ACP disagree on when to stop. Provider-specific assistant-message construction is also duplicated (build_assistant_message_with_tools).\nMandated Refactor: Extract pub async fn run_agentic_loop(initial_request, max_iterations: u32, event_sink: &dyn AgentEventSink, client, endpoint, headers, provider, memory_db) -> Result<Vec<Message>, String>. Define trait AgentEventSink { fn stream_text, tool_start, tool_done, response_done, api_error }. Implement AgentEventSink for each seam (TUI mpsc, ACP stdio, REPL stdout). Single source of truth for the loop.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:41:50.315616051Z",
+  "updated_at": "2026-04-18T00:41:50.315616051Z"
+}
