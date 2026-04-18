@@ -1,0 +1,11 @@
+{
+  "uuid": "142cf873-0bda-4e4c-a36f-29ae6be84cdc",
+  "display_id": 272,
+  "title": "Duplicated OAuth URL and beta-header string construction drift",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Security and Access\n\nLocation: src/proxy.rs lines 250-257 (auth_device_start) and lines 1065-1069 (proxy_anthropic_messages), and src/oauth.rs lines 84-102 (PkceParams::build_auth_url — which is the ALREADY-EXISTING canonical implementation).\n\nViolation: auth_device_start manually builds the authorization URL via format! with bare curly-brace interpolation of ANTHROPIC_CLIENT_ID, ANTHROPIC_REDIRECT_URI, the scope literal, pkce.challenge, and oauth_state — bypassing the PkceParams::build_auth_url() method that already exists in oauth.rs and would give consistent URL encoding. This is a clear DRY violation (two authoritative URL builders). Worse, the proxy.rs version hard-codes the scope list as 'org:create_api_key user:profile user:inference' but oauth.rs OAUTH_SCOPES has a different list that INCLUDES 'user:sessions:claude_code'. These two scope lists drift silently.\n\nSeparately, proxy_anthropic_messages line 1069 sets a large inline 'anthropic-beta' header constant `claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14`. The same constant list is defined in claude_credentials.rs lines 21-27 as three separate typed constants — which are NOT used in proxy.rs, so the inline string must stay in sync manually.\n\nMandated Refactor:\n  1. Delete lines 243-257 in auth_device_start. Replace with: `let auth_url = pkce.build_auth_url();`\n  2. Ensure oauth.rs::OAUTH_SCOPES is the single source of truth. Delete the hard-coded scope string in proxy.rs.\n  3. In claude_credentials.rs, create a public function `fn claude_code_beta_header_value() -> String` that joins CLAUDE_CODE_BETA_HEADER, OAUTH_BETA_HEADER, INTERLEAVED_THINKING_BETA and any fine-grained-tool-streaming header. Call it from proxy.rs line 1068.\n  4. Add a compile-time check or test that proxy.rs does not contain the literal string 'oauth-2025-04-20' or the scope list.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:28:58.202102353Z",
+  "updated_at": "2026-04-18T00:28:58.202102353Z"
+}
