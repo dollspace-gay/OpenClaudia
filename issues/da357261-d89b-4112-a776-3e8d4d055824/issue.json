@@ -1,0 +1,11 @@
+{
+  "uuid": "da357261-d89b-4112-a776-3e8d4d055824",
+  "display_id": 402,
+  "title": "Clippy: 11 #[must_use] candidates — add attribute to return-value-only methods",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\n**Dimension:** Documentation & Intent, Functional Correctness\n**Lint:** clippy::must_use_candidate\n\n## Violation\nPure functions and accessor methods that return a non-`()` value without side effects should be marked `#[must_use]` so the compiler warns when callers discard the result. Otherwise silent bugs (forgetting to assign the builder chain result, ignoring an `Option`-like query).\n\n## Locations\nFunctions (6):\n- src/modes/fragments.rs: 57, 66, 75, 84\n- src/modes/mod.rs: 427, 465\n\nMethods (5):\n- src/modes/mod.rs: 290, 363, 378, 397, 409\n\n## Mandated Refactor\n```rust\n#[must_use]\npub fn as_system_fragment(&self) -> String { ... }\n```\nAll flagged sites are in `src/modes/` — consider a crate-level `#![warn(clippy::must_use_candidate)]` in that module to enforce going forward.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:38:38.725028210Z",
+  "updated_at": "2026-04-18T00:38:38.725028210Z"
+}
