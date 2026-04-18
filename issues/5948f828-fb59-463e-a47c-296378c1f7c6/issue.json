@@ -7,8 +7,9 @@
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:39:57.924487423Z",
-  "updated_at": "2026-04-18T00:39:59.459357517Z",
+  "updated_at": "2026-04-18T00:40:07.063824312Z",
   "labels": [
-    "refactor"
+    "refactor",
+    "qa-review-2026-04"
   ]
 }
