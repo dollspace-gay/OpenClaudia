@@ -1,0 +1,11 @@
+{
+  "uuid": "1ed3dbdb-1b7f-4cf5-8fb0-19d1e2d08819",
+  "display_id": 371,
+  "title": "Blocking std::process::Command inside TUI sync event loop (freezes render)",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Performance / Architectural Alignment\nLocation: src/tui/app.rs /diff (1095), /review (1170), /init (1217), /files (1057), /doctor (1138) and fn handle_shell_command (1250)\nViolation: Every one of these slash-command branches calls std::process::Command::new(...).output() directly on the TUI's synchronous event-loop thread. .output() blocks until the child exits. During that time the rendering loop does not tick, the spinner freezes, key events queue up, and cancellation (Esc) is impossible. Running 'git diff HEAD' on a large repo can block the UI for >1s. This also breaks the TUI/CLI parity invariant — Claude Code runs these asynchronously.\nMandated Refactor: All filesystem/subprocess work must go through self.runtime_handle.spawn() with results arriving via AppEvent::ShellDone { stdout, stderr, exit_code }. Add a helper fn spawn_shell(&self, cmd: Vec<&str>) -> JoinHandle<()> that sends the result back into the channel. Blocks the model spawn_api_turn already uses; apply the same pattern here.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:36:37.425051488Z",
+  "updated_at": "2026-04-18T00:36:37.425051488Z"
+}
