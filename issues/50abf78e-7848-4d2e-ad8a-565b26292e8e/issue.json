@@ -1,0 +1,11 @@
+{
+  "uuid": "50abf78e-7848-4d2e-ad8a-565b26292e8e",
+  "display_id": 498,
+  "title": "VDD truncate_output 12000-char cap silently drops builder code — verifier sees only prefix",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Functional Correctness. Location: src/vdd/mod.rs:905 (verify_findings uses truncate_output(builder_code, 12000)). Violation: If builder output is larger than 12 KB, the verifier sees only the first 12 KB plus a '[truncated, N total chars]' marker. A finding citing lines beyond byte 12000 will be judged 'confabulated' because the verifier cannot find the cited code in its truncated view — but the finding is genuine. This systematically demotes real findings in later parts of long responses. Mandated Refactor: (a) When a finding has file_path + line_range, extract the relevant line window from the builder_code instead of truncating to a prefix. (b) If the builder code is too large for the context window, chunk and run the verifier once per chunk covering the findings in that chunk. (c) Explicitly log the truncation and keep findings referencing truncated code as Genuine (fail-safe) rather than letting the verifier dismiss them.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:46:22.543310598Z",
+  "updated_at": "2026-04-18T00:46:22.543310598Z"
+}
