@@ -7,8 +7,9 @@
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:30:46.281531220Z",
-  "updated_at": "2026-04-18T00:30:52.755076103Z",
+  "updated_at": "2026-04-18T00:30:54.039423599Z",
   "labels": [
-    "qa-review-2026-04"
+    "qa-review-2026-04",
+    "qa-seam-tools"
   ]
 }
