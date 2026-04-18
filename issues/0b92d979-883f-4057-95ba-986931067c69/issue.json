@@ -1,0 +1,11 @@
+{
+  "uuid": "0b92d979-883f-4057-95ba-986931067c69",
+  "display_id": 473,
+  "title": "output_style.rs: load_output_style silently swallows file-read errors — permission denied = 'no style' with no log",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Error Orchestration / Documentation and Intent. Location: src/output_style.rs:12-33 (load_output_style, read_style). Violation: Both .ok() calls discard the underlying io error. If .openclaudia/output-style.md exists but is unreadable (permission, locked file, encoding error), the function returns None and the user's style silently doesn't apply. No log, no config-validation feedback, no way to debug 'why is my output style not working?'. Mandated Refactor: Return Result<Option<String>, StyleError>. Log permission/encoding errors at WARN so they appear in the proxy log. save_output_style/clear_output_style already use Result<(), String>; load_output_style should too.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:44:05.463876043Z",
+  "updated_at": "2026-04-18T00:44:05.463876043Z"
+}
