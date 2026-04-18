@@ -1,6 +1,6 @@
 {
   "uuid": "c2f4e3de-dd3b-4026-9273-b80d5f83927b",
-  "display_id": 274,
+  "display_id": 275,
   "title": "DisplayMessage uses twin boolean flags (is_error, is_thinking) — replace with enum status",
   "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Structural Modularity (Boolean Flag Parameter) / Cognitive Readability\nLocation: src/tui/messages.rs:10-16 and every DisplayMessage literal (30+ call sites across src/tui/app.rs)\nViolation: DisplayMessage { role: String, content: String, tool_name: Option<String>, is_error: bool, is_thinking: bool } encodes four orthogonal states (normal, error, thinking, tool-result) as two independent booleans. The combination (is_error=true, is_thinking=true) is nonsensical but representable. Every construction site repeats 'is_error: false, is_thinking: false' boilerplate. This is the boolean-flag anti-pattern applied to data carriers.\nMandated Refactor: Replace with: pub enum MessageKind { User, Assistant, AssistantThinking, SystemInfo, SystemError, ToolStart { name: String }, ToolOk { name: String }, ToolErr { name: String } }. Then pub struct DisplayMessage { kind: MessageKind, content: String }. This makes invalid states unrepresentable and eliminates ~120 lines of 'role: \"system\".to_string(), tool_name: None, is_error: false, is_thinking: false' boilerplate in app.rs. The match arms in messages.rs::build_lines become exhaustive and self-documenting.",
   "status": "open",
