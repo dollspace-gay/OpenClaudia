@@ -101,6 +101,26 @@ pub struct LearnedPreference {
     pub updated_at: String,
 }
 
+/// Escape a user-supplied string into a single FTS5 phrase literal.
+///
+/// The SQLite FTS5 MATCH grammar treats words as operators (`AND`, `OR`,
+/// `NOT`, `NEAR`), supports column filters (`colname:token`), prefix
+/// matching with `*`, parentheses, and bare double-quotes for phrase
+/// expressions. Wrapping the entire query in a double-quoted phrase and
+/// doubling interior double-quotes neutralizes all of those: FTS5 parses
+/// the result as one opaque literal phrase.
+///
+/// Also strips ASCII control characters that FTS5's tokenizer would
+/// choke on or that could produce surprising matches. See crosslink #444.
+fn escape_fts5_phrase(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| !c.is_ascii_control())
+        .collect();
+    let inner = cleaned.replace('"', "\"\"");
+    format!("\"{inner}\"")
+}
+
 /// Memory database handle
 pub struct MemoryDb {
     conn: Mutex<Connection>,
@@ -374,7 +394,7 @@ impl MemoryDb {
     /// Returns an error if the FTS query or database read fails.
     #[allow(clippy::significant_drop_tightening)] // conn must outlive stmt which borrows it
     pub fn memory_search(&self, query: &str, limit: usize) -> Result<Vec<ArchivalMemory>> {
-        let sanitized_query = format!("\"{}\"", query.replace('"', "\"\""));
+        let phrase_query = escape_fts5_phrase(query);
         let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -388,7 +408,7 @@ impl MemoryDb {
         )?;
 
         let memories = stmt
-            .query_map(params![sanitized_query, limit_i64], |row| {
+            .query_map(params![phrase_query, limit_i64], |row| {
                 Ok(ArchivalMemory {
                     id: row.get(0)?,
                     content: row.get(1)?,
@@ -1357,6 +1377,49 @@ pub struct AutoLearnStats {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    // --- Regression tests for crosslink #444 ---
+
+    #[test]
+    fn fts5_escape_wraps_bare_word_in_quotes() {
+        assert_eq!(escape_fts5_phrase("hello"), r#""hello""#);
+    }
+
+    #[test]
+    fn fts5_escape_doubles_interior_quotes() {
+        assert_eq!(escape_fts5_phrase(r#"say "hi""#), r#""say ""hi""""#);
+    }
+
+    #[test]
+    fn fts5_escape_neutralizes_boolean_operators() {
+        // `AND`, `OR`, `NOT`, `NEAR` inside a phrase are treated as
+        // literal words, not operators.
+        let escaped = escape_fts5_phrase("foo OR bar NOT baz");
+        assert!(escaped.starts_with('"') && escaped.ends_with('"'));
+        assert!(escaped.contains("foo OR bar NOT baz"));
+    }
+
+    #[test]
+    fn fts5_escape_neutralizes_column_filter() {
+        // `colname:token` is how FTS5 restricts matching to one column;
+        // wrapped in a phrase it becomes literal text.
+        let escaped = escape_fts5_phrase("content:secret");
+        assert_eq!(escaped, r#""content:secret""#);
+    }
+
+    #[test]
+    fn fts5_escape_strips_control_chars() {
+        // Newlines, NULs, and other ASCII control chars are stripped —
+        // FTS5 tokenizer behaves oddly on them and they have no
+        // legitimate place in a search query.
+        let escaped = escape_fts5_phrase("foo\nbar\0baz\x1b[31m");
+        assert_eq!(escaped, r#""foobarbaz[31m""#);
+    }
+
+    #[test]
+    fn fts5_escape_handles_empty_input() {
+        assert_eq!(escape_fts5_phrase(""), r#""""#);
+    }
 
     #[test]
     fn test_memory_db_creation() {
