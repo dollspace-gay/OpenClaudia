@@ -7,9 +7,10 @@
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-18T02:28:49.549120921Z",
-  "updated_at": "2026-04-18T02:28:52.826610333Z",
+  "updated_at": "2026-04-18T02:28:54.378636312Z",
   "labels": [
     "qa-review-2026-04",
-    "qa-followup-460"
+    "qa-followup-460",
+    "bug"
   ]
 }
