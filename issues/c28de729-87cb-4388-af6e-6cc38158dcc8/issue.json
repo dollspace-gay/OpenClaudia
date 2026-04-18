@@ -1,0 +1,11 @@
+{
+  "uuid": "c28de729-87cb-4388-af6e-6cc38158dcc8",
+  "display_id": 333,
+  "title": "deep_merge unbounded recursion and array concatenation explosion",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension**: Performance & Complexity / Security (DoS)\n\n**Location**: src/hooks/merge.rs:75-90 (deep_merge)\n\n**Violation**: deep_merge is a naive recursive function with:\n- No recursion-depth limit — a maliciously deeply nested JSON settings file (e.g. 100k levels) overflows the stack.\n- Arrays concatenate without upper bound (merge.rs:83-85) — a hostile managed-settings file can append infinitely to, e.g., hooks.PreToolUse causing OOM.\n- load_claude_settings (hooks/claude_compat.rs:108-185) applies FOUR merge_settings_file calls in sequence without validating total accumulated size.\n- When the project-level settings.local.json is gitignored/not-checked-in, an attacker who gains write on the developer machine has unbounded influence.\n\n**Mandated Refactor**:\n1. Convert deep_merge to iterative using an explicit work stack; enforce MAX_DEPTH=32.\n2. Enforce MAX_SETTINGS_BYTES (e.g. 1 MiB) before calling serde_json::from_str in merge_settings_file.\n3. Enforce MAX_ARRAY_LEN per array after merge (e.g. 1024).\n4. Return Result<(), MergeError> from deep_merge instead of mutating in place; surface errors in merge_settings_file.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:33:23.461433840Z",
+  "updated_at": "2026-04-18T00:33:23.461433840Z"
+}
