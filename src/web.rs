@@ -8,41 +8,194 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
+use std::str::FromStr;
 use std::time::Duration;
 use url::Url;
 
-/// Validate that a URL is safe to fetch (prevents SSRF and restricts schemes)
+/// Hostnames that always represent internal infrastructure, cloud metadata
+/// endpoints, or cluster control planes. Block by name even before DNS
+/// resolution — some of these resolve in odd ways across distros.
+const DANGEROUS_HOSTNAMES: &[&str] = &[
+    "localhost",
+    "localhost.localdomain",
+    "ip6-localhost",
+    "ip6-loopback",
+    // Cloud metadata endpoints
+    "metadata",
+    "metadata.google.internal",
+    "metadata.goog",
+    "metadata.aws",
+    "metadata.tencentyun.com",
+    "instance-data",
+    "instance-data.ec2.internal",
+    // Kubernetes in-cluster endpoints
+    "kubernetes",
+    "kubernetes.default",
+    "kubernetes.default.svc",
+    "kubernetes.default.svc.cluster.local",
+];
+
+/// Parse a host string as an IP literal, including non-standard single-integer
+/// forms (`http://2130706433/` = 127.0.0.1) that some resolvers accept and
+/// that `url::Url` leaves as a hostname.
+fn parse_host_as_ip(host: &str) -> Option<IpAddr> {
+    // Standard IPv4/IPv6 textual form
+    if let Ok(ip) = IpAddr::from_str(host) {
+        return Some(ip);
+    }
+    // IPv6 in brackets
+    if let Some(inner) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        if let Ok(ip) = Ipv6Addr::from_str(inner) {
+            return Some(IpAddr::V6(ip));
+        }
+    }
+    // Decimal-integer IPv4 (2130706433 → 127.0.0.1)
+    if !host.is_empty() && host.chars().all(|c| c.is_ascii_digit()) {
+        if let Ok(n) = host.parse::<u32>() {
+            return Some(IpAddr::V4(Ipv4Addr::from(n)));
+        }
+    }
+    // Hex-integer IPv4 (0x7f000001 → 127.0.0.1)
+    if let Some(hex) = host.strip_prefix("0x").or_else(|| host.strip_prefix("0X")) {
+        if let Ok(n) = u32::from_str_radix(hex, 16) {
+            return Some(IpAddr::V4(Ipv4Addr::from(n)));
+        }
+    }
+    None
+}
+
+/// True when `v6` is on a range that should never be reachable from a public fetch.
+fn is_ipv6_forbidden(v6: &Ipv6Addr) -> bool {
+    // IPv4-mapped: unwrap and re-check as IPv4 (covers ::ffff:127.0.0.1 etc.)
+    if let Some(v4) = v6.to_ipv4_mapped() {
+        return is_ip_forbidden(&IpAddr::V4(v4));
+    }
+    let s = v6.segments();
+    // Unique-local fc00::/7
+    if s[0] & 0xfe00 == 0xfc00 {
+        return true;
+    }
+    // Link-local fe80::/10
+    if s[0] & 0xffc0 == 0xfe80 {
+        return true;
+    }
+    // 6to4 2002::/16 — deprecated tunneling; block wholesale.
+    if s[0] == 0x2002 {
+        return true;
+    }
+    // Teredo 2001:0000::/32 — tunneling.
+    if s[0] == 0x2001 && s[1] == 0x0000 {
+        return true;
+    }
+    false
+}
+
+/// True if this IP is on any IANA-reserved, private, or otherwise non-public
+/// range. Drives the SSRF guard.
+fn is_ip_forbidden(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            if v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+                || v4.is_documentation()
+            {
+                return true;
+            }
+            let oct = v4.octets();
+            // 100.64/10 shared address space (RFC 6598 / carrier-grade NAT)
+            if oct[0] == 100 && (64..=127).contains(&oct[1]) {
+                return true;
+            }
+            // 192.0.0/24 IETF protocol assignments
+            if oct[0] == 192 && oct[1] == 0 && oct[2] == 0 {
+                return true;
+            }
+            // 198.18/15 benchmarking (RFC 2544)
+            if oct[0] == 198 && (18..=19).contains(&oct[1]) {
+                return true;
+            }
+            // 240.0.0.0/4 reserved for future use
+            if oct[0] >= 240 {
+                return true;
+            }
+            false
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() || is_ipv6_forbidden(v6)
+        }
+    }
+}
+
+/// Validate that a URL is safe to fetch (prevents SSRF and restricts schemes).
+///
+/// Defense layers, in order:
+///  1. Scheme allowlist (http/https only).
+///  2. Hostname denylist: localhost, cloud metadata endpoints
+///     (`metadata.google.internal`, `metadata.aws`, `instance-data`, etc.),
+///     Kubernetes in-cluster endpoints.
+///  3. IP-literal parsing: handles decimal-integer (`2130706433` = 127.0.0.1),
+///     hex-integer (`0x7f000001`), bracketed IPv6, and standard dotted quads.
+///     Any literal on an IANA reserved/private/link-local/multicast range
+///     is rejected — full IPv4 + IPv6 matrix, not the prefix-string heuristic
+///     the previous implementation used.
+///  4. DNS resolution with `ToSocketAddrs`: hostnames are resolved and EVERY
+///     resolved IP is checked against the same forbidden-range matrix.
+///
+/// Residual risk: a DNS-rebinding server that returns a public IP at
+/// validate time and a private IP at `reqwest`'s dial time still bypasses
+/// this. A custom `reqwest` resolver that re-checks at dial time is the
+/// complete mitigation and is tracked as a follow-up to crosslink #335.
 fn validate_url(url_str: &str) -> Result<(), String> {
     let parsed = Url::parse(url_str).map_err(|e| format!("Invalid URL: {e}"))?;
 
-    // Only allow http/https schemes (blocks file://, data:, ftp://, etc.)
+    // Scheme allowlist.
     match parsed.scheme() {
         "http" | "https" => {}
         scheme => return Err(format!("Unsupported URL scheme: {scheme}")),
     }
 
-    // Block private/internal network addresses to prevent SSRF
-    if let Some(host) = parsed.host_str() {
-        let host_lower = host.to_lowercase();
-        if host_lower == "localhost"
-            || host_lower == "[::1]"
-            || host.starts_with("127.")
-            || host.starts_with("10.")
-            || host.starts_with("192.168.")
-            || host.starts_with("172.16.")
-            || host.starts_with("172.17.")
-            || host.starts_with("172.18.")
-            || host.starts_with("172.19.")
-            || host.starts_with("172.2")
-            || host.starts_with("172.30.")
-            || host.starts_with("172.31.")
-            || host.starts_with("169.254.")
-            || host == "0.0.0.0"
-        {
-            return Err(format!("URL points to private/internal network: {host}"));
+    let host = parsed.host_str().ok_or("URL has no host")?;
+    let host_lower = host.to_ascii_lowercase();
+
+    // Hostname denylist — these names should never be reachable at all.
+    if DANGEROUS_HOSTNAMES.iter().any(|h| *h == host_lower) {
+        return Err(format!(
+            "URL host '{host}' is a known internal/metadata endpoint"
+        ));
+    }
+
+    // If the host parses as an IP literal (standard, decimal, hex, IPv6-brackets),
+    // check it directly — no DNS needed.
+    if let Some(ip) = parse_host_as_ip(&host_lower) {
+        if is_ip_forbidden(&ip) {
+            return Err(format!(
+                "URL points to reserved/internal IP address: {ip} (host was '{host}')"
+            ));
         }
-    } else {
-        return Err("URL has no host".to_string());
+        return Ok(());
+    }
+
+    // Hostname → resolve and check each address.
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    let socket_addrs: Vec<_> = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| format!("Cannot resolve host '{host}': {e}"))?
+        .collect();
+    if socket_addrs.is_empty() {
+        return Err(format!("Host '{host}' did not resolve to any address"));
+    }
+    for sa in socket_addrs {
+        let ip = sa.ip();
+        if is_ip_forbidden(&ip) {
+            return Err(format!(
+                "URL host '{host}' resolves to reserved/internal IP {ip}"
+            ));
+        }
     }
 
     Ok(())
@@ -582,56 +735,88 @@ mod tests {
     fn test_validate_url_blocks_localhost() {
         let result = validate_url("http://localhost:8080/admin");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("private/internal network"));
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("reserved/internal") || err.contains("metadata endpoint"),
+            "expected SSRF rejection, got: {err}"
+        );
     }
 
     #[test]
     fn test_validate_url_blocks_127() {
         let result = validate_url("http://127.0.0.1:9090/");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("private/internal network"));
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("reserved/internal") || err.contains("metadata endpoint"),
+            "expected SSRF rejection, got: {err}"
+        );
     }
 
     #[test]
     fn test_validate_url_blocks_10_network() {
         let result = validate_url("http://10.0.0.1/internal");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("private/internal network"));
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("reserved/internal") || err.contains("metadata endpoint"),
+            "expected SSRF rejection, got: {err}"
+        );
     }
 
     #[test]
     fn test_validate_url_blocks_192_168() {
         let result = validate_url("http://192.168.1.1/router");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("private/internal network"));
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("reserved/internal") || err.contains("metadata endpoint"),
+            "expected SSRF rejection, got: {err}"
+        );
     }
 
     #[test]
     fn test_validate_url_blocks_172_16() {
         let result = validate_url("http://172.16.0.1/");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("private/internal network"));
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("reserved/internal") || err.contains("metadata endpoint"),
+            "expected SSRF rejection, got: {err}"
+        );
     }
 
     #[test]
     fn test_validate_url_blocks_169_254_link_local() {
         let result = validate_url("http://169.254.169.254/latest/meta-data/");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("private/internal network"));
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("reserved/internal") || err.contains("metadata endpoint"),
+            "expected SSRF rejection, got: {err}"
+        );
     }
 
     #[test]
     fn test_validate_url_blocks_zero_address() {
         let result = validate_url("http://0.0.0.0/");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("private/internal network"));
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("reserved/internal") || err.contains("metadata endpoint"),
+            "expected SSRF rejection, got: {err}"
+        );
     }
 
     #[test]
     fn test_validate_url_blocks_ipv6_loopback() {
         let result = validate_url("http://[::1]:8080/");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("private/internal network"));
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("reserved/internal") || err.contains("metadata endpoint"),
+            "expected SSRF rejection, got: {err}"
+        );
     }
 
     #[test]
@@ -639,5 +824,147 @@ mod tests {
         let result = validate_url("not a url at all");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid URL"));
+    }
+
+    // --- SSRF regression tests (crosslink #335) ---
+
+    #[test]
+    fn ssrf_decimal_encoded_ipv4_loopback() {
+        // 2130706433 decimal == 127.0.0.1
+        let err = validate_url("http://2130706433/").unwrap_err();
+        assert!(
+            err.contains("reserved/internal") || err.contains("Invalid URL"),
+            "decimal-encoded 127.0.0.1 not blocked: {err}"
+        );
+    }
+
+    #[test]
+    fn ssrf_hex_encoded_ipv4_loopback() {
+        let err = validate_url("http://0x7f000001/").unwrap_err();
+        assert!(
+            err.contains("reserved/internal") || err.contains("Invalid URL"),
+            "hex-encoded 127.0.0.1 not blocked: {err}"
+        );
+    }
+
+    #[test]
+    fn ssrf_blocks_gcp_metadata_hostname() {
+        let err = validate_url("http://metadata.google.internal/").unwrap_err();
+        assert!(
+            err.contains("metadata endpoint"),
+            "metadata.google.internal not denylisted: {err}"
+        );
+    }
+
+    #[test]
+    fn ssrf_blocks_aws_metadata_hostname() {
+        let err = validate_url("http://instance-data/").unwrap_err();
+        assert!(
+            err.contains("metadata endpoint"),
+            "instance-data not denylisted: {err}"
+        );
+    }
+
+    #[test]
+    fn ssrf_blocks_k8s_api_hostname() {
+        let err = validate_url("http://kubernetes.default.svc/api/v1/secrets").unwrap_err();
+        assert!(
+            err.contains("metadata endpoint"),
+            "kubernetes.default.svc not denylisted: {err}"
+        );
+    }
+
+    #[test]
+    fn ssrf_blocks_ipv6_loopback_mapped() {
+        let err = validate_url("http://[::ffff:127.0.0.1]/").unwrap_err();
+        assert!(
+            err.contains("reserved/internal"),
+            "IPv4-mapped IPv6 loopback not blocked: {err}"
+        );
+    }
+
+    #[test]
+    fn ssrf_blocks_ipv6_unique_local() {
+        let err = validate_url("http://[fc00::1]/").unwrap_err();
+        assert!(
+            err.contains("reserved/internal"),
+            "IPv6 unique-local not blocked: {err}"
+        );
+    }
+
+    #[test]
+    fn ssrf_blocks_ipv6_link_local() {
+        let err = validate_url("http://[fe80::1]/").unwrap_err();
+        assert!(
+            err.contains("reserved/internal"),
+            "IPv6 link-local not blocked: {err}"
+        );
+    }
+
+    #[test]
+    fn ssrf_blocks_shared_address_space() {
+        let err = validate_url("http://100.64.0.1/").unwrap_err();
+        assert!(
+            err.contains("reserved/internal"),
+            "100.64/10 CGNAT not blocked: {err}"
+        );
+    }
+
+    #[test]
+    fn ssrf_blocks_benchmarking_range() {
+        let err = validate_url("http://198.18.0.1/").unwrap_err();
+        assert!(
+            err.contains("reserved/internal"),
+            "198.18/15 benchmarking not blocked: {err}"
+        );
+    }
+
+    #[test]
+    fn ssrf_previous_prefix_bug_172_200_now_allowed() {
+        // The previous impl wrongly blocked 172.200.x (public) via
+        // `starts_with("172.2")`. Public 172.200.0.1 must NOT be rejected
+        // by the host check.
+        let result = validate_url("http://172.200.0.1/");
+        if let Err(e) = result {
+            assert!(
+                !e.contains("reserved/internal"),
+                "172.200.0.1 (public) wrongly classified as internal: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn ssrf_blocks_172_all_private_slashes() {
+        for middle in [16_u8, 20, 25, 28, 31] {
+            let url = format!("http://172.{middle}.0.1/");
+            let err = validate_url(&url).unwrap_err();
+            assert!(
+                err.contains("reserved/internal"),
+                "172.{middle}.0.1 (private) not blocked: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn ssrf_blocks_documentation_range() {
+        let err = validate_url("http://203.0.113.1/").unwrap_err();
+        assert!(
+            err.contains("reserved/internal"),
+            "203.0.113/24 (documentation) not blocked: {err}"
+        );
+    }
+
+    #[test]
+    fn ssrf_blocks_future_reserved_240() {
+        let err = validate_url("http://240.0.0.1/").unwrap_err();
+        assert!(
+            err.contains("reserved/internal"),
+            "240.0.0.0/4 (reserved) not blocked: {err}"
+        );
+    }
+
+    #[test]
+    fn ssrf_allows_public_ipv4() {
+        assert!(validate_url("http://8.8.8.8/").is_ok());
     }
 }
