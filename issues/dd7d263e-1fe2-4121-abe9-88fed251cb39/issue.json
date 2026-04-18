@@ -3,9 +3,10 @@
   "display_id": 336,
   "title": "ping-unblock-test-2",
   "description": "verifying after gpg config repair",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:33:35.219838051Z",
-  "updated_at": "2026-04-18T00:33:35.219838051Z"
+  "updated_at": "2026-04-18T00:33:56.158084954Z",
+  "closed_at": "2026-04-18T00:33:56.158084954Z"
 }
