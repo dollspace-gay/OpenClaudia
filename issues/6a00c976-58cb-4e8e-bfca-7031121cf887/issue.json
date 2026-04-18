@@ -1,0 +1,11 @@
+{
+  "uuid": "6a00c976-58cb-4e8e-bfca-7031121cf887",
+  "display_id": 459,
+  "title": "forward_to_provider_raw_reqwest: unused _api_key parameter and misleading name",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Documentation & Intent / Cognitive Readability\n\nLocation: src/proxy.rs line 1420-1443 (fn forward_to_provider_raw_reqwest).\n\nViolation: The function takes an `_api_key: &str` parameter that is IGNORED (named with underscore prefix), but the name 'forward_to_provider_raw_reqwest' implies it would use the api_key. The actual auth header construction has been moved to the caller (proxy_chat_completions passes custom_headers vec that already contains the Authorization from adapter.get_headers). The unused api_key parameter is a vestigial API contract that:\n  (a) Mis-leads the reader.\n  (b) Prevents refactoring — every call site still passes api_key for no reason.\n  (c) Violates YAGNI — there is no plan to use it.\n\nAdditionally the function name 'forward_to_provider_raw_reqwest' is non-descriptive — the '_raw_reqwest' suffix is a synonym for the previous 'forward_to_provider' which also uses reqwest. The real difference is that this variant returns the raw reqwest::Response without converting it. A better name is 'send_to_provider' or 'send_raw'.\n\nMandated Refactor:\n  1. Delete the `_api_key: &str` parameter from forward_to_provider_raw_reqwest. Update all callers.\n  2. Rename to `send_raw_request(client, provider, path, body, headers) -> Result<reqwest::Response, ProxyError>`.\n  3. forward_to_provider (which returns the converted axum Response) should internally call send_raw_request and then convert_response. DRY the two functions that share the URL construction and provider.headers loop.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:42:34.613476462Z",
+  "updated_at": "2026-04-18T00:42:34.613476462Z"
+}
