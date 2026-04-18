@@ -1,0 +1,11 @@
+{
+  "uuid": "cca24a63-a7e7-42af-a856-f1c9305cf368",
+  "display_id": 323,
+  "title": "test-probe",
+  "description": "test",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:32:46.677767845Z",
+  "updated_at": "2026-04-18T00:32:46.677767845Z"
+}
