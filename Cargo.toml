@@ -57,6 +57,11 @@ dirs = "6"
 # Regex for hook matchers
 regex = "1"
 
+# POSIX shell word-splitting — used to convert a single model-supplied
+# `args` string into argv tokens WITHOUT invoking a shell interpreter
+# (closes shell-injection attacks on chainlink/static-analysis dispatch).
+shlex = "1"
+
 # OAuth and cryptography
 base64 = "0.22"
 sha2 = "0.10"

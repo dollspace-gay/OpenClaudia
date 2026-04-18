@@ -29,15 +29,44 @@ pub struct StaticAnalysisResult {
 // ==========================================================================
 
 /// Run a shell command with timeout, returning structured result.
+///
+/// # Security
+/// The command string is parsed with POSIX shlex into argv tokens and
+/// executed via `Command::new(argv[0]).args(&argv[1..])` — **no shell is
+/// invoked**. Previously this function routed through `sh -c` / `cmd /C`
+/// with the raw string, allowing shell-metacharacter injection from any
+/// config-sourced command (crosslink #277). Pipelines, redirections, and
+/// `&&`/`||` are therefore no longer supported in this entry point; callers
+/// that need them must compose subprocess invocations at the Rust level.
 pub(crate) async fn run_shell_command(command: &str, timeout: Duration) -> StaticAnalysisResult {
-    let shell = if cfg!(windows) { "cmd" } else { "sh" };
-    let flag = if cfg!(windows) { "/C" } else { "-c" };
+    let tokens: Vec<String> = match shlex::split(command) {
+        Some(t) if !t.is_empty() => t,
+        Some(_) => {
+            return StaticAnalysisResult {
+                command: command.to_string(),
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: "Empty command".to_string(),
+                passed: false,
+            };
+        }
+        None => {
+            return StaticAnalysisResult {
+                command: command.to_string(),
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: "Could not parse command (unbalanced quotes or unsupported escape)"
+                    .to_string(),
+                passed: false,
+            };
+        }
+    };
 
+    let (program, argv_rest) = tokens.split_first().expect("non-empty by match above");
     let result = tokio::time::timeout(
         timeout,
-        tokio::process::Command::new(shell)
-            .arg(flag)
-            .arg(command)
+        tokio::process::Command::new(program)
+            .args(argv_rest)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output(),
@@ -76,22 +105,23 @@ pub(crate) async fn run_shell_command(command: &str, timeout: Duration) -> Stati
 // Chainlink Integration
 // ==========================================================================
 
-/// Run `chainlink create` and `chainlink label` to create an issue.
+/// Run `chainlink create`, then `label`, then `comment` via argv-level
+/// dispatch. No shell is invoked at any stage — `title`, `label`, and
+/// `comment` flow through as individual `Command::arg` values, so
+/// backticks, `$()`, `;`, newlines, etc. are inert.
+///
+/// Closes crosslink #277 (shell injection via finding title).
 pub(crate) async fn run_chainlink_create(
     title: &str,
     label: &str,
     comment: &str,
 ) -> Result<String, VddError> {
-    let shell = if cfg!(windows) { "cmd" } else { "sh" };
-    let flag = if cfg!(windows) { "/C" } else { "-c" };
-
-    // Create the issue
-    let create_output = tokio::process::Command::new(shell)
-        .arg(flag)
-        .arg(format!(
-            "chainlink create \"{}\" -p high",
-            title.replace('"', "\\\"")
-        ))
+    // Create the issue: `chainlink create "<title>" -p high`
+    let create_output = tokio::process::Command::new("chainlink")
+        .arg("create")
+        .arg(title)
+        .arg("-p")
+        .arg("high")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -108,21 +138,24 @@ pub(crate) async fn run_chainlink_create(
         .unwrap_or("unknown")
         .to_string();
 
-    // Label it
-    let _ = tokio::process::Command::new(shell)
-        .arg(flag)
-        .arg(format!("chainlink label {issue_id} {label}"))
+    // Label it: `chainlink label <id> <label>`
+    let _ = tokio::process::Command::new("chainlink")
+        .arg("label")
+        .arg(&issue_id)
+        .arg(label)
         .output()
         .await;
 
-    // Add comment with details
-    let _ = tokio::process::Command::new(shell)
-        .arg(flag)
-        .arg(format!(
-            "chainlink comment {} \"{}\"",
-            issue_id,
-            comment.replace('"', "\\\"").replace('\n', " ")
-        ))
+    // Add comment: `chainlink comment <id> <text>`. Newlines inside the
+    // comment body used to be replaced with spaces because they broke the
+    // old shell quoting; argv dispatch preserves them correctly, but we
+    // continue to collapse them so the resulting comment renders on one
+    // logical line in the crosslink UI.
+    let collapsed_comment = comment.replace('\n', " ");
+    let _ = tokio::process::Command::new("chainlink")
+        .arg("comment")
+        .arg(&issue_id)
+        .arg(&collapsed_comment)
         .output()
         .await;
 
