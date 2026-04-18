@@ -1,0 +1,11 @@
+{
+  "uuid": "765de9dd-d4e4-456d-8b95-a676d99cbc48",
+  "display_id": 432,
+  "title": "skills.rs: load_skills is not cached — every prompt build hits the filesystem and parses YAML for every skill",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Performance and Complexity. Location: src/skills.rs:59-120 (load_skills) called by src/prompt.rs:174 (build_system_prompt_blocks step 7). Violation: Every single system prompt assembly walks .openclaudia/skills/ and ~/.openclaudia/skills/, reads and parses every SKILL.md, deduplicates into a HashSet — on every request. With N skills and T turns, this is O(N*T) filesystem syscalls and serde_yaml parses. The prompt cache split puts skills in the dynamic suffix specifically to allow them to change, but re-reading from disk every turn is wasteful when skills rarely change. Mandated Refactor: Cache skills in a LazyLock<RwLock<Vec<SkillDefinition>>> with an mtime-based invalidation, or an explicit reload() call that tui.rs invokes on a watcher event. Fallback: cache for N seconds between reads. Also: parse_skill_file silently returns None on any YAML error — log the error so users know why their skill didn't load.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:40:24.586920844Z",
+  "updated_at": "2026-04-18T00:40:24.586920844Z"
+}
