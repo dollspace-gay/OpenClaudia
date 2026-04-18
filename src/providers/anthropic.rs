@@ -33,49 +33,20 @@ impl AnthropicAdapter {
             })
     }
 
-    /// Convert `OpenAI` messages to Anthropic format
+    /// Convert `ChatMessage`s to the shape [`convert_messages_to_anthropic`]
+    /// expects, then dispatch — the richer converter correctly handles
+    /// `role="tool"` → `tool_result` blocks with `tool_use_id` linkage and
+    /// assistant `tool_calls` → `tool_use` blocks. Previously this method
+    /// had its own simpler conversion that silently dropped tool-result
+    /// semantics, causing every agentic tool-loop request to fail with
+    /// Anthropic 400 "each tool_use must have a matching tool_result"
+    /// (crosslink #475).
     fn convert_messages(messages: &[ChatMessage]) -> Vec<Value> {
-        messages
+        let as_values: Vec<Value> = messages
             .iter()
-            .filter(|m| m.role != "system") // System is handled separately
-            .map(|m| {
-                let role = match m.role.as_str() {
-                    "assistant" => "assistant",
-                    _ => "user", // user, function, tool all become user
-                };
-
-                let content = match &m.content {
-                    MessageContent::Text(t) => json!([{"type": "text", "text": t}]),
-                    MessageContent::Parts(parts) => {
-                        let converted: Vec<Value> = parts
-                            .iter()
-                            .map(|p| {
-                                p.text.as_ref().map_or_else(
-                                    || {
-                                        p.image_url.as_ref().map_or_else(
-                                            || json!({"type": "text", "text": ""}),
-                                            |image| {
-                                                json!({
-                                                    "type": "image",
-                                                    "source": image
-                                                })
-                                            },
-                                        )
-                                    },
-                                    |text| json!({"type": "text", "text": text}),
-                                )
-                            })
-                            .collect();
-                        Value::Array(converted)
-                    }
-                };
-
-                json!({
-                    "role": role,
-                    "content": content
-                })
-            })
-            .collect()
+            .filter_map(|m| serde_json::to_value(m).ok())
+            .collect();
+        convert_messages_to_anthropic(&as_values)
     }
 
     /// Convert `OpenAI` tools to Anthropic format with optional prompt caching
@@ -277,6 +248,34 @@ impl ProviderAdapter for AnthropicAdapter {
     }
 }
 
+impl AnthropicAdapter {
+    /// Headers to send when authenticating with an OAuth access token
+    /// (Claude Max / Pro subscriptions) rather than a static API key.
+    ///
+    /// Takes `&str` rather than `&ApiKey` because the bearer token is a
+    /// different secret type with different lifetime semantics than the
+    /// API key; it is sourced from the OAuth session (`session.credentials
+    /// .access_token`) and never flows through config deserialization.
+    ///
+    /// Replaces the inline magic strings previously embedded in
+    /// `proxy::proxy_anthropic_messages` — every Anthropic-specific header
+    /// literal now lives in one place. See crosslink #338.
+    #[must_use]
+    pub fn oauth_headers(bearer_token: &str) -> Vec<(String, String)> {
+        vec![
+            ("authorization".to_string(), format!("Bearer {bearer_token}")),
+            (
+                "anthropic-beta".to_string(),
+                "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,\
+                 fine-grained-tool-streaming-2025-05-14"
+                    .to_string(),
+            ),
+            ("anthropic-version".to_string(), "2023-06-01".to_string()),
+            ("content-type".to_string(), "application/json".to_string()),
+        ]
+    }
+}
+
 /// Build an Anthropic `system` array from a [`SystemPromptBlocks`].
 ///
 /// Returns two blocks for cache efficiency:
@@ -442,4 +441,182 @@ pub fn convert_messages_to_anthropic(messages: &[Value]) -> Vec<Value> {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proxy::{ChatCompletionRequest, ChatMessage, ContentPart, MessageContent};
+
+    fn text_msg(role: &str, text: &str) -> ChatMessage {
+        ChatMessage {
+            role: role.to_string(),
+            content: MessageContent::Text(text.to_string()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    // --- Regression test for crosslink #475 ---
+    //
+    // The hot path (AnthropicAdapter::transform_request) previously went
+    // through a private `convert_messages` that mapped role="tool" to a
+    // bare role="user" text block, losing the tool_use_id linkage.
+    // Anthropic rejects this with 400 ("each tool_use must have a matching
+    // tool_result"). After the fix the adapter routes through
+    // convert_messages_to_anthropic, which preserves the linkage.
+
+    #[test]
+    fn tool_result_role_becomes_tool_result_block_with_id() {
+        let msgs = vec![
+            text_msg("user", "what is 2+2?"),
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: MessageContent::Text(String::new()),
+                name: None,
+                tool_calls: Some(vec![json!({
+                    "id": "toolu_abc",
+                    "type": "function",
+                    "function": {"name": "calc", "arguments": "{\"expr\":\"2+2\"}"}
+                })]),
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: MessageContent::Text("4".to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: Some("toolu_abc".to_string()),
+            },
+        ];
+
+        let request = ChatCompletionRequest {
+            model: "claude-opus-4-6".to_string(),
+            messages: msgs,
+            max_tokens: Some(64),
+            temperature: None,
+            tools: None,
+            stream: None,
+            tool_choice: None,
+            extra: std::collections::HashMap::new(),
+        };
+
+        let adapter = AnthropicAdapter::new();
+        let body = adapter.transform_request(&request).expect("transform ok");
+        let messages = body["messages"].as_array().expect("messages is array");
+
+        assert_eq!(messages.len(), 3, "expected 3 messages, got {messages:?}");
+
+        // Assistant message must carry a tool_use block with id toolu_abc.
+        let asst = &messages[1];
+        assert_eq!(asst["role"], "assistant");
+        let asst_content = asst["content"].as_array().expect("assistant content array");
+        let tool_use = asst_content
+            .iter()
+            .find(|b| b["type"] == "tool_use")
+            .expect("assistant message missing tool_use block");
+        assert_eq!(tool_use["id"], "toolu_abc");
+        assert_eq!(tool_use["name"], "calc");
+        assert_eq!(tool_use["input"]["expr"], "2+2");
+
+        // Tool result must be wrapped as a user message with a tool_result
+        // block whose tool_use_id matches the preceding tool_use id.
+        let tool_result_msg = &messages[2];
+        assert_eq!(tool_result_msg["role"], "user");
+        let tr_content = tool_result_msg["content"].as_array().expect("tr content");
+        let tool_result = tr_content
+            .iter()
+            .find(|b| b["type"] == "tool_result")
+            .expect("tool result block missing — #475 regression");
+        assert_eq!(tool_result["tool_use_id"], "toolu_abc");
+        assert_eq!(tool_result["content"], "4");
+    }
+
+    #[test]
+    fn plain_text_user_message_still_works() {
+        let request = ChatCompletionRequest {
+            model: "claude-opus-4-6".to_string(),
+            messages: vec![text_msg("user", "hi")],
+            max_tokens: Some(16),
+            temperature: None,
+            tools: None,
+            stream: None,
+            tool_choice: None,
+            extra: std::collections::HashMap::new(),
+        };
+        let body = AnthropicAdapter::new()
+            .transform_request(&request)
+            .expect("transform ok");
+        let messages = body["messages"].as_array().expect("messages array");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+    }
+
+    #[test]
+    fn image_content_part_preserved() {
+        let parts = vec![
+            ContentPart {
+                content_type: "text".to_string(),
+                text: Some("describe this".to_string()),
+                image_url: None,
+            },
+            ContentPart {
+                content_type: "image".to_string(),
+                text: None,
+                image_url: Some(json!({
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "iVBORw..."
+                })),
+            },
+        ];
+        let msg = ChatMessage {
+            role: "user".to_string(),
+            content: MessageContent::Parts(parts),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        let request = ChatCompletionRequest {
+            model: "claude-opus-4-6".to_string(),
+            messages: vec![msg],
+            max_tokens: Some(64),
+            temperature: None,
+            tools: None,
+            stream: None,
+            tool_choice: None,
+            extra: std::collections::HashMap::new(),
+        };
+        let body = AnthropicAdapter::new()
+            .transform_request(&request)
+            .expect("transform ok");
+        let messages = body["messages"].as_array().expect("messages array");
+        assert_eq!(messages.len(), 1);
+        let content = messages[0]["content"]
+            .as_array()
+            .expect("content is array");
+        assert!(content.len() >= 2, "multimodal parts lost: {content:?}");
+    }
+
+    // --- Regression tests for crosslink #338 ---
+
+    #[test]
+    fn oauth_headers_contains_all_required_fields() {
+        let h = AnthropicAdapter::oauth_headers("access-xyz");
+        let names: Vec<&str> = h.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(names.contains(&"authorization"));
+        assert!(names.contains(&"anthropic-beta"));
+        assert!(names.contains(&"anthropic-version"));
+        assert!(names.contains(&"content-type"));
+
+        let auth = h.iter().find(|(k, _)| k == "authorization").unwrap();
+        assert_eq!(auth.1, "Bearer access-xyz");
+
+        let beta = h.iter().find(|(k, _)| k == "anthropic-beta").unwrap();
+        assert!(beta.1.contains("claude-code-20250219"));
+        assert!(beta.1.contains("oauth-2025-04-20"));
+        assert!(beta.1.contains("interleaved-thinking-2025-05-14"));
+        assert!(beta.1.contains("fine-grained-tool-streaming-2025-05-14"));
+    }
 }

@@ -975,6 +975,7 @@ async fn proxy_completions(
     let response = forward_to_provider(
         &state.client,
         provider,
+        &provider_name,
         &api_key,
         "/v1/completions",
         &request,
@@ -1060,22 +1061,15 @@ async fn proxy_anthropic_messages(
 
         let url = format!("{}/v1/messages", normalize_base_url(&provider.base_url));
 
-        let response = state
-            .client
-            .post(&url)
-            .header(
-                "Authorization",
-                format!("Bearer {}", session.credentials.access_token),
-            )
-            .header(
-                "anthropic-beta",
-                "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14",
-            )
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&request)
-            .send()
-            .await?;
+        let mut builder = state.client.post(&url).json(&request);
+        // Centralized OAuth header construction — every Anthropic-specific
+        // header literal now lives on the adapter. See crosslink #338.
+        for (name, value) in crate::providers::AnthropicAdapter::oauth_headers(
+            &session.credentials.access_token,
+        ) {
+            builder = builder.header(name.as_str(), value.as_str());
+        }
+        let response = builder.send().await?;
 
         return convert_response(response).await;
     }
@@ -1089,6 +1083,7 @@ async fn proxy_anthropic_messages(
     let response = forward_to_provider(
         &state.client,
         provider,
+        "anthropic",
         &api_key,
         "/v1/messages",
         &request,
@@ -1139,7 +1134,14 @@ async fn proxy_passthrough(
     }
 
     // Set auth header based on provider
-    req_builder = set_auth_header(req_builder, &state.config.proxy.target, &api_key);
+    // Provider-owned auth headers via the adapter's get_headers method.
+    // Previously this called a local `set_auth_header` helper that branched
+    // on provider-name equality — the adapter trait is the correct
+    // abstraction (crosslink #338).
+    let adapter = crate::providers::get_adapter(&state.config.proxy.target);
+    for (k, v) in adapter.get_headers(&api_key) {
+        req_builder = req_builder.header(k.as_str(), v.as_str());
+    }
 
     let response = req_builder.send().await?;
     convert_response(response).await
@@ -1382,10 +1384,21 @@ pub const SSE_STREAM_TIMEOUT_SECS: u64 = 30;
 /// Forward request to upstream provider.
 ///
 /// `api_key` is an [`ApiKey`] newtype — the raw secret only leaves it at
-/// the `.as_str()` calls in this function. See crosslink #256.
+/// the adapter's `.get_headers(api_key)` call, which is the single audited
+/// boundary where headers are constructed. See crosslink #256 and #338.
+///
+/// Auth headers are produced by the provider's
+/// [`ProviderAdapter::get_headers`] implementation, not by a local
+/// substring test on `base_url`. Previously three separate locations
+/// (`forward_to_provider`, `set_auth_header`, and
+/// `proxy_anthropic_messages`) each branched on a different discriminator
+/// (URL substring vs. provider-name equality vs. hardcoded literal); now
+/// only the adapter matters. Adding a new provider with unusual auth is
+/// a one-file change instead of four.
 async fn forward_to_provider<T: Serialize + Sync>(
     client: &Client,
     provider: &ProviderConfig,
+    provider_name: &str,
     api_key: &ApiKey,
     path: &str,
     body: &T,
@@ -1396,42 +1409,20 @@ async fn forward_to_provider<T: Serialize + Sync>(
 
     let mut req = client.post(&url).json(body);
 
-    // Set provider-specific auth headers. `.as_str()` is the audited
-    // boundary where the raw key leaves the ApiKey newtype.
-    if provider.base_url.contains("anthropic") {
-        req = req
-            .header("x-api-key", api_key.as_str())
-            .header("anthropic-version", "2023-06-01");
-    } else {
-        req = req.header(header::AUTHORIZATION, format!("Bearer {}", api_key.as_str()));
+    // Provider-owned auth and protocol headers.
+    let adapter = crate::providers::get_adapter(provider_name);
+    for (key, value) in adapter.get_headers(api_key) {
+        req = req.header(key.as_str(), value.as_str());
     }
 
-    // Add any custom headers from config
+    // Operator-supplied passthrough headers from config (these override
+    // the adapter's defaults — reqwest uses last-write-wins semantics).
     for (key, value) in &provider.headers {
         req = req.header(key.as_str(), value.as_str());
     }
 
     let response = req.send().await?;
     convert_response(response).await
-}
-
-/// Set authentication header based on provider type.
-///
-/// Takes `&ApiKey` so the raw secret never escapes the newtype except at
-/// the `.as_str()` call within. See crosslink #256.
-fn set_auth_header(
-    mut req: reqwest::RequestBuilder,
-    provider_name: &str,
-    api_key: &ApiKey,
-) -> reqwest::RequestBuilder {
-    if provider_name == "anthropic" {
-        req = req
-            .header("x-api-key", api_key.as_str())
-            .header("anthropic-version", "2023-06-01");
-    } else {
-        req = req.header(header::AUTHORIZATION, format!("Bearer {}", api_key.as_str()));
-    }
-    req
 }
 
 /// Forward request to upstream provider with raw Value body and custom headers.
