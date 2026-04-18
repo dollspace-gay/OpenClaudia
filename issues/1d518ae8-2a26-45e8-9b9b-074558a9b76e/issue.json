@@ -4,10 +4,10 @@
   "title": "/commit and /commit-push-pr inline the same git pipeline twice (DRY)",
   "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: DRY / KISS\nLocation: src/cli/repl/slash.rs:846-944 (/commit arm) and :946-~1100 (/commit-push-pr arm). Both open 'use std::process::Command' inside the function, re-check 'rev-parse --is-inside-work-tree', re-run 'diff --cached --stat' and 'diff --stat', re-run the stage-all prompt, re-run the commit with default or edited message. /commit-push-pr additionally runs 'push' and 'gh pr create'.\nViolation: The /commit-push-pr arm literally copy-pastes the commit logic then appends push. Bug fixes to one arm will drift from the other. 'use std::process::Command' is declared twice (846, 947) inside function scopes — a lint smell.\nMandated Refactor: Extract fn git_commit_flow(target: CommitTarget) -> Result<CommitOutcome> where CommitTarget = CommitOnly | CommitAndPush | CommitPushPr. Or better: extract a GitGateway trait with commit(), push(), open_pr() methods and compose them. Commit-push-pr becomes: let oid = gateway.commit(msg)?; gateway.push(\"origin\", branch)?; gateway.open_pr(title, body)?; — three lines instead of ~250.",
   "status": "open",
-  "priority": "low",
+  "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:44:16.087251447Z",
-  "updated_at": "2026-04-18T00:44:28.001380774Z",
+  "updated_at": "2026-04-18T00:47:09.832430959Z",
   "labels": [
     "refactor",
     "qa-review-2026-04",
