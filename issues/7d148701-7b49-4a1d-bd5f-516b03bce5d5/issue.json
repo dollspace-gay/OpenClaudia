@@ -1,0 +1,11 @@
+{
+  "uuid": "7d148701-7b49-4a1d-bd5f-516b03bce5d5",
+  "display_id": 482,
+  "title": "MessageList::scroll_offset semantics inverted (0 = bottom, positive = back in time)",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Cognitive Readability / Naming\nLocation: src/tui/messages.rs:21-89; used in src/tui/app.rs:556-559 with scroll_up(3)/scroll_down(3)/scroll_up(15).\nViolation: scroll_offset = 0 means 'at the bottom (latest)'; scroll_offset > 0 means 'scrolled up by N'. scroll_up(n) does scroll_offset = saturating_add(n), scroll_down(n) does saturating_sub. The vocabulary is backwards: incrementing the offset moves the *view* up, but the offset itself is a count of hidden-below-the-fold lines. A reader has to construct the mental model from the constants (15 for PageUp, 3 for Up) rather than from names. Also scroll_to_bottom simply sets it to 0, not 'to bottom' — the word 'bottom' conflates position and offset.\nMandated Refactor: Rename scroll_offset -> lines_scrolled_back_from_bottom (or use a newtype struct ScrollBack(u16)). Rename scroll_to_bottom -> reset_scroll. Or better: flip to conventional vertical offset from top and adjust render() accordingly — matches ratatui::widgets::Paragraph::scroll convention and removes the (total - visible) - offset subtraction at messages.rs:262. Eliminates the allow(clippy::cast_possible_truncation) at line 247 and 259.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:44:44.492886189Z",
+  "updated_at": "2026-04-18T00:44:44.492886189Z"
+}
