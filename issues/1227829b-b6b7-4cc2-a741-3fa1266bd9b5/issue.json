@@ -1,0 +1,11 @@
+{
+  "uuid": "1227829b-b6b7-4cc2-a741-3fa1266bd9b5",
+  "display_id": 395,
+  "title": "Guardrails quality-gate timeout prefix is Unix-specific; bash dependency on Windows",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\n**Dimension**: Functional Correctness (cross-platform)\n\n**Location**: src/guardrails.rs:492-541 (run_shell_command_sync)\n\n**Violation**:\n1. Line 503: `format!(\"timeout {timeout_seconds} {command}\")` — the `timeout` coreutils binary does not exist on macOS by default (only on GNU coreutils / Linux). On macOS every quality-gate run silently fails with 'command not found' and passes/fails status are meaningless.\n2. Line 527 (non-windows): hardcoded `Command::new(\"bash\")` — requires bash even on Alpine Linux containers where only `sh` is available.\n3. Line 508-524 (windows): searches for Git Bash in Program Files — but the final fallback is literal 'bash' (line 517) which likely does NOT exist on a minimal Windows without Git. Returns Err gracefully but the failure is masked as exit_code -1 with no diagnostic.\n4. The function returns (-1, empty-stdout, stderr-with-failure) — a caller cannot distinguish 'command exited with -1' from 'shell not found'. The 'required' flag (config/guardrails.rs:199) does not help because passed=false either way.\n\n**Mandated Refactor**:\n1. Use tokio::process::Command with tokio::time::timeout directly (as hooks/mod.rs already does correctly) — NO shell timeout-prefix hack.\n2. Replace bash hardcode with platform-appropriate shell detection: on unix, try /bin/sh; on windows, try powershell.exe with explicit 'cmd' fallback.\n3. Return a typed enum: enum ShellResult { Success(output), ExitFailed(code), ShellMissing, Timeout } so the caller can react appropriately.\n4. Add integration tests on macOS (CI matrix) that actually runs a quality gate — likely reveals this bug.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:38:16.108910109Z",
+  "updated_at": "2026-04-18T00:38:16.108910109Z"
+}
