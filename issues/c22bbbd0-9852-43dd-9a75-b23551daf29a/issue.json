@@ -1,0 +1,11 @@
+{
+  "uuid": "c22bbbd0-9852-43dd-9a75-b23551daf29a",
+  "display_id": 283,
+  "title": "VDD static_analysis: run_shell_command executes arbitrary config strings via sh -c",
+  "description": "Steps to reproduce:\n1. \n\nExpected: \nActual: \n\nDimension: Security and Access / Perimeter Defense. Location: src/vdd/static_analysis.rs:32-73 (run_shell_command) and src/vdd/mod.rs:688-724 (run_static_analysis caller). Violation: VddEngine::run_static_analysis pulls command strings from self.config.static_analysis.commands or auto-detected guardrails and passes each to sh -c cmd. No allowlist, no shell escaping audit, no sandboxing. If OpenClaudia accepts config from a less-trusted source (MCP, remote config, imported yaml), this is RCE-by-design. A .openclaudia/config.yaml tampered with vdd.static_analysis.commands containing rm -rf runs on every VDD pass. No warning banner, no drop-privileges shim. Mandated Refactor: (a) Parse the command string with shlex and execute via argv (no shell). Reject pipes, logical operators, command substitution. (b) Add a config-time warning banner listing the commands that will be executed. (c) Consider unshare or seccomp sandboxing on Linux.",
+  "status": "open",
+  "priority": "high",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:30:08.981097242Z",
+  "updated_at": "2026-04-18T00:30:08.981097242Z"
+}
