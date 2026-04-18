@@ -1,0 +1,11 @@
+{
+  "uuid": "de21a015-5991-49f7-954e-09a74bf3af91",
+  "display_id": 348,
+  "title": "memory.rs.bak (47KB) committed to git — stale duplicate of active module",
+  "description": "Current state: \n\nDesired state: \n\nReason: \n\nDimension: Documentation & Intent (9) / YAGNI (3.2)\n\nLocation: src/memory.rs.bak (exists in git index, first appears in commit 298e671 'style: fix clippy pedantic/nursery lints').\n\nViolation: A 47,172-byte backup copy of src/memory.rs is tracked in the repository. It is 1371 lines of duplicated code with divergent schema (includes same tables as active file), diverging method signatures (29 uses of .lock().unwrap() vs 28 in the active), and test assertions that may or may not still pass. Problems:\n\n1. Developer hygiene: future readers may edit the .bak file by mistake.\n2. Audit/grep pollution: every Grep for memory function symbols returns duplicate hits (confirmed: search for format_core_memory_for_prompt returns 4 hits split between memory.rs and memory.rs.bak).\n3. Duplicate code: literal DRY violation, ~1300 lines.\n4. Licensing/content hygiene: checked-in source files carry history. A .bak file adds noise to git blame and file-count metrics.\n\nMandated Refactor:\n1. git rm src/memory.rs.bak.\n2. Add *.bak and *.orig patterns to .gitignore.\n3. If the .bak content contains any logic NOT present in the active file (do a diff), either port the delta or explicitly document why it was removed.\n4. Pre-commit hook: reject any staged file whose name ends in .bak / .orig / ~ .",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-18T00:34:57.068116165Z",
+  "updated_at": "2026-04-18T00:34:57.068116165Z"
+}
