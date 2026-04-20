@@ -1,0 +1,11 @@
+{
+  "uuid": "833ea48d-3593-4f4c-b2ac-83afa12876ea",
+  "display_id": 518,
+  "title": "Session-scoped todo_write storage (deferred from #509)",
+  "description": "Claude Code's TodoWriteTool keys the todo list by agentId ?? sessionId (TodoWriteTool.ts L67). OC's src/tools/todo.rs uses a single global Mutex — every agent and session shares one list.\n\n## Symptoms\n- Subagent todos overwrite the main agent's list\n- Resuming a session inherits stale todos from whatever last ran\n- Parallel coordinator teammates collide\n\n## Scope\n- Thread session_id through tool execution (new ToolExecutionContext or add to execute_tool_* signatures)\n- Replace TODO_LIST: Mutex<Vec<_>> with Mutex<HashMap<SessionId, Vec<_>>>\n- Subagent path reads/writes under agentId\n- Migrate any persisted todos to session-keyed format (via migrations framework #506)\n\n## Deferred from #509\nClosed the other four parity gaps (auto-clear, cell_id, domain filters,\nmultiSelect/uniqueness). This one requires invasive signature changes\nto thread session_id through ~6 execute_tool_* entry points.",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-20T02:19:29.689300618Z",
+  "updated_at": "2026-04-20T02:19:29.689300618Z"
+}
