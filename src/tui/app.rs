@@ -288,6 +288,15 @@ pub struct App {
     pub rules_content: Option<String>,
     /// Whether rules have been injected into session messages.
     rules_injected: bool,
+    /// Count of `session_messages` already appended to the Claude Code
+    /// JSONL transcript. Everything past this index is persisted on the
+    /// next call to `persist_transcript_tail`. Rebuilt to 0 on resume
+    /// because resuming re-points at an existing transcript file, so we
+    /// want to skip re-appending the already-on-disk history.
+    transcript_watermark: usize,
+    /// Absolute cwd used for the transcript path. Captured once so
+    /// later appends survive the user changing dirs within a skill.
+    transcript_cwd: PathBuf,
 }
 
 impl App {
@@ -320,7 +329,37 @@ impl App {
             hook_engine: None,
             rules_content: None,
             rules_injected: false,
+            transcript_watermark: 0,
+            transcript_cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         }
+    }
+
+    /// Append every `session_messages` entry past the watermark to the
+    /// Claude Code-layout JSONL transcript at
+    /// `$CLAUDE_CONFIG_HOME_DIR/projects/<sanitized-cwd>/<session>.jsonl`.
+    /// Best-effort: transcript I/O failures are logged but never bubble
+    /// up — a missing transcript must never break the live turn.
+    fn persist_transcript_tail(&mut self) {
+        let cwd = self.transcript_cwd.clone();
+        let session_id = self.chat_session.id.clone();
+        for msg in &self.session_messages[self.transcript_watermark..] {
+            let kind = msg
+                .get("role")
+                .and_then(|r| r.as_str())
+                .unwrap_or("system")
+                .to_string();
+            let entry = crate::transcript::envelope_for(
+                &kind,
+                &cwd,
+                &session_id,
+                Some(msg.clone()),
+            );
+            if let Err(err) = crate::transcript::append_entry(&cwd, &session_id, &entry) {
+                tracing::warn!(error = %err, "transcript append failed");
+                break;
+            }
+        }
+        self.transcript_watermark = self.session_messages.len();
     }
 
     /// Set the API connection details needed to make requests.
@@ -438,6 +477,7 @@ impl App {
                     self.chat_session.update_title();
                     self.chat_session.touch();
                     let _ = save_session(&self.chat_session);
+                    self.persist_transcript_tail();
                     // Update token estimate
                     self.tokens = self.chat_session.estimate_tokens();
                 }
@@ -725,6 +765,12 @@ impl App {
                 self.provider = loaded.provider.clone();
                 self.mode = loaded.mode.clone();
                 self.tokens = self.chat_session.estimate_tokens();
+                // Sync transcript cwd/watermark to the loaded session so
+                // future appends target the correct JSONL and skip the
+                // history that's already on disk.
+                self.transcript_cwd =
+                    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                self.transcript_watermark = self.session_messages.len();
                 // Show loaded messages in the display
                 self.messages = super::messages::MessageList::new();
                 for msg in &loaded.messages {
@@ -824,6 +870,7 @@ impl App {
                             is_thinking: false,
                         });
                         let _ = save_session(&self.chat_session);
+                    self.persist_transcript_tail();
                     } else {
                         self.messages.add(DisplayMessage {
                             role: "system".to_string(),
@@ -1030,6 +1077,7 @@ impl App {
                     self.chat_session.title = new_title.to_string();
                     self.chat_session.touch();
                     let _ = save_session(&self.chat_session);
+                    self.persist_transcript_tail();
                     self.messages.add(DisplayMessage {
                         role: "system".to_string(),
                         content: format!("Session renamed to: {new_title}"),

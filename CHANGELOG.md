@@ -74,6 +74,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Path traversal protection on read_file (requires absolute paths)
 - Read-before-edit enforcement on edit_file tool
 
+### Added
+- thinking: port Claude Code's `ultrathink` / `think ultra hard` / `think ultrahard` keyword detection + `MAX_THINKING_TOKENS` / `CLAUDE_CODE_EFFORT_LEVEL` env precedence. New `src/thinking.rs` module. Keyword in any user message bumps the turn's effort to `high`, which in turn raises the Anthropic `thinking.budget_tokens` to Claude Code's ULTRATHINK constant (31999). Added `max` effort level (alias of `high` with the same budget)
+- thinking: effort level now propagates to the OpenAI (`reasoning_effort: "high"` on high/max) and Google Gemini (`generationConfig.thinkingConfig.thinkingBudget`, clamped to Gemini's 24k cap) request builders
+- transcripts: new `src/transcript.rs` module writes each session as a Claude Code-compatible JSONL at `$CLAUDE_CONFIG_HOME_DIR/projects/<sanitized-cwd>/<session-id>.jsonl`. `CLAUDE_CONFIG_HOME_DIR` defaults to `~/.claude`. Path sanitization (`[^a-zA-Z0-9]` → `-`) matches Claude Code exactly, so transcripts written here are readable by Claude Code and vice versa. Each line is a `SerializedMessage` envelope (`type`, `uuid`, `timestamp`, `cwd`, `sessionId`, `version`, optional `gitBranch`, `message`). Append-only with `O_APPEND`, 0o600/0o700 perms
+- TUI: every turn now dual-writes — the existing JSON snapshot at `~/.local/share/openclaudia/chat_sessions/<uuid>.json` stays for backward compat, and new entries also append to the JSONL transcript via `App::persist_transcript_tail`. Watermark tracking skips re-appending on resume
+
 ### Fixed
 - tui/messages: thinking deltas now render as a collapsed `∴ Thinking… (Xs)` indicator (live) replaced by `∴ Thought for X.Xs` once regular text streams in, matching Claude Code. Raw reasoning tokens are hidden (accumulated in `MessageList::thinking_buffer` for session persistence) rather than inlined into the assistant message
 - deps: bumped rustls-webpki 0.103.10 → 0.103.12 (GHSA-965h-392x-2mh5, GHSA on wildcard name constraints), rand 0.9.2 → 0.9.4 and rand 0.10.0 → 0.10.1 (GHSA on `rand::rng()` unsoundness). Closes 6 open dependabot alerts in both Cargo.lock and fuzz/Cargo.lock

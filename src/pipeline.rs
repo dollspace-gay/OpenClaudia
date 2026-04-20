@@ -98,11 +98,22 @@ pub fn build_anthropic_request(
         crate::claude_credentials::inject_system_prompt(&mut req);
     }
 
-    // Apply effort level
+    // Apply effort level. `high` / `max` switch the Anthropic thinking
+    // budget to Claude Code's ULTRATHINK constant (31999); MAX_THINKING_TOKENS
+    // env var overrides outright. See `crate::thinking` for the precedence
+    // chain and keyword-trigger logic (ultrathink / think ultra hard).
     match effort_level {
-        "high" => {
-            req["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": 10000});
-            req["max_tokens"] = serde_json::json!(16000);
+        "high" | "max" => {
+            if let Some(budget) = crate::thinking::anthropic_thinking_budget(Some(effort_level)) {
+                req["thinking"] = serde_json::json!({
+                    "type": "enabled",
+                    "budget_tokens": budget,
+                });
+                // Headroom for the thinking block plus the answer. Claude
+                // Code uses max_tokens > budget_tokens; 40k covers 32k
+                // thinking + ~8k answer comfortably.
+                req["max_tokens"] = serde_json::json!(40_000);
+            }
         }
         "low" => {
             req["max_tokens"] = serde_json::json!(2048);
@@ -114,20 +125,29 @@ pub fn build_anthropic_request(
 }
 
 /// Build an OpenAI-compatible request body (used by OpenAI, DeepSeek, Qwen, Z.AI).
+///
+/// `effort_level` propagates as `reasoning_effort` for `high`/`max` to
+/// unlock o1/o3 reasoning; `max` downgrades to `high` because the API
+/// only accepts the level on a subset of models (matches Claude Code's
+/// `modelSupportsMaxEffort` clamp).
 #[must_use]
-pub fn build_openai_request(model: &str, messages: &[Value]) -> Value {
-    serde_json::json!({
+pub fn build_openai_request(model: &str, messages: &[Value], effort_level: &str) -> Value {
+    let mut req = serde_json::json!({
         "model": model,
         "messages": messages,
         "max_tokens": crate::DEFAULT_MAX_TOKENS,
         "stream": true,
         "tools": tools::get_all_tool_definitions(true)
-    })
+    });
+    if matches!(effort_level, "high" | "max") {
+        req["reasoning_effort"] = serde_json::json!("high");
+    }
+    req
 }
 
 /// Build a Google Gemini-format request body.
 #[must_use]
-pub fn build_google_request(messages: &[Value]) -> Value {
+pub fn build_google_request(messages: &[Value], effort_level: &str) -> Value {
     let openai_tools = tools::get_all_tool_definitions(true);
     let tools_vec = openai_tools.as_array().cloned().unwrap_or_default();
     let functions: Vec<Value> = tools_vec
@@ -158,9 +178,21 @@ pub fn build_google_request(messages: &[Value]) -> Value {
         }));
     }
 
+    // Gemini 2.5 takes `thinkingConfig.thinkingBudget` inside
+    // generationConfig. When effort is high/max we hand it the Claude
+    // Code ULTRATHINK constant, clamped to Gemini's 24k ceiling.
+    let mut generation_config = serde_json::json!({"maxOutputTokens": 4096});
+    if matches!(effort_level, "high" | "max") {
+        const GEMINI_THINKING_CAP: u32 = 24_576;
+        let budget = crate::thinking::anthropic_thinking_budget(Some(effort_level))
+            .unwrap_or(crate::thinking::ULTRATHINK_BUDGET_TOKENS)
+            .min(GEMINI_THINKING_CAP);
+        generation_config["thinkingConfig"] =
+            serde_json::json!({"thinkingBudget": budget});
+    }
     let mut req = serde_json::json!({
         "contents": contents,
-        "generationConfig": {"maxOutputTokens": 4096},
+        "generationConfig": generation_config,
         "tools": [{"functionDeclarations": functions}]
     });
     if let Some(sys) = system_text {
@@ -182,16 +214,24 @@ pub fn build_request(
     claude_code_token: Option<&str>,
     prompt_blocks: Option<&crate::prompt::SystemPromptBlocks>,
 ) -> Value {
+    // Resolve ultrathink keyword / env override against the base effort
+    // so every provider path sees the same effective level (Claude Code
+    // does the same in `resolveAppliedEffort`). If the env var is set
+    // to `unset` / `auto` we drop to `medium` — keeping effort out of
+    // the request body entirely isn't an option for OC's existing
+    // string-typed signature, and `medium` is the API's no-op level.
+    let resolved = crate::thinking::resolve_effort(effort_level, messages);
+    let effective = resolved.as_deref().unwrap_or("medium");
     match provider {
         "anthropic" => build_anthropic_request(
             model,
             messages,
-            effort_level,
+            effective,
             claude_code_token,
             prompt_blocks,
         ),
-        "google" => build_google_request(messages),
-        _ => build_openai_request(model, messages),
+        "google" => build_google_request(messages, effective),
+        _ => build_openai_request(model, messages, effective),
     }
 }
 
@@ -958,10 +998,14 @@ mod tests {
     #[test]
     fn test_build_openai_request() {
         let messages = vec![serde_json::json!({"role": "user", "content": "hello"})];
-        let req = build_openai_request("gpt-4", &messages);
+        let req = build_openai_request("gpt-4", &messages, "medium");
         assert_eq!(req["model"], "gpt-4");
         assert_eq!(req["stream"], true);
         assert!(req["tools"].is_array());
+        assert!(req.get("reasoning_effort").is_none());
+
+        let high = build_openai_request("gpt-4", &messages, "high");
+        assert_eq!(high["reasoning_effort"], "high");
     }
 
     #[test]
@@ -1065,11 +1109,25 @@ mod tests {
 
     #[test]
     fn test_effort_levels() {
+        // Tests read env vars — guard against interference from the ambient
+        // MAX_THINKING_TOKENS override.
+        // SAFETY: no other test in this module mutates MAX_THINKING_TOKENS.
+        let prev = std::env::var("MAX_THINKING_TOKENS").ok();
+        unsafe { std::env::remove_var("MAX_THINKING_TOKENS"); }
         let messages = vec![serde_json::json!({"role": "user", "content": "hi"})];
 
         let high = build_anthropic_request("claude-sonnet-4-6", &messages, "high", None, None);
-        assert!(high.get("thinking").is_some());
-        assert_eq!(high["max_tokens"], 16000);
+        assert_eq!(
+            high["thinking"]["budget_tokens"],
+            crate::thinking::ULTRATHINK_BUDGET_TOKENS,
+        );
+        assert_eq!(high["max_tokens"], 40_000);
+
+        let maxr = build_anthropic_request("claude-sonnet-4-6", &messages, "max", None, None);
+        assert_eq!(
+            maxr["thinking"]["budget_tokens"],
+            crate::thinking::ULTRATHINK_BUDGET_TOKENS,
+        );
 
         let low = build_anthropic_request("claude-sonnet-4-6", &messages, "low", None, None);
         assert!(low.get("thinking").is_none());
@@ -1078,5 +1136,40 @@ mod tests {
         let med = build_anthropic_request("claude-sonnet-4-6", &messages, "medium", None, None);
         assert!(med.get("thinking").is_none());
         assert_eq!(med["max_tokens"], crate::DEFAULT_MAX_TOKENS);
+        if let Some(v) = prev {
+            unsafe { std::env::set_var("MAX_THINKING_TOKENS", v); }
+        }
+    }
+
+    #[test]
+    fn ultrathink_keyword_promotes_anthropic_thinking() {
+        let prev = (
+            std::env::var("MAX_THINKING_TOKENS").ok(),
+            std::env::var("CLAUDE_CODE_EFFORT_LEVEL").ok(),
+        );
+        unsafe {
+            std::env::remove_var("MAX_THINKING_TOKENS");
+            std::env::remove_var("CLAUDE_CODE_EFFORT_LEVEL");
+        }
+        let messages = vec![serde_json::json!({
+            "role": "user",
+            "content": "ultrathink and plan this out"
+        })];
+        // Base effort is medium — dispatcher should see the keyword and
+        // bump to high, attaching the ULTRATHINK budget.
+        let req = build_request(
+            "anthropic",
+            "claude-sonnet-4-6",
+            &messages,
+            "medium",
+            None,
+            None,
+        );
+        assert_eq!(
+            req["thinking"]["budget_tokens"],
+            crate::thinking::ULTRATHINK_BUDGET_TOKENS,
+        );
+        if let Some(v) = prev.0 { unsafe { std::env::set_var("MAX_THINKING_TOKENS", v); } }
+        if let Some(v) = prev.1 { unsafe { std::env::set_var("CLAUDE_CODE_EFFORT_LEVEL", v); } }
     }
 }
