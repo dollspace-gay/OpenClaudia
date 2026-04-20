@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # GHSA-cq8v-f236-94qc covers `rand::rng()` unsoundness. The API was
+      # introduced in rand 0.9.0 and does not exist in the 0.8.x branch, so
+      # 0.8.x is not actually vulnerable despite matching the advisory range.
+      # In this repo, rand 0.8 is only a transitive optional dep of
+      # ratatui-termwiz (never activated — we use ratatui with default
+      # features, which selects the crossterm backend). `cargo build
+      # --message-format=json` confirms only rand 0.9.4 and 0.10.1 are
+      # actually compiled.
+      - dependency-name: rand
+        versions: ["< 0.9"]
+
+  - package-ecosystem: cargo
+    directory: /fuzz
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: rand
+        versions: ["< 0.9"]
