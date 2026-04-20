@@ -1,0 +1,11 @@
+{
+  "uuid": "8f676796-ce49-4abb-b677-3adedd078577",
+  "display_id": 512,
+  "title": "Slash command ecosystem (~200 commands)",
+  "description": "CC has ~200 command files in commands/ covering git (/commit, /branch, /autofix-pr), session (/compact, /dream, /clear, /resume), development (/bughunter, /review, /remember), etc. OC has ~6 core ones in cli/repl/slash.rs.\n\n## Scope\n- Expand cli/repl/slash.rs to a commands/ directory\n- Prioritize: /commit (compose + execute), /compact (manual trigger), /review (PR/branch review), /remember (memory update), /resume (session picker UI), /clear (conversation reset), /dream (memory consolidation)\n- Each command in its own module with a CommandDef trait (name, description, handler)\n\n## References\n- /home/doll/claude-code/commands/\n- /home/doll/claude-code/commands.ts (registry)",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-20T01:56:35.629404647Z",
+  "updated_at": "2026-04-20T01:56:35.629404647Z"
+}
