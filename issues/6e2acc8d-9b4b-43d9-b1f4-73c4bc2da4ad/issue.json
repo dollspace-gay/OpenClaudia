@@ -1,0 +1,11 @@
+{
+  "uuid": "6e2acc8d-9b4b-43d9-b1f4-73c4bc2da4ad",
+  "display_id": 516,
+  "title": "Context injection: IDE-opened files, task notifications, compact boundary handling",
+  "description": "OC context.rs injects system reminders. CC also handles:\n- IDE-opened file context (<ide_opened_file> tags)\n- Task notifications (task-summary forks)\n- Compact boundary messages (skip pre-boundary content on resume)\n- File history snapshots (for tool-result resume)\n\n## Scope\n- src/context.rs additions for the above\n- New context providers registered via trait\n- Snapshot/restore for tool results across compact boundaries\n\n## References\n- /home/doll/claude-code/context/\n- /home/doll/claude-code/utils/fileHistory.ts",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-20T01:56:57.592337272Z",
+  "updated_at": "2026-04-20T01:56:57.592337272Z"
+}
