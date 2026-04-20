@@ -3,11 +3,12 @@
   "display_id": 509,
   "title": "Core tool parity: TodoWrite, AskUserQuestion, NotebookEdit, WebSearch",
   "description": "Claude Code has 40+ tools; OC covers ~14. Four high-impact ones are trivially buildable and used in every session:\n\n## Tools to add\n- **TodoWrite** - in-conversation todo list (user-visible)\n- **AskUserQuestion** - structured multi-choice prompt (used by /remember, /compact)\n- **NotebookEdit** - .ipynb cell edit/insert/delete (maps to existing read/edit infrastructure)\n- **WebSearch** - keyword search (distinct from existing web_fetch)\n\n## Scope\n- Add tool definitions in src/tools/mod.rs\n- Wire into pipeline get_all_tool_definitions()\n- Add per-tool module under src/tools/\n- Cover with unit tests\n\n## References\n- /home/doll/claude-code/tools/TodoTool/\n- /home/doll/claude-code/tools/AskUserQuestionTool/\n- /home/doll/claude-code/tools/NotebookEditTool/\n- /home/doll/claude-code/tools/WebSearchTool/",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-20T01:56:01.383180830Z",
-  "updated_at": "2026-04-20T01:56:02.881395647Z",
+  "updated_at": "2026-04-20T02:19:11.642016438Z",
+  "closed_at": "2026-04-20T02:19:11.642016438Z",
   "labels": [
     "claude-code-parity,tools"
   ]
