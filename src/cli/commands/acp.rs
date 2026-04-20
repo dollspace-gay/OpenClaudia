@@ -53,7 +53,7 @@ pub async fn cmd_acp(
     let model = model_override
         .or_else(|| provider.model.clone())
         .unwrap_or_else(|| match config.proxy.target.as_str() {
-            "anthropic" => "claude-sonnet-4-6".to_string(),
+            "anthropic" => "claude-opus-4-6".to_string(),
             "google" => "gemini-2.5-flash".to_string(),
             "zai" => "glm-5".to_string(),
             "deepseek" => "deepseek-chat".to_string(),

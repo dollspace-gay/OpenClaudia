@@ -326,7 +326,7 @@ async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
     let model = model_override
         .or_else(|| provider.model.clone())
         .unwrap_or_else(|| match config.proxy.target.as_str() {
-            "anthropic" => "claude-sonnet-4-6".to_string(),
+            "anthropic" => "claude-opus-4-6".to_string(),
             "openai" => "gpt-5.2".to_string(),
             "google" => "gemini-2.5-flash".to_string(),
             "zai" => "glm-5".to_string(),
@@ -796,7 +796,7 @@ fn resolve_model_name(
     model_override
         .or(provider_model)
         .unwrap_or_else(|| match target {
-            "anthropic" => "claude-sonnet-4-6".to_string(),
+            "anthropic" => "claude-opus-4-6".to_string(),
             "openai" => "gpt-5.2".to_string(),
             "google" => "gemini-2.5-flash".to_string(),
             "zai" => "glm-5".to_string(),
@@ -4008,7 +4008,7 @@ mod tests {
 
     #[test]
     fn resolve_model_per_target_defaults() {
-        assert_eq!(resolve_model_name(None, None, "anthropic"), "claude-sonnet-4-6");
+        assert_eq!(resolve_model_name(None, None, "anthropic"), "claude-opus-4-6");
         assert_eq!(resolve_model_name(None, None, "openai"), "gpt-5.2");
         assert_eq!(resolve_model_name(None, None, "google"), "gemini-2.5-flash");
         assert_eq!(resolve_model_name(None, None, "zai"), "glm-5");
