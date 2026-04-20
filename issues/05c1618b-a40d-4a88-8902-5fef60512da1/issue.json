@@ -1,0 +1,11 @@
+{
+  "uuid": "05c1618b-a40d-4a88-8902-5fef60512da1",
+  "display_id": 519,
+  "title": "IDE-opened file context + task_notification emission (deferred from #516)",
+  "description": "Deferred part of #516. Blocked on:\n- IDE bridge (#517) for <ide_opened_file> tag generation — needs editor to push file-opened events to OC\n- Coordinator (#507) for task_notification bookends around subagent spawn/complete\n\nOnce #517 and #507 land, add:\n- context.rs injection of <ide_opened_file path=\"X\"> tags when the bridge reports an open file\n- subagent.rs emitting task_notification system messages at spawn (<status>Started</status>) and at completion — same text shape Claude Code's cli/print.ts uses so transcripts are cross-readable\n\nCompact boundary portion of #516 shipped in 339a872.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-20T02:54:40.841042906Z",
+  "updated_at": "2026-04-20T02:54:40.841042906Z"
+}
