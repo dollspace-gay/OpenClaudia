@@ -1,0 +1,11 @@
+{
+  "uuid": "4aba17c7-1b3c-411b-b388-591e7001ab3c",
+  "display_id": 520,
+  "title": "Remaining TUI overlay components (ModelPicker, ModePicker, NotificationBar, AskUserQuestion dialog)",
+  "description": "Deferred from #515. Overlay plumbing shipped in b9e13aa (trait + ActiveOverlay enum + centered_rect helper + HelpOverlay + LogSelector). Each remaining component is a single-file addition under src/tui/components/ + one new ActiveOverlay variant.\n\n## Components\n- **ModelPicker**: interactive list of available models with effort preview. Opened via /model with no args. Up/Down + Enter; source the list from the configured providers.\n- **ModePicker**: behavioral-mode switcher. Opened via /mode with no args. Mirrors ModelPicker shape.\n- **NotificationBar**: transient bottom-of-screen status ribbon for non-modal events (rate-limit warnings, tool gate denials, memory-saved confirmations). Auto-dismiss after ~3 s.\n- **AskUserQuestion dialog**: rich version of the tool-level prompt now surfaced as plain system messages. Hooks into the existing ask_user_question tool result — intercepts the USER_QUESTION_MARKER payload and renders the question(s) with multi-select support (crosslink #509 parity).\n\n## References\n- /home/doll/claude-code/components/ModelPicker.tsx\n- /home/doll/claude-code/tools/AskUserQuestionTool/AskUserQuestionTool.tsx\n- src/tui/components/ (existing examples)",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-04-20T04:00:04.014761335Z",
+  "updated_at": "2026-04-20T04:00:04.014761335Z"
+}
