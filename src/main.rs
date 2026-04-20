@@ -198,6 +198,13 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    // Run on-disk schema migrations before any subsystem touches the
+    // stores they manage. Failures never abort startup — the runner
+    // logs each and continues.
+    let _ = openclaudia::migrations::run_all(
+        &openclaudia::migrations::MigrationContext::from_env(),
+    );
+
     match cli.command {
         None if cli.tui_mode => {
             // Legacy rustyline REPL (--tui-mode is now the escape hatch name, kept for compat)
