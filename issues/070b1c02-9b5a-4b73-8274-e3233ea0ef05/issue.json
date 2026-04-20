@@ -1,0 +1,11 @@
+{
+  "uuid": "070b1c02-9b5a-4b73-8274-e3233ea0ef05",
+  "display_id": 522,
+  "title": "Additional services: LSP manager, remote config fetch, extractMemories worker",
+  "description": "Deferred from #511 (framework shipped in 815230c). Each new service is a new file under src/services/ + one Arc<dyn Trait> field on ServiceRegistry.\n\n## Candidates\n- **LspManager**: spawn / connect / forward LSP diagnostics to acp.rs IdeState (ties into #517 IDE bridge)\n- **RemoteConfig**: fetch Claude Code-style feature-flag bundles (e.g. tengu_* GrowthBook keys) so OC can share rollout signals\n- **ExtractMemories worker**: memdir-adjacent — extracts memorable facts from sessions for autoDream (ties into #508)\n\n## References\n- /home/doll/claude-code/services/analytics/ (done equivalent)\n- /home/doll/claude-code/services/api/\n- /home/doll/claude-code/services/extractMemories/",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-20T04:47:59.834277270Z",
+  "updated_at": "2026-04-20T04:47:59.834277270Z"
+}
