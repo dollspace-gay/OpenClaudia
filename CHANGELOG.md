@@ -75,6 +75,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Read-before-edit enforcement on edit_file tool
 
 ### Fixed
+- hooks/claude_compat.rs: `unused_mut` warning on `managed_path` on non-Linux/macOS targets
+- main.rs: TUI no longer sprays tracing output onto the rendered frame — logs redirect to `.openclaudia/logs/tui-<pid>.log` when the full-screen TUI owns the terminal
+- context.rs ContextInjector: hook/user content concatenated unescaped into system-reminder — prompt injection (#502)
+- expires_in.cast_signed() and unwrap_or(3600) mask OAuth protocol violations (#480)
+- FTS5 MATCH query construction has misleading 'sanitized' label — bypasses escape for operators (#444)
+- extract_api_key accepts unsanitized Bearer tokens (CRLF/control char injection surface) (#452)
+- permissions: 7 call sites still pass None for permission_mgr (qa-followup-460) (#505)
+- permissions: check_tool_permission returns None for disabled-manager, allowing ANYTHING when ops forget to pass manager (#460)
+- API keys flow through raw String interpolation with no redaction newtype (#256)
+- Unbounded response body read (to_bytes usize::MAX) enables memory DoS (#352)
+- VDD parsing: extract_json_from_response uses byte slicing that panics on multibyte input (#337)
+- Anthropic adapter has TWO message converters; transform_request uses the broken one (#475)
+- Plugin install_from_git: URL-derived plugin name path traversal (#248)
+- Marketplace Url source: no URL scheme validation, allows file:// and http:// (#280)
+- Chainlink tool: raw arg interpolation into bash -c enables shell injection (#265)
+- VDD static_analysis: run_chainlink_create uses shell interpolation — command injection via finding title (#277)
+- get_any_valid_session fallback allows cross-client session hijacking (#375)
+- OAuth error bodies leak refresh tokens and auth codes to end users (#263)
+- web_fetch SSRF guard bypassed by hostnames, DNS rebinding, decimal IPs (#335)
+- resolve_path rejects .. components but still susceptible to symlink escape and absolute path escape (#269)
+- Bash tool: no command allowlist/denylist — model can rm -rf /, curl | sh, exfiltrate secrets (#257)
 - Finish incomplete features: git_with_timeout, hook regex, oauth metadata check (#245)
 - Fix flaky test_todo_list_persistence integration test (#4)
 - Fix raw HTML dumped to terminal on non-2xx provider responses (#2)
@@ -112,6 +133,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix missing `permissions` field in test AppConfig initializers after merge
 
 ### Changed
+- Plugin manifest trust: no signature, origin, or integrity verification (#249)
+- proxy_chat_completions is a 308-line God function violating SRP (#247)
+- Blanket clippy suppressions at main.rs file scope hide real SRP violations (#461)
+- Massive duplicate proxy-state-construction between start_server and start_server_with_shutdown (#246)
+- Four-way split-brain auth header logic across proxy.rs and providers (#338)
 - W-18: Auto-learner stores unbounded data (#103)
 - W-27: Session cleanup ignores deletion errors (#112)
 - W-1: Malformed tool args bypass permission checks (#86)

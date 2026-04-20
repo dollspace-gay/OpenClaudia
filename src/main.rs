@@ -156,18 +156,46 @@ enum Commands {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Initialize logging
+    // Initialize logging. The full-screen ratatui TUI owns the terminal, so
+    // writing log lines to stderr would smear them across the rendered frame.
+    // In that mode we redirect tracing to a per-run log file under
+    // .openclaudia/logs/; everywhere else we keep the stderr writer.
     let filter = if cli.verbose {
         "openclaudia=debug,tower_http=debug"
     } else {
         "openclaudia=info,tower_http=warn"
     };
 
+    let tui_mode_active = matches!(cli.command, None) && !cli.tui_mode;
+    let log_writer: tracing_subscriber::fmt::writer::BoxMakeWriter = if tui_mode_active {
+        let dir = std::path::Path::new(".openclaudia/logs");
+        let file = std::fs::create_dir_all(dir).ok().and_then(|()| {
+            let path = dir.join(format!("tui-{}.log", std::process::id()));
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .ok()
+        });
+        match file {
+            Some(f) => tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::sync::Mutex::new(f)),
+            // If we can't open a log file, fall back to sink so we never spray
+            // stderr onto the TUI.
+            None => tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::sink),
+        }
+    } else {
+        tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::stderr)
+    };
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| filter.into()),
         )
-        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(!tui_mode_active)
+                .with_writer(log_writer),
+        )
         .init();
 
     match cli.command {

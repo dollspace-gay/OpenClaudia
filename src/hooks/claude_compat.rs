@@ -107,7 +107,6 @@ pub struct LayeredSettings {
 /// scalars from later files override.
 pub fn load_claude_settings() -> LayeredSettings {
     let mut settings = Value::Object(serde_json::Map::default());
-    let mut managed_path: Option<PathBuf> = None;
 
     // 1. User global settings
     if let Some(home) = dirs::home_dir() {
@@ -132,31 +131,31 @@ pub fn load_claude_settings() -> LayeredSettings {
         debug!(path = ?local_settings, "Loaded project-local Claude settings");
     }
 
-    // 4. System-level managed settings (enterprise)
-    #[cfg(target_os = "linux")]
-    {
-        let managed = Path::new("/etc/openclaudia/managed-settings.json");
-        if managed.exists() {
-            warn!(
-                path = ?managed,
-                "Loading enterprise managed settings - these override all user and project settings"
-            );
-            merge_settings_file(&mut settings, managed);
-            managed_path = Some(managed.to_path_buf());
+    // 4. System-level managed settings (enterprise). Only Linux and macOS
+    // have well-known managed locations; on other platforms this is None.
+    let managed_path: Option<PathBuf> = {
+        #[cfg(target_os = "linux")]
+        {
+            let p = Path::new("/etc/openclaudia/managed-settings.json");
+            p.exists().then(|| p.to_path_buf())
         }
-    }
+        #[cfg(target_os = "macos")]
+        {
+            let p = Path::new("/Library/Application Support/openclaudia/managed-settings.json");
+            p.exists().then(|| p.to_path_buf())
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            None
+        }
+    };
 
-    #[cfg(target_os = "macos")]
-    {
-        let managed = Path::new("/Library/Application Support/openclaudia/managed-settings.json");
-        if managed.exists() {
-            warn!(
-                path = ?managed,
-                "Loading enterprise managed settings - these override all user and project settings"
-            );
-            merge_settings_file(&mut settings, managed);
-            managed_path = Some(managed.to_path_buf());
-        }
+    if let Some(path) = &managed_path {
+        warn!(
+            path = ?path,
+            "Loading enterprise managed settings - these override all user and project settings"
+        );
+        merge_settings_file(&mut settings, path);
     }
 
     // Extract allowedTools from merged settings
