@@ -1,0 +1,10 @@
+{
+  "uuid": "b80cf993-5164-4b77-8931-7d7bd65d5cc9",
+  "issue_uuid": "0a15d642-1a1c-4876-a675-0849c426bc72",
+  "author": "lOrm",
+  "content": "Phase 0 shipped in d6b68e1. Tests green (+22 new). Ready for the next phase per docs/designs/510-*.md.",
+  "created_at": "2026-04-20T06:09:41.267807388Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA86s/Xm9S/44E7XhJoCaO2tVs330FVeOCGQ5xsIewyhYj154wBZbaZPWAij+vqslSwygDyJwCE3Zym31M91SXDw=="
+}
