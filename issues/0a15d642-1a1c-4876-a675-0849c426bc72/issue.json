@@ -1,0 +1,11 @@
+{
+  "uuid": "0a15d642-1a1c-4876-a675-0849c426bc72",
+  "display_id": 510,
+  "title": "Centralized SessionState with listener-based updates",
+  "description": "Claude Code has state/ — a thread-safe SessionState singleton (Arc<RwLock<>>) with ~98 fields grouped by Identity/Telemetry/Permissions/Auth/UI/etc., exposing ~210 getters/setters + broadcast channels for on_session_switch etc. OC has state scattered across App, ChatSession, config loaders with no central signal model.\n\n## Symptoms\n- Fields like 'has_exited_plan_mode', 'needs_plan_mode_exit_attachment' are threaded through function args\n- No event bus for state transitions (session switch, mode change, auth refresh)\n- Permission manager, hook engine, memory_db each hold their own Arc\n\n## Scope\n- src/state/ module with SessionState struct\n- Categorized field groups (Identity, Permissions, Telemetry, UI State, Teleport, ScheduledTasks)\n- tokio::sync::broadcast for session-switch subscribers\n- Migration: gradually move fields off App into SessionState\n\n## References\n- /home/doll/claude-code/state/\n- /home/doll/claude-code-design-documents/.design/state-management.md (REQ-1 enumerates all 98 fields)",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-20T01:56:25.834447377Z",
+  "updated_at": "2026-04-20T01:56:25.834447377Z"
+}
