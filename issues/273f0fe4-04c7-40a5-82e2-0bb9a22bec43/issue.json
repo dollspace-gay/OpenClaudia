@@ -7,5 +7,8 @@
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-04-20T01:55:55.505888670Z",
-  "updated_at": "2026-04-20T01:55:55.505888670Z"
+  "updated_at": "2026-04-20T01:55:57.045136212Z",
+  "labels": [
+    "claude-code-parity,memory"
+  ]
 }
