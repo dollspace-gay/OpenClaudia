@@ -3,11 +3,12 @@
   "display_id": 511,
   "title": "Services layer: organized analytics, LSP, policy, remote-config",
   "description": "CC has services/ with ~20 discrete services (analytics w/ GrowthBook, LSP manager, policy enforcement, remote settings, extractMemories, sessionIngress, contentReplacement store). OC has ad-hoc equivalents scattered across modules.\n\n## Scope\n- src/services/ module directory\n- Analytics sink trait (events: tengu_thinking, tool_use, session_start, etc.)\n- LSP manager service (spawns language servers on demand)\n- Policy service (enterprise managed-settings enforcement)\n- Remote config / feature-flag service\n\n## References\n- /home/doll/claude-code/services/analytics/\n- /home/doll/claude-code/services/api/\n- /home/doll/claude-code/services/extractMemories/",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-20T01:56:29.152130571Z",
-  "updated_at": "2026-04-20T01:56:30.745379422Z",
+  "updated_at": "2026-04-20T04:48:06.742352614Z",
+  "closed_at": "2026-04-20T04:48:06.742352614Z",
   "labels": [
     "claude-code-parity,services"
   ]
