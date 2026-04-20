@@ -16,6 +16,7 @@ pub mod claude_credentials;
 pub mod compaction;
 pub mod config;
 pub mod context;
+pub mod coordinator;
 pub mod guardrails;
 pub mod hooks;
 pub mod mcp;
