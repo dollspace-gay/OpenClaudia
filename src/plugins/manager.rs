@@ -7,7 +7,10 @@ use tracing::{debug, info, warn};
 
 use super::git::{copy_dir_recursive, git_clone, git_pull};
 use super::install::{InstallScope, InstalledPlugins, PluginInstallEntry};
-use super::marketplace::{MarketplaceManifest, MarketplacePlugin, PluginSource, PluginSourceDef};
+use super::marketplace::{
+    MarketplaceManifest, MarketplacePlugin, MarketplaceSource, PluginSource, PluginSourceDef,
+};
+use super::policy::{self, PluginPolicy, PolicyRejection};
 use super::{Plugin, PluginCommand, PluginError, PluginHook, PluginMcpServer};
 
 /// Manages plugin discovery, loading, and lifecycle
@@ -297,6 +300,79 @@ impl PluginManager {
             }
         }
         marketplaces
+    }
+
+    /// Convert a [`PolicyRejection`] into a [`PluginError`]. Centralizes
+    /// the human-readable reason string so CLI / TUI / audit logs get
+    /// consistent messaging regardless of which guard rejected.
+    fn policy_rejection_to_error(
+        rejection: PolicyRejection,
+        policy: &PluginPolicy,
+    ) -> PluginError {
+        let reason = match rejection {
+            PolicyRejection::Blocked => "source is on the block list".to_string(),
+            PolicyRejection::NotInAllowlist => {
+                "source is not on the allowed list (strict_known_marketplaces)"
+                    .to_string()
+            }
+        };
+        PluginError::PolicyRejected {
+            reason,
+            scope: if policy.managed { "managed" } else { "user" },
+        }
+    }
+
+    /// Add a marketplace from a local directory, enforcing
+    /// `policy.strict_known_marketplaces` / `blocked_marketplaces`.
+    /// Prefer this over [`Self::add_marketplace_from_directory`] in
+    /// code paths that have a `PluginPolicy` in hand.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PluginError::PolicyRejected`] when the source fails
+    /// policy checks, or whatever
+    /// [`Self::add_marketplace_from_directory`] would return for a
+    /// permitted source.
+    pub fn add_marketplace_from_directory_with_policy(
+        &self,
+        source_path: &Path,
+        policy: &PluginPolicy,
+    ) -> Result<MarketplaceManifest, PluginError> {
+        let canonical = source_path
+            .canonicalize()
+            .unwrap_or_else(|_| source_path.to_path_buf())
+            .to_string_lossy()
+            .into_owned();
+        let source = MarketplaceSource::Directory { path: canonical };
+        if let Err(rejection) = policy::check_marketplace_allowed(&source, policy) {
+            return Err(Self::policy_rejection_to_error(rejection, policy));
+        }
+        self.add_marketplace_from_directory(source_path)
+    }
+
+    /// Add a marketplace from a git URL, enforcing policy. See
+    /// [`Self::add_marketplace_from_directory_with_policy`] for the
+    /// error contract.
+    ///
+    /// # Errors
+    ///
+    /// Policy rejection → [`PluginError::PolicyRejected`]. Everything
+    /// else matches [`Self::add_marketplace_from_git`].
+    pub fn add_marketplace_from_git_with_policy(
+        &self,
+        url: &str,
+        git_ref: Option<&str>,
+        policy: &PluginPolicy,
+    ) -> Result<MarketplaceManifest, PluginError> {
+        let source = MarketplaceSource::Git {
+            url: url.to_string(),
+            git_ref: git_ref.map(str::to_string),
+            path: None,
+        };
+        if let Err(rejection) = policy::check_marketplace_allowed(&source, policy) {
+            return Err(Self::policy_rejection_to_error(rejection, policy));
+        }
+        self.add_marketplace_from_git(url, git_ref)
     }
 
     /// Add a marketplace from a local directory path
@@ -726,5 +802,84 @@ impl PluginManager {
 impl Default for PluginManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn directory_add_rejected_by_blocklist_without_touching_fs() {
+        // Build a policy that blocks every Directory source. The
+        // add method must fail BEFORE any filesystem side effects —
+        // Claude Code's guarantee that the check happens before the
+        // download. We verify by handing it a nonexistent path: if
+        // the policy check fires first we get PolicyRejected; if
+        // the path-read fires first we'd get IoError.
+        let tmp = TempDir::new().unwrap();
+        let bogus = tmp.path().join("does-not-exist");
+        let pm = PluginManager::new();
+        let policy = PluginPolicy {
+            blocked_marketplaces: vec![MarketplaceSource::Directory {
+                path: bogus
+                    .canonicalize()
+                    .unwrap_or_else(|_| bogus.clone())
+                    .to_string_lossy()
+                    .into_owned(),
+            }],
+            ..PluginPolicy::default()
+        };
+        let err = pm
+            .add_marketplace_from_directory_with_policy(&bogus, &policy)
+            .expect_err("blocked source must be rejected");
+        match err {
+            PluginError::PolicyRejected { scope, .. } => {
+                assert_eq!(scope, "user");
+            }
+            other => panic!("expected PolicyRejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn git_add_rejected_when_not_in_strict_allowlist() {
+        let pm = PluginManager::new();
+        let policy = PluginPolicy {
+            strict_known_marketplaces: Some(vec![MarketplaceSource::Git {
+                url: "https://example.com/allowed".to_string(),
+                git_ref: None,
+                path: None,
+            }]),
+            managed: true,
+            ..PluginPolicy::default()
+        };
+        let err = pm
+            .add_marketplace_from_git_with_policy(
+                "https://example.com/unknown",
+                None,
+                &policy,
+            )
+            .expect_err("unknown source must be rejected");
+        match err {
+            PluginError::PolicyRejected { scope, reason } => {
+                assert_eq!(scope, "managed");
+                assert!(reason.contains("allowed list"));
+            }
+            other => panic!("expected PolicyRejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn policy_error_display_is_informative() {
+        // Display impl is surfaced to the CLI / TUI — a change here
+        // would flow to user-visible strings, so keep it covered.
+        let err = PluginError::PolicyRejected {
+            reason: "source is on the block list".to_string(),
+            scope: "managed",
+        };
+        let s = err.to_string();
+        assert!(s.contains("block list"));
+        assert!(s.contains("managed"));
     }
 }

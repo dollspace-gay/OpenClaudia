@@ -22,6 +22,7 @@ pub mod install;
 pub mod manager;
 pub mod manifest;
 pub mod marketplace;
+pub mod policy;
 pub mod validate;
 
 // Re-export all public types for backward compatibility
@@ -69,6 +70,13 @@ pub enum PluginError {
 
     #[error("Marketplace error: {0}")]
     MarketplaceError(String),
+
+    /// Rejected by the installed [`policy::PluginPolicy`]. The inner
+    /// string carries a caller-facing reason (blocklist hit /
+    /// not-in-allowlist); the `managed` flag lets the CLI distinguish
+    /// administrator-applied denials from user preferences.
+    #[error("Plugin policy rejected this source: {reason} ({scope})")]
+    PolicyRejected { reason: String, scope: &'static str },
 }
 
 // ---------------------------------------------------------------------------
