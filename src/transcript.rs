@@ -193,6 +193,53 @@ fn set_secure_perms(_path: &Path, _mode: u32) {
     // On Windows the umask model doesn't apply; rely on NTFS ACLs.
 }
 
+/// Sentinel content prefix used by
+/// [`crate::compaction::build_compact_boundary_message`]. Re-declared
+/// here to avoid a circular import — keep in sync with the canonical
+/// constant in `src/compaction.rs`.
+const COMPACT_BOUNDARY_MARKER: &str = "[openclaudia:compact_boundary]";
+
+/// True when a serialized message carries the compact-boundary marker
+/// in its text content. Looks at the nested `message.content` shape
+/// used by normal user/assistant/system entries.
+fn is_compact_boundary(entry: &SerializedMessage) -> bool {
+    if entry.kind != "system" {
+        return false;
+    }
+    let Some(msg) = entry.message.as_ref() else {
+        return false;
+    };
+    let Some(content) = msg.get("content") else {
+        return false;
+    };
+    if let Some(s) = content.as_str() {
+        return s.starts_with(COMPACT_BOUNDARY_MARKER);
+    }
+    if let Some(arr) = content.as_array() {
+        return arr.iter().any(|block| {
+            block
+                .get("text")
+                .and_then(|t| t.as_str())
+                .is_some_and(|t| t.starts_with(COMPACT_BOUNDARY_MARKER))
+        });
+    }
+    false
+}
+
+/// Return the subset of `entries` starting from the last
+/// compact-boundary marker onward (inclusive). When no boundary
+/// exists, returns `entries` unchanged. Used by `--resume` to avoid
+/// re-feeding the model content that was already summarized away.
+#[must_use]
+pub fn entries_after_last_boundary(
+    entries: &[SerializedMessage],
+) -> &[SerializedMessage] {
+    match entries.iter().rposition(is_compact_boundary) {
+        Some(idx) => &entries[idx..],
+        None => entries,
+    }
+}
+
 /// Read every JSONL line in `path` as a [`SerializedMessage`]. Lines
 /// that fail to parse are skipped (and logged via `tracing::warn`) so a
 /// partial/corrupt tail doesn't break resume.
@@ -426,6 +473,57 @@ mod tests {
         assert_eq!(infos.len(), 2);
         assert_eq!(infos[0].session_id, "bbb");
         assert_eq!(infos[1].session_id, "aaa");
+    }
+
+    #[test]
+    fn entries_after_last_boundary_slices_correctly() {
+        // Build a mixed transcript: pre-boundary messages, boundary,
+        // post-boundary messages. Resume must only feed the last slice.
+        let make = |kind: &str, content: &str| SerializedMessage {
+            kind: kind.to_string(),
+            uuid: "u".to_string(),
+            timestamp: "t".to_string(),
+            cwd: "/x".to_string(),
+            session_id: "s".to_string(),
+            version: "v".to_string(),
+            git_branch: None,
+            message: Some(json!({"role": kind, "content": content})),
+        };
+        let entries = vec![
+            make("user", "old question"),
+            make("assistant", "old answer"),
+            make("system", &format!("{COMPACT_BOUNDARY_MARKER} {{}}\nsummary")),
+            make("user", "new question"),
+            make("assistant", "new answer"),
+        ];
+        let after = entries_after_last_boundary(&entries);
+        assert_eq!(after.len(), 3, "boundary + 2 post-boundary messages kept");
+        assert_eq!(after[0].kind, "system");
+        assert_eq!(after[1].kind, "user");
+        assert!(after[1]
+            .message
+            .as_ref()
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .unwrap()
+            .contains("new"));
+    }
+
+    #[test]
+    fn entries_after_last_boundary_is_identity_without_boundary() {
+        let entry = SerializedMessage {
+            kind: "user".to_string(),
+            uuid: "u".to_string(),
+            timestamp: "t".to_string(),
+            cwd: "/x".to_string(),
+            session_id: "s".to_string(),
+            version: "v".to_string(),
+            git_branch: None,
+            message: Some(json!({"role": "user", "content": "hi"})),
+        };
+        let entries = vec![entry];
+        let after = entries_after_last_boundary(&entries);
+        assert_eq!(after.len(), 1);
     }
 
     #[test]

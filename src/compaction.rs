@@ -72,6 +72,98 @@ impl CompactionConfig {
     }
 }
 
+/// Sentinel prefix that marks a system message as a compact-boundary
+/// divider. Callers detect one via [`is_compact_boundary_message`]
+/// rather than matching the raw string. Kept stable across releases
+/// because it lives in on-disk JSONL transcripts.
+pub const COMPACT_BOUNDARY_MARKER: &str = "[openclaudia:compact_boundary]";
+
+/// Metadata carried inside a compact-boundary message, immediately
+/// after [`COMPACT_BOUNDARY_MARKER`] as a one-line JSON object.
+/// Mirrors Claude Code's `compactMetadata` shape.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompactBoundaryMetadata {
+    /// Whether the compaction fired from an automatic threshold
+    /// trigger or from an explicit user action (`/compact`).
+    pub trigger: String,
+    /// Token count immediately before the compaction.
+    pub pre_tokens: usize,
+    /// How many messages the summary replaced.
+    pub messages_summarized: usize,
+}
+
+/// Build a compact-boundary system message. Format:
+/// `<marker> <json>\n<human-readable content>`. The JSON line allows
+/// transcript readers to recover the metadata without parsing the
+/// whole summary; the human-readable suffix keeps inline rendering
+/// legible when no reader is present.
+#[must_use]
+pub fn build_compact_boundary_message(
+    pre_tokens: usize,
+    messages_summarized: usize,
+) -> ChatMessage {
+    let metadata = CompactBoundaryMetadata {
+        trigger: "auto".to_string(),
+        pre_tokens,
+        messages_summarized,
+    };
+    let metadata_json =
+        serde_json::to_string(&metadata).unwrap_or_else(|_| "{}".to_string());
+    let content = format!(
+        "{COMPACT_BOUNDARY_MARKER} {metadata_json}\nConversation compacted — {messages_summarized} earlier message(s) summarized to free context."
+    );
+    ChatMessage {
+        role: "system".to_string(),
+        content: MessageContent::Text(content),
+        name: None,
+        tool_calls: None,
+        tool_call_id: None,
+    }
+}
+
+/// True when `msg` is a compact-boundary marker emitted by
+/// [`build_compact_boundary_message`]. Checks the raw text prefix so
+/// the predicate works against both in-memory [`ChatMessage`]s and
+/// [`crate::transcript::SerializedMessage`] envelopes round-tripped
+/// through JSONL.
+#[must_use]
+pub fn is_compact_boundary_message(msg: &ChatMessage) -> bool {
+    if msg.role != "system" {
+        return false;
+    }
+    match &msg.content {
+        MessageContent::Text(t) => t.starts_with(COMPACT_BOUNDARY_MARKER),
+        MessageContent::Parts(parts) => parts
+            .iter()
+            .filter_map(|p| p.text.as_deref())
+            .any(|t| t.starts_with(COMPACT_BOUNDARY_MARKER)),
+    }
+}
+
+/// Parse the JSON metadata out of a compact-boundary message. Returns
+/// `None` for non-boundary messages or when the metadata line is
+/// malformed (reader should treat this as "we know compaction
+/// happened but not the details" rather than an error).
+#[must_use]
+pub fn extract_compact_boundary_metadata(
+    msg: &ChatMessage,
+) -> Option<CompactBoundaryMetadata> {
+    if !is_compact_boundary_message(msg) {
+        return None;
+    }
+    let text = match &msg.content {
+        MessageContent::Text(t) => t.as_str(),
+        MessageContent::Parts(parts) => parts
+            .iter()
+            .filter_map(|p| p.text.as_deref())
+            .next()?,
+    };
+    // First line after the marker is the JSON blob.
+    let first_line = text.lines().next()?;
+    let after_marker = first_line.strip_prefix(COMPACT_BOUNDARY_MARKER)?;
+    serde_json::from_str::<CompactBoundaryMetadata>(after_marker.trim()).ok()
+}
+
 /// Get context window size for a model
 #[must_use]
 pub fn get_context_window(model: &str) -> usize {
@@ -456,7 +548,16 @@ impl ContextCompactor {
         })
     }
 
-    /// Build the compacted message list: system messages + summary + preserved non-system.
+    /// Build the compacted message list: system messages + boundary marker
+    /// + summary + preserved non-system.
+    ///
+    /// The boundary marker is a dedicated system message tagged with
+    /// [`COMPACT_BOUNDARY_MARKER`] — downstream readers (transcript
+    /// loader, TUI, `/resume` picker) can detect it to show a visual
+    /// "Conversation compacted" divider. Matches Claude Code's
+    /// `createCompactBoundaryMessage` output (utils/messages.ts),
+    /// carrying the same metadata (trigger, pre-compaction tokens,
+    /// messages summarized).
     fn build_compacted_messages(
         analysis: &CompactionAnalysis,
         original_messages: &[ChatMessage],
@@ -472,6 +573,13 @@ impl ContextCompactor {
                 }
             }
         }
+
+        // Emit the compact-boundary marker before the summary so
+        // readers can split pre- vs post-compaction views.
+        new_messages.push(build_compact_boundary_message(
+            analysis.current_tokens,
+            analysis.messages_to_summarize.len(),
+        ));
 
         // Add summary as a system message
         new_messages.push(ChatMessage {
@@ -1225,5 +1333,107 @@ mod tests {
         assert!(!warn);
         assert!(!compact);
         assert!((pct - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn compact_boundary_roundtrips_metadata() {
+        let msg = build_compact_boundary_message(123_456, 42);
+        assert!(is_compact_boundary_message(&msg));
+        let metadata = extract_compact_boundary_metadata(&msg).expect("parses");
+        assert_eq!(metadata.trigger, "auto");
+        assert_eq!(metadata.pre_tokens, 123_456);
+        assert_eq!(metadata.messages_summarized, 42);
+    }
+
+    #[test]
+    fn is_compact_boundary_rejects_non_boundary_messages() {
+        let plain = ChatMessage {
+            role: "system".to_string(),
+            content: MessageContent::Text("just a system message".to_string()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        assert!(!is_compact_boundary_message(&plain));
+
+        let user = ChatMessage {
+            role: "user".to_string(),
+            content: MessageContent::Text(format!(
+                "{COMPACT_BOUNDARY_MARKER} {{}}\nforged"
+            )),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        // Role check catches forged user-side markers.
+        assert!(!is_compact_boundary_message(&user));
+    }
+
+    #[test]
+    fn corrupt_boundary_metadata_returns_none_without_panicking() {
+        let msg = ChatMessage {
+            role: "system".to_string(),
+            content: MessageContent::Text(format!(
+                "{COMPACT_BOUNDARY_MARKER} {{not valid json\nbody"
+            )),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        // The predicate still identifies the marker — caller wants to
+        // know a boundary happened, even if the metadata line is lost.
+        assert!(is_compact_boundary_message(&msg));
+        assert!(extract_compact_boundary_metadata(&msg).is_none());
+    }
+
+    #[test]
+    fn build_compacted_messages_inserts_boundary_before_summary() {
+        // Minimal analysis: 2 messages to summarize, 1 preserved.
+        let analysis = CompactionAnalysis {
+            needs_compaction: true,
+            current_tokens: 10_000,
+            max_tokens: 8_000,
+            tokens_to_free: 2_000,
+            messages_to_preserve: vec![2],
+            messages_to_summarize: vec![0, 1],
+        };
+        let original = vec![
+            ChatMessage {
+                role: "user".to_string(),
+                content: MessageContent::Text("old 1".to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: MessageContent::Text("old 2".to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: MessageContent::Text("recent".to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+        ];
+        let built = ContextCompactor::build_compacted_messages(
+            &analysis,
+            &original,
+            "SUMMARY",
+        );
+        // Expected order: boundary, summary, recent.
+        assert!(is_compact_boundary_message(&built[0]));
+        if let MessageContent::Text(t) = &built[1].content {
+            assert_eq!(t, "SUMMARY");
+        } else {
+            panic!("summary should be a text message");
+        }
+        if let MessageContent::Text(t) = &built[2].content {
+            assert_eq!(t, "recent");
+        }
     }
 }
