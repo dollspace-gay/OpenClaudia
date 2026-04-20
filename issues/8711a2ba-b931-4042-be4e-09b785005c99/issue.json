@@ -7,5 +7,8 @@
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-20T01:56:53.629725131Z",
-  "updated_at": "2026-04-20T01:56:53.629725131Z"
+  "updated_at": "2026-04-20T01:56:55.952503981Z",
+  "labels": [
+    "claude-code-parity,tui"
+  ]
 }
