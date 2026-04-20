@@ -1,0 +1,11 @@
+{
+  "uuid": "8711a2ba-b931-4042-be4e-09b785005c99",
+  "display_id": 515,
+  "title": "Rich TUI components: dialogs, menus, model picker, theme picker",
+  "description": "CC has 389 component files (Ink/React); OC has 5 files in tui/. Missing rich components used in every session.\n\n## Priority components\n- ModelPicker (CC: components/ModelPicker.tsx) — interactive list with effort preview\n- AskUserQuestion dialog\n- ModePicker (behavior mode switching)\n- NotificationBar (transient status messages)\n- HelpOverlay (keybindings cheatsheet)\n- LogSelector (resume picker with transcript preview)\n\n## Scope\n- Extend src/tui/ with one file per component\n- Each component is a ratatui widget with its own state machine\n- App state routes to active component via Screen enum",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-04-20T01:56:53.629725131Z",
+  "updated_at": "2026-04-20T01:56:53.629725131Z"
+}
