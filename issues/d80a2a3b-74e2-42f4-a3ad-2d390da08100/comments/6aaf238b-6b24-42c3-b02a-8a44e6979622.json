@@ -1,0 +1,10 @@
+{
+  "uuid": "6aaf238b-6b24-42c3-b02a-8a44e6979622",
+  "issue_uuid": "d80a2a3b-74e2-42f4-a3ad-2d390da08100",
+  "author": "lOrm",
+  "content": "Design doc landed in commit 52320e1 at docs/designs/507-*.md. Covers problem framing, proposed architecture (concrete Rust types), phased integration plan, test strategy, and risks. See docs/designs/README.md for cross-issue dependencies and recommended implementation order.",
+  "created_at": "2026-04-20T05:05:37.907013299Z",
+  "kind": "decision",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAlTrxg/peaEVuyF6DMNEtSczv4NucVV8K67FnPDwD0mriB6akne45DCUpDHe/PJ0mwA2lYEmFZ90i5n6e1Wb8DQ=="
+}
