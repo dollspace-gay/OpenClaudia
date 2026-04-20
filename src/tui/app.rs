@@ -385,12 +385,19 @@ impl App {
                     self.spinner_frame = (self.spinner_frame + 1) % SPINNER_FRAMES.len();
                 }
                 Ok(AppEvent::StreamText(text)) => {
+                    // First regular-text delta ends any active thinking
+                    // block, replacing the live `∴ Thinking…` indicator
+                    // with a collapsed `∴ Thought for Xs` summary.
+                    self.messages.finish_thinking();
                     self.messages.append_streaming(&text);
                     self.messages.scroll_to_bottom();
                 }
                 Ok(AppEvent::StreamThinking(text)) => {
-                    self.messages
-                        .append_streaming(&format!("[thinking] {text}"));
+                    // Hide the raw reasoning tokens behind a collapsed
+                    // indicator — the text is kept in `thinking_buffer`
+                    // for session persistence but not rendered inline.
+                    self.messages.push_thinking(&text);
+                    self.messages.scroll_to_bottom();
                 }
                 Ok(AppEvent::ToolStart { name, description }) => {
                     self.messages.add(DisplayMessage {
@@ -420,6 +427,10 @@ impl App {
                     });
                 }
                 Ok(AppEvent::ResponseDone) => {
+                    // Close any open thinking block first so the summary
+                    // lands above the final answer even if no regular
+                    // text was streamed (e.g. thinking-only response).
+                    self.messages.finish_thinking();
                     self.messages.finish_streaming();
                     self.is_waiting = false;
                     // Sync session messages and auto-save

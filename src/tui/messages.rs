@@ -1,5 +1,7 @@
 //! Scrollable message list for the TUI.
 
+use std::time::Instant;
+
 use ratatui::{
     prelude::*,
     widgets::{Paragraph, Wrap},
@@ -21,6 +23,15 @@ pub struct MessageList {
     pub scroll_offset: u16,
     pub streaming_text: String,
     pub is_streaming: bool,
+    /// True while thinking/reasoning deltas are arriving for the current
+    /// response, before any regular text has streamed in.
+    pub is_thinking_now: bool,
+    /// When the current thinking block started. Used to render elapsed
+    /// seconds next to the `∴ Thinking…` indicator.
+    thinking_start: Option<Instant>,
+    /// Hidden accumulator for the full thinking stream — not rendered,
+    /// but kept so callers could persist it alongside the assistant turn.
+    pub thinking_buffer: String,
 }
 
 impl MessageList {
@@ -31,7 +42,46 @@ impl MessageList {
             scroll_offset: 0,
             streaming_text: String::new(),
             is_streaming: false,
+            is_thinking_now: false,
+            thinking_start: None,
+            thinking_buffer: String::new(),
         }
+    }
+
+    /// Record a thinking-delta chunk. The text is accumulated into a
+    /// hidden buffer (for session persistence) and the `∴ Thinking…`
+    /// indicator is activated; the text itself is intentionally not
+    /// rendered — matching Claude Code's collapsed thinking UX.
+    pub fn push_thinking(&mut self, text: &str) {
+        if self.thinking_start.is_none() {
+            self.thinking_start = Some(Instant::now());
+        }
+        self.is_thinking_now = true;
+        self.thinking_buffer.push_str(text);
+    }
+
+    /// Finalize the current thinking block: replace the live indicator
+    /// with a collapsed `∴ Thought for X.Xs` header message and reset
+    /// the timer. Safe to call repeatedly — no-op when not thinking.
+    pub fn finish_thinking(&mut self) {
+        if !self.is_thinking_now {
+            return;
+        }
+        let duration = self
+            .thinking_start
+            .map(|start| start.elapsed().as_secs_f64())
+            .unwrap_or(0.0);
+        self.messages.push(DisplayMessage {
+            role: "thinking".to_string(),
+            content: format!("Thought for {duration:.1}s"),
+            tool_name: None,
+            is_error: false,
+            is_thinking: true,
+        });
+        self.is_thinking_now = false;
+        self.thinking_start = None;
+        self.thinking_buffer.clear();
+        self.scroll_to_bottom();
     }
 
     /// Remove the last N messages from the display list.
@@ -180,6 +230,15 @@ impl MessageList {
                     }
                     lines.push(Line::from(""));
                 }
+                "thinking" => {
+                    lines.push(Line::from(Span::styled(
+                        format!("  \u{2234} {}", msg.content),
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::ITALIC),
+                    )));
+                    lines.push(Line::from(""));
+                }
                 "tool" => {
                     let tool_name = msg.tool_name.as_deref().unwrap_or("tool");
                     if msg.is_error {
@@ -217,6 +276,21 @@ impl MessageList {
                     lines.push(Line::from(""));
                 }
             }
+        }
+
+        // Live thinking indicator (while thinking deltas are arriving)
+        if self.is_thinking_now {
+            let elapsed = self
+                .thinking_start
+                .map(|s| s.elapsed().as_secs_f64())
+                .unwrap_or(0.0);
+            lines.push(Line::from(Span::styled(
+                format!("  \u{2234} Thinking\u{2026} ({elapsed:.1}s)"),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
+            )));
+            lines.push(Line::from(""));
         }
 
         // Streaming content
@@ -306,6 +380,30 @@ mod tests {
         assert!(!ml.is_streaming);
         assert_eq!(ml.messages.len(), 1);
         assert_eq!(ml.messages[0].content, "hello world");
+    }
+
+    #[test]
+    fn thinking_indicator_lifecycle() {
+        let mut ml = MessageList::new();
+        // No-op when not thinking.
+        ml.finish_thinking();
+        assert!(!ml.is_thinking_now);
+        assert_eq!(ml.messages.len(), 0);
+
+        // Deltas activate the indicator and accumulate hidden buffer.
+        ml.push_thinking("first ");
+        ml.push_thinking("second");
+        assert!(ml.is_thinking_now);
+        assert_eq!(ml.thinking_buffer, "first second");
+
+        // Finalize emits a collapsed summary and clears state.
+        ml.finish_thinking();
+        assert!(!ml.is_thinking_now);
+        assert!(ml.thinking_buffer.is_empty());
+        assert_eq!(ml.messages.len(), 1);
+        assert_eq!(ml.messages[0].role, "thinking");
+        assert!(ml.messages[0].content.starts_with("Thought for "));
+        assert!(ml.messages[0].is_thinking);
     }
 
     #[test]
