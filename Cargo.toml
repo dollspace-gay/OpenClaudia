@@ -79,7 +79,7 @@ arboard = "3"
 ratatui = "0.30"
 
 # SQLite for stateful memory
-rusqlite = { version = "0.38", features = ["bundled"] }
+rusqlite = { version = "0.39", features = ["bundled"] }
 
 # Headless browser for web scraping (optional, heavy dependency)
 headless_chrome = { version = "1", optional = true }
