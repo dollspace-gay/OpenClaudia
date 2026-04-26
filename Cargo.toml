@@ -64,7 +64,7 @@ shlex = "1"
 
 # OAuth and cryptography
 base64 = "0.22"
-sha2 = "0.10"
+sha2 = "0.11"
 rand = "0.10"
 url = "2"
 urlencoding = "2"
