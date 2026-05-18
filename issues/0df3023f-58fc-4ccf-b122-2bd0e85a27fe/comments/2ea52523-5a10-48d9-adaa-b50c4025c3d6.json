@@ -1,0 +1,10 @@
+{
+  "uuid": "2ea52523-5a10-48d9-adaa-b50c4025c3d6",
+  "issue_uuid": "0df3023f-58fc-4ccf-b122-2bd0e85a27fe",
+  "author": "lOrm",
+  "content": "Plan: write #[cfg(test)] mod tests blocks in plan_mode.rs, worktree.rs, cron.rs, todo.rs. Each spec behavior (5 total) gets ≥1 test. No production code changes. Only rustfmt on target files. Pinning current contracts, not fixing gaps.",
+  "created_at": "2026-05-18T16:56:26.996768057Z",
+  "kind": "plan",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAgMg6J3CTEaJAQmYkyew7BbJt4AR/v81d2FZ5cbWHvWYTeNyQaTrIW3oEnrxe1SHZki7iUL5lBEdsQrDWj6UOBw=="
+}
