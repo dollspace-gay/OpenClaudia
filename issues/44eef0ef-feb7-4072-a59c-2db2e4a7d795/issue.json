@@ -1,0 +1,11 @@
+{
+  "uuid": "44eef0ef-feb7-4072-a59c-2db2e4a7d795",
+  "display_id": 753,
+  "title": "execute_web_fetch and execute_web_browser duplicate output assembly verbatim",
+  "description": "## Severity\nMinor\n## Dimension\ndry\n## Location\nsrc/tools/web.rs:37-58 (execute_web_fetch) and src/tools/web.rs:179-200 (execute_web_browser)\n## Violation\nBoth tool entry points format a `FetchResult` into the agent-facing string using identical logic — title heading, URL header, content append, 50000-char truncate with a \"content truncated\" suffix. The 50000 magic constant is also duplicated.\n\n```rust\n// execute_web_fetch\nif let Some(title) = fetch_result.title { let _ = write!(output, \"# {title}\\n\\n\"); }\nlet _ = write!(output, \"URL: {}\\n\\n\", fetch_result.url);\noutput.push_str(&fetch_result.content);\nif output.len() > 50000 {\n    output = format!(\"{}...\\n\\n(content truncated, {} total chars)\", safe_truncate(&output, 50000), output.len());\n}\n```\n\nThe runtime-dispatch boilerplate (`Handle::try_current` -> `block_in_place` else `Runtime::new`) is also duplicated between `execute_web_fetch` and `execute_web_search`.\n## Mandated refactor\nExtract a `format_fetch_result(result: FetchResult, max_len: usize) -> String` helper and call it from both tool functions, with `const MAX_OUTPUT_CHARS: usize = 50_000`. Extract `block_on_in_any_context<F>(fut: F) -> F::Output` for the runtime-dispatch boilerplate.\n## Filed from QA review dispatch",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-05-18T21:53:59.236770134Z",
+  "updated_at": "2026-05-18T21:53:59.236770134Z"
+}
