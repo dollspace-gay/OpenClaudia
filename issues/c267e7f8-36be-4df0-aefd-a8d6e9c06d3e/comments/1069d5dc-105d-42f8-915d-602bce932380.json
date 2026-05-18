@@ -1,0 +1,10 @@
+{
+  "uuid": "1069d5dc-105d-42f8-915d-602bce932380",
+  "issue_uuid": "c267e7f8-36be-4df0-aefd-a8d6e9c06d3e",
+  "author": "lOrm",
+  "content": "Decision: tested validate_url SSRF/scheme behaviors via the public fetch_url/fetch_with_browser APIs rather than the private validate_url function directly. This gives stronger coverage (tests the full call stack) and avoids exposing internal symbols. The wiremock serve_body helper is present but Jina Reader proxy interception is documented as a limitation — the non-200 contract is pinned via white-box format tests instead. Two browser tests gated behind #[ignore] with OPENCLAUDIA_TEST_BROWSER=1 env opt-in.",
+  "created_at": "2026-05-18T16:40:41.752459434Z",
+  "kind": "decision",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA8yQhv8NlkQiU9LaXaFYV3mhvJ6GOD8X9yOO/XzpOzM70A9MLGRlFnCJjxGn7GzpAuqyu8q6qoJpWuxLwvYFNCQ=="
+}
