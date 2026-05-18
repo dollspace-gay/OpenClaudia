@@ -1,0 +1,10 @@
+{
+  "uuid": "8723e31d-4e75-45cd-a91f-3f6d6c93d646",
+  "issue_uuid": "479e043c-70f2-482a-bb5a-df441ffd0bee",
+  "author": "lOrm",
+  "content": "Plan: \n- Add #[cfg(test)] mod tests to src/pipeline.rs — B1 retry loop, B2 thinking budget, B3 tool accumulation, B6 stream timeout, B5 needs_followup\n- Add #[cfg(test)] mod tests to src/session/task.rs — task CRUD and dependency invariants  \n- Add #[cfg(test)] mod tests to src/session/mod.rs — session lifecycle, cumulative usage\n- Add #[cfg(test)] mod tests to src/proxy.rs — extract_usage_from_sse_event, extract_usage_from_response, determine_provider, normalize_base_url\n- Add tests/pipeline_integration.rs — B1 SSE retry via wiremock (no live network)\nEach test pins current (broken) behavior with explicit comments citing gap issues. No production code changes.",
+  "created_at": "2026-05-18T17:24:28.309313258Z",
+  "kind": "plan",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAy1HVaVDt9Is0ZvZs45yXVixIpM7nd/WEbme9rbI2TKeY4x/Tdo3UaNSf7Ugz6aF2M0J51zaqY6KozOFNz68/Bg=="
+}
