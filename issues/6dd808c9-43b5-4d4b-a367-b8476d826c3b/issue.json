@@ -8,11 +8,14 @@
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:32:14.720578330Z",
-  "updated_at": "2026-05-18T15:32:20.498808273Z",
+  "updated_at": "2026-05-18T15:32:22.157150091Z",
   "labels": [
     "audit",
     "parity",
     "phase-2-tests",
     "cc-coordinator-tasks"
+  ],
+  "blockers": [
+    "e32edae7-d1a5-4f9d-82a7-1bd084d8258f"
   ]
 }
