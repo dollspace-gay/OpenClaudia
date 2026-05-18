@@ -1,0 +1,10 @@
+{
+  "uuid": "6bc9c09b-d944-401a-a4b8-9cbaedcef35b",
+  "issue_uuid": "f0ea2e8a-0ec0-48a7-adaf-f8ba79a5dcdd",
+  "author": "lOrm",
+  "content": "Plan: Category A — root-cause. VDD forward_request already receives endpoint from adapter.chat_endpoint(). Google's GoogleAdapter::chat_endpoint() already returns '/v1beta/models/{model}:generateContent'. Remove the hardcoded provider_name == 'google' conditional and use endpoint for all providers uniformly.",
+  "created_at": "2026-05-18T22:38:33.103517836Z",
+  "kind": "plan",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAAfA/OGxhX7xfomis3SI15D8yyoNOPw8SJI4MLoCO8/Z7v+1ZAmZzClVJ1t6Hn67RX5C8NAJjZ/DFSi9nMleZAw=="
+}
