@@ -1,0 +1,11 @@
+{
+  "uuid": "266e87c9-9adb-42e8-8fdf-e3be52fce34f",
+  "display_id": 601,
+  "title": "Emit structured error_max_turns result event when turn cap reached (parity with CC QueryEngine.ts:851-873)",
+  "status": "open",
+  "priority": "medium",
+  "parent_uuid": "5e625118-78a2-470d-b9fd-644b77070cb7",
+  "created_by": "lOrm",
+  "created_at": "2026-05-18T15:54:54.325428817Z",
+  "updated_at": "2026-05-18T15:54:54.325428817Z"
+}
