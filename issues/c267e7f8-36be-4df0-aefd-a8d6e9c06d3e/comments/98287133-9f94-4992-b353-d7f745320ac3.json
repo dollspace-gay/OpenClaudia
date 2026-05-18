@@ -1,0 +1,10 @@
+{
+  "uuid": "98287133-9f94-4992-b353-d7f745320ac3",
+  "issue_uuid": "c267e7f8-36be-4df0-aefd-a8d6e9c06d3e",
+  "author": "lOrm",
+  "content": "Plan: add tests in two locations matching the #540 pattern. (1) In-file unit tests appended to src/web.rs#[cfg(test)] mod — covering spec behaviors 1–4 (validate_url SSRF guard, scheme allowlist, hostname denylist, output format). (2) tests/web_fetch_integration.rs (new) — wiremock-backed fetch_url tests covering behaviors 1 (HTTP 200 success path), 5 (HTTP non-200 error path), and the #610 DDG SSRF gap pin. No production code changes. Browser tests gated behind #[ignore] with OPENCLAUDIA_TEST_BROWSER=1 env comment. wiremock already in dev-deps.",
+  "created_at": "2026-05-18T16:34:28.516018841Z",
+  "kind": "plan",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAR3Hb9CteadtcUQoLaJykgBonVahLHlztmBMP75mhzpjGIaU1nli5yw63HEn+EF76z6R6gFZY8h1hRWF1LAlDBA=="
+}
