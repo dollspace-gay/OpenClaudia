@@ -1,0 +1,12 @@
+{
+  "uuid": "5dbe587b-0d71-4ebb-910a-7d1f4b92a892",
+  "display_id": 550,
+  "title": "Phase 2 tests: LSP service + LSPTool [CC parity]",
+  "description": "## Goal\n\nImplement Rust tests covering the behavioral spec produced by Phase 1 (#535). Pin down every contract listed in that spec with at least one test case.\n\nParent audit: #523.\n\n## Blocked on\n\n- Phase 1 spec issue #535. Do not start until that body contains the markdown spec.\n\n## Where the tests live\n\n- `src/tools/lsp.rs` — `#[cfg(test)] mod tests` for action enum parsing, language-server detection, error on unknown action\n- `tests/lsp_integration.rs` (new) — fake LSP server fixture (stdio echo) — gate behind `--ignored` if no rust-analyzer installed\n\n## Test plan skeleton\n\n- Read the spec at #535.\n- For each behavior bullet: add a `#[test]` (or `#[tokio::test]`) named after the behavior.\n- For pure functions: `#[cfg(test)] mod tests` colocated in the same source file.\n- For multi-module / cross-process / SSE / HTTP: `tests/<subsystem>_integration.rs`.\n- Use `tempfile::TempDir` for filesystem isolation.\n- Use `wiremock` (already in deps) for HTTP fakes; avoid network IO.\n- Property tests (`proptest`) for input-parsers where useful.\n\n## Notes\n- LSP integration tests are CI-flaky if real language servers are required. Prefer fake stdio fixtures.\n\n## Acceptance\n\n- Every Phase 1 behavior bullet has at least one matching test\n- `cargo test -p openclaudia` passes cleanly (no `#[ignore]` shortcuts)\n- `cargo test --workspace -- --nocapture` shows the new tests by name\n- No new clippy warnings (`cargo clippy --tests -- -D warnings`)\n- Gap signals from Phase 1 confirmed filed as separate feature issues, not silently bundled here\n",
+  "status": "open",
+  "priority": "medium",
+  "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
+  "created_by": "lOrm",
+  "created_at": "2026-05-18T15:32:41.356442904Z",
+  "updated_at": "2026-05-18T15:32:41.356442904Z"
+}
