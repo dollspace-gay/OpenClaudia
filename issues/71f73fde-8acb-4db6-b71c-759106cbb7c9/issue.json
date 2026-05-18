@@ -1,0 +1,10 @@
+{
+  "uuid": "71f73fde-8acb-4db6-b71c-759106cbb7c9",
+  "display_id": 638,
+  "title": "Add passive LSP diagnostic accumulation registry (parity with CC LSPDiagnosticRegistry)",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-05-18T16:08:26.001654634Z",
+  "updated_at": "2026-05-18T16:08:26.001654634Z"
+}
