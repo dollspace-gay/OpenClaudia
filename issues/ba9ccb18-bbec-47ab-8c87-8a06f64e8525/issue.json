@@ -7,5 +7,8 @@
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:57:59.359275840Z",
-  "updated_at": "2026-05-18T21:57:59.359275840Z"
+  "updated_at": "2026-05-18T21:58:55.079954387Z",
+  "labels": [
+    "qa-review"
+  ]
 }
