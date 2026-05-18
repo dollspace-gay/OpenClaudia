@@ -1,0 +1,10 @@
+{
+  "uuid": "8c9fe667-9b2e-492e-91e1-d9876bc8f2f7",
+  "issue_uuid": "a74f0f4e-db19-4096-9e1d-7de5a824e90a",
+  "author": "lOrm",
+  "content": "Refactor complete. Entry point shrunk from ~110 LOC to 51 LOC. Helpers now: resolve_provider (sync, lookup), bump_session_request_count (async), transform_and_forward (async), record_actual_usage (async) — plus pre-existing record_turn_estimate, apply_vdd_review, compact_request_context from prior partial fix. Verification: 1135 lib tests pass (matches baseline), clippy --all-targets --all-features adds zero new errors (only pre-existing kill.rs:35 remains), rustfmt --check clean on src/proxy.rs. No allow/ignore/clippy.toml. Behavior preserved.",
+  "created_at": "2026-05-18T23:25:00.765036526Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA6A3TSdX83xDFCISovLPL8qYu7nR9xjvaA+/QnVNC9s2LqWiw45YtR8jBq93YT4BrQSL3fwkCwkoRSqOKseRACQ=="
+}
