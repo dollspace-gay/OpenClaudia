@@ -3,9 +3,10 @@
   "display_id": 708,
   "title": "QA: Quality-gate runner shells timeout+command via bash -c without separation (guardrails.rs)",
   "description": "## Severity\nCritical\n## Dimension\nsecurity\n## Location\nsrc/guardrails.rs:492-541\n## Violation\n`run_shell_command_sync` builds and executes a shell string by\ninterpolating two attacker-influenced fields:\n```rust\nlet actual_command = if timeout_seconds > 0 {\n    format!(\"timeout {timeout_seconds} {command}\")\n} else {\n    command.to_string()\n};\n...\nCommand::new(\"bash\").args([\"-c\", &actual_command])\n```\n`command` is `QualityCheck.command` (config-loaded). Any check that\ntemplates user-supplied tooling runs through a layered shell with zero\nescaping or allowlisting. There is no audit log beyond the bare\n`info!(name = %check.name, \"Running quality gate\")`; stderr is captured\nbut not surfaced.\n## Mandated refactor\nDrop `bash -c`. Require `QualityCheck { program: String, args: Vec<String> }`\nand exec via `Command::new(program).args(args)`. If timeout wrapping is\nrequired, build it as `Command::new(\"timeout\").args([ts.to_string(),\nprogram]).args(args)`. Emit a structured audit-log event for every\nquality-gate invocation with full argv before spawning.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:49:30.981018380Z",
-  "updated_at": "2026-05-18T21:49:30.981018380Z"
+  "updated_at": "2026-05-18T21:50:30.539602425Z",
+  "closed_at": "2026-05-18T21:50:30.539602425Z"
 }
