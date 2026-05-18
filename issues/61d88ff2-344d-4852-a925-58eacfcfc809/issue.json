@@ -1,0 +1,10 @@
+{
+  "uuid": "61d88ff2-344d-4852-a925-58eacfcfc809",
+  "display_id": 647,
+  "title": "Add isFileOpen deduplication for textDocument/didOpen (parity with CC LSPServerManager.ts:64,277)",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-05-18T16:09:03.353550467Z",
+  "updated_at": "2026-05-18T16:09:03.353550467Z"
+}
