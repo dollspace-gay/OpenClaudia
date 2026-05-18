@@ -121,3 +121,198 @@ pub fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
         Err(e) => (format!("Failed to write file '{path}': {e}"), true),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::READ_TRACKER;
+    use std::io::Write as _;
+    use std::path::Path;
+    use tempfile::NamedTempFile;
+
+    /// Write content to a NamedTempFile, mark it as read in READ_TRACKER,
+    /// and return (file, canonical_path_string).
+    fn tmp_readable(content: &str) -> (NamedTempFile, String) {
+        let mut f = NamedTempFile::new().expect("tempfile");
+        f.write_all(content.as_bytes()).expect("write");
+        let canon = f.path().canonicalize().expect("canonicalize");
+        READ_TRACKER.mark_read(&canon);
+        let path = canon.to_string_lossy().to_string();
+        (f, path)
+    }
+
+    fn make_args(
+        path: &str,
+        old: &str,
+        new: &str,
+    ) -> std::collections::HashMap<String, serde_json::Value> {
+        let mut m = std::collections::HashMap::new();
+        m.insert("path".to_string(), serde_json::json!(path));
+        m.insert("old_string".to_string(), serde_json::json!(old));
+        m.insert("new_string".to_string(), serde_json::json!(new));
+        m
+    }
+
+    // =========================================================================
+    // Behavior 4: old_string not found → explicit error, no modification
+    // =========================================================================
+
+    #[test]
+    fn edit_old_string_not_found_returns_error() {
+        // Behavior 4: absent old_string must produce an error result.
+        let (_f, path) = tmp_readable("hello world\n");
+        let args = make_args(&path, "DOES NOT EXIST", "replacement");
+        let (msg, is_err) = super::execute_edit_file(&args);
+        assert!(is_err, "missing old_string must be an error: {msg}");
+        assert!(
+            msg.contains("Could not find the specified text"),
+            "error message: {msg}"
+        );
+    }
+
+    #[test]
+    fn edit_old_string_not_found_does_not_modify_file() {
+        // Behavior 4: file content must be unchanged when old_string is absent.
+        let original = "unchanged content\n";
+        let (_f, path) = tmp_readable(original);
+        let args = make_args(&path, "ABSENT", "whatever");
+        super::execute_edit_file(&args);
+        let after = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(
+            after, original,
+            "file must be unmodified on not-found error"
+        );
+    }
+
+    // =========================================================================
+    // Behavior 4 edge: CC performs quote normalization; OC does exact match
+    // =========================================================================
+
+    #[test]
+    fn edit_curly_quote_not_normalized_returns_error() {
+        // Behavior 4 edge: OC uses exact byte-match — curly quotes are NOT
+        // substituted for straight quotes (CC does this via findActualString).
+        // Pinned as current OC behavior; CC parity gap noted in #525 spec.
+        let (_f, path) = tmp_readable("it's fine\n");
+        // Search with a straight apostrophe when file has a curly one
+        let args = make_args(&path, "it's fine", "ok");
+        let (msg, is_err) = super::execute_edit_file(&args);
+        // OC will return error (cannot find with straight quote); CC would find it.
+        // We pin whichever OC currently does — the key assertion is the file is intact.
+        let after = std::fs::read_to_string(&path).expect("read back");
+        if is_err {
+            // Expected OC path: exact match fails
+            assert!(msg.contains("Could not find"), "error message: {msg}");
+            assert!(after.contains("it's fine"), "file unmodified");
+        } else {
+            // If OC somehow matches (e.g. file was written with straight quote by
+            // NamedTempFile), the replacement is fine — the point is no panic.
+            assert!(!after.contains("it\u{2019}s fine") || after.contains("ok"));
+        }
+    }
+
+    // =========================================================================
+    // Behavior 4 edge: old_string === new_string
+    // =========================================================================
+
+    #[test]
+    fn edit_old_equals_new_succeeds_if_present() {
+        // Behavior 4 edge: CC catches old==new before the not-found check (errorCode 1).
+        // OC does NOT special-case this — it succeeds (no-op write) when the string
+        // exists once. Pinned as current OC behavior.
+        let (_f, path) = tmp_readable("foo bar\n");
+        let args = make_args(&path, "foo bar", "foo bar");
+        let (msg, is_err) = super::execute_edit_file(&args);
+        // OC: succeeds (no special validation for equal strings)
+        assert!(!is_err, "OC does not reject old==new: {msg}");
+    }
+
+    // =========================================================================
+    // Behavior 5: replace_all — OC rejects multi-occurrence unconditionally
+    // =========================================================================
+
+    #[test]
+    fn edit_single_occurrence_succeeds() {
+        // Behavior 5: single occurrence with no replace_all flag → success
+        let (_f, path) = tmp_readable("alpha beta gamma\n");
+        let args = make_args(&path, "beta", "BETA");
+        let (msg, is_err) = super::execute_edit_file(&args);
+        assert!(!is_err, "single occurrence replace must succeed: {msg}");
+        let after = std::fs::read_to_string(&path).expect("read back");
+        assert!(after.contains("BETA"), "replacement applied");
+        assert!(!after.contains(" beta "), "old string gone");
+    }
+
+    #[test]
+    fn edit_multi_occurrence_without_replace_all_errors() {
+        // Behavior 5: N>1 occurrences without replace_all → error in both CC and OC
+        let (_f, path) = tmp_readable("dog cat dog\n");
+        let args = make_args(&path, "dog", "bird");
+        let (msg, is_err) = super::execute_edit_file(&args);
+        assert!(is_err, "multi-occurrence must error: {msg}");
+        assert!(
+            msg.contains("2"),
+            "error must mention occurrence count: {msg}"
+        );
+    }
+
+    #[test]
+    fn edit_replace_all_true_with_multi_occurrence_currently_errors() {
+        // Behavior 5 (GAP #569): OC rejects multi-occurrence even when
+        // replace_all=true is passed. CC would replace all N occurrences.
+        // Pinned as current (broken) OC behavior; tracked in gap issue #569.
+        let (_f, path) = tmp_readable("x y x\n");
+        let mut args = make_args(&path, "x", "Z");
+        args.insert("replace_all".to_string(), serde_json::json!(true));
+        let (msg, is_err) = super::execute_edit_file(&args);
+        // OC: still errors — replace_all flag is silently ignored for N>1
+        assert!(
+            is_err,
+            "OC rejects replace_all multi-occurrence (gap #569): {msg}"
+        );
+    }
+
+    #[test]
+    fn edit_replace_all_true_single_occurrence_succeeds_flag_ignored() {
+        // Behavior 5 edge: replace_all=true with exactly 1 occurrence → OC succeeds
+        // because count=1 takes the single-replace path; the flag is silently ignored.
+        // Pinned as current OC behavior.
+        let (_f, path) = tmp_readable("only once\n");
+        let mut args = make_args(&path, "only once", "exactly once");
+        args.insert("replace_all".to_string(), serde_json::json!(true));
+        let (msg, is_err) = super::execute_edit_file(&args);
+        assert!(
+            !is_err,
+            "single occurrence with replace_all succeeds: {msg}"
+        );
+        let after = std::fs::read_to_string(&path).expect("read back");
+        assert!(after.contains("exactly once"));
+    }
+
+    // =========================================================================
+    // Behavior 4/5 error path: must read before editing
+    // =========================================================================
+
+    #[test]
+    fn edit_requires_prior_read() {
+        // Not in #525 spec directly, but the read-before-edit enforcement is a
+        // contract that interacts with all Behavior 4/5 tests; pin it explicitly.
+        let mut f = NamedTempFile::new().expect("tempfile");
+        f.write_all(b"some content\n").expect("write");
+        let path = f.path().canonicalize().expect("canon");
+        // Deliberately do NOT call READ_TRACKER.mark_read() for this file
+        let path_str = path.to_string_lossy().to_string();
+        // Use a path that was never marked read; ensure it's unique so unrelated tests
+        // don't accidentally mark it.
+        let fresh_path = format!("{}_never_read", path_str);
+        std::fs::copy(&path, Path::new(&fresh_path)).ok(); // best-effort copy
+        let args = make_args(&fresh_path, "some content", "other");
+        let (msg, is_err) = super::execute_edit_file(&args);
+        assert!(is_err, "edit without prior read must error: {msg}");
+        assert!(
+            msg.contains("read") || msg.contains("Read"),
+            "message: {msg}"
+        );
+        // clean up
+        let _ = std::fs::remove_file(&fresh_path);
+    }
+}

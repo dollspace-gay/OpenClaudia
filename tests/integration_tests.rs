@@ -3423,12 +3423,8 @@ tracking:
 // with it. Added line range: ~3410-end.
 // ===========================================================================
 mod gated_dispatch_460 {
-    use openclaudia::permissions::{
-        PermissionDecision, PermissionManager, PermissionRule,
-    };
-    use openclaudia::tools::{
-        execute_tool_gated, ExecutionOutcome, FunctionCall, ToolCall,
-    };
+    use openclaudia::permissions::{PermissionDecision, PermissionManager, PermissionRule};
+    use openclaudia::tools::{execute_tool_gated, ExecutionOutcome, FunctionCall, ToolCall};
     use tempfile::TempDir;
 
     fn deny_bash_mgr() -> (PermissionManager, TempDir) {
@@ -3454,8 +3450,7 @@ mod gated_dispatch_460 {
             call_type: "function".to_string(),
             function: FunctionCall {
                 name: "bash".to_string(),
-                arguments: r#"{"command": "echo SIDE_EFFECT_THAT_SHOULD_NOT_PRINT"}"#
-                    .to_string(),
+                arguments: r#"{"command": "echo SIDE_EFFECT_THAT_SHOULD_NOT_PRINT"}"#.to_string(),
             },
         };
         let (mgr, _tmp) = deny_bash_mgr();
@@ -3478,9 +3473,7 @@ mod gated_dispatch_460 {
                 );
             }
             ExecutionOutcome::NeedsPrompt { tool, target, .. } => {
-                panic!(
-                    "expected Result(Denied) but got NeedsPrompt tool={tool} target={target}"
-                );
+                panic!("expected Result(Denied) but got NeedsPrompt tool={tool} target={target}");
             }
         }
     }

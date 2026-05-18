@@ -73,3 +73,115 @@ pub fn execute_write_file(args: &HashMap<String, Value>) -> (String, bool) {
         Err(e) => (format!("Failed to write file '{path}': {e}"), true),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use tempfile::TempDir;
+
+    fn make_args(path: &str, content: &str) -> HashMap<String, serde_json::Value> {
+        let mut m = HashMap::new();
+        m.insert("path".to_string(), serde_json::json!(path));
+        m.insert("content".to_string(), serde_json::json!(content));
+        m
+    }
+
+    // =========================================================================
+    // Behavior 6: write creates parent directories when missing
+    // =========================================================================
+
+    #[test]
+    fn write_creates_parent_directories_recursively() {
+        // Behavior 6: OC calls create_dir_all before writing, matching CC's
+        // mkdir-p semantics.
+        let dir = TempDir::new().expect("tempdir");
+        let deep = dir.path().join("a").join("b").join("c").join("file.txt");
+        let args = make_args(&deep.to_string_lossy(), "hello");
+        let (msg, is_err) = super::execute_write_file(&args);
+        assert!(!is_err, "deep path write must succeed: {msg}");
+        assert!(
+            std::fs::read_to_string(&deep).expect("read back") == "hello",
+            "content correct"
+        );
+    }
+
+    #[test]
+    fn write_success_message_contains_byte_count_and_path() {
+        // Behavior 6 output contract: "Successfully wrote {N} bytes to '{path}'"
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("out.txt");
+        let content = "abc";
+        let args = make_args(&path.to_string_lossy(), content);
+        let (msg, is_err) = super::execute_write_file(&args);
+        assert!(!is_err, "write should succeed: {msg}");
+        assert!(msg.contains("Successfully wrote"), "message: {msg}");
+        assert!(msg.contains("3 bytes"), "byte count: {msg}");
+    }
+
+    #[test]
+    fn write_parent_already_exists_is_idempotent() {
+        // Behavior 6 edge: create_dir_all is idempotent — no error when parent exists
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("file.txt");
+        // Write once
+        let args = make_args(&path.to_string_lossy(), "first");
+        let (_, is_err) = super::execute_write_file(&args);
+        assert!(!is_err, "first write must succeed");
+        // Write again (same parent, same path)
+        let args2 = make_args(&path.to_string_lossy(), "second");
+        let (msg2, is_err2) = super::execute_write_file(&args2);
+        assert!(!is_err2, "second write must succeed: {msg2}");
+        let content = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(content, "second", "content updated to second write");
+    }
+
+    #[test]
+    fn write_overwrites_existing_file() {
+        // Behavior 6: write is not append — existing content is replaced
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("existing.txt");
+        std::fs::write(&path, "old content").expect("setup");
+        let args = make_args(&path.to_string_lossy(), "new content");
+        let (msg, is_err) = super::execute_write_file(&args);
+        assert!(!is_err, "overwrite must succeed: {msg}");
+        let content = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(content, "new content");
+    }
+
+    #[test]
+    fn write_empty_content_succeeds() {
+        // Behavior 6 edge: empty string is valid content
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("empty.txt");
+        let args = make_args(&path.to_string_lossy(), "");
+        let (msg, is_err) = super::execute_write_file(&args);
+        assert!(!is_err, "empty content write must succeed: {msg}");
+        let content = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(content, "");
+    }
+
+    #[test]
+    fn write_missing_content_arg_returns_error() {
+        // Behavior 6 error path: missing required 'content' argument
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("x.txt");
+        let mut args = HashMap::new();
+        args.insert(
+            "path".to_string(),
+            serde_json::json!(path.to_string_lossy().as_ref()),
+        );
+        let (msg, is_err) = super::execute_write_file(&args);
+        assert!(is_err, "missing content must error: {msg}");
+        assert!(msg.contains("Missing 'content'"), "message: {msg}");
+    }
+
+    #[test]
+    fn write_missing_path_arg_returns_error() {
+        // Behavior 6 error path: missing required 'path' argument
+        let mut args = HashMap::new();
+        args.insert("content".to_string(), serde_json::json!("data"));
+        let (msg, is_err) = super::execute_write_file(&args);
+        assert!(is_err, "missing path must error: {msg}");
+        assert!(msg.contains("Missing 'path'"), "message: {msg}");
+    }
+}

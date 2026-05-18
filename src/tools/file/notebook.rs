@@ -144,10 +144,7 @@ pub fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
         match find_cell_by_id(cells, id) {
             Some(idx) => Some(idx),
             None => {
-                return (
-                    format!("No cell with id '{id}' found in notebook."),
-                    true,
-                );
+                return (format!("No cell with id '{id}' found in notebook."), true);
             }
         }
     } else {
@@ -267,8 +264,8 @@ pub fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
                         new_lines,
                         old_lines,
                     );
-                    let where_str = summary_index
-                        .map_or_else(|| target_desc.clone(), |idx| format!("{idx}"));
+                    let where_str =
+                        summary_index.map_or_else(|| target_desc.clone(), |idx| format!("{idx}"));
                     let action = match edit_mode {
                         "replace" => format!("Replaced cell {where_str} contents"),
                         "insert" => format!(
@@ -300,5 +297,366 @@ pub fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
             }
         }
         Err(e) => (format!("Failed to serialize notebook: {e}"), true),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::READ_TRACKER;
+    use super::{execute_notebook_edit, source_to_line_array};
+    use serde_json::{json, Value};
+    use std::collections::HashMap;
+    use std::io::Write as _;
+    use tempfile::NamedTempFile;
+
+    // =========================================================================
+    // source_to_line_array unit tests
+    // =========================================================================
+
+    #[test]
+    fn source_to_line_array_empty_yields_empty_array() {
+        let v = source_to_line_array("");
+        assert_eq!(v, json!([]));
+    }
+
+    #[test]
+    fn source_to_line_array_single_line_no_trailing_newline() {
+        let v = source_to_line_array("hello");
+        assert_eq!(v, json!(["hello"]));
+    }
+
+    #[test]
+    fn source_to_line_array_multiline_adds_newlines_to_non_last() {
+        let v = source_to_line_array("a\nb\nc");
+        // Lines "a" and "b" get \n appended; last line "c" does not.
+        assert_eq!(v, json!(["a\n", "b\n", "c"]));
+    }
+
+    // =========================================================================
+    // Helpers for notebook edit tests
+    // =========================================================================
+
+    /// Build a minimal valid .ipynb JSON with the given cells.
+    fn make_notebook(cells: Value) -> Value {
+        json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": cells
+        })
+    }
+
+    /// Write a notebook JSON to a NamedTempFile, mark it read in READ_TRACKER,
+    /// and return (file, canonical_path_string).
+    fn tmp_notebook(nb: &Value) -> (NamedTempFile, String) {
+        let mut f = NamedTempFile::new().expect("tempfile");
+        let text = serde_json::to_string_pretty(nb).expect("serialize");
+        f.write_all(text.as_bytes()).expect("write");
+        let canon = f.path().canonicalize().expect("canonicalize");
+        READ_TRACKER.mark_read(&canon);
+        (f, canon.to_string_lossy().to_string())
+    }
+
+    fn args_replace_by_id(path: &str, cell_id: &str, new_source: &str) -> HashMap<String, Value> {
+        let mut m = HashMap::new();
+        m.insert("notebook_path".to_string(), json!(path));
+        m.insert("cell_id".to_string(), json!(cell_id));
+        m.insert("new_source".to_string(), json!(new_source));
+        m.insert("edit_mode".to_string(), json!("replace"));
+        m
+    }
+
+    fn args_replace_by_number(
+        path: &str,
+        cell_number: u64,
+        new_source: &str,
+    ) -> HashMap<String, Value> {
+        let mut m = HashMap::new();
+        m.insert("notebook_path".to_string(), json!(path));
+        m.insert("cell_number".to_string(), json!(cell_number));
+        m.insert("new_source".to_string(), json!(new_source));
+        m.insert("edit_mode".to_string(), json!("replace"));
+        m
+    }
+
+    fn args_insert(
+        path: &str,
+        cell_id: Option<&str>,
+        cell_number: Option<u64>,
+        cell_type: &str,
+        new_source: &str,
+    ) -> HashMap<String, Value> {
+        let mut m = HashMap::new();
+        m.insert("notebook_path".to_string(), json!(path));
+        m.insert("cell_type".to_string(), json!(cell_type));
+        m.insert("new_source".to_string(), json!(new_source));
+        m.insert("edit_mode".to_string(), json!("insert"));
+        if let Some(id) = cell_id {
+            m.insert("cell_id".to_string(), json!(id));
+        }
+        if let Some(n) = cell_number {
+            m.insert("cell_number".to_string(), json!(n));
+        }
+        m
+    }
+
+    fn args_delete_by_id(path: &str, cell_id: &str) -> HashMap<String, Value> {
+        let mut m = HashMap::new();
+        m.insert("notebook_path".to_string(), json!(path));
+        m.insert("cell_id".to_string(), json!(cell_id));
+        m.insert("new_source".to_string(), json!(""));
+        m.insert("edit_mode".to_string(), json!("delete"));
+        m
+    }
+
+    /// Read the cells array back from a written notebook file.
+    fn read_cells(path: &str) -> Vec<Value> {
+        let text = std::fs::read_to_string(path).expect("read back");
+        let nb: Value = serde_json::from_str(&text).expect("parse");
+        nb["cells"].as_array().expect("cells array").clone()
+    }
+
+    // =========================================================================
+    // Behavior 7: replace by cell_id — primary lookup
+    // =========================================================================
+
+    #[test]
+    fn notebook_replace_by_cell_id_succeeds() {
+        // Behavior 7: cell found by id field → source updated
+        let nb = make_notebook(json!([
+            {"id": "cell-a", "cell_type": "code", "source": "old source", "metadata": {}, "outputs": [], "execution_count": null}
+        ]));
+        let (_f, path) = tmp_notebook(&nb);
+        let args = args_replace_by_id(&path, "cell-a", "new source");
+        let (msg, is_err) = execute_notebook_edit(&args);
+        assert!(!is_err, "replace by id must succeed: {msg}");
+        let cells = read_cells(&path);
+        let src: String = match &cells[0]["source"] {
+            Value::Array(arr) => arr.iter().filter_map(|v| v.as_str()).collect(),
+            Value::String(s) => s.clone(),
+            _ => panic!("unexpected source type"),
+        };
+        assert_eq!(src, "new source");
+    }
+
+    #[test]
+    fn notebook_replace_by_cell_id_not_found_returns_error() {
+        // Behavior 7 edge: cell_id not found and no cell_number fallback → error
+        let nb = make_notebook(json!([
+            {"id": "cell-a", "cell_type": "code", "source": "x", "metadata": {}, "outputs": [], "execution_count": null}
+        ]));
+        let (_f, path) = tmp_notebook(&nb);
+        let args = args_replace_by_id(&path, "nonexistent-id", "y");
+        let (msg, is_err) = execute_notebook_edit(&args);
+        assert!(is_err, "unknown cell_id must error: {msg}");
+        assert!(msg.contains("No cell with id"), "message: {msg}");
+    }
+
+    // =========================================================================
+    // Behavior 7: replace by cell_number — fallback when no cell_id given
+    // =========================================================================
+
+    #[test]
+    fn notebook_replace_by_cell_number_succeeds() {
+        // Behavior 7: OC exposes cell_number as a distinct parameter (not a
+        // fallback parse of cell_id as CC does). When cell_id is absent,
+        // cell_number is used directly as the 0-indexed position.
+        let nb = make_notebook(json!([
+            {"cell_type": "code", "source": "first", "metadata": {}, "outputs": [], "execution_count": null},
+            {"cell_type": "code", "source": "second", "metadata": {}, "outputs": [], "execution_count": null}
+        ]));
+        let (_f, path) = tmp_notebook(&nb);
+        let args = args_replace_by_number(&path, 1, "updated second");
+        let (msg, is_err) = execute_notebook_edit(&args);
+        assert!(!is_err, "replace by cell_number must succeed: {msg}");
+        let cells = read_cells(&path);
+        let src: String = match &cells[1]["source"] {
+            Value::Array(arr) => arr.iter().filter_map(|v| v.as_str()).collect(),
+            Value::String(s) => s.clone(),
+            _ => panic!("unexpected source type"),
+        };
+        assert!(src.contains("updated second"), "source updated: {src}");
+    }
+
+    #[test]
+    fn notebook_replace_without_cell_id_or_number_errors() {
+        // Behavior 7 edge: replace requires cell_id or cell_number
+        let nb = make_notebook(json!([
+            {"cell_type": "code", "source": "x", "metadata": {}, "outputs": [], "execution_count": null}
+        ]));
+        let (_f, path) = tmp_notebook(&nb);
+        let mut args = HashMap::new();
+        args.insert("notebook_path".to_string(), json!(&path));
+        args.insert("new_source".to_string(), json!("y"));
+        args.insert("edit_mode".to_string(), json!("replace"));
+        let (msg, is_err) = execute_notebook_edit(&args);
+        assert!(is_err, "replace without locator must error: {msg}");
+        assert!(msg.contains("replace requires"), "message: {msg}");
+    }
+
+    // =========================================================================
+    // Behavior 7: out-of-bounds replace → error (NOT silent promote to insert)
+    // =========================================================================
+
+    #[test]
+    fn notebook_replace_out_of_bounds_returns_error_not_insert() {
+        // Behavior 7 edge: index == cells.len() in OC returns out-of-bounds error.
+        // CC silently promotes to insert (line 372-376 of CC source).
+        // Pinned as current OC behavior.
+        let nb = make_notebook(json!([
+            {"cell_type": "code", "source": "only", "metadata": {}, "outputs": [], "execution_count": null}
+        ]));
+        let (_f, path) = tmp_notebook(&nb);
+        // cell_number = 1 but there is only 1 cell (index 0)
+        let args = args_replace_by_number(&path, 1, "oob");
+        let (msg, is_err) = execute_notebook_edit(&args);
+        assert!(
+            is_err,
+            "out-of-bounds replace must error in OC (CC parity gap — CC promotes to insert): {msg}"
+        );
+        assert!(msg.contains("out of bounds"), "message: {msg}");
+        // File must be unchanged
+        let cells = read_cells(&path);
+        assert_eq!(cells.len(), 1, "cell count unchanged");
+    }
+
+    // =========================================================================
+    // Behavior 7: code cell replace does NOT reset execution_count/outputs (OC gap)
+    // =========================================================================
+
+    #[test]
+    fn notebook_replace_code_cell_does_not_reset_outputs() {
+        // Behavior 7 edge (GAP): CC resets execution_count=null and outputs=[]
+        // on code-cell replace (CC source line 420-423). OC does NOT reset them.
+        // Pinned as current OC behavior; gap noted in #525 spec.
+        let nb = make_notebook(json!([
+            {
+                "id": "cell-x",
+                "cell_type": "code",
+                "source": "print('hello')",
+                "metadata": {},
+                "outputs": [{"output_type": "stream", "text": ["hello\n"]}],
+                "execution_count": 3
+            }
+        ]));
+        let (_f, path) = tmp_notebook(&nb);
+        let args = args_replace_by_id(&path, "cell-x", "print('world')");
+        let (msg, is_err) = execute_notebook_edit(&args);
+        assert!(!is_err, "replace must succeed: {msg}");
+        let cells = read_cells(&path);
+        // OC: execution_count and outputs are preserved (not reset to null/[])
+        // CC parity: CC would reset both. Pinned as current OC behavior.
+        assert!(
+            !cells[0]["outputs"].as_array().is_none_or(|a| a.is_empty()),
+            "OC does NOT clear outputs on replace (CC parity gap — CC clears them)"
+        );
+        assert!(
+            cells[0]["execution_count"] != Value::Null,
+            "OC does NOT reset execution_count on replace (CC parity gap)"
+        );
+    }
+
+    // =========================================================================
+    // Behavior 7: insert — no cell_id inserts at position 0
+    // =========================================================================
+
+    #[test]
+    fn notebook_insert_without_cell_id_inserts_at_position_zero() {
+        // Behavior 7 edge: omitting both cell_id and cell_number on insert → position 0
+        let nb = make_notebook(json!([
+            {"cell_type": "code", "source": "existing", "metadata": {}, "outputs": [], "execution_count": null}
+        ]));
+        let (_f, path) = tmp_notebook(&nb);
+        let args = args_insert(&path, None, None, "markdown", "# new first");
+        let (msg, is_err) = execute_notebook_edit(&args);
+        assert!(!is_err, "insert at 0 must succeed: {msg}");
+        let cells = read_cells(&path);
+        assert_eq!(cells.len(), 2, "cell count grew by 1");
+        let first_src: String = match &cells[0]["source"] {
+            Value::Array(arr) => arr.iter().filter_map(|v| v.as_str()).collect(),
+            Value::String(s) => s.clone(),
+            _ => panic!(),
+        };
+        assert!(first_src.contains("# new first"), "new cell at position 0");
+    }
+
+    #[test]
+    fn notebook_insert_after_cell_id_inserts_at_next_position() {
+        // Behavior 7: insert with cell_id means "insert AFTER" that cell
+        let nb = make_notebook(json!([
+            {"id": "first", "cell_type": "code", "source": "a", "metadata": {}, "outputs": [], "execution_count": null},
+            {"id": "second", "cell_type": "code", "source": "b", "metadata": {}, "outputs": [], "execution_count": null}
+        ]));
+        let (_f, path) = tmp_notebook(&nb);
+        let args = args_insert(&path, Some("first"), None, "markdown", "inserted");
+        let (msg, is_err) = execute_notebook_edit(&args);
+        assert!(!is_err, "insert after cell must succeed: {msg}");
+        let cells = read_cells(&path);
+        assert_eq!(cells.len(), 3, "cell count");
+        let mid_src: String = match &cells[1]["source"] {
+            Value::Array(arr) => arr.iter().filter_map(|v| v.as_str()).collect(),
+            Value::String(s) => s.clone(),
+            _ => panic!(),
+        };
+        assert!(mid_src.contains("inserted"), "inserted cell at index 1");
+    }
+
+    // =========================================================================
+    // Behavior 7: delete by cell_id
+    // =========================================================================
+
+    #[test]
+    fn notebook_delete_by_cell_id_removes_correct_cell() {
+        let nb = make_notebook(json!([
+            {"id": "keep", "cell_type": "code", "source": "keep me", "metadata": {}, "outputs": [], "execution_count": null},
+            {"id": "remove", "cell_type": "code", "source": "remove me", "metadata": {}, "outputs": [], "execution_count": null}
+        ]));
+        let (_f, path) = tmp_notebook(&nb);
+        let args = args_delete_by_id(&path, "remove");
+        let (msg, is_err) = execute_notebook_edit(&args);
+        assert!(!is_err, "delete must succeed: {msg}");
+        let cells = read_cells(&path);
+        assert_eq!(cells.len(), 1, "one cell remains");
+        let src: String = match &cells[0]["source"] {
+            Value::Array(arr) => arr.iter().filter_map(|v| v.as_str()).collect(),
+            Value::String(s) => s.clone(),
+            _ => panic!(),
+        };
+        assert!(src.contains("keep me"), "correct cell remains");
+    }
+
+    // =========================================================================
+    // Behavior 7 / error path: invalid JSON notebook
+    // =========================================================================
+
+    #[test]
+    fn notebook_invalid_json_returns_error() {
+        // Behavior 7 error path: invalid JSON → error (both CC and OC agree)
+        let mut f = NamedTempFile::new().expect("tempfile");
+        f.write_all(b"not valid json {{{{").expect("write");
+        let canon = f.path().canonicalize().expect("canon");
+        READ_TRACKER.mark_read(&canon);
+        let path = canon.to_string_lossy().to_string();
+        let args = args_replace_by_number(&path, 0, "x");
+        let (msg, is_err) = execute_notebook_edit(&args);
+        assert!(is_err, "invalid JSON must error: {msg}");
+        assert!(msg.contains("Failed to parse notebook"), "message: {msg}");
+    }
+
+    // =========================================================================
+    // Behavior 7 / error path: invalid edit_mode
+    // =========================================================================
+
+    #[test]
+    fn notebook_invalid_edit_mode_returns_error() {
+        let nb = make_notebook(json!([]));
+        let (_f, path) = tmp_notebook(&nb);
+        let mut args = HashMap::new();
+        args.insert("notebook_path".to_string(), json!(&path));
+        args.insert("new_source".to_string(), json!("x"));
+        args.insert("edit_mode".to_string(), json!("upsert"));
+        let (msg, is_err) = execute_notebook_edit(&args);
+        assert!(is_err, "invalid edit_mode must error: {msg}");
+        assert!(msg.contains("Invalid edit_mode"), "message: {msg}");
     }
 }
