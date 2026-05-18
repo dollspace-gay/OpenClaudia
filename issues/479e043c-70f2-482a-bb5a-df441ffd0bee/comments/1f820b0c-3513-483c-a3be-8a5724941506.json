@@ -1,0 +1,10 @@
+{
+  "uuid": "1f820b0c-3513-483c-a3be-8a5724941506",
+  "issue_uuid": "479e043c-70f2-482a-bb5a-df441ffd0bee",
+  "author": "lOrm",
+  "content": "Delivered:\n- tests/pipeline_integration.rs: 10 tests (B1 retry loop via wiremock, B3 SSE parse/accumulation via pure-fn + wiremock)\n- src/pipeline.rs: 8 new tests (B2 thinking budget, B5 needs_followup, B6 timeout pin, B1 stream flag, B3 tool permission)\n- src/proxy.rs: 11 new tests (normalize_base_url, determine_provider, extract_usage_from_sse_event x4, SSE timeout const, ProxyError HTTP status, strip_cache_control_ttl x2)\n- src/session/mod.rs: 9 new tests (TokenUsage total/accumulate, record_actual_usage, turn numbers, session context, idempotent file, start_initializer, VDD store/take)\n- src/session/task.rs: 8 new tests (status display, new_task_starts_pending, single_in_progress invariant, nonexistent update, delete returns Ok(None), cycle detection, reverse blocked_by sync, format_detail)\nTotal: 46 new tests across 5 files.\ncargo build: PASS. cargo test --lib: 1136 passed. pipeline_integration: 10 passed. clippy new test code: CLEAN. cargo fmt: CLEAN.",
+  "created_at": "2026-05-18T17:47:08.038789726Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAEdzIaUSuW8oA0VR65yrrP0vgq+XKWO6u6UK820EX9yBgEthNuOvF77veoVmfpswphp6T5Yv19Bbz25wx/eHPBw=="
+}
