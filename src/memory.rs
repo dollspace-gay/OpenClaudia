@@ -1554,4 +1554,210 @@ mod tests {
         assert!(formatted.contains("#50"));
         assert!(formatted.contains("</recent_sessions>"));
     }
+
+    // -----------------------------------------------------------------------
+    // B4 — MemoryDb SQLite round-trips (spec §B4, crosslink #548)
+    // Each sub-test uses a fresh tempfile DB to stay isolated.
+    // -----------------------------------------------------------------------
+
+    /// B4: fresh DB migrates to schema_version = 3 and pre-populates the
+    /// three core memory sections (persona, project_info, user_preferences).
+    #[test]
+    fn b4_schema_migration_reaches_v3_with_core_sections() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+
+        let core = db.get_core_memory().unwrap();
+        // Exactly three pre-populated sections.
+        assert_eq!(core.len(), 3);
+        let sections: Vec<&str> = core.iter().map(|c| c.section.as_str()).collect();
+        assert!(sections.contains(&SECTION_PERSONA));
+        assert!(sections.contains(&SECTION_PROJECT_INFO));
+        assert!(sections.contains(&SECTION_USER_PREFS));
+
+        // Sentinel placeholder text is present (not empty).
+        for c in &core {
+            assert!(
+                !c.content.trim().is_empty(),
+                "section '{}' must have placeholder text after migration",
+                c.section
+            );
+        }
+    }
+
+    /// B4: `MemoryDb::open` accepts an explicit `path` argument — not a
+    /// hardcoded location.  Two separate DBs at different paths are
+    /// fully independent (no cross-contamination).
+    #[test]
+    fn b4_open_with_explicit_path_is_isolated() {
+        let dir = tempdir().unwrap();
+        let db_a = MemoryDb::open(&dir.path().join("a.db")).unwrap();
+        let db_b = MemoryDb::open(&dir.path().join("b.db")).unwrap();
+
+        db_a.memory_save("only in A", &[]).unwrap();
+
+        let results_b = db_b.memory_search("only in A", 10).unwrap();
+        assert!(
+            results_b.is_empty(),
+            "db_b must not see records written to db_a"
+        );
+    }
+
+    /// B4: `archival_memory` FTS5 round-trip — save → search by content word.
+    #[test]
+    fn b4_archival_memory_fts_round_trip() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+
+        let id = db
+            .memory_save(
+                "OpenClaudia uses FTS5 for full-text search",
+                &["fts".into(), "sqlite".into()],
+            )
+            .unwrap();
+        assert!(id > 0);
+
+        // Search by a word that appears in the content.
+        let hits = db.memory_search("FTS5", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, id);
+        assert!(hits[0].tags.contains(&"fts".to_string()));
+        assert!(hits[0].tags.contains(&"sqlite".to_string()));
+    }
+
+    /// B4: `RecentSession` CRUD — save → retrieve, field mapping preserved.
+    #[test]
+    fn b4_recent_session_round_trip() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+
+        let id = db
+            .save_session_summary(
+                "sess-b4",
+                "Refactored memory module",
+                &["src/memory.rs".into(), "src/lib.rs".into()],
+                &["#548".into()],
+                "2026-05-18 00:00:00",
+            )
+            .unwrap();
+        assert!(id > 0);
+
+        let sessions = db.get_recent_sessions(5).unwrap();
+        assert_eq!(sessions.len(), 1);
+        let s = &sessions[0];
+        assert_eq!(s.session_id, "sess-b4");
+        assert_eq!(s.summary, "Refactored memory module");
+        assert_eq!(s.files_modified, vec!["src/memory.rs", "src/lib.rs"]);
+        assert_eq!(s.issues_worked, vec!["#548"]);
+    }
+
+    /// B4: `CoreMemory` CRUD — upsert replaces content, section key stable.
+    #[test]
+    fn b4_core_memory_upsert_round_trip() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+
+        db.update_core_memory(SECTION_PERSONA, "I am OpenClaudia test persona")
+            .unwrap();
+        let got = db
+            .get_core_memory_section(SECTION_PERSONA)
+            .unwrap()
+            .unwrap();
+        assert_eq!(got.content, "I am OpenClaudia test persona");
+
+        // Upsert again — section count stays at 3, not 4.
+        db.update_core_memory(SECTION_PERSONA, "Updated persona")
+            .unwrap();
+        let all = db.get_core_memory().unwrap();
+        assert_eq!(all.len(), 3);
+        let updated = all.iter().find(|c| c.section == SECTION_PERSONA).unwrap();
+        assert_eq!(updated.content, "Updated persona");
+    }
+
+    /// B4: `CodingPattern` CRUD — save increments confidence on duplicate.
+    #[test]
+    fn b4_coding_pattern_confidence_increments_on_duplicate() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+
+        let id1 = db
+            .save_coding_pattern("src/*.rs", "convention", "Use thiserror for library errors")
+            .unwrap();
+        let id2 = db
+            .save_coding_pattern("src/*.rs", "convention", "Use thiserror for library errors")
+            .unwrap();
+        // Same row — id unchanged.
+        assert_eq!(id1, id2);
+
+        let patterns = db.get_patterns_for_file("src/memory.rs").unwrap();
+        let p = patterns
+            .iter()
+            .find(|p| p.description.contains("thiserror"))
+            .unwrap();
+        // confidence starts at 1 (INSERT), increments to 2 on second call.
+        assert_eq!(p.confidence, 2);
+    }
+
+    /// B4: memory_delete removes the row; subsequent get returns None.
+    #[test]
+    fn b4_archival_memory_delete_removes_row() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+
+        let id = db.memory_save("to be deleted", &[]).unwrap();
+        assert!(db.memory_get(id).unwrap().is_some());
+
+        let deleted = db.memory_delete(id).unwrap();
+        assert!(deleted);
+        assert!(db.memory_get(id).unwrap().is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // B6 — Missing entrypoint returns None, not an error (spec §B6)
+    // These tests live in entrypoint.rs for load_entrypoint; here we pin
+    // the MemoryDb side: open() on a fresh path succeeds (never errors on
+    // missing file — SQLite creates it).
+    // -----------------------------------------------------------------------
+
+    /// B6 (MemoryDb side): opening a DB at a non-existent path creates it
+    /// rather than returning an error.  Callers get a valid DB, not None.
+    #[test]
+    fn b6_open_new_path_creates_db_without_error() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("brand_new.db");
+        assert!(!path.exists());
+
+        let result = MemoryDb::open(&path);
+        assert!(result.is_ok(), "open on fresh path must succeed");
+        assert!(path.exists(), "DB file must be created");
+    }
+
+    /// B6: `open_for_project` creates the `.openclaudia/` directory if absent.
+    #[test]
+    fn b6_open_for_project_creates_directory() {
+        let dir = tempdir().unwrap();
+        let project_dir = dir.path().join("myproject");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        let result = MemoryDb::open_for_project(&project_dir);
+        assert!(result.is_ok());
+        assert!(project_dir.join(".openclaudia").join("memory.db").exists());
+    }
+
+    // -----------------------------------------------------------------------
+    // B4 extra: escape_fts5_phrase + memory_search with special characters
+    // -----------------------------------------------------------------------
+
+    /// Pin B4: FTS5 search with query that contains FTS5 operator keywords
+    /// does not panic or return an error — escape_fts5_phrase neutralizes them.
+    #[test]
+    fn b4_fts_search_with_operator_keywords_does_not_error() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+        db.memory_save("Some neutral content", &[]).unwrap();
+
+        // "AND", "OR", "NOT" are FTS5 operators — escaping wraps them in a phrase.
+        let result = db.memory_search("AND OR NOT NEAR", 5);
+        assert!(result.is_ok(), "FTS5 operator query must not error");
+    }
 }

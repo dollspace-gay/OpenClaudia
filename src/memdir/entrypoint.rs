@@ -373,4 +373,278 @@ mod tests {
         // And the truncated content must be a prefix of the original.
         assert!(s.starts_with(&out));
     }
+
+    // -----------------------------------------------------------------------
+    // B3 — UTF-8 boundary tests: 2-byte sequences (spec §B3 "Missing tests")
+    // -----------------------------------------------------------------------
+
+    /// Pin B3: 2-byte codepoint (U+00E9, `é`) straddles the cut point.
+    /// A naive slice at `max_bytes` would cut byte 1 of 2 and produce
+    /// invalid UTF-8. `utf8_safe_truncate` must retreat to the char boundary.
+    #[test]
+    fn utf8_safe_truncate_two_byte_sequence_boundary() {
+        // Build a string: 24_999 ASCII 'a' chars (1 byte each) followed by
+        // `é` (U+00E9, 2 bytes). Total = 25_001 bytes.  A naive slice at
+        // 25_000 would land between the two bytes of `é`.
+        let mut s = "a".repeat(24_999);
+        s.push('é'); // 2-byte codepoint at offset 24_999..25_001
+        assert_eq!(s.len(), 25_001);
+
+        let out = utf8_safe_truncate(&s, MAX_ENTRYPOINT_BYTES);
+
+        // Result must be valid UTF-8 (implicit — it is a String).
+        // Result must not exceed the cap.
+        assert!(out.len() <= MAX_ENTRYPOINT_BYTES);
+        // The multi-byte codepoint must be dropped whole (not split).
+        assert!(!out.contains('é'));
+        // All the ASCII prefix that fits must be present.
+        assert_eq!(out.len(), 24_999);
+    }
+
+    /// Pin B3: truncate at exactly the byte after the FIRST byte of a
+    /// 2-byte sequence — same retreat requirement, different alignment.
+    #[test]
+    fn utf8_safe_truncate_two_byte_sequence_internal_offset() {
+        // Two `é` at positions 0..1 (bytes 0-1), then 2-3.
+        // Ask to cut at byte 1 (inside the first codepoint).
+        let s = "éé"; // 4 bytes total
+        let out = utf8_safe_truncate(s, 1);
+        // byte 1 is not a char boundary for `é`, so `end` retreats to 0.
+        assert_eq!(out, "");
+    }
+
+    // -----------------------------------------------------------------------
+    // B3 — UTF-8 boundary tests: 3-byte sequences (spec §B3 "Missing tests")
+    // -----------------------------------------------------------------------
+
+    /// Pin B3: 3-byte codepoint (U+3042, `あ`) straddles the cut point.
+    /// 24_999 bytes of ASCII + one `あ` (3 bytes) = 25_002 bytes total.
+    /// Naive slice at 25_000 lands byte 2 of 3; retreat must drop the whole
+    /// codepoint.
+    #[test]
+    fn utf8_safe_truncate_three_byte_sequence_boundary() {
+        let mut s = "a".repeat(24_999);
+        s.push('あ'); // U+3042, 3 bytes at offset 24_999..25_002
+        assert_eq!(s.len(), 25_002);
+
+        let out = utf8_safe_truncate(&s, MAX_ENTRYPOINT_BYTES);
+
+        assert!(out.len() <= MAX_ENTRYPOINT_BYTES);
+        assert!(!out.contains('あ'));
+        assert_eq!(out.len(), 24_999);
+    }
+
+    /// Pin B3: cut inside the SECOND byte of a 3-byte sequence.
+    #[test]
+    fn utf8_safe_truncate_three_byte_sequence_internal_offset() {
+        // `あ` = 3 bytes (0xE3 0x81 0x82). Cut at byte 2 (between byte 1
+        // and byte 2 of the codepoint) — must retreat to byte 0.
+        let s = "あX"; // 4 bytes: [0xE3,0x81,0x82, 0x58]
+        let out = utf8_safe_truncate(s, 2);
+        assert_eq!(out, "");
+    }
+
+    // -----------------------------------------------------------------------
+    // B2 — Divergence pin: CC trims before measuring; OC uses .lines() on
+    // the raw string.  Whitespace-only files illustrate the gap.
+    // -----------------------------------------------------------------------
+
+    /// Pin B2 divergence (spec §B2 "OC gap"): a file consisting entirely of
+    /// whitespace has a `.lines()` count of 0 in OC (Rust `.lines()` yields
+    /// no items for all-whitespace input that has no `\n`, and for "\n" etc.
+    /// it yields empty string slices, but the *count* stays 0 for pure spaces).
+    /// After CC's `.trim()` the string is empty → 0 lines → no truncation.
+    /// OC's result must also be no truncation.  Both agree here; the divergence
+    /// is in the *caller* deciding whether to treat empty-content as absent.
+    #[test]
+    fn whitespace_only_file_no_truncation() {
+        // OC's truncate_content on whitespace-only: lines().count() == 0,
+        // byte count well under 25_000 → EntrypointTruncation::None.
+        let raw = "   \n  \n\t\n   ";
+        let (out, kind) = truncate_content(raw);
+        assert_eq!(kind, EntrypointTruncation::None);
+        // Content is returned verbatim (no suffix appended).
+        assert_eq!(out, raw);
+    }
+
+    // -----------------------------------------------------------------------
+    // B2 — Trailing-newline line count pin (spec §B2 edge cases)
+    // -----------------------------------------------------------------------
+
+    /// Pin B2: exactly 200 content lines followed by a single trailing `\n`.
+    /// Rust `.lines()` does NOT yield a trailing empty string for a terminal
+    /// newline, so `line_count` == 200 → no truncation (boundary is `> 200`).
+    #[test]
+    fn trailing_newline_at_exact_limit_is_not_truncated() {
+        // 200 non-empty lines, then a trailing newline.
+        let mut raw: String = (0..MAX_ENTRYPOINT_LINES)
+            .map(|i| format!("- entry {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        raw.push('\n'); // trailing newline — Rust .lines() absorbs this
+
+        let (_, kind) = truncate_content(&raw);
+        // OC must NOT truncate: .lines() on "…\n" yields exactly 200 items.
+        assert_eq!(kind, EntrypointTruncation::None);
+    }
+
+    /// Pin B2: 201 content lines, trailing newline.  Must trigger
+    /// `EntrypointTruncation::Lines` and keep only the first 200.
+    #[test]
+    fn trailing_newline_one_over_limit_truncates() {
+        let mut raw: String = (0..MAX_ENTRYPOINT_LINES + 1)
+            .map(|i| format!("- entry {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        raw.push('\n');
+
+        let (out, kind) = truncate_content(&raw);
+        assert_eq!(kind, EntrypointTruncation::Lines);
+        assert!(out.contains("truncated"));
+        // Entry 200 (the 201st, 0-indexed) must be absent.
+        assert!(!out.contains(&format!("- entry {MAX_ENTRYPOINT_LINES}")));
+    }
+
+    // -----------------------------------------------------------------------
+    // B1 — HOME-unset: third candidate silently omitted (spec §B1)
+    // -----------------------------------------------------------------------
+
+    /// Pin B1: when HOME is unset, `discovery_candidates` returns only 2
+    /// paths (cwd/MEMORY.md and cwd/.openclaudia/MEMORY.md); the function
+    /// still succeeds if one of those exists.
+    #[test]
+    fn load_with_home_unset_still_finds_root_memory() {
+        let _lock = env_lock();
+        let tmp = TempDir::new().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::remove_var("HOME");
+        }
+
+        std::fs::write(tmp.path().join("MEMORY.md"), "# home-unset test").unwrap();
+
+        let loaded = load_entrypoint(tmp.path());
+        // Must succeed even without HOME.
+        assert!(loaded.is_some());
+        assert_eq!(loaded.unwrap().content.trim(), "# home-unset test");
+
+        unsafe {
+            match prev_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // B1 — Empty file returns Some (not None) (spec §B1 edge cases)
+    // -----------------------------------------------------------------------
+
+    /// Pin B1: an empty MEMORY.md returns `Some(EntrypointFile { content: "" })`
+    /// — empty is NOT the same as missing.  Callers (not load_entrypoint) decide
+    /// whether to treat empty content as absent (CC does via `.trim()` check).
+    #[test]
+    fn empty_file_returns_some_not_none() {
+        let _lock = env_lock();
+        let tmp = TempDir::new().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        std::fs::write(tmp.path().join("MEMORY.md"), "").unwrap();
+
+        let loaded = load_entrypoint(tmp.path());
+        assert!(
+            loaded.is_some(),
+            "empty file must return Some, not None (B6 OC gap)"
+        );
+        assert_eq!(loaded.unwrap().content, "");
+
+        unsafe {
+            match prev_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // B1 — user-global fallback: ~/.openclaudia/MEMORY.md (spec §B1)
+    // -----------------------------------------------------------------------
+
+    /// Pin B1: when neither cwd/MEMORY.md nor cwd/.openclaudia/MEMORY.md exist,
+    /// load_entrypoint falls through to HOME/.openclaudia/MEMORY.md.
+    #[test]
+    fn load_falls_back_to_home_openclaudia() {
+        let _lock = env_lock();
+        let tmp = TempDir::new().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        // Create only the home-level fallback, not cwd/* or cwd/.openclaudia/*.
+        let home_oc = tmp.path().join(".openclaudia");
+        std::fs::create_dir_all(&home_oc).unwrap();
+        std::fs::write(home_oc.join("MEMORY.md"), "# global fallback").unwrap();
+
+        // Use a separate cwd dir so it's clean.
+        let cwd_tmp = TempDir::new().unwrap();
+        let loaded = load_entrypoint(cwd_tmp.path());
+        assert!(loaded.is_some(), "home-level fallback must be found");
+        assert_eq!(loaded.unwrap().content.trim(), "# global fallback");
+
+        unsafe {
+            match prev_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // B3 — Newline-vs-char-boundary divergence pin (spec §B3 key divergence)
+    // -----------------------------------------------------------------------
+
+    /// Pin B3 divergence: OC uses char-boundary truncation (not last-`\n`
+    /// truncation like CC). Construct a string where a `\n` falls BEFORE
+    /// byte 25_000 but the char boundary falls AFTER that `\n`.  OC cuts at
+    /// the char boundary (may include a partial line); CC cuts at the `\n`.
+    /// This test pins OC's CURRENT behavior without asserting CC is wrong.
+    #[test]
+    fn byte_truncation_cuts_at_char_boundary_not_newline() {
+        // 24_998 'a' chars (ASCII), then '\n' at byte 24_998, then 'あ'
+        // (3 bytes: 24_999..25_002). Byte cap is 25_000.
+        // - CC: lastIndexOf('\n', 25000) → 24_998 → cuts before `\n`.
+        // - OC: char boundary walk from 25_000 → 24_999 is not a boundary
+        //   (inside 'あ'), 24_998 is a boundary ('\n') → cuts at 24_998.
+        // Both cut at 24_998 here (the `\n`). But the 3-byte char straddles
+        // 24_999..25_001, so both agree on this exact placement.
+        //
+        // To SHOW the divergence we need the last `\n` strictly BEFORE the
+        // last valid char boundary.  Use: (24_996 'a') + '\n' + 'a'
+        // (24_998 bytes total up to here) + 'あ' (25_001 total).
+        // Cap = 25_000: last `\n` at 24_997; char boundary walk from 25_000
+        // retreats to 24_999 (inside 'あ') → 24_998 → also 'a' boundary.
+        // So OC cuts at byte 24_998 (includes the 'a' after the `\n`);
+        // CC cuts at byte 24_997 (before the trailing 'a').
+        let mut s = "a".repeat(24_996);
+        s.push('\n'); // byte 24_996
+        s.push('a'); // byte 24_997
+        s.push('あ'); // bytes 24_998..25_001
+        assert_eq!(s.len(), 25_001);
+
+        let out = utf8_safe_truncate(&s, MAX_ENTRYPOINT_BYTES);
+
+        // OC must cut at a char boundary ≤ 25_000 and ≥ 0.
+        assert!(out.len() <= MAX_ENTRYPOINT_BYTES);
+        assert!(std::str::from_utf8(out.as_bytes()).is_ok());
+        // OC includes the 'a' at byte 24_997 (char boundary at 24_998).
+        // The CJK char 'あ' must be absent.
+        assert!(!out.contains('あ'));
+        // OC cuts at byte 24_998: the single 'a' after the newline IS present.
+        // (CC would cut at 24_997 and exclude it.)  Pin OC's behavior:
+        assert_eq!(out.len(), 24_998, "OC cuts at char boundary 24_998");
+    }
 }

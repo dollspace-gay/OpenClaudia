@@ -662,3 +662,462 @@ mod tests {
         assert_eq!(result, CheckResult::Allowed);
     }
 }
+
+/// Phase 2 spec-pinning tests for issue #546.
+///
+/// These tests pin the CURRENT behaviour of `PermissionManager` against
+/// the Phase 1 spec extracted in crosslink #531. They do **not** fix
+/// bugs — they document divergences from CC so that regressions are
+/// caught and so that each gap issue (#570, #572, #576, #581, #586)
+/// has an explicit, labelled test.
+///
+/// Security-critical divergences are marked `// SECURITY: #<issue>`.
+/// Denial paths are the dominant test style, matching the permission
+/// system's purpose.
+#[cfg(test)]
+mod phase2_spec_pins {
+    use super::*;
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    // ── helpers ───────────────────────────────────────────────────────────
+
+    fn enabled(default_allow: Vec<&str>) -> (PermissionManager, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("perms.json");
+        let mgr = PermissionManager::new(
+            &path,
+            true,
+            default_allow.into_iter().map(str::to_string).collect(),
+        );
+        (mgr, dir)
+    }
+
+    fn disabled() -> PermissionManager {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("perms.json");
+        PermissionManager::new(path, false, vec![])
+    }
+
+    // ── B1 · Check order: always-allow → session → default_allow → NeedsPrompt ─
+
+    /// B1-allow-1: persisted always-allow fires before every other tier.
+    #[test]
+    fn b1_persisted_always_allow_beats_session_deny() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("perms.json");
+        let mut mgr = PermissionManager::new(&path, true, vec![]);
+
+        mgr.add_always_allow("Edit", "src/**");
+        mgr.add_session_rule(PermissionRule {
+            tool: "Edit".to_string(),
+            pattern: "src/**".to_string(),
+            decision: PermissionDecision::Deny,
+        });
+
+        // Spec §B1: persisted always-allow is step 1 — session deny is step 2.
+        // Result MUST be Allowed.
+        let r = mgr.check("edit_file", &json!({"path": "src/main.rs"}));
+        assert_eq!(
+            r,
+            CheckResult::Allowed,
+            "B1: persisted always-allow must beat session deny"
+        );
+    }
+
+    /// B1-deny-1: session Deny fires before default_allow.
+    #[test]
+    fn b1_session_deny_beats_default_allow() {
+        let (mut mgr, _dir) = enabled(vec!["rm **"]);
+        mgr.add_session_rule(PermissionRule {
+            tool: "Bash".to_string(),
+            pattern: "rm **".to_string(),
+            decision: PermissionDecision::Deny,
+        });
+
+        // default_allow has "rm **" but session deny fires first (step 2 vs step 3).
+        let r = mgr.check("bash", &json!({"command": "rm -rf /tmp/foo"}));
+        assert!(
+            matches!(r, CheckResult::Denied(_)),
+            "B1: session Deny must fire before default_allow; got {r:?}"
+        );
+    }
+
+    /// B1-deny-2: OC has NO pre-allow deny tier (gap vs CC alwaysDenyRules).
+    /// A pattern that would be a CC alwaysDenyRule can only be expressed in OC
+    /// as a session Deny. Without that session rule, default_allow wins.
+    /// Documents the gap from spec §B1 "Security divergence".
+    #[test]
+    fn b1_gap_no_pre_allow_deny_tier_default_allow_wins() {
+        // Allow all bash commands via default_allow — no session deny rule.
+        let (mgr, _dir) = enabled(vec!["**"]);
+
+        // CC could have alwaysDenyRules that fire before step 2a allow lookup.
+        // OC cannot replicate that without a session Deny rule.
+        // Current OC behaviour: Allowed (default_allow step 3 fires).
+        // A future pre-allow deny tier (parity with CC) would return Denied here.
+        let r = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        assert_eq!(
+            r,
+            CheckResult::Allowed,
+            "B1 gap doc: without a session Deny, OC cannot short-circuit before allow lookup"
+        );
+    }
+
+    /// B1-deny-3: empty default_allow with no rules → NeedsPrompt (deny-by-default).
+    #[test]
+    fn b1_empty_default_allow_yields_needs_prompt() {
+        let (mgr, _dir) = enabled(vec![]);
+        let r = mgr.check("bash", &json!({"command": "ls"}));
+        assert!(
+            matches!(r, CheckResult::NeedsPrompt { .. }),
+            "B1: empty default_allow must produce NeedsPrompt, got {r:?}"
+        );
+    }
+
+    // ── B2 · Invalid glob logs warning and is skipped (no panic) ──────────
+
+    /// B2-deny-1: an invalid glob in default_allow never matches — the guarded
+    /// call falls through to NeedsPrompt rather than being auto-allowed.
+    #[test]
+    fn b2_invalid_glob_in_default_allow_never_matches() {
+        // "[unclosed" is an invalid regex that glob_to_regex_cached will fail to compile.
+        let (mgr, _dir) = enabled(vec!["[unclosed"]);
+
+        let r = mgr.check("bash", &json!({"command": "anything"}));
+        // Must NOT be Allowed — invalid pattern must be skipped, not treated as allow-all.
+        assert!(
+            matches!(r, CheckResult::NeedsPrompt { .. }),
+            "B2: invalid glob must fall through to NeedsPrompt, got {r:?}"
+        );
+    }
+
+    /// B2-deny-2: empty-string glob matches only empty target (bash with no command).
+    #[test]
+    fn b2_empty_glob_matches_only_empty_target() {
+        let (mgr, _dir) = enabled(vec![""]);
+
+        // Non-empty bash command must NOT be allowed by the empty-string pattern.
+        let r = mgr.check("bash", &json!({"command": "ls"}));
+        assert!(
+            matches!(r, CheckResult::NeedsPrompt { .. }),
+            "B2: empty glob must not match a non-empty bash command"
+        );
+
+        // Bash with absent command key → target is "" → the empty glob matches.
+        let r_empty = mgr.check("bash", &json!({}));
+        assert_eq!(
+            r_empty,
+            CheckResult::Allowed,
+            "B2: empty glob must match an empty (absent) command target"
+        );
+    }
+
+    /// B2-deny-3: `*` (single star) does NOT match a target containing `/`.
+    /// This is the documented OC vs CC security boundary (gap #576).
+    #[test]
+    fn b2_single_star_does_not_match_slash() {
+        let (mgr, _dir) = enabled(vec!["*"]);
+
+        // "rm -rf /" contains a `/` — OC `*` → `[^/]*` which stops at `/`.
+        // SECURITY: #576 — CC `*` → `.*` which WOULD match this. OC is safer here.
+        let r = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        assert!(
+            matches!(r, CheckResult::NeedsPrompt { .. }),
+            "B2/B6 #576: single-star must not allow commands containing '/'; got {r:?}"
+        );
+
+        // A command without any `/` IS matched by `*`.
+        let r_ok = mgr.check("bash", &json!({"command": "ls"}));
+        assert_eq!(
+            r_ok,
+            CheckResult::Allowed,
+            "B2: single-star must allow slash-free commands"
+        );
+    }
+
+    // ── B3 · unrestricted() bypasses ALL checks ────────────────────────────
+
+    /// B3-deny-1 (SECURITY: #586): unrestricted() allows destructive bash commands.
+    /// CC bypassPermissions still enforces step 1g safetyCheck; OC does not.
+    #[test]
+    fn b3_unrestricted_allows_destructive_bash() {
+        let mgr = PermissionManager::unrestricted();
+        // SECURITY: #586 — CC would still run safetyCheck (step 1g) here.
+        // OC short-circuits at enabled=false before any check.
+        let r = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        assert_eq!(
+            r,
+            CheckResult::Allowed,
+            "B3 SECURITY #586: unrestricted() currently allows rm -rf / (CC would deny via safetyCheck)"
+        );
+    }
+
+    /// B3-deny-2 (SECURITY: #586): unrestricted() allows writes to `.git/config`.
+    /// CC's bypassPermissions mode still blocks .git/ writes via step 1g.
+    #[test]
+    fn b3_unrestricted_allows_git_config_write() {
+        let mgr = PermissionManager::unrestricted();
+        // SECURITY: #586 — CC bypassPermissions denies .git/config edits via safetyCheck.
+        // OC unrestricted() is a superset bypass; no safety-path check exists.
+        let r = mgr.check("edit_file", &json!({"path": ".git/config"}));
+        assert_eq!(
+            r,
+            CheckResult::Allowed,
+            "B3 SECURITY #586: unrestricted() must currently return Allowed for .git/config (documents gap)"
+        );
+    }
+
+    /// B3-deny-3 (SECURITY: #586): unrestricted() allows writes to `.claude/settings.json`.
+    #[test]
+    fn b3_unrestricted_allows_claude_settings_write() {
+        let mgr = PermissionManager::unrestricted();
+        // SECURITY: #586
+        let r = mgr.check("write_file", &json!({"path": ".claude/settings.json"}));
+        assert_eq!(
+            r,
+            CheckResult::Allowed,
+            "B3 SECURITY #586: unrestricted() must currently return Allowed for .claude/settings.json"
+        );
+    }
+
+    /// B3-deny-4 (SECURITY: #586): dangerously_disable_sandbox check in enabled mode
+    /// is unreachable via unrestricted() — the short-circuit fires first.
+    #[test]
+    fn b3_unrestricted_bypasses_sandbox_flag_check() {
+        let mgr = PermissionManager::unrestricted();
+        // The sandbox-flag check (lines 155-169) is inside enabled=true branch.
+        // SECURITY: #586 — unrestricted() skips it entirely.
+        let r = mgr.check(
+            "bash",
+            &json!({"command": "id", "dangerously_disable_sandbox": true}),
+        );
+        assert_eq!(
+            r,
+            CheckResult::Allowed,
+            "B3 SECURITY #586: unrestricted bypasses sandbox-flag check"
+        );
+    }
+
+    // ── B4 · LeaderPermissionBridge (tested in coordinator/permission.rs) ─
+    // See phase2_spec_pins in src/coordinator/permission.rs for B4 tests.
+
+    // ── B5 · Denial tracking missing (gap #572) ───────────────────────────
+
+    /// B5-gap-1 (SECURITY: #572): OC has no denial tracking state.
+    /// Repeated NeedsPrompt for the same denied tool call returns NeedsPrompt
+    /// every time — there is no escalation to auto-deny or AbortError.
+    /// CC escalates to fallback-prompt after 3 consecutive denials.
+    #[test]
+    fn b5_repeated_denied_call_stays_needs_prompt_no_escalation() {
+        let (mgr, _dir) = enabled(vec![]);
+
+        // Simulate repeated calls with no rule — each returns NeedsPrompt.
+        // CC after 3 would hit shouldFallbackToPrompting; OC never escalates.
+        for i in 0..5 {
+            let r = mgr.check("bash", &json!({"command": "ls"}));
+            assert!(
+                matches!(r, CheckResult::NeedsPrompt { .. }),
+                "B5 SECURITY #572: call {i} must still be NeedsPrompt (no escalation path)"
+            );
+        }
+    }
+
+    // ── B6 · Bash command glob matching divergences ───────────────────────
+
+    /// B6-deny-1: `"git *"` does NOT match bare `"git"` (OC diverges from CC).
+    /// CC trailing-wildcard optional-space: `"git *"` → `^git( .*)?$` → matches `"git"`.
+    /// OC: `"git *"` → `^git [^/]*$` → requires a space after `git`.
+    #[test]
+    fn b6_git_star_does_not_match_bare_git() {
+        let (mgr, _dir) = enabled(vec!["git *"]);
+
+        // OC diverges from CC here (gap #576).
+        let r = mgr.check("bash", &json!({"command": "git"}));
+        assert!(
+            matches!(r, CheckResult::NeedsPrompt { .. }),
+            "B6 #576: OC 'git *' must not match bare 'git' (diverges from CC optional-trailing-space)"
+        );
+    }
+
+    /// B6-allow-1: `"git *"` DOES match `"git status"` in both CC and OC.
+    #[test]
+    fn b6_git_star_matches_git_status() {
+        let (mgr, _dir) = enabled(vec!["git *"]);
+        let r = mgr.check("bash", &json!({"command": "git status"}));
+        assert_eq!(
+            r,
+            CheckResult::Allowed,
+            "B6: 'git *' must match 'git status'"
+        );
+    }
+
+    /// B6-deny-2: `"git *"` does NOT match `"gita status"` (no space after `git`).
+    /// Both CC and OC agree on this rejection.
+    #[test]
+    fn b6_git_star_does_not_match_gita() {
+        let (mgr, _dir) = enabled(vec!["git *"]);
+        let r = mgr.check("bash", &json!({"command": "gita status"}));
+        assert!(
+            matches!(r, CheckResult::NeedsPrompt { .. }),
+            "B6: 'git *' must not match 'gita status'"
+        );
+    }
+
+    /// B6-deny-3 (SECURITY: #576): `"rm *"` does NOT match `"rm -rf /"` in OC.
+    /// CC `"rm *"` → `^rm .*$` which WOULD match (`.` matches `/`).
+    /// OC `"rm *"` → `^rm [^/]*$` which does NOT match (stops at `/`).
+    /// OC is MORE restrictive here; documents the portability break.
+    #[test]
+    fn b6_rm_star_does_not_match_path_with_slash() {
+        let (mgr, _dir) = enabled(vec!["rm *"]);
+        // SECURITY: #576 — OC is safer than CC for this pattern.
+        let r = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        assert!(
+            matches!(r, CheckResult::NeedsPrompt { .. }),
+            "B6 #576: 'rm *' must not match 'rm -rf /' in OC (slash blocked by [^/]*)"
+        );
+    }
+
+    /// B6-deny-4: CC legacy `"git:*"` prefix rule is NOT supported in OC.
+    /// OC treats `:` as a literal, so `"git:*"` never matches `"git status"`.
+    #[test]
+    fn b6_colon_star_prefix_syntax_not_supported() {
+        let (mgr, _dir) = enabled(vec!["git:*"]);
+        // In CC: "git:*" is a prefix rule → matches "git status".
+        // In OC: "git:*" is a glob with literal `:` → requires "git:<something>".
+        let r = mgr.check("bash", &json!({"command": "git status"}));
+        assert!(
+            matches!(r, CheckResult::NeedsPrompt { .. }),
+            "B6 #576: OC does not support CC legacy 'git:*' prefix syntax"
+        );
+    }
+
+    // ── B7 · enabled=false (default) is allow-all; enabled=true + empty → deny ─
+
+    /// B7-deny-1 (SECURITY: #581): default PermissionsConfig has enabled=false,
+    /// so a manager built from defaults allows all tool calls including rm -rf /.
+    #[test]
+    fn b7_disabled_allows_all_including_destructive() {
+        let mgr = disabled();
+        // SECURITY: #581 — CC's permission pipeline always runs; OC defaults to off.
+        let r = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        assert_eq!(
+            r,
+            CheckResult::Allowed,
+            "B7 SECURITY #581: enabled=false (the default) must allow rm -rf / (documents gap)"
+        );
+    }
+
+    /// B7-deny-2 (SECURITY: #581): enabled=false allows writes to safety-sensitive paths.
+    #[test]
+    fn b7_disabled_allows_git_config_edit() {
+        let mgr = disabled();
+        // SECURITY: #581
+        let r = mgr.check("edit_file", &json!({"path": ".git/config"}));
+        assert_eq!(
+            r,
+            CheckResult::Allowed,
+            "B7 SECURITY #581: enabled=false allows .git/config edits (documents gap)"
+        );
+    }
+
+    /// B7-allow-1: enabled=true + empty default_allow → deny-by-default (NeedsPrompt).
+    /// This is the correct CC-equivalent behaviour when the system is actually on.
+    #[test]
+    fn b7_enabled_empty_default_allow_is_deny_by_default() {
+        let (mgr, _dir) = enabled(vec![]);
+        for cmd in ["rm -rf /", "ls", "cargo build", "cat /etc/passwd"] {
+            let r = mgr.check("bash", &json!({"command": cmd}));
+            assert!(
+                matches!(r, CheckResult::NeedsPrompt { .. }),
+                "B7: enabled=true + empty default_allow must deny '{cmd}'; got {r:?}"
+            );
+        }
+    }
+
+    /// B7-deny-3: `"*"` in default_allow does NOT catch commands with `/` (OC vs CC divergence).
+    /// Spec §B7 edge case: OC `*` → `[^/]*`; CC `*` → `.*` (catches `/`).
+    #[test]
+    fn b7_catchall_star_does_not_allow_slash_commands() {
+        let (mgr, _dir) = enabled(vec!["*"]);
+        // SECURITY: #576 — OC is MORE restrictive than CC for catchall `*`.
+        let r = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        assert!(
+            matches!(r, CheckResult::NeedsPrompt { .. }),
+            "B7 #576: OC '*' catchall must not allow commands containing '/' (diverges from CC '.*')"
+        );
+    }
+
+    // ── Denial path edge-case battery ────────────────────────────────────
+
+    /// Deny: session Deny on write_file fires before default_allow.
+    #[test]
+    fn deny_session_deny_write_beats_default_allow() {
+        let (mut mgr, _dir) = enabled(vec!["**"]);
+        mgr.add_session_rule(PermissionRule {
+            tool: "Write".to_string(),
+            pattern: "**".to_string(),
+            decision: PermissionDecision::Deny,
+        });
+        let r = mgr.check("write_file", &json!({"path": "anywhere/file.txt"}));
+        assert!(
+            matches!(r, CheckResult::Denied(_)),
+            "deny: session Deny on Write must fire before default_allow '**'"
+        );
+    }
+
+    /// Deny: session Deny on a different tool does not affect another tool.
+    #[test]
+    fn deny_session_deny_does_not_cross_tool_boundary() {
+        let (mut mgr, _dir) = enabled(vec!["**"]);
+        mgr.add_session_rule(PermissionRule {
+            tool: "Bash".to_string(),
+            pattern: "**".to_string(),
+            decision: PermissionDecision::Deny,
+        });
+        // Write is not denied — its default_allow "**" still fires.
+        let r = mgr.check("write_file", &json!({"path": "foo.txt"}));
+        assert_eq!(
+            r,
+            CheckResult::Allowed,
+            "deny: Bash Deny must not affect Write"
+        );
+    }
+
+    /// Deny: malformed bash args (non-string command) are denied, not allowed.
+    /// This is a security invariant regardless of default_allow.
+    #[test]
+    fn deny_malformed_bash_args_denied_regardless_of_default_allow() {
+        let (mgr, _dir) = enabled(vec!["**"]);
+        let r = mgr.check("bash", &json!({"command": true}));
+        assert!(
+            matches!(r, CheckResult::Denied(_)),
+            "malformed bash args must be Denied even when default_allow='**'"
+        );
+    }
+
+    /// Deny: malformed edit_file args are denied even with permissive default_allow.
+    #[test]
+    fn deny_malformed_edit_args_denied_regardless_of_default_allow() {
+        let (mgr, _dir) = enabled(vec!["**"]);
+        let r = mgr.check("edit_file", &json!({"path": 42}));
+        assert!(matches!(r, CheckResult::Denied(_)));
+    }
+
+    /// Deny: tool case-insensitive matching — "edit" rule matches "Edit" tool.
+    #[test]
+    fn deny_tool_name_case_insensitive_session_rule() {
+        let (mut mgr, _dir) = enabled(vec![]);
+        mgr.add_session_rule(PermissionRule {
+            tool: "edit".to_string(), // lower-case rule
+            pattern: "**".to_string(),
+            decision: PermissionDecision::Deny,
+        });
+        let r = mgr.check("edit_file", &json!({"path": "src/main.rs"}));
+        assert!(
+            matches!(r, CheckResult::Denied(_)),
+            "tool name matching must be case-insensitive"
+        );
+    }
+}

@@ -175,3 +175,260 @@ mod tests {
         assert!(!bridge.is_idle());
     }
 }
+
+/// Phase 2 spec-pinning tests for issue #546, B4 behaviours.
+///
+/// Pins the CURRENT `LeaderPermissionBridge` data-structure contracts
+/// against the Phase 1 spec (crosslink #531 §B4). No production code
+/// is changed — divergences from CC are documented with comments.
+///
+/// Denial paths dominate, matching the permission-system test philosophy.
+/// Security-critical divergences are marked `// SECURITY: #<issue>`.
+#[cfg(test)]
+mod phase2_spec_pins {
+    use super::*;
+
+    // ── helpers ───────────────────────────────────────────────────────────
+
+    fn req(tm: &TeammateId, tool: &str) -> QueuedPermission {
+        QueuedPermission {
+            teammate: tm.clone(),
+            tool_name: tool.into(),
+            tool_args: r#"{"command":"ls"}"#.into(),
+        }
+    }
+
+    // ── B4-1 · Fresh bridge is idle and empty ─────────────────────────────
+
+    /// B4-deny-1: fresh bridge has nothing queued and no always-allow cache.
+    #[test]
+    fn b4_fresh_bridge_idle_and_empty() {
+        let bridge = LeaderPermissionBridge::new();
+        assert!(bridge.is_idle(), "B4: fresh bridge must be idle");
+        assert_eq!(bridge.pending_count(), 0);
+    }
+
+    /// B4-deny-2: dequeue on empty bridge returns None (caller must not hang).
+    #[test]
+    fn b4_dequeue_empty_returns_none() {
+        let mut bridge = LeaderPermissionBridge::new();
+        assert!(
+            bridge.dequeue().is_none(),
+            "B4: dequeue on empty must return None"
+        );
+    }
+
+    // ── B4-2 · FIFO enqueue/dequeue order ────────────────────────────────
+
+    /// B4-allow-1: requests are served in arrival order (FIFO).
+    #[test]
+    fn b4_fifo_order_preserved() {
+        let mut bridge = LeaderPermissionBridge::new();
+        let t1 = TeammateId::new();
+        let t2 = TeammateId::new();
+        let t3 = TeammateId::new();
+
+        bridge.enqueue(req(&t1, "bash"));
+        bridge.enqueue(req(&t2, "write_file"));
+        bridge.enqueue(req(&t3, "edit_file"));
+
+        assert_eq!(bridge.pending_count(), 3);
+
+        let first = bridge.dequeue().unwrap();
+        assert_eq!(first.teammate, t1, "B4: first dequeue must be t1");
+        assert_eq!(first.tool_name, "bash");
+
+        let second = bridge.dequeue().unwrap();
+        assert_eq!(second.teammate, t2, "B4: second dequeue must be t2");
+
+        let third = bridge.dequeue().unwrap();
+        assert_eq!(third.teammate, t3, "B4: third dequeue must be t3");
+
+        assert!(
+            bridge.dequeue().is_none(),
+            "B4: queue must be empty after all dequeued"
+        );
+    }
+
+    /// B4-allow-2: pending_count tracks enqueue/dequeue correctly.
+    #[test]
+    fn b4_pending_count_tracks_mutations() {
+        let mut bridge = LeaderPermissionBridge::new();
+        let tm = TeammateId::new();
+        assert_eq!(bridge.pending_count(), 0);
+        bridge.enqueue(req(&tm, "bash"));
+        assert_eq!(bridge.pending_count(), 1);
+        bridge.enqueue(req(&tm, "bash"));
+        assert_eq!(bridge.pending_count(), 2);
+        bridge.dequeue();
+        assert_eq!(bridge.pending_count(), 1);
+        bridge.dequeue();
+        assert_eq!(bridge.pending_count(), 0);
+    }
+
+    // ── B4-3 · always-allow cache isolation ───────────────────────────────
+
+    /// B4-deny-1: always_allow for t1+bash must NOT grant t2+bash.
+    /// Per-teammate isolation matches CC's "a reply doesn't leak across teammates".
+    #[test]
+    fn b4_always_allow_does_not_cross_teammate_boundary() {
+        let mut bridge = LeaderPermissionBridge::new();
+        let t1 = TeammateId::new();
+        let t2 = TeammateId::new();
+
+        bridge.always_allow(t1.clone(), "bash");
+
+        assert!(
+            bridge.is_always_allowed(&t1, "bash"),
+            "t1+bash must be cached"
+        );
+        assert!(
+            !bridge.is_always_allowed(&t2, "bash"),
+            "B4: t2+bash must NOT be cached (per-teammate isolation)"
+        );
+    }
+
+    /// B4-deny-2: always_allow for t1+bash must NOT grant t1+edit_file.
+    #[test]
+    fn b4_always_allow_does_not_cross_tool_boundary() {
+        let mut bridge = LeaderPermissionBridge::new();
+        let tm = TeammateId::new();
+        bridge.always_allow(tm.clone(), "bash");
+
+        assert!(bridge.is_always_allowed(&tm, "bash"));
+        assert!(
+            !bridge.is_always_allowed(&tm, "edit_file"),
+            "B4: always_allow for bash must not grant edit_file"
+        );
+        assert!(
+            !bridge.is_always_allowed(&tm, "write_file"),
+            "B4: always_allow for bash must not grant write_file"
+        );
+    }
+
+    /// B4-deny-3: always_allow for unknown tool name → not cached.
+    #[test]
+    fn b4_always_allow_unknown_tool_not_cached() {
+        let bridge = LeaderPermissionBridge::new();
+        let tm = TeammateId::new();
+        assert!(
+            !bridge.is_always_allowed(&tm, "nonexistent_tool"),
+            "B4: no always_allow entry must return false for any teammate+tool"
+        );
+    }
+
+    /// B4-allow-1: distinct (teammate, tool) pairs are tracked independently.
+    #[test]
+    fn b4_multiple_always_allow_pairs_tracked_independently() {
+        let mut bridge = LeaderPermissionBridge::new();
+        let t1 = TeammateId::new();
+        let t2 = TeammateId::new();
+
+        bridge.always_allow(t1.clone(), "bash");
+        bridge.always_allow(t1.clone(), "write_file");
+        bridge.always_allow(t2.clone(), "edit_file");
+
+        assert!(bridge.is_always_allowed(&t1, "bash"));
+        assert!(bridge.is_always_allowed(&t1, "write_file"));
+        assert!(bridge.is_always_allowed(&t2, "edit_file"));
+
+        // Cross-checks must still fail.
+        assert!(!bridge.is_always_allowed(&t1, "edit_file"));
+        assert!(!bridge.is_always_allowed(&t2, "bash"));
+        assert!(!bridge.is_always_allowed(&t2, "write_file"));
+    }
+
+    // ── B4-4 · is_idle semantics ──────────────────────────────────────────
+
+    /// B4-deny-1: bridge with only always-allow cache (no pending) is NOT idle.
+    /// Spec §B4 edge case: is_idle() = pending.is_empty() && always_allowed.is_empty().
+    #[test]
+    fn b4_is_idle_false_when_only_cache_populated() {
+        let mut bridge = LeaderPermissionBridge::new();
+        bridge.always_allow(TeammateId::new(), "bash");
+        assert!(
+            !bridge.is_idle(),
+            "B4: bridge with non-empty always_allowed cache must not be idle"
+        );
+    }
+
+    /// B4-deny-2: bridge with only pending (no cache) is NOT idle.
+    #[test]
+    fn b4_is_idle_false_when_only_pending_populated() {
+        let mut bridge = LeaderPermissionBridge::new();
+        let tm = TeammateId::new();
+        bridge.enqueue(req(&tm, "bash"));
+        assert!(
+            !bridge.is_idle(),
+            "B4: bridge with pending queue must not be idle"
+        );
+    }
+
+    /// B4-allow-1: dequeuing all items but leaving cache populated → still not idle.
+    #[test]
+    fn b4_is_idle_false_after_drain_if_cache_nonempty() {
+        let mut bridge = LeaderPermissionBridge::new();
+        let tm = TeammateId::new();
+        bridge.enqueue(req(&tm, "bash"));
+        bridge.always_allow(tm.clone(), "bash");
+        bridge.dequeue();
+
+        // Pending is now empty, but cache still has an entry.
+        assert!(
+            !bridge.is_idle(),
+            "B4: cache entry alone keeps bridge non-idle after pending drain"
+        );
+    }
+
+    // ── B4-5 · CC divergence gap: always_allow bypasses target/pattern check ─
+
+    /// B4-gap-1 (SECURITY): OC always_allow is keyed (teammate, tool_name) only —
+    /// no target/pattern check. Granting always_allow for ("t1", "bash") bypasses
+    /// ALL bash permission checks for teammate t1 regardless of command.
+    ///
+    /// CC's equivalent always-allow goes through the full rule pipeline on the leader
+    /// side; there is no tool-name-only shortcut in CC.
+    ///
+    /// This test documents the current OC behaviour (no production code change).
+    #[test]
+    fn b4_gap_always_allow_has_no_target_restriction() {
+        let mut bridge = LeaderPermissionBridge::new();
+        let tm = TeammateId::new();
+
+        // Grant always_allow for "bash" — no pattern restriction.
+        bridge.always_allow(tm.clone(), "bash");
+
+        // A caller that honours is_always_allowed would skip enqueuing ANY bash
+        // request from tm, including dangerous commands.
+        // This test confirms the cache has no target dimension.
+        assert!(
+            bridge.is_always_allowed(&tm, "bash"),
+            "B4 gap: is_always_allowed returns true for all bash commands, not just safe ones"
+        );
+        // If a caller checked "rm -rf /" specifically, the cache still says true —
+        // the bridge has no mechanism to restrict to safe targets.
+        // (Callers must implement their own target check if needed; the bridge does not.)
+    }
+
+    // ── B4-6 · tool_args preserved in queued request ──────────────────────
+
+    /// B4-allow-1: tool_args string is preserved through enqueue→dequeue round-trip.
+    #[test]
+    fn b4_tool_args_preserved_in_queue() {
+        let mut bridge = LeaderPermissionBridge::new();
+        let tm = TeammateId::new();
+        let args = r#"{"command":"cargo test","timeout":60}"#;
+
+        bridge.enqueue(QueuedPermission {
+            teammate: tm.clone(),
+            tool_name: "bash".into(),
+            tool_args: args.into(),
+        });
+
+        let popped = bridge.dequeue().unwrap();
+        assert_eq!(
+            popped.tool_args, args,
+            "B4: tool_args must be preserved through the queue"
+        );
+    }
+}

@@ -181,4 +181,104 @@ mod tests {
         // haiku: $0.25/M input + $1.25/M output * 0.1M = $0.25 + $0.125 = $0.375
         assert!(c > 0.3 && c < 0.5, "Expected ~$0.375, got {c}");
     }
+
+    // -----------------------------------------------------------------------
+    // B5 — calculate_cost: cache-read and cache-write tokens (spec §B5)
+    // Pins OC's CURRENT fixed-ratio behavior without asserting CC is wrong.
+    // Divergences vs CC are noted inline as gap markers.
+    // -----------------------------------------------------------------------
+
+    /// B5: cache-read tokens apply the 0.1× fixed ratio on OC.
+    /// CC uses per-model `promptCacheReadTokens` from MODEL_COSTS; OC uses
+    /// `input_per_million × 0.1`.  This test pins OC's ratio.
+    #[test]
+    fn b5_cache_read_tokens_apply_point_one_ratio() {
+        // 1 million cache-read tokens at Sonnet pricing ($3.00/M input).
+        // OC: cache_read_cost = 3.00 × 0.1 = $0.30
+        let usage = TokenUsage {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 1_000_000,
+            cache_write_tokens: 0,
+        };
+        let cost = calculate_cost("claude-sonnet-4-5", &usage).unwrap();
+        let expected = 3.0 * 0.1; // $0.30
+        assert!(
+            (cost - expected).abs() < 1e-9,
+            "cache-read ratio must be 0.1× input price; got {cost}, expected {expected}"
+        );
+    }
+
+    /// B5: cache-write tokens apply the 1.25× fixed ratio on OC.
+    /// CC uses per-model `promptCacheWriteTokens`; OC uses
+    /// `input_per_million × 1.25`.  This test pins OC's ratio.
+    #[test]
+    fn b5_cache_write_tokens_apply_one_point_two_five_ratio() {
+        // 1 million cache-write tokens at Sonnet pricing ($3.00/M input).
+        // OC: cache_write_cost = 3.00 × 1.25 = $3.75
+        let usage = TokenUsage {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 1_000_000,
+        };
+        let cost = calculate_cost("claude-sonnet-4-5", &usage).unwrap();
+        let expected = 3.0 * 1.25; // $3.75
+        assert!(
+            (cost - expected).abs() < 1e-9,
+            "cache-write ratio must be 1.25× input price; got {cost}, expected {expected}"
+        );
+    }
+
+    /// B5: combined input + output + cache-read + cache-write — four terms sum
+    /// correctly under OC's formula.
+    #[test]
+    fn b5_all_four_token_buckets_sum_correctly() {
+        // Use Haiku pricing: $0.25/M input, $1.25/M output.
+        // cache_read  = $0.25 × 0.1  = $0.025/M
+        // cache_write = $0.25 × 1.25 = $0.3125/M
+        let usage = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_read_tokens: 1_000_000,
+            cache_write_tokens: 1_000_000,
+        };
+        let cost = calculate_cost("claude-3-haiku-20240307", &usage).unwrap();
+        let expected = 0.25 + 1.25 + 0.25 * 0.1 + 0.25 * 1.25;
+        assert!(
+            (cost - expected).abs() < 1e-9,
+            "four-bucket sum wrong; got {cost}, expected {expected}"
+        );
+    }
+
+    /// B5 divergence pin: unknown model returns None in OC.
+    /// CC returns a default cost instead of None — this pins OC's behavior.
+    #[test]
+    fn b5_unknown_model_returns_none() {
+        let usage = TokenUsage {
+            input_tokens: 1_000,
+            output_tokens: 500,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+        };
+        // Divergence vs CC: CC falls back to default model cost; OC returns None.
+        let cost = calculate_cost("completely-unknown-model-xyz", &usage);
+        assert!(
+            cost.is_none(),
+            "OC returns None for unknown model (CC gap: CC returns default cost)"
+        );
+    }
+
+    /// B5: zero-token usage returns Some(0.0), not None.
+    #[test]
+    fn b5_zero_tokens_returns_zero_cost() {
+        let usage = TokenUsage {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+        };
+        let cost = calculate_cost("claude-3-haiku-20240307", &usage).unwrap();
+        assert_eq!(cost, 0.0);
+    }
 }
