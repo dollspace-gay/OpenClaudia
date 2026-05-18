@@ -1,0 +1,11 @@
+{
+  "uuid": "3b61ba85-3cf3-4932-8309-c9220f1a6f60",
+  "display_id": 593,
+  "title": "task_create: enforce blocked_by — prevent InProgress transition while blockers are pending/in_progress (CC parity)",
+  "status": "open",
+  "priority": "medium",
+  "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
+  "created_by": "lOrm",
+  "created_at": "2026-05-18T15:54:03.682759691Z",
+  "updated_at": "2026-05-18T15:54:03.682759691Z"
+}
