@@ -1,0 +1,11 @@
+{
+  "uuid": "9fd6f21a-5ac5-4d91-b89f-ca17d81862cf",
+  "display_id": 595,
+  "title": "Emit typed structured api_retry event on retry instead of plain-text stream message (parity with CC withRetry.ts / QueryEngine.ts)",
+  "status": "open",
+  "priority": "medium",
+  "parent_uuid": "5e625118-78a2-470d-b9fd-644b77070cb7",
+  "created_by": "lOrm",
+  "created_at": "2026-05-18T15:54:10.619751308Z",
+  "updated_at": "2026-05-18T15:54:10.619751308Z"
+}
