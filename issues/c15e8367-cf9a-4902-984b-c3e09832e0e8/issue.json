@@ -1,6 +1,6 @@
 {
   "uuid": "c15e8367-cf9a-4902-984b-c3e09832e0e8",
-  "display_id": 706,
+  "display_id": 708,
   "title": "SSE buffer can grow unbounded when upstream never emits newlines",
   "description": "## Severity\nCritical\n## Dimension\nsecurity\n## Location\nsrc/pipeline.rs:516-543\n## Violation\nThe SSE parsing loop in `stream_sse_response` accumulates upstream bytes into an unbounded `String` until a `\\n` is found. A hostile or broken upstream that streams large payloads without `\\n` (or a single very long SSE event) will inflate `buffer` until the process OOMs. The only timeout (`last_data_time.elapsed()`) is reset by every byte received, so a 1 MiB/s newline-free stream is welcomed.\n\n```rust\nlet mut buffer = String::new();\n...\nbuffer.push_str(&String::from_utf8_lossy(&chunk));\nwhile let Some(line_end) = buffer.find('\\n') {\n```\n## Mandated refactor\nIntroduce `MAX_SSE_LINE_BYTES` and `MAX_SSE_BUFFER_BYTES` constants; abort the stream and emit `AppEvent::ApiError` when either is exceeded. Switch to `BytesMut` and `memchr` over raw bytes to avoid the per-chunk UTF-8 round-trip. Track total bytes against an absolute ceiling separate from the inactivity timeout.\n## Filed from QA review dispatch",
   "status": "open",
