@@ -1,6 +1,6 @@
 {
   "uuid": "7423a9b6-f369-4c3e-8069-0c271653882b",
-  "display_id": 750,
+  "display_id": 756,
   "title": "handle_google_response duplicates GoogleAdapter transform_response logic",
   "description": "## Severity\nMajor\n## Dimension\ndry\n## Location\nsrc/pipeline.rs:396-504 vs src/providers/google.rs:164-258\n## Violation\nhandle_google_response reimplements Gemini response parsing already present in GoogleAdapter::transform_response. The candidates/content/parts traversal, functionCall mapping, and usageMetadata extraction are duplicated. The two parsers will drift: adapter rejects no-candidates as InvalidResponse but pipeline silently returns empty text; adapter handles finishReason SAFETY, pipeline ignores it. Classic stovepipe — /v1 proxy goes through the adapter, the pipeline TUI does not.\n## Mandated refactor\nPipeline should call GoogleAdapter::new().transform_response(...) and convert OpenAI-shaped tool_calls into ToolCall once. Or lift parsing into a streaming::parse_gemini_completion shared helper.\n## Filed from QA review dispatch",
   "status": "open",
