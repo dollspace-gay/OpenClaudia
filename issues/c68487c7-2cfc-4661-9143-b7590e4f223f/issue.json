@@ -3,11 +3,12 @@
   "display_id": null,
   "title": "Two competing TokenUsage types defined in session and streaming modules",
   "description": "## Severity\nMajor\n## Dimension\ndry\n## Location\nsrc/session/state.rs (TokenUsage with cache_read_tokens, cache_write_tokens) vs src/streaming.rs:73-79 (TokenUsage with cache_read_tokens: Option<u64>, cache_creation_tokens: Option<u64>)\n## Violation\nTwo distinct TokenUsage types coexist with different field names and shapes. session::TokenUsage uses cache_write_tokens; streaming::TokenUsage uses cache_creation_tokens. Both represent the same upstream concept. Cross-module callers must translate manually:\n\nThe risk: a future contributor wires streaming::TokenUsage directly into Session.record_actual_usage and the cache fields silently zero out. The session/audit tests already include 'cache_write_tokens' as required usage shape, while streaming uses Option-typed cache fields that mean 'provider didn't tell us' — a Some(0) vs None distinction lost in conversion.\n## Mandated refactor\nPromote a single canonical TokenUsage into a new crate-level module (e.g. crate::usage::TokenUsage) with documented field semantics. Implement From conversions only at the SSE-parsing boundary. Delete the duplicate type in streaming.rs.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:12:27.097159058Z",
-  "updated_at": "2026-05-18T22:13:19.380660423Z",
+  "updated_at": "2026-05-18T22:46:07.849709880Z",
+  "closed_at": "2026-05-18T22:46:07.849709880Z",
   "labels": [
     "qa-review",
     "dry"
