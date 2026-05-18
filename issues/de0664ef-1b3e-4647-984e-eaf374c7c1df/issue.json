@@ -1,0 +1,11 @@
+{
+  "uuid": "de0664ef-1b3e-4647-984e-eaf374c7c1df",
+  "display_id": 763,
+  "title": "host_of in tools/web.rs is a hand-rolled URL parser duplicating url::Url",
+  "description": "## Severity\nMinor\n## Dimension\ndry\n## Location\nsrc/tools/web.rs:64-74 (host_of)\n## Violation\n`host_of` extracts a hostname from a URL by string-splitting on `://`, `/`, and `:`. The crate already depends on `url::Url` (used in `src/web.rs`) which handles scheme detection, IPv6 brackets, percent-encoded hosts, and userinfo correctly. The bespoke parser will misparse e.g. `http://user:pass@example.com/`, IPv6 literals like `https://[::1]:8080/`, and URLs without schemes whose authority is ambiguous.\n\n```rust\nfn host_of(url: &str) -> Option<String> {\n    let rest = url.split_once(\"://\").map_or(url, |(_, tail)| tail);\n    let host_port = rest.split('/').next()?;\n    let host = host_port.split(':').next()?.to_ascii_lowercase();\n    ...\n}\n```\n\nNote that the test at line 221 documents the bug: `\"://no-scheme\"` returns `Some(\"no-scheme\")`, treating a malformed scheme as a host — the function's own tests cement the bug.\n## Mandated refactor\nReplace with `url::Url::parse(url).ok().and_then(|u| u.host_str().map(|h| h.trim_start_matches(\"www.\").to_ascii_lowercase()))`. Remove the bespoke parser and its broken edge-case tests.\n## Filed from QA review dispatch",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-05-18T21:54:55.273680615Z",
+  "updated_at": "2026-05-18T21:54:55.273680615Z"
+}
