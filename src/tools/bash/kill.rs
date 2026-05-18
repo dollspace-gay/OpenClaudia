@@ -1,6 +1,7 @@
 use super::BACKGROUND_SHELLS;
 use serde_json::Value;
 use std::collections::HashMap;
+#[cfg(not(unix))]
 use std::process::Command;
 
 /// Kill a background shell
@@ -17,8 +18,9 @@ pub fn execute_kill_shell(args: &HashMap<String, Value>) -> (String, bool) {
 
 /// Terminate a process and its entire process group.
 ///
-/// On Unix, sends SIGTERM to the process group (negative PID), waits up to
-/// 2 seconds for the process to exit, then escalates to SIGKILL if needed.
+/// On Unix, sends SIGTERM to the process group (negative PID) via `libc::kill`,
+/// waits up to 2 seconds for the process to exit, then escalates to SIGKILL if
+/// needed. Uses direct syscalls — no PATH lookup, no fork/exec.
 /// The process must have been spawned with `process_group(0)` for group
 /// killing to work correctly.
 ///
@@ -28,33 +30,53 @@ pub fn terminate_process_tree(pid: u32) {
     {
         use std::time::{Duration, Instant};
 
-        let pid_str = pid.to_string();
-        let neg_pid_str = format!("-{pid}");
+        // libc::pid_t is i32; cast is safe because u32::MAX/2 > any realistic PID.
+        // POSIX guarantees pid_t fits in i32 and process-group IDs share the range.
+        let signed_pid = pid as libc::pid_t;
+        // Negative pid targets the entire process group (POSIX kill(2)).
+        let process_group_id = -signed_pid;
 
-        // Step 1: Send SIGTERM to the entire process group
-        let _ = Command::new("kill").args(["-TERM", &neg_pid_str]).output();
+        // Step 1: Send SIGTERM to the entire process group.
+        // SAFETY: process_group_id is a valid negative process-group ID derived
+        // from a u32 PID; SIGTERM is a well-defined signal constant. kill(2) is
+        // async-signal-safe and does not dereference pointers.
+        let sigterm_result = unsafe { libc::kill(process_group_id, libc::SIGTERM) };
+        if sigterm_result != 0 {
+            tracing::debug!(
+                pid,
+                errno = unsafe { *libc::__errno_location() },
+                "terminate_process_tree: SIGTERM to process group failed"
+            );
+        }
 
-        // Step 2: Wait up to 2 seconds for the process to exit
+        // Step 2: Wait up to 2 seconds for the process to exit.
+        // kill(pid, 0) returns 0 if the process exists, -1 (ESRCH) if not.
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut exited = false;
         while Instant::now() < deadline {
-            // `kill -0` checks if process exists without sending a signal
-            let check = Command::new("kill").args(["-0", &pid_str]).output();
-            match check {
-                Ok(output) if !output.status.success() => {
-                    // Process no longer exists
-                    exited = true;
-                    break;
-                }
-                _ => {
-                    std::thread::sleep(Duration::from_millis(50));
-                }
+            // SAFETY: signed_pid is a valid pid_t; signal 0 never delivers,
+            // it only checks process existence. No pointers involved.
+            let exists = unsafe { libc::kill(signed_pid, 0) };
+            if exists != 0 {
+                // ESRCH: process no longer exists
+                exited = true;
+                break;
             }
+            std::thread::sleep(Duration::from_millis(50));
         }
 
-        // Step 3: If still alive, send SIGKILL to the process group
+        // Step 3: If still alive, send SIGKILL to the process group.
         if !exited {
-            let _ = Command::new("kill").args(["-KILL", &neg_pid_str]).output();
+            // SAFETY: same invariants as the SIGTERM call above; SIGKILL is
+            // a well-defined signal constant that cannot be caught or ignored.
+            let sigkill_result = unsafe { libc::kill(process_group_id, libc::SIGKILL) };
+            if sigkill_result != 0 {
+                tracing::debug!(
+                    pid,
+                    errno = unsafe { *libc::__errno_location() },
+                    "terminate_process_tree: SIGKILL to process group failed"
+                );
+            }
 
             // Brief wait for SIGKILL to take effect
             std::thread::sleep(Duration::from_millis(100));

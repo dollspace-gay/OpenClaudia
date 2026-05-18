@@ -934,7 +934,8 @@ impl VddEngine {
                 finding.cwe.as_deref().unwrap_or("none"),
                 finding.file_path.as_deref().unwrap_or("unknown"),
                 finding
-                    .line_range.map_or_else(|| "unknown".to_string(), |(a, b)| format!("{a}-{b}")),
+                    .line_range
+                    .map_or_else(|| "unknown".to_string(), |(a, b)| format!("{a}-{b}")),
                 finding.description,
                 finding.adversary_reasoning,
             );
@@ -1020,8 +1021,6 @@ impl VddEngine {
         let response = forward_request(
             &self.client,
             provider_config,
-            provider_name,
-            &request.model,
             &endpoint,
             &transformed,
             headers,
@@ -1041,9 +1040,7 @@ impl VddEngine {
     }
 
     /// Parse the verification agent's response into a `finding_id` → verdict map.
-    fn parse_verification_verdicts(
-        response: &str,
-    ) -> std::collections::HashMap<String, String> {
+    fn parse_verification_verdicts(response: &str) -> std::collections::HashMap<String, String> {
         let mut verdicts = std::collections::HashMap::new();
 
         // Try to extract JSON from the response
@@ -1227,8 +1224,6 @@ impl VddEngine {
             forward_request(
                 &self.client,
                 provider_config,
-                &self.config.adversary.provider,
-                &request.model,
                 &endpoint,
                 &transformed,
                 headers,
@@ -1302,8 +1297,6 @@ impl VddEngine {
         let response = forward_request(
             &self.client,
             provider_config,
-            provider_name,
-            &request.model,
             &endpoint,
             &transformed,
             headers,
@@ -1343,11 +1336,14 @@ impl VddEngine {
 // ==========================================================================
 
 /// Forward a request to a provider and return the raw reqwest response.
+///
+/// URL composition is entirely delegated to the adapter via `endpoint`
+/// (the return value of [`ProviderAdapter::chat_endpoint`]), so provider-specific
+/// path conventions (e.g. Google's `/v1beta/models/{model}:generateContent`)
+/// are handled in the adapter, not here.
 async fn forward_request(
     client: &Client,
     provider: &crate::config::ProviderConfig,
-    provider_name: &str,
-    model: &str,
     endpoint: &str,
     body: &Value,
     headers: Vec<(String, String)>,
@@ -1358,12 +1354,9 @@ async fn forward_request(
         .trim_end_matches("/v1")
         .trim_end_matches('/');
 
-    // Google/Gemini requires model name in the URL path
-    let url = if provider_name == "google" {
-        format!("{base_url}/v1beta/models/{model}:generateContent")
-    } else {
-        format!("{base_url}{endpoint}")
-    };
+    // endpoint already encodes the full provider-specific path, including
+    // any model name or version segment (e.g. Google's v1beta path).
+    let url = format!("{base_url}{endpoint}");
 
     // Validate the constructed URL before sending the request
     if let Err(e) = reqwest::Url::parse(&url) {
@@ -1634,7 +1627,10 @@ mod tests {
     fn code_view_extracts_window_around_cited_lines() {
         // 200 lines, finding cites lines 150-152. Max bytes forces a
         // window view rather than the whole body.
-        let code: String = (1..=200).fold(String::new(), |mut s, n| { let _ = writeln!(s, "line {n}"); s });
+        let code: String = (1..=200).fold(String::new(), |mut s, n| {
+            let _ = writeln!(s, "line {n}");
+            s
+        });
         let f = finding_with_lines("f1", 150, 152);
         let findings: Vec<&Finding> = vec![&f];
         let (view, _) = build_verification_code_view(&code, &findings, 500);
@@ -1647,7 +1643,10 @@ mod tests {
 
     #[test]
     fn code_view_merges_overlapping_windows() {
-        let code: String = (1..=200).fold(String::new(), |mut s, n| { let _ = writeln!(s, "line {n}"); s });
+        let code: String = (1..=200).fold(String::new(), |mut s, n| {
+            let _ = writeln!(s, "line {n}");
+            s
+        });
         let f1 = finding_with_lines("f1", 50, 52);
         let f2 = finding_with_lines("f2", 55, 57); // overlaps f1's ±20 window
         let findings: Vec<&Finding> = vec![&f1, &f2];

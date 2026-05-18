@@ -95,6 +95,9 @@ pub struct ChatSession {
     /// Approved plan content injected as system context
     #[serde(default)]
     pub approved_plan: Option<String>,
+    /// Additional working directories added via `/add-dir`
+    #[serde(default)]
+    pub working_dirs: Vec<std::path::PathBuf>,
 }
 
 impl ChatSession {
@@ -117,6 +120,7 @@ impl ChatSession {
             undo_stack: Vec::new(),
             plan_mode: None,
             approved_plan: None,
+            working_dirs: Vec::new(),
         }
     }
 
@@ -147,6 +151,18 @@ impl ChatSession {
     /// Clear undo stack (call when new messages are added)
     pub fn clear_undo_stack(&mut self) {
         self.undo_stack.clear();
+    }
+
+    /// Add a working directory to the session scope (deduplicates by canonical path).
+    ///
+    /// Returns `true` if the directory was added, `false` if it was already present.
+    pub fn add_working_dir(&mut self, path: std::path::PathBuf) -> bool {
+        if self.working_dirs.contains(&path) {
+            return false;
+        }
+        self.working_dirs.push(path);
+        self.touch();
+        true
     }
 
     pub fn update_title(&mut self) {

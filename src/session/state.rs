@@ -37,6 +37,27 @@ impl TokenUsage {
     }
 }
 
+/// Convert from the SSE-parse-boundary type into the canonical session accumulator.
+///
+/// Field-name mapping:
+/// - `cache_creation_tokens` (streaming) → `cache_write_tokens` (session): both
+///   represent tokens written to the provider cache; Anthropic calls this
+///   "cache creation" in its SSE events but "cache write" in billing docs.
+/// - `cache_read_tokens` maps 1-to-1.
+///
+/// `Option<u64>` → `u64`: `None` means the provider did not report the field;
+/// treat as zero so accumulation remains correct.
+impl From<crate::streaming::TokenUsage> for TokenUsage {
+    fn from(s: crate::streaming::TokenUsage) -> Self {
+        Self {
+            input_tokens: s.input_tokens,
+            output_tokens: s.output_tokens,
+            cache_read_tokens: s.cache_read_tokens.unwrap_or(0),
+            cache_write_tokens: s.cache_creation_tokens.unwrap_or(0),
+        }
+    }
+}
+
 /// Metrics for a single API turn (round-trip)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnMetrics {

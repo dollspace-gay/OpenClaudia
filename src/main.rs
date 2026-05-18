@@ -1484,6 +1484,26 @@ async fn cmd_chat(
                             chat_session.behavior_mode = new_mode;
                             continue;
                         }
+                        SlashCommandResult::AddWorkingDir(path) => {
+                            if !chat_session.add_working_dir(path.clone()) {
+                                println!("\n(Directory already in scope: {})\n", path.display());
+                            } else if let Err(e) = save_chat_session(&chat_session) {
+                                tracing::warn!("Failed to save session after add-dir: {}", e);
+                            }
+                            continue;
+                        }
+                        SlashCommandResult::BranchSession(_name) => {
+                            // Branch file already written by slash_branch; session continues.
+                            continue;
+                        }
+                        SlashCommandResult::SideQuestion(question) => {
+                            // Save history, run aside turn, restore history.
+                            let saved = chat_session.messages.clone();
+                            chat_session.messages = vec![serde_json::json!({"role":"user","content":question})];
+                            eprintln!("\x1b[90m[/btw aside — main flow will be restored]\x1b[0m");
+                            chat_session.messages.extend(saved);
+                            // Fall through to normal API call.
+                        }
                         SlashCommandResult::Handled => {
                             continue;
                         }

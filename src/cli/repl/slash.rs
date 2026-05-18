@@ -94,6 +94,12 @@ pub enum SlashCommandResult {
     CycleEffort,
     /// Show help message (already printed)
     Handled,
+    /// Add a working directory to the session scope (#176)
+    AddWorkingDir(std::path::PathBuf),
+    /// Branch conversation at current point, saving snapshot under the given name (#177)
+    BranchSession(String),
+    /// Ask a side question without disturbing main conversation flow (#179)
+    SideQuestion(String),
 }
 
 fn slash_help() {
@@ -710,6 +716,101 @@ fn slash_find(args: &str) -> SlashCommandResult {
     SlashCommandResult::Handled
 }
 
+/// Handle `/add-dir <path>` — add a working directory to the session scope (#176).
+///
+/// Validates that `path` exists and is a directory, canonicalises it, then
+/// returns `AddWorkingDir(canonical_path)` for the REPL loop to store on the
+/// session.  Returns `Handled` (with an error message printed) on any failure.
+fn slash_add_dir(args: &str) -> SlashCommandResult {
+    let raw = args.trim();
+    if raw.is_empty() {
+        println!("\nUsage: /add-dir <path>\n");
+        return SlashCommandResult::Handled;
+    }
+    let path = std::path::Path::new(raw);
+    if !path.exists() {
+        println!("\nError: path does not exist: {raw}\n");
+        return SlashCommandResult::Handled;
+    }
+    if !path.is_dir() {
+        println!("\nError: path is not a directory: {raw}\n");
+        return SlashCommandResult::Handled;
+    }
+    match path.canonicalize() {
+        Ok(canonical) => {
+            println!("\nAdded working directory: {}\n", canonical.display());
+            SlashCommandResult::AddWorkingDir(canonical)
+        }
+        Err(e) => {
+            println!("\nError: could not resolve path '{raw}': {e}\n");
+            SlashCommandResult::Handled
+        }
+    }
+}
+
+/// Handle `/branch [name]` — snapshot the conversation at this point (#177).
+///
+/// Serialises the current message history to
+/// `.openclaudia/branches/<name>.json`.  `name` defaults to a timestamp
+/// with a UUID suffix when not supplied.  Returns `BranchSession(name)`.
+fn slash_branch(args: &str, messages: &[serde_json::Value]) -> SlashCommandResult {
+    let branches_dir = std::path::PathBuf::from(".openclaudia/branches");
+    if let Err(e) = fs::create_dir_all(&branches_dir) {
+        println!("\nError: could not create branches directory: {e}\n");
+        return SlashCommandResult::Handled;
+    }
+    let name: String = {
+        let raw = args.trim();
+        if raw.is_empty() {
+            let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+            let suffix = &uuid::Uuid::new_v4().to_string()[..8];
+            format!("{ts}_{suffix}")
+        } else {
+            raw.to_string()
+        }
+    };
+    let branch_path = branches_dir.join(format!("{name}.json"));
+    if branch_path.exists() {
+        println!("\nError: branch '{name}' already exists. Choose a different name.\n");
+        return SlashCommandResult::Handled;
+    }
+    let snapshot = serde_json::json!({
+        "name": name,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "messages": messages,
+    });
+    match serde_json::to_string_pretty(&snapshot) {
+        Ok(json) => match fs::write(&branch_path, json.as_bytes()) {
+            Ok(()) => {
+                println!("\nBranched session as {name}; use /resume {name} to restore\n");
+                SlashCommandResult::BranchSession(name)
+            }
+            Err(e) => {
+                println!("\nError: could not write branch file: {e}\n");
+                SlashCommandResult::Handled
+            }
+        },
+        Err(e) => {
+            println!("\nError: could not serialise session: {e}\n");
+            SlashCommandResult::Handled
+        }
+    }
+}
+
+/// Handle `/btw <question>` — ask a side question without disturbing the main
+/// conversation flow (#179).
+///
+/// Returns `SideQuestion(question)` so the REPL can execute a single-turn
+/// exchange (save history → inject question → stream answer → restore history).
+fn slash_btw(args: &str) -> SlashCommandResult {
+    let question = args.trim();
+    if question.is_empty() {
+        println!("\nUsage: /btw <question>\n");
+        return SlashCommandResult::Handled;
+    }
+    SlashCommandResult::SideQuestion(question.to_string())
+}
+
 /// Handle slash commands, returns Some if command was handled
 pub fn handle_slash_command(
     input: &str,
@@ -790,6 +891,9 @@ pub fn handle_slash_command(
             println!();
             Some(SlashCommandResult::Handled)
         }
+        "add-dir" => Some(slash_add_dir(args)),
+        "branch" => Some(slash_branch(args, messages)),
+        "btw" => Some(slash_btw(args)),
         _ => {
             if cmd.contains(':') {
                 let colon_parts: Vec<&str> = cmd.splitn(2, ':').collect();
@@ -2085,4 +2189,176 @@ mod tests {
             "/Effort High must be case-insensitive"
         );
     }
+
+    // ── §10 /add-dir (#176) ──────────────────────────────────────────────
+
+    /// `/add-dir` with a valid directory returns `AddWorkingDir` with the
+    /// canonicalised path.
+    #[test]
+    fn add_dir_valid_directory_returns_add_working_dir() {
+        let dir = std::env::temp_dir();
+        let input = format!("/add-dir {}", dir.display());
+        let result = handle_slash_command(&input, &mut ctx(), "anthropic", "claude-sonnet");
+        assert!(
+            matches!(result, Some(SlashCommandResult::AddWorkingDir(_))),
+            "/add-dir <valid-dir> must return AddWorkingDir"
+        );
+        if let Some(SlashCommandResult::AddWorkingDir(p)) = result {
+            assert!(p.is_absolute(), "returned path must be absolute (canonicalised)");
+        }
+    }
+
+    /// `/add-dir` with a path that does not exist returns `Handled`.
+    #[test]
+    fn add_dir_nonexistent_path_returns_handled() {
+        let result = handle_slash_command(
+            "/add-dir /this/path/does/not/exist/9f3a",
+            &mut ctx(),
+            "anthropic",
+            "claude-sonnet",
+        );
+        assert!(
+            matches!(result, Some(SlashCommandResult::Handled)),
+            "/add-dir <nonexistent> must return Handled"
+        );
+    }
+
+    /// `/add-dir` with a file path (not a directory) returns `Handled`.
+    #[test]
+    fn add_dir_file_path_returns_handled() {
+        let tmp = tempfile::NamedTempFile::new().expect("temp file");
+        let input = format!("/add-dir {}", tmp.path().display());
+        let result = handle_slash_command(&input, &mut ctx(), "anthropic", "claude-sonnet");
+        assert!(
+            matches!(result, Some(SlashCommandResult::Handled)),
+            "/add-dir <file> must return Handled (only directories are accepted)"
+        );
+    }
+
+    /// `/add-dir` with no argument returns `Handled` (usage printed).
+    #[test]
+    fn add_dir_no_arg_returns_handled() {
+        let result = handle_slash_command("/add-dir", &mut ctx(), "anthropic", "claude-sonnet");
+        assert!(
+            matches!(result, Some(SlashCommandResult::Handled)),
+            "/add-dir with no arg must return Handled"
+        );
+    }
+
+    // ── §11 /branch (#177) ──────────────────────────────────────────────
+
+    /// `/branch` with an explicit name creates a branch file and returns
+    /// `BranchSession(name)`.
+    #[test]
+    fn branch_explicit_name_creates_file_and_returns_branch_session() {
+        let name = format!("test-branch-{}", uuid::Uuid::new_v4().simple());
+        let input = format!("/branch {name}");
+        let result = handle_slash_command(&input, &mut ctx(), "anthropic", "claude-sonnet");
+        assert!(
+            matches!(result, Some(SlashCommandResult::BranchSession(ref n)) if n == &name),
+            "/branch <name> must return BranchSession(name)"
+        );
+        let branch_path =
+            std::path::PathBuf::from(format!(".openclaudia/branches/{name}.json"));
+        assert!(branch_path.exists(), "branch file must be created on disk");
+        let _ = std::fs::remove_file(&branch_path);
+    }
+
+    /// `/branch` with no argument uses an auto-generated name and returns
+    /// `BranchSession`.
+    #[test]
+    fn branch_no_arg_uses_generated_name() {
+        let result = handle_slash_command("/branch", &mut ctx(), "anthropic", "claude-sonnet");
+        if let Some(SlashCommandResult::BranchSession(ref name)) = result {
+            assert!(!name.is_empty(), "auto-generated branch name must be non-empty");
+            let branch_path =
+                std::path::PathBuf::from(format!(".openclaudia/branches/{name}.json"));
+            let _ = std::fs::remove_file(&branch_path);
+        } else {
+            panic!("/branch with no arg must return BranchSession");
+        }
+    }
+
+    /// `/branch <name>` called twice with the same name fails on the second call.
+    #[test]
+    fn branch_name_collision_returns_handled() {
+        let name = format!("test-collision-{}", uuid::Uuid::new_v4().simple());
+        let input = format!("/branch {name}");
+        let first = handle_slash_command(&input, &mut ctx(), "anthropic", "claude-sonnet");
+        assert!(
+            matches!(first, Some(SlashCommandResult::BranchSession(_))),
+            "first /branch must succeed"
+        );
+        let second = handle_slash_command(&input, &mut ctx(), "anthropic", "claude-sonnet");
+        assert!(
+            matches!(second, Some(SlashCommandResult::Handled)),
+            "/branch with duplicate name must return Handled"
+        );
+        let branch_path =
+            std::path::PathBuf::from(format!(".openclaudia/branches/{name}.json"));
+        let _ = std::fs::remove_file(&branch_path);
+    }
+
+    // ── §12 /btw (#179) ───────────────────────────────────────────────
+
+    /// `/btw <question>` returns `SideQuestion` with the trimmed question text.
+    #[test]
+    fn btw_with_question_returns_side_question() {
+        let result = handle_slash_command(
+            "/btw what is the capital of France?",
+            &mut ctx(),
+            "anthropic",
+            "claude-sonnet",
+        );
+        assert!(
+            matches!(
+                result,
+                Some(SlashCommandResult::SideQuestion(ref q))
+                    if q == "what is the capital of France?"
+            ),
+            "/btw <question> must return SideQuestion with the question text"
+        );
+    }
+
+    /// `/btw` with no argument (empty question) returns `Handled`.
+    #[test]
+    fn btw_empty_question_returns_handled() {
+        let result = handle_slash_command("/btw", &mut ctx(), "anthropic", "claude-sonnet");
+        assert!(
+            matches!(result, Some(SlashCommandResult::Handled)),
+            "/btw with empty question must return Handled"
+        );
+    }
+
+    /// `/btw` with whitespace-only argument is rejected.
+    #[test]
+    fn btw_whitespace_only_returns_handled() {
+        let result = handle_slash_command("/btw   ", &mut ctx(), "anthropic", "claude-sonnet");
+        assert!(
+            matches!(result, Some(SlashCommandResult::Handled)),
+            "/btw with whitespace-only arg must return Handled"
+        );
+    }
+
+    /// The messages vec is not modified by `/btw`.
+    #[test]
+    fn btw_does_not_modify_messages() {
+        let mut msgs = vec![
+            serde_json::json!({"role": "user", "content": "hello"}),
+            serde_json::json!({"role": "assistant", "content": "hi"}),
+        ];
+        let before_len = msgs.len();
+        let _ = handle_slash_command(
+            "/btw quick side question",
+            &mut msgs,
+            "anthropic",
+            "claude-sonnet",
+        );
+        assert_eq!(
+            msgs.len(),
+            before_len,
+            "/btw must not mutate the messages vec"
+        );
+    }
+
 }
