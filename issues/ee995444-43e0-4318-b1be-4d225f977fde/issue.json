@@ -7,8 +7,9 @@
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:16:11.262913320Z",
-  "updated_at": "2026-05-18T22:16:12.604200119Z",
+  "updated_at": "2026-05-18T22:16:13.924045074Z",
   "labels": [
-    "qa-review"
+    "qa-review",
+    "decoupling"
   ]
 }
