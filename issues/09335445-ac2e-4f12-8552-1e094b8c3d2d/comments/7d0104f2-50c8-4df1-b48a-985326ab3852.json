@@ -1,0 +1,10 @@
+{
+  "uuid": "7d0104f2-50c8-4df1-b48a-985326ab3852",
+  "issue_uuid": "09335445-ac2e-4f12-8552-1e094b8c3d2d",
+  "author": "lOrm",
+  "content": "Implemented /btw <question>: trims question, rejects empty/whitespace-only, returns SideQuestion(question) variant for REPL to save/restore message history around the one-off turn. Does not mutate messages in the slash handler itself. 4 tests added.",
+  "created_at": "2026-05-18T22:54:02.053090266Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA5Yk5ui9+FEQTUp1rkLMRTB8lDEsP/5ZrGOusB8kZ3N6+wum+FMelTPQUDxvTJZu3L2G5Mvd3G+/i/5q1FYAPBw=="
+}
