@@ -1,0 +1,12 @@
+{
+  "uuid": "89571bd5-e0fe-43c1-9eea-91102e4cb0d0",
+  "display_id": 543,
+  "title": "Phase 2 tests: tools — MCP [CC parity]",
+  "description": "## Goal\n\nImplement Rust tests covering the behavioral spec produced by Phase 1 (#528). Pin down every contract listed in that spec with at least one test case.\n\nParent audit: #523.\n\n## Blocked on\n\n- Phase 1 spec issue #528. Do not start until that body contains the markdown spec.\n\n## Where the tests live\n\n- `src/mcp.rs` — `#[cfg(test)] mod tests` for stdio handshake, tool refresh, capability gating\n- `tests/mcp_integration.rs` (new) — stdio server fake (use `tokio::process::Command` spawning a python echo-server fixture)\n\n## Test plan skeleton\n\n- Read the spec at #528.\n- For each behavior bullet: add a `#[test]` (or `#[tokio::test]`) named after the behavior.\n- For pure functions: `#[cfg(test)] mod tests` colocated in the same source file.\n- For multi-module / cross-process / SSE / HTTP: `tests/<subsystem>_integration.rs`.\n- Use `tempfile::TempDir` for filesystem isolation.\n- Use `wiremock` (already in deps) for HTTP fakes; avoid network IO.\n- Property tests (`proptest`) for input-parsers where useful.\n\n## Notes\n- Fake stdio MCP server fixture: ship under `tests/fixtures/mcp_echo_server.py` (no network)\n- HTTP transport tests: `wiremock`\n\n## Acceptance\n\n- Every Phase 1 behavior bullet has at least one matching test\n- `cargo test -p openclaudia` passes cleanly (no `#[ignore]` shortcuts)\n- `cargo test --workspace -- --nocapture` shows the new tests by name\n- No new clippy warnings (`cargo clippy --tests -- -D warnings`)\n- Gap signals from Phase 1 confirmed filed as separate feature issues, not silently bundled here\n",
+  "status": "open",
+  "priority": "medium",
+  "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
+  "created_by": "lOrm",
+  "created_at": "2026-05-18T15:31:38.008762241Z",
+  "updated_at": "2026-05-18T15:31:38.008762241Z"
+}
