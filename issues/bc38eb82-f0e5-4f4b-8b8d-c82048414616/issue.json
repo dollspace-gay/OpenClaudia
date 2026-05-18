@@ -8,11 +8,14 @@
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:32:23.633997811Z",
-  "updated_at": "2026-05-18T15:32:29.711591637Z",
+  "updated_at": "2026-05-18T15:32:31.235594719Z",
   "labels": [
     "audit",
     "parity",
     "phase-2-tests",
     "cc-memdir"
+  ],
+  "blockers": [
+    "6e5d4ff2-0f4d-4a53-ba9e-ab6bb418ab3b"
   ]
 }
