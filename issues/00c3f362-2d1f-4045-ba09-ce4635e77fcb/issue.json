@@ -1,0 +1,11 @@
+{
+  "uuid": "00c3f362-2d1f-4045-ba09-ce4635e77fcb",
+  "display_id": 582,
+  "title": "Resume subagent should reuse original agent_id for transcript/cache continuity (CC parity)",
+  "status": "open",
+  "priority": "medium",
+  "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
+  "created_by": "lOrm",
+  "created_at": "2026-05-18T15:53:10.867990308Z",
+  "updated_at": "2026-05-18T15:53:10.867990308Z"
+}
