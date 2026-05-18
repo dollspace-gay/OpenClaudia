@@ -8,10 +8,11 @@
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:32:04.772466455Z",
-  "updated_at": "2026-05-18T15:32:09.790643868Z",
+  "updated_at": "2026-05-18T15:32:11.470304838Z",
   "labels": [
     "audit",
     "parity",
-    "phase-2-tests"
+    "phase-2-tests",
+    "cc-permissions"
   ]
 }
