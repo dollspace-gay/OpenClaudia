@@ -1,0 +1,10 @@
+{
+  "uuid": "30c23e8c-3b91-46f0-90a7-f39ad2ded864",
+  "issue_uuid": "79f3fb57-dfdc-40a9-8f2d-9bc9b371f0a6",
+  "author": "lOrm",
+  "content": "Plan: Category A — root-cause. Replace Command::new('kill') PATH lookups with direct libc kill()/killpg() syscalls. libc is already a unix-target dependency in Cargo.toml. Use libc::kill() and libc::SIGTERM/SIGKILL. For kill -0 existence check, also use libc::kill(pid, 0). Propagate errors.",
+  "created_at": "2026-05-18T22:38:31.654104774Z",
+  "kind": "plan",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABASHJD6yC4LTpLl0fSpJ6esL8Tm4RJuYQVlBWUg7QFZkjuVHTKXB/KDJH0RDSZKKg4P53l1rJN7LBc5JjirRJODA=="
+}
