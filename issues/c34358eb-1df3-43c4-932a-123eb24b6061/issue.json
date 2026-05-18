@@ -8,8 +8,9 @@
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:29:37.996461860Z",
-  "updated_at": "2026-05-18T15:29:39.584396407Z",
+  "updated_at": "2026-05-18T15:29:41.178567076Z",
   "labels": [
-    "audit"
+    "audit",
+    "parity"
   ]
 }
