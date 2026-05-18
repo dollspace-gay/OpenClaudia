@@ -1,0 +1,10 @@
+{
+  "uuid": "508c7868-fb9f-4420-8a71-1cb9c68135e1",
+  "issue_uuid": "e1ea7878-fc34-40da-8a20-64769ede56e8",
+  "author": "lOrm",
+  "content": "Implemented /branch [name]: snapshots current messages to .openclaudia/branches/<name>.json, name defaults to timestamp+UUID suffix, collision on duplicate name returns Handled. Returns BranchSession(name) variant. 3 tests added.",
+  "created_at": "2026-05-18T22:53:55.239297847Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA8Ap8V1iDZRnglJHamkRfB8Woju0kCXSIgq6nlvRsMPb0ffZOuwnrAyDiYgDul0FmTgqymPaYJa7lsCOOpI4eBw=="
+}
