@@ -1,0 +1,10 @@
+{
+  "uuid": "76a4b78c-26fd-4b76-93e2-cdb5a3335a82",
+  "issue_uuid": "a74f0f4e-db19-4096-9e1d-7de5a824e90a",
+  "author": "lOrm",
+  "content": "Refactor LANDED. Entry-point proxy_chat_completions shrunk from 110 LOC to 50 LOC (target <=80). Five single-responsibility helpers extracted at semantic boundaries: resolve_provider (sync, line 834), bump_session_request_count (async, line 853), inject_stream_options_if_needed (sync, line 866), transform_and_forward (async, line 892), record_actual_usage_for_session (async, line 928). Verification: cargo test -p openclaudia --lib = 1150 passed / 0 failed (matches baseline). proxy-scoped tests = 15 passed / 0 failed. cargo clippy --lib --all-features = clean (0 errors, 0 warnings). rustfmt --check src/proxy.rs = clean. NO #[allow] added, NO clippy.toml, NO #[ignore]. The pre-existing #[allow(clippy::too_many_lines)] at line 451 is on prepare_request_context (out of scope for #247). All behavior preserved. Pre-existing clippy errors in src/cli/repl/slash.rs / src/main.rs / src/cli/repl/command_registry.rs are unrelated to proxy.rs and predate this refactor.",
+  "created_at": "2026-05-18T23:38:49.129828308Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAdW9rjEHuq7Kvjl0eHXqGQWEQzyGyLyoHhGlS7jsahORXl6VqhWyLsAsU7j0dVwRT7wQ5kbWACneIVVwolnyCDg=="
+}
