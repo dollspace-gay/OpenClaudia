@@ -1,0 +1,12 @@
+{
+  "uuid": "443e9d81-e04d-417b-abc0-6b10a8833600",
+  "display_id": 559,
+  "title": "Phase 1 spec: tools — web (WebFetch, WebSearch) [CC parity]",
+  "description": "## Goal\n\nExtract a behavioral spec for this subsystem by reading Claude Code's TypeScript source. **Output**: update this issue body with a markdown spec pinning down each testable contract (input → expected output, edge cases, error paths). No Rust yet — that is Phase 2.\n\nParent audit: #523.\n\n## Claude Code source — read these\n\n- `tools/WebFetchTool/WebFetchTool.ts` (~318 lines)\n- `tools/WebFetchTool/preapproved.ts` (~166 lines) — hardcoded domain allowlist\n- `tools/WebFetchTool/utils.ts` (~530 lines)\n- `tools/WebSearchTool/WebSearchTool.ts` (~435 lines) — multiple backends + key rotation\n\n## OpenClaudia counterpart\n\n- `src/tools/web.rs` (~224 lines) — search at line 125\n- `src/web.rs` (~970 lines) — `fetch_with_browser` at line 202\n\n## Behaviors to specify\n\nFor each, capture: input shape, expected output, error paths, side effects, and at least one edge case.\n\n1. `web_fetch(url)` returns rendered HTML as text\n2. `web_search(query)` falls back to DuckDuckGo with headless browser when no API key configured\n3. `web_browser(url)` uses headless Chrome path\n4. Non-200 fetch returns error with HTTP status (not silent empty string)\n5. Invalid/file:// URL rejected before any network call\n\n## Gaps already visible from the brief\n\nThese are CC features OpenClaudia does not implement. Do **not** include them in the spec — file each as a separate feature/refactor issue and link back here.\n\n- **Domain preapproval allowlist missing** — file: \"Add hardcoded domain allowlist for web_fetch sandbox bypass (parity with CC `preapproved.ts`)\"\n- **Multi-backend web_search missing** — file: \"Add multiple search backends with API-key rotation (parity with CC `WebSearchTool`)\"\n\n## Done when\n\n- This issue body has been edited to contain a markdown spec, one section per behavior above\n- Each behavior section names the function(s) on both sides (or marks the OC side missing)\n- Every gap above has been filed as its own issue and linked here\n- The matching Phase 2 issue is unblocked\n",
+  "status": "open",
+  "priority": "medium",
+  "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
+  "created_by": "lOrm",
+  "created_at": "2026-05-18T15:34:04.697389847Z",
+  "updated_at": "2026-05-18T15:34:04.697389847Z"
+}
