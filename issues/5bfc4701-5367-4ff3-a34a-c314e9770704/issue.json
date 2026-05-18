@@ -1,0 +1,12 @@
+{
+  "uuid": "5bfc4701-5367-4ff3-a34a-c314e9770704",
+  "display_id": 610,
+  "title": "Validate extracted URLs from DuckDuckGo scraper against SSRF guard before returning to agent",
+  "description": "SSRF-adjacent gap discovered during spec #529: OC src/web.rs search_duckduckgo (line 475) extracts URLs from the DuckDuckGo HTML response (scraper crate, CSS selectors .result__a[href]) and returns them to the caller without running validate_url on each extracted URL. A malicious or compromised DDG response could surface SSRF-interesting URLs (private IPs, metadata endpoints) into the search result list returned to the agent.\n\nCC does not have this gap because CC's web_search delegates to the Anthropic API server tool; no URL extraction from third-party HTML is performed.\n\nValidate_url (src/web.rs:153) is already implemented and handles all SSRF checks; it just is not called on extracted result URLs.\n\nDone when: each extracted URL in search_duckduckgo is passed through validate_url before being added to results; URLs that fail validation are dropped (not surfaced to agent); a debug log line records dropped URLs.\n\nParent spec: #529",
+  "status": "open",
+  "priority": "high",
+  "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
+  "created_by": "lOrm",
+  "created_at": "2026-05-18T16:01:10.376332146Z",
+  "updated_at": "2026-05-18T16:01:10.376332146Z"
+}
