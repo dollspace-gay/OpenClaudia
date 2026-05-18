@@ -1,0 +1,10 @@
+{
+  "uuid": "6f89eaad-72ea-4930-b56c-7e75b1c49e65",
+  "issue_uuid": "f0ea2e8a-0ec0-48a7-adaf-f8ba79a5dcdd",
+  "author": "lOrm",
+  "content": "Delivered: Removed provider_name and model parameters from forward_request() signature. Removed hardcoded 'google' branch. URL now composed uniformly as base_url+endpoint for all providers. GoogleAdapter::chat_endpoint() already returns '/v1beta/models/{model}:generateContent' so the produced URL is identical. All three call sites updated. OCP satisfied: new providers override chat_endpoint only. 1135 tests pass, clippy clean, rustfmt exit 0.",
+  "created_at": "2026-05-18T22:46:14.968230143Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAzitE49dnBAChKHfwnYxrteUp8JvLMunup+aY6PzsnC+lr1E4CpBPRJPLetyFVAwOCuMXxUGgH4bxEAovt5LkCg=="
+}
