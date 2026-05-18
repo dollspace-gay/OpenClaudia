@@ -1,0 +1,10 @@
+{
+  "uuid": "bf8986ae-c7b7-4890-8c05-8289d0d0b45f",
+  "issue_uuid": "c68487c7-2cfc-4661-9143-b7590e4f223f",
+  "author": "lOrm",
+  "content": "Plan: Category B — local correctness. streaming::TokenUsage is a parse-boundary type with Option<u64> cache fields (provider may not report). session::TokenUsage is the canonical accumulator with u64 fields named cache_write_tokens. Fix: add From<streaming::TokenUsage> for session::TokenUsage at the SSE boundary, document the field-name distinction. Keep both types; streaming re-exports or documents the canonical path.",
+  "created_at": "2026-05-18T22:38:30.158322490Z",
+  "kind": "plan",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABASOjf79nFJ+aZC9Em1YnL4DPF2Tvr+aYt0xeV+cAvVb9EpJwp1Bj9yOnQVrGzL3g26SDbqFKpX5qDO9/+dym4Dw=="
+}
