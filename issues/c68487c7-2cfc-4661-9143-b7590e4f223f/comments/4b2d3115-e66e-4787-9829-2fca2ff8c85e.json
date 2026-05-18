@@ -1,0 +1,10 @@
+{
+  "uuid": "4b2d3115-e66e-4787-9829-2fca2ff8c85e",
+  "issue_uuid": "c68487c7-2cfc-4661-9143-b7590e4f223f",
+  "author": "lOrm",
+  "content": "Delivered: Added From<streaming::TokenUsage> for session::TokenUsage in session/state.rs. The From impl documents the field-name mapping (cache_creation_tokens→cache_write_tokens, cache_read_tokens→cache_read_tokens) and the Option<u64>→u64 semantic (None=0). Both types retained with clear boundary: streaming type is SSE-parse boundary, session type is canonical accumulator. 1135 tests pass, clippy clean, rustfmt exit 0.",
+  "created_at": "2026-05-18T22:46:06.424966927Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABADj5w2wVZsyWY8bHgkLUd/mwPBccimPr+abd+P6kI+9+44OAjHDeIBuP0mLrh1gzSyv0dxfAthC5aeJLdgoHFBw=="
+}
