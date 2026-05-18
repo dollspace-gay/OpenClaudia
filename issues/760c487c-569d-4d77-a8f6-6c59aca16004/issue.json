@@ -6,5 +6,8 @@
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:09:19.237812977Z",
-  "updated_at": "2026-05-18T16:09:19.237812977Z"
+  "updated_at": "2026-05-18T16:09:20.616011607Z",
+  "labels": [
+    "parity,cc-lsp"
+  ]
 }
