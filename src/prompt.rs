@@ -28,7 +28,7 @@ use crate::modes::BehaviorMode;
 /// - `stable_prefix`: identity + axes + tools + principles + comms.
 ///   Stable across turns — should carry `cache_control: { type: "ephemeral" }`.
 /// - `dynamic_suffix`: env + skills + memory + hooks + custom instructions.
-///   Changes per-turn — sent as a separate block WITHOUT cache_control.
+///   Changes per-turn — sent as a separate block WITHOUT `cache_control`.
 #[derive(Debug, Clone)]
 pub struct SystemPromptBlocks {
     /// Content that is stable across turns (cacheable).
@@ -244,7 +244,7 @@ pub fn build_system_prompt_blocks(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modes::{Agency, Modifier, Preset, Quality, Scope};
+    use crate::modes::{Modifier, Preset};
 
     const ALL_PRESETS: [Preset; 8] = [
         Preset::Create,
@@ -479,13 +479,11 @@ mod tests {
             let prompt = build_system_prompt(Some(blank), Some(blank), None);
             assert!(
                 !prompt.contains("Active Instructions"),
-                "blank hook {:?} produced Active Instructions header",
-                blank
+                "blank hook {blank:?} produced Active Instructions header"
             );
             assert!(
                 !prompt.contains("Custom Instructions"),
-                "blank custom {:?} produced Custom Instructions header",
-                blank
+                "blank custom {blank:?} produced Custom Instructions header"
             );
         }
     }
@@ -572,7 +570,7 @@ mod tests {
         assert!(prompt_with.len() > prompt_without.len());
     }
 
-    /// build_system_prompt (no mode arg) and build_system_prompt_with_mode
+    /// `build_system_prompt` (no mode arg) and `build_system_prompt_with_mode`
     /// using Default must produce identical output.
     #[test]
     fn default_mode_backward_compat() {
@@ -582,7 +580,7 @@ mod tests {
         assert_eq!(via_legacy, via_explicit);
     }
 
-    /// build_system_prompt_with_cwd and build_system_prompt_with_mode with
+    /// `build_system_prompt_with_cwd` and `build_system_prompt_with_mode` with
     /// default mode and same CWD must produce identical output.
     #[test]
     fn cwd_backward_compat() {
@@ -767,8 +765,8 @@ mod tests {
         );
     }
 
-    /// to_combined() must produce the same result as the legacy
-    /// build_system_prompt_with_mode() for all presets.
+    /// `to_combined()` must produce the same result as the legacy
+    /// `build_system_prompt_with_mode()` for all presets.
     #[test]
     fn combined_matches_legacy_for_all_presets() {
         for preset in ALL_PRESETS {

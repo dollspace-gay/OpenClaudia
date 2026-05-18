@@ -374,7 +374,7 @@ mod tests {
             StreamEvent::RequestStart { request_id } => {
                 assert_eq!(request_id.as_deref(), Some("msg_123"));
             }
-            other => panic!("Expected RequestStart, got {:?}", other),
+            other => panic!("Expected RequestStart, got {other:?}"),
         }
     }
 
@@ -385,7 +385,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         match &events[0] {
             StreamEvent::TextDelta { text } => assert_eq!(text, "Hello"),
-            other => panic!("Expected TextDelta, got {:?}", other),
+            other => panic!("Expected TextDelta, got {other:?}"),
         }
     }
 
@@ -396,7 +396,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         match &events[0] {
             StreamEvent::ThinkingDelta { text } => assert_eq!(text, "Let me think..."),
-            other => panic!("Expected ThinkingDelta, got {:?}", other),
+            other => panic!("Expected ThinkingDelta, got {other:?}"),
         }
     }
 
@@ -416,7 +416,7 @@ mod tests {
                 assert_eq!(id, "toolu_abc");
                 assert_eq!(name, "bash");
             }
-            other => panic!("Expected ToolUseStart, got {:?}", other),
+            other => panic!("Expected ToolUseStart, got {other:?}"),
         }
     }
 
@@ -429,7 +429,7 @@ mod tests {
             StreamEvent::ToolUseInputDelta { partial_json } => {
                 assert_eq!(partial_json, "{\"cmd\":");
             }
-            other => panic!("Expected ToolUseInputDelta, got {:?}", other),
+            other => panic!("Expected ToolUseInputDelta, got {other:?}"),
         }
     }
 
@@ -456,7 +456,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         match &events[0] {
             StreamEvent::Done { stop_reason } => assert_eq!(stop_reason, &StopReason::ToolUse),
-            other => panic!("Expected Done with ToolUse, got {:?}", other),
+            other => panic!("Expected Done with ToolUse, got {other:?}"),
         }
     }
 
@@ -492,7 +492,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         match &events[0] {
             StreamEvent::ThinkingDelta { text } => assert!(text.is_empty()),
-            other => panic!("Expected ThinkingDelta (empty), got {:?}", other),
+            other => panic!("Expected ThinkingDelta (empty), got {other:?}"),
         }
     }
 
@@ -523,7 +523,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         match &events[0] {
             StreamEvent::TextDelta { text } => assert_eq!(text, "Hello world"),
-            other => panic!("Expected TextDelta, got {:?}", other),
+            other => panic!("Expected TextDelta, got {other:?}"),
         }
     }
 
@@ -545,7 +545,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         match &events[0] {
             StreamEvent::ThinkingDelta { text } => assert_eq!(text, "Step 1: ..."),
-            other => panic!("Expected ThinkingDelta, got {:?}", other),
+            other => panic!("Expected ThinkingDelta, got {other:?}"),
         }
     }
 
@@ -650,7 +650,7 @@ mod tests {
                 assert!(usage.cache_creation_tokens.is_none());
                 assert!(usage.cache_read_tokens.is_none());
             }
-            other => panic!("Expected Usage, got {:?}", other),
+            other => panic!("Expected Usage, got {other:?}"),
         }
     }
 
@@ -674,7 +674,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         match &events[0] {
             StreamEvent::TextDelta { text } => assert_eq!(text, "Hello from Gemini"),
-            other => panic!("Expected TextDelta, got {:?}", other),
+            other => panic!("Expected TextDelta, got {other:?}"),
         }
     }
 
@@ -722,7 +722,7 @@ mod tests {
             StreamEvent::ThinkingDelta { text } => {
                 assert_eq!(text, "I need to analyze the code...");
             }
-            other => panic!("Expected ThinkingDelta, got {:?}", other),
+            other => panic!("Expected ThinkingDelta, got {other:?}"),
         }
     }
 
@@ -771,7 +771,7 @@ mod tests {
                 assert_eq!(usage.input_tokens, 300);
                 assert_eq!(usage.output_tokens, 150);
             }
-            other => panic!("Expected Usage, got {:?}", other),
+            other => panic!("Expected Usage, got {other:?}"),
         }
     }
 
@@ -835,7 +835,7 @@ mod tests {
         let deserialized: StreamEvent = serde_json::from_str(&serialized).unwrap();
         match deserialized {
             StreamEvent::TextDelta { text } => assert_eq!(text, "hello"),
-            other => panic!("Expected TextDelta, got {:?}", other),
+            other => panic!("Expected TextDelta, got {other:?}"),
         }
     }
 }

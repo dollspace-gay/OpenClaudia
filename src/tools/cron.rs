@@ -270,7 +270,7 @@ mod tests {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     #[test]
@@ -342,7 +342,7 @@ mod tests {
 
     // ─── Spec §3: cron_create stores schedule; cron_list reads it back ─────────
 
-    /// Contract: `cron_create` requires a `name` field; absent → is_error=true.
+    /// Contract: `cron_create` requires a `name` field; absent → `is_error=true`.
     #[test]
     fn cron_create_requires_name_field() {
         let mut args = HashMap::new();
@@ -359,7 +359,7 @@ mod tests {
         );
     }
 
-    /// Contract: `cron_create` requires a `schedule` field; absent → is_error=true.
+    /// Contract: `cron_create` requires a `schedule` field; absent → `is_error=true`.
     #[test]
     fn cron_create_requires_schedule_field() {
         let mut args = HashMap::new();
@@ -373,7 +373,7 @@ mod tests {
         );
     }
 
-    /// Contract: `cron_create` requires a `prompt` field; absent → is_error=true.
+    /// Contract: `cron_create` requires a `prompt` field; absent → `is_error=true`.
     #[test]
     fn cron_create_requires_prompt_field() {
         let mut args = HashMap::new();
@@ -390,7 +390,7 @@ mod tests {
         );
     }
 
-    /// Contract: duplicate `name` is rejected with is_error=true.
+    /// Contract: duplicate `name` is rejected with `is_error=true`.
     /// OC deduplicates by name (CC does not deduplicate at all — pin this
     /// OC-specific behaviour).
     #[test]

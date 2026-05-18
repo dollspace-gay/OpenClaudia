@@ -4,17 +4,17 @@
 //! `skippedMarketplaces`, and `skippedPlugins` settings. Each list
 //! gates a different stage of the install pipeline:
 //!
-//! - **strict_known_marketplaces**: when set (non-empty), ONLY the
+//! - **`strict_known_marketplaces`**: when set (non-empty), ONLY the
 //!   marketplace sources named here can be added. Anything else is
 //!   rejected BEFORE the download happens, matching Claude Code's
 //!   "check happens before touching the filesystem" guarantee.
-//! - **blocked_marketplaces**: hard blocklist — any source listed here
+//! - **`blocked_marketplaces`**: hard blocklist — any source listed here
 //!   is rejected even when it would otherwise be allowed by
 //!   `strict_known_marketplaces`. Takes precedence.
-//! - **skipped_marketplaces**: user has declined to re-prompt on this
+//! - **`skipped_marketplaces`**: user has declined to re-prompt on this
 //!   one. Non-enforcing — the marketplace can still be added
 //!   explicitly; this just suppresses automatic prompts.
-//! - **skipped_plugins**: plugin IDs (in `plugin@marketplace` form)
+//! - **`skipped_plugins`**: plugin IDs (in `plugin@marketplace` form)
 //!   the user declined. Install path skips these silently.
 //!
 //! A missing `strict_known_marketplaces` (`None`) means "no allowlist

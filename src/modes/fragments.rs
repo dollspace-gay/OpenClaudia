@@ -54,6 +54,7 @@ const MOD_CONTEXT_PACING: &str = include_str!("../../prompts/modifiers/context-p
 // =========================================================================
 
 /// Get the prompt fragment for an agency value.
+#[must_use] 
 pub const fn agency_fragment(agency: Agency) -> &'static str {
     match agency {
         Agency::Autonomous => AGENCY_AUTONOMOUS,
@@ -63,6 +64,7 @@ pub const fn agency_fragment(agency: Agency) -> &'static str {
 }
 
 /// Get the prompt fragment for a quality value.
+#[must_use] 
 pub const fn quality_fragment(quality: Quality) -> &'static str {
     match quality {
         Quality::Architect => QUALITY_ARCHITECT,
@@ -72,6 +74,7 @@ pub const fn quality_fragment(quality: Quality) -> &'static str {
 }
 
 /// Get the prompt fragment for a scope value.
+#[must_use] 
 pub const fn scope_fragment(scope: Scope) -> &'static str {
     match scope {
         Scope::Unrestricted => SCOPE_UNRESTRICTED,
@@ -81,6 +84,7 @@ pub const fn scope_fragment(scope: Scope) -> &'static str {
 }
 
 /// Get the prompt fragment for a modifier.
+#[must_use] 
 pub const fn modifier_fragment(modifier: Modifier) -> &'static str {
     match modifier {
         Modifier::Bold => MOD_BOLD,

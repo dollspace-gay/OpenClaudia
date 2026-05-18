@@ -98,7 +98,7 @@ fn domain_list(args: &HashMap<String, Value>, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Search the web using Tavily or Brave API (or DuckDuckGo fallback).
+/// Search the web using Tavily or Brave API (or `DuckDuckGo` fallback).
 ///
 /// Supports Claude Code-compatible `allowed_domains` / `blocked_domains`
 /// filtering: results from domains matching `blocked_domains` are
@@ -161,38 +161,6 @@ pub fn execute_web_search(args: &HashMap<String, Value>) -> (String, bool) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn host_of_handles_common_shapes() {
-        assert_eq!(
-            host_of("https://example.com/path"),
-            Some("example.com".into())
-        );
-        assert_eq!(
-            host_of("http://www.example.com"),
-            Some("example.com".into())
-        );
-        assert_eq!(
-            host_of("https://EXAMPLE.com:8080/x"),
-            Some("example.com".into())
-        );
-        assert_eq!(host_of("://no-scheme"), Some("no-scheme".into()));
-        assert_eq!(host_of(""), None);
-    }
-
-    #[test]
-    fn domain_matches_subdomains_but_not_siblings() {
-        assert!(domain_matches("docs.python.org", "docs.python.org"));
-        assert!(domain_matches("foo.docs.python.org", "docs.python.org"));
-        assert!(!domain_matches("python.org", "docs.python.org"));
-        assert!(!domain_matches("evildocs.python.org", "docs.python.org"));
-        assert!(domain_matches("example.com", "www.example.com"));
-    }
-}
-
 /// Fetch a URL using headless Chrome browser
 /// Fallback for when Jina Reader fails on complex sites
 pub fn execute_web_browser(args: &HashMap<String, Value>) -> (String, bool) {
@@ -229,5 +197,37 @@ pub fn execute_web_browser(args: &HashMap<String, Value>) -> (String, bool) {
             (output, false)
         }
         Err(e) => (format!("Browser fetch failed: {e}"), true),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_of_handles_common_shapes() {
+        assert_eq!(
+            host_of("https://example.com/path"),
+            Some("example.com".into())
+        );
+        assert_eq!(
+            host_of("http://www.example.com"),
+            Some("example.com".into())
+        );
+        assert_eq!(
+            host_of("https://EXAMPLE.com:8080/x"),
+            Some("example.com".into())
+        );
+        assert_eq!(host_of("://no-scheme"), Some("no-scheme".into()));
+        assert_eq!(host_of(""), None);
+    }
+
+    #[test]
+    fn domain_matches_subdomains_but_not_siblings() {
+        assert!(domain_matches("docs.python.org", "docs.python.org"));
+        assert!(domain_matches("foo.docs.python.org", "docs.python.org"));
+        assert!(!domain_matches("python.org", "docs.python.org"));
+        assert!(!domain_matches("evildocs.python.org", "docs.python.org"));
+        assert!(domain_matches("example.com", "www.example.com"));
     }
 }

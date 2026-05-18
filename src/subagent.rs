@@ -1407,7 +1407,7 @@ pub fn execute_agent_output_tool<S: BuildHasher>(
     if block && !agent.finished.load(Ordering::SeqCst) {
         // Wait for completion (up to 5 minutes)
         let start = std::time::Instant::now();
-        let timeout = std::time::Duration::from_secs(300);
+        let timeout = std::time::Duration::from_mins(5);
 
         while !agent.finished.load(Ordering::SeqCst) && start.elapsed() < timeout {
             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -1589,7 +1589,7 @@ mod tests {
     }
 
     /// Spec #527 §1 — The message format produced for background spawn includes
-    /// the agent_id, task description, and a hint to use `agent_output`.
+    /// the `agent_id`, task description, and a hint to use `agent_output`.
     #[test]
     fn spec1_background_message_format() {
         let mgr = BackgroundAgentManager::new();
@@ -1635,7 +1635,7 @@ mod tests {
     }
 
     /// Spec #527 §2 — Storing and loading a transcript round-trips correctly;
-    /// the loaded messages and agent_type match what was stored.
+    /// the loaded messages and `agent_type` match what was stored.
     #[test]
     fn spec2_transcript_store_and_load_round_trip() {
         let msgs = vec![
@@ -1653,7 +1653,7 @@ mod tests {
         assert_eq!(loaded.0[2]["content"].as_str(), Some("Done."));
     }
 
-    /// Spec #527 §2 gap #582 — OC generates a NEW agent_id on resume; it does NOT
+    /// Spec #527 §2 gap #582 — OC generates a NEW `agent_id` on resume; it does NOT
     /// reuse the original id. CC reuses the original `agentId` for transcript
     /// continuity and prompt-cache hits. This pins the divergent OC behavior.
     #[test]
@@ -1726,7 +1726,7 @@ mod tests {
 
     // ── Spec #527 §1 — agent_output edge cases ──
 
-    /// Spec #527 §1 — querying an agent_id that was never registered returns
+    /// Spec #527 §1 — querying an `agent_id` that was never registered returns
     /// `is_error = true` with a "not found" message.
     #[test]
     fn spec1_agent_output_unknown_id_returns_error() {
@@ -1741,7 +1741,7 @@ mod tests {
         );
     }
 
-    /// Spec #527 §1 — agent_output for a finished agent returns the output text
+    /// Spec #527 §1 — `agent_output` for a finished agent returns the output text
     /// and `is_error = false`.
     #[test]
     fn spec1_agent_output_finished_agent_returns_result() {
@@ -1760,7 +1760,7 @@ mod tests {
         assert!(msg.contains(&id));
     }
 
-    /// Spec #527 §1 — agent_output for a failed agent returns `is_error = true`
+    /// Spec #527 §1 — `agent_output` for a failed agent returns `is_error = true`
     /// and the error text.
     #[test]
     fn spec1_agent_output_failed_agent_returns_error() {

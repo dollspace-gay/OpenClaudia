@@ -881,7 +881,7 @@ impl VddEngine {
     /// against the actual code.  Uses the **builder's** provider (not the
     /// adversary's) to get an independent second opinion.
     ///
-    /// Returns a map of finding_id → "genuine" | "confabulated".
+    /// Returns a map of `finding_id` → "genuine" | "confabulated".
     async fn verify_findings(
         &self,
         findings: &[&Finding],
@@ -934,9 +934,7 @@ impl VddEngine {
                 finding.cwe.as_deref().unwrap_or("none"),
                 finding.file_path.as_deref().unwrap_or("unknown"),
                 finding
-                    .line_range
-                    .map(|(a, b)| format!("{a}-{b}"))
-                    .unwrap_or_else(|| "unknown".to_string()),
+                    .line_range.map_or_else(|| "unknown".to_string(), |(a, b)| format!("{a}-{b}")),
                 finding.description,
                 finding.adversary_reasoning,
             );
@@ -1042,7 +1040,7 @@ impl VddEngine {
         Ok((text, tokens))
     }
 
-    /// Parse the verification agent's response into a finding_id → verdict map.
+    /// Parse the verification agent's response into a `finding_id` → verdict map.
     fn parse_verification_verdicts(
         &self,
         response: &str,
@@ -1507,7 +1505,7 @@ fn build_verification_code_view(
                 any_truncated = true;
                 break;
             }
-            let _ = write!(out, "{}: {}\n", line_idx + 1, lines[line_idx]);
+            let _ = writeln!(out, "{}: {}", line_idx + 1, lines[line_idx]);
         }
         if out.len() >= max_chars {
             any_truncated = true;
@@ -1728,7 +1726,7 @@ mod tests {
             file_path: None,
             line_range: None,
             status: FindingStatus::FalsePositive,
-            adversary_reasoning: "".to_string(),
+            adversary_reasoning: String::new(),
             iteration: 1,
         }];
         let result = format_findings_for_injection(&findings, &[]);
@@ -1832,7 +1830,7 @@ mod tests {
             file_path: None,
             line_range: None,
             status: FindingStatus::Genuine,
-            adversary_reasoning: "".to_string(),
+            adversary_reasoning: String::new(),
             iteration: 2,
         }];
 

@@ -44,7 +44,7 @@ impl SessionStateV1 {
 
     /// Wrap a `SessionState` in the versioned envelope.
     #[must_use]
-    pub fn wrap(state: SessionState) -> Self {
+    pub const fn wrap(state: SessionState) -> Self {
         Self {
             version: Self::CURRENT_VERSION,
             state,
@@ -61,7 +61,7 @@ impl SessionStateV1 {
 }
 
 /// Persist errors — short enum so callers don't need to understand
-/// serde / std::io error hierarchies.
+/// serde / `std::io` error hierarchies.
 #[derive(Debug, thiserror::Error)]
 pub enum PersistError {
     #[error("IO error: {0}")]

@@ -62,7 +62,7 @@ impl LogSelector {
     /// an "empty" placeholder instead of a list in that case. Exposed
     /// so the event loop can decline to open an empty picker.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.rows.is_empty()
     }
 

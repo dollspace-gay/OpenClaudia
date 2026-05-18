@@ -140,7 +140,7 @@ pub fn denied_reason(command: &str) -> Option<&'static str> {
 ///
 /// * Remove every env var matching [`is_sensitive_env`].
 /// * Do NOT `env_clear` — the child may legitimately need PATH, HOME,
-///   CARGO_*, NODE_ENV, etc. Denylist is the right granularity here.
+///   CARGO_*, `NODE_ENV`, etc. Denylist is the right granularity here.
 pub fn apply_env_scrub(cmd: &mut Command) {
     let sensitive: Vec<String> = std::env::vars()
         .map(|(k, _)| k)
@@ -270,7 +270,7 @@ mod tests {
     }
 
     /// B4-unit-b: prefix-matched families (AWS_, AZURE_, GCP_, GCLOUD_,
-    /// CLAUDE_CODE_). OC source: policy.rs:63-68.
+    /// `CLAUDE_CODE`_). OC source: policy.rs:63-68.
     #[test]
     fn b4_prefix_families_are_sensitive() {
         assert!(is_sensitive_env("AWS_ACCESS_KEY_ID"));
@@ -284,8 +284,8 @@ mod tests {
         assert!(is_sensitive_env("CLAUDE_CODE_ANYTHING"));
     }
 
-    /// B4-unit-c: suffix-matched families (_API_KEY, _TOKEN, _SECRET,
-    /// _PASSWORD, _PASSPHRASE, _PRIVATE_KEY). OC source: policy.rs:74-79.
+    /// B4-unit-c: suffix-matched families (_`API_KEY`, _TOKEN, _SECRET,
+    /// _PASSWORD, _PASSPHRASE, _`PRIVATE_KEY`). OC source: policy.rs:74-79.
     #[test]
     fn b4_suffix_families_are_sensitive() {
         assert!(is_sensitive_env("MY_SERVICE_API_KEY"), "_API_KEY suffix");
@@ -298,9 +298,9 @@ mod tests {
 
     /// B4-unit-d: vars that must NOT be classified as sensitive.
     ///
-    /// Notably: CARGO_HOME and CARGO_BUILD_JOBS are NOT on any match rule.
+    /// Notably: `CARGO_HOME` and `CARGO_BUILD_JOBS` are NOT on any match rule.
     /// The CARGO_ prefix is intentionally excluded from the prefix denylist.
-    /// Only CARGO_REGISTRY_TOKEN is caught (exact match).
+    /// Only `CARGO_REGISTRY_TOKEN` is caught (exact match).
     /// OC source: policy.rs:63-68 (no CARGO_ prefix entry).
     #[test]
     fn b4_non_sensitive_vars_pass_through() {
@@ -367,7 +367,7 @@ mod tests {
         }
     }
 
-    /// B5-unit-b: PIPE_TO_SHELL regex covers curl/wget/fetch variants.
+    /// B5-unit-b: `PIPE_TO_SHELL` regex covers curl/wget/fetch variants.
     /// OC source: policy.rs:128-131.
     #[test]
     fn b5_pipe_to_shell_regex_variants() {
@@ -402,7 +402,7 @@ mod tests {
         assert!(denied_reason("dd if=/dev/sda of=backup.img").is_none());
     }
 
-    /// B5-unit-d: validate_command error messages match documented format.
+    /// B5-unit-d: `validate_command` error messages match documented format.
     #[test]
     fn b5_validate_command_error_message_format() {
         // Length cap: must mention "bytes exceeds" and the cap value
@@ -427,7 +427,7 @@ mod tests {
         );
     }
 
-    /// B5-unit-e: boundary conditions at MAX_COMMAND_LEN (4096).
+    /// B5-unit-e: boundary conditions at `MAX_COMMAND_LEN` (4096).
     #[test]
     fn b5_length_cap_boundary() {
         let at_limit = "x".repeat(MAX_COMMAND_LEN);

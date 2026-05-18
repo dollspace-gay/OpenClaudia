@@ -1,8 +1,8 @@
-//! Behavioral modes system for OpenClaudia.
+//! Behavioral modes system for `OpenClaudia`.
 //!
 //! Implements a three-axis model (agency, quality, scope) with named presets
 //! and composable modifiers. Inspired by claude-code-modes but integrated
-//! directly into OpenClaudia's prompt pipeline.
+//! directly into `OpenClaudia`'s prompt pipeline.
 //!
 //! # Architecture
 //!
@@ -287,6 +287,7 @@ impl fmt::Display for BehaviorMode {
 
 impl BehaviorMode {
     /// Create a mode from a preset, optionally overriding individual axes.
+    #[must_use] 
     pub fn from_preset(preset: Preset) -> Self {
         let (agency, quality, scope, modifiers) = match preset {
             Preset::Create => (
@@ -360,6 +361,7 @@ impl BehaviorMode {
 
     /// Try to find a matching preset name for the current configuration.
     /// Returns `None` if no built-in preset matches exactly.
+    #[must_use] 
     pub fn matching_preset(&self) -> Option<Preset> {
         let presets = [
             Preset::Create,
@@ -375,6 +377,7 @@ impl BehaviorMode {
     }
 
     /// Human-readable description of the mode for status displays.
+    #[must_use] 
     pub fn description(&self) -> String {
         if let Some(preset) = self.matching_preset() {
             let desc = match preset {
@@ -394,6 +397,7 @@ impl BehaviorMode {
     }
 
     /// Short display name — preset name if matching, otherwise axis summary.
+    #[must_use] 
     pub fn display_name(&self) -> String {
         if let Some(preset) = self.matching_preset() {
             preset.to_string()
@@ -406,6 +410,7 @@ impl BehaviorMode {
     ///
     /// Returns the assembled string of all axis + modifier fragments,
     /// ready to be inserted into the system prompt.
+    #[must_use] 
     pub fn assemble_behavioral_prompt(&self) -> String {
         let mut sections: Vec<&str> = Vec::with_capacity(6);
 
@@ -424,6 +429,7 @@ impl BehaviorMode {
 }
 
 /// List all available preset names with their descriptions.
+#[must_use] 
 pub fn list_presets() -> Vec<(&'static str, &'static str)> {
     vec![
         (
@@ -462,6 +468,7 @@ pub fn list_presets() -> Vec<(&'static str, &'static str)> {
 }
 
 /// List all available modifier names with their descriptions.
+#[must_use] 
 pub fn list_modifiers() -> Vec<(&'static str, &'static str)> {
     vec![
         ("bold", "Confident, idiomatic code — no hedging"),
@@ -500,7 +507,7 @@ mod tests {
         Preset::Director,
     ];
 
-    /// Every preset must produce a distinct BehaviorMode.  If two presets
+    /// Every preset must produce a distinct `BehaviorMode`.  If two presets
     /// collapse to the same config, one of them is redundant or miswired.
     #[test]
     fn all_presets_produce_unique_modes() {
@@ -519,7 +526,7 @@ mod tests {
         }
     }
 
-    /// from_preset → matching_preset must round-trip for every preset.
+    /// `from_preset` → `matching_preset` must round-trip for every preset.
     #[test]
     fn preset_roundtrip_all() {
         for preset in ALL_PRESETS {
@@ -532,8 +539,8 @@ mod tests {
         }
     }
 
-    /// Changing ANY single field of a preset's mode must break matching_preset.
-    /// This catches a matching_preset implementation that ignores a field.
+    /// Changing ANY single field of a preset's mode must break `matching_preset`.
+    /// This catches a `matching_preset` implementation that ignores a field.
     #[test]
     fn matching_preset_sensitive_to_each_field() {
         for preset in ALL_PRESETS {
@@ -629,28 +636,23 @@ mod tests {
             {
                 assert!(
                     input.parse::<Agency>().is_err(),
-                    "Agency should reject {:?}",
-                    input
+                    "Agency should reject {input:?}"
                 );
                 assert!(
                     input.parse::<Quality>().is_err(),
-                    "Quality should reject {:?}",
-                    input
+                    "Quality should reject {input:?}"
                 );
                 assert!(
                     input.parse::<Scope>().is_err(),
-                    "Scope should reject {:?}",
-                    input
+                    "Scope should reject {input:?}"
                 );
                 assert!(
                     input.parse::<Preset>().is_err(),
-                    "Preset should reject {:?}",
-                    input
+                    "Preset should reject {input:?}"
                 );
                 assert!(
                     input.parse::<Modifier>().is_err(),
-                    "Modifier should reject {:?}",
-                    input
+                    "Modifier should reject {input:?}"
                 );
             }
         }
@@ -685,7 +687,7 @@ mod tests {
     }
 
     /// Modifier aliases must parse correctly — "read-only" and "readonly"
-    /// both map to Readonly; "pacing" maps to ContextPacing.
+    /// both map to Readonly; "pacing" maps to `ContextPacing`.
     #[test]
     fn modifier_aliases_all_resolve() {
         assert_eq!("read-only".parse::<Modifier>().unwrap(), Modifier::Readonly);
@@ -741,7 +743,7 @@ mod tests {
         assert_eq!(mode.modifiers.len(), 5);
     }
 
-    /// Duplicate add_modifier calls must be idempotent — the modifier
+    /// Duplicate `add_modifier` calls must be idempotent — the modifier
     /// list must never contain duplicates.
     #[test]
     fn add_modifier_is_idempotent() {
@@ -936,7 +938,7 @@ mod tests {
     // list_presets / list_modifiers consistency
     // =====================================================================
 
-    /// Every preset returned by list_presets() must be parseable as a Preset.
+    /// Every preset returned by `list_presets()` must be parseable as a Preset.
     #[test]
     fn list_presets_names_all_parse() {
         for (name, _desc) in list_presets() {
@@ -947,15 +949,15 @@ mod tests {
         }
     }
 
-    /// The set of names from list_presets() must equal the set from ALL_PRESETS.
+    /// The set of names from `list_presets()` must equal the set from `ALL_PRESETS`.
     #[test]
     fn list_presets_covers_all_variants() {
         let listed: HashSet<String> = list_presets().iter().map(|(n, _)| n.to_string()).collect();
-        let expected: HashSet<String> = ALL_PRESETS.iter().map(|p| p.to_string()).collect();
+        let expected: HashSet<String> = ALL_PRESETS.iter().map(std::string::ToString::to_string).collect();
         assert_eq!(listed, expected, "list_presets() doesn't match ALL_PRESETS");
     }
 
-    /// Every modifier name from list_modifiers() must be parseable.
+    /// Every modifier name from `list_modifiers()` must be parseable.
     #[test]
     fn list_modifiers_names_all_parse() {
         for (name, _desc) in list_modifiers() {
@@ -984,7 +986,7 @@ mod tests {
         assert!(s.contains("[debug, bold, readonly]"), "got: {s}");
     }
 
-    /// display_name returns the preset name for matching presets,
+    /// `display_name` returns the preset name for matching presets,
     /// and the full axis string for custom modes.
     #[test]
     fn display_name_preset_vs_custom() {
@@ -1001,7 +1003,7 @@ mod tests {
         assert_eq!(custom.display_name(), "surgical/architect/unrestricted");
     }
 
-    /// description() for a custom mode must include the axis values
+    /// `description()` for a custom mode must include the axis values
     /// so the user can tell what's configured.
     #[test]
     fn description_custom_includes_axes() {

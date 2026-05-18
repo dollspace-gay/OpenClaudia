@@ -49,7 +49,7 @@ pub enum ApiKeyError {
     },
 
     /// The value exceeded [`MAX_API_KEY_LEN`] bytes. Legitimate API keys are
-    /// well under this cap (Anthropic: ~108 chars, OpenAI: ~56); an
+    /// well under this cap (Anthropic: ~108 chars, `OpenAI`: ~56); an
     /// 8 KiB header is an attack shape, not a real key. See crosslink #452.
     #[error("API key is {actual} bytes, exceeding the {max}-byte cap")]
     TooLong {
@@ -61,7 +61,7 @@ pub enum ApiKeyError {
 }
 
 /// Upper bound on the byte length of an accepted API key. Anthropic,
-/// OpenAI, Google, and Z.AI keys are all well under 200 bytes; 512 gives
+/// `OpenAI`, Google, and Z.AI keys are all well under 200 bytes; 512 gives
 /// the occasional long session/project-scoped key enough room while
 /// refusing 8 KiB attack payloads. See crosslink #452.
 pub const MAX_API_KEY_LEN: usize = 512;

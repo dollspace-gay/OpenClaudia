@@ -195,7 +195,7 @@ mod tests {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     #[test]
@@ -418,8 +418,8 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// Pin B3: 3-byte codepoint (U+3042, `あ`) straddles the cut point.
-    /// 24_999 bytes of ASCII + one `あ` (3 bytes) = 25_002 bytes total.
-    /// Naive slice at 25_000 lands byte 2 of 3; retreat must drop the whole
+    /// `24_999` bytes of ASCII + one `あ` (3 bytes) = `25_002` bytes total.
+    /// Naive slice at `25_000` lands byte 2 of 3; retreat must drop the whole
     /// codepoint.
     #[test]
     fn utf8_safe_truncate_three_byte_sequence_boundary() {
@@ -492,7 +492,7 @@ mod tests {
     /// `EntrypointTruncation::Lines` and keep only the first 200.
     #[test]
     fn trailing_newline_one_over_limit_truncates() {
-        let mut raw: String = (0..MAX_ENTRYPOINT_LINES + 1)
+        let mut raw: String = (0..=MAX_ENTRYPOINT_LINES)
             .map(|i| format!("- entry {i}"))
             .collect::<Vec<_>>()
             .join("\n");
@@ -541,7 +541,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// Pin B1: an empty MEMORY.md returns `Some(EntrypointFile { content: "" })`
-    /// — empty is NOT the same as missing.  Callers (not load_entrypoint) decide
+    /// — empty is NOT the same as missing.  Callers (not `load_entrypoint`) decide
     /// whether to treat empty content as absent (CC does via `.trim()` check).
     #[test]
     fn empty_file_returns_some_not_none() {
@@ -574,7 +574,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// Pin B1: when neither cwd/MEMORY.md nor cwd/.openclaudia/MEMORY.md exist,
-    /// load_entrypoint falls through to HOME/.openclaudia/MEMORY.md.
+    /// `load_entrypoint` falls through to HOME/.openclaudia/MEMORY.md.
     #[test]
     fn load_falls_back_to_home_openclaudia() {
         let _lock = env_lock();
@@ -609,7 +609,7 @@ mod tests {
 
     /// Pin B3 divergence: OC uses char-boundary truncation (not last-`\n`
     /// truncation like CC). Construct a string where a `\n` falls BEFORE
-    /// byte 25_000 but the char boundary falls AFTER that `\n`.  OC cuts at
+    /// byte `25_000` but the char boundary falls AFTER that `\n`.  OC cuts at
     /// the char boundary (may include a partial line); CC cuts at the `\n`.
     /// This test pins OC's CURRENT behavior without asserting CC is wrong.
     #[test]

@@ -99,7 +99,7 @@ impl MigrationContext {
 
     /// Explicit constructor for tests that need to sandbox writes.
     #[must_use]
-    pub fn with_paths(claude_home: PathBuf, openclaudia_data: PathBuf) -> Self {
+    pub const fn with_paths(claude_home: PathBuf, openclaudia_data: PathBuf) -> Self {
         Self {
             claude_home,
             openclaudia_data,
@@ -170,6 +170,7 @@ pub fn run_all(ctx: &MigrationContext) -> Vec<MigrationReport> {
 /// Utility: convenience wrapper around [`run_all`] that returns only
 /// the count of applied migrations. Callers that don't care about per-
 /// migration details use this.
+#[must_use] 
 pub fn run_all_count_applied(ctx: &MigrationContext) -> usize {
     run_all(ctx)
         .into_iter()

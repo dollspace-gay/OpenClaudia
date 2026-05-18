@@ -565,7 +565,7 @@ async fn stdio_mid_call_disconnect_returns_transport_error() {
     assert!(
         matches!(
             result,
-            Err(McpError::Transport(_)) | Err(McpError::Protocol(_))
+            Err(McpError::Transport(_) | McpError::Protocol(_))
         ),
         "mid-call disconnect must return McpError::Transport or McpError::Protocol (no panic), got {result:?}"
     );
@@ -607,7 +607,7 @@ async fn call_tool_invalid_name_format_returns_tool_not_found() {
         assert!(
             matches!(
                 result,
-                Err(McpError::NotConnected(_)) | Err(McpError::ToolNotFound(_))
+                Err(McpError::NotConnected(_) | McpError::ToolNotFound(_))
             ),
             "bad name '{bad_name}' should yield ToolNotFound or NotConnected, got {result:?}"
         );
@@ -616,7 +616,7 @@ async fn call_tool_invalid_name_format_returns_tool_not_found() {
 
 /// B2 — Tool names with embedded single underscores parse correctly.
 ///
-/// `mcp__my_server__my_tool` must parse server_name = "my_server", tool = "my_tool".
+/// `mcp__my_server__my_tool` must parse `server_name` = "`my_server`", tool = "`my_tool`".
 #[tokio::test]
 async fn call_tool_underscored_names_parse_correctly() {
     let manager = McpManager::new();

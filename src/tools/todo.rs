@@ -155,7 +155,7 @@ pub fn execute_todo_write(args: &HashMap<String, Value>) -> (String, bool) {
             if stored_todos.is_empty() {
                 map.remove(&session_key);
             } else {
-                map.insert(session_key, stored_todos.clone());
+                map.insert(session_key, stored_todos);
             }
         }
         Err(e) => return (format!("Failed to update todo list: {e}"), true),
@@ -271,7 +271,7 @@ mod tests {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn args_with(v: Value) -> HashMap<String, Value> {
@@ -381,7 +381,7 @@ mod tests {
 
     // ─── Spec §4: todo_write — full-replacement, atomic, per-session ───────────
 
-    /// Contract: `todos` argument is required; absent → is_error=true.
+    /// Contract: `todos` argument is required; absent → `is_error=true`.
     #[test]
     fn todo_write_requires_todos_argument() {
         let _lock = task_lock();
@@ -394,7 +394,7 @@ mod tests {
         );
     }
 
-    /// Contract: `todos` must be an array; a scalar → is_error=true.
+    /// Contract: `todos` must be an array; a scalar → `is_error=true`.
     #[test]
     fn todo_write_requires_todos_to_be_array() {
         let _lock = task_lock();
@@ -408,7 +408,7 @@ mod tests {
         );
     }
 
-    /// Contract: each item must have a `content` field; absent → is_error=true.
+    /// Contract: each item must have a `content` field; absent → `is_error=true`.
     #[test]
     fn todo_write_rejects_item_missing_content() {
         let _lock = task_lock();
@@ -421,7 +421,7 @@ mod tests {
         );
     }
 
-    /// Contract: each item must have a `status` field; absent → is_error=true.
+    /// Contract: each item must have a `status` field; absent → `is_error=true`.
     #[test]
     fn todo_write_rejects_item_missing_status() {
         let _lock = task_lock();
@@ -434,7 +434,7 @@ mod tests {
         );
     }
 
-    /// Contract: each item must have an `activeForm` field; absent → is_error=true.
+    /// Contract: each item must have an `activeForm` field; absent → `is_error=true`.
     #[test]
     fn todo_write_rejects_item_missing_active_form() {
         let _lock = task_lock();
@@ -447,7 +447,7 @@ mod tests {
         );
     }
 
-    /// Contract: invalid `status` value → is_error=true naming the bad value.
+    /// Contract: invalid `status` value → `is_error=true` naming the bad value.
     #[test]
     fn todo_write_rejects_invalid_status_value() {
         let _lock = task_lock();
@@ -464,7 +464,7 @@ mod tests {
         );
     }
 
-    /// Contract: content > 2000 chars → is_error=true.
+    /// Contract: content > 2000 chars → `is_error=true`.
     #[test]
     fn todo_write_rejects_content_exceeding_2000_chars() {
         let _lock = task_lock();
@@ -636,7 +636,7 @@ mod tests {
         );
     }
 
-    /// Contract: without any guard, the key falls back to DEFAULT_SESSION_KEY.
+    /// Contract: without any guard, the key falls back to `DEFAULT_SESSION_KEY`.
     #[test]
     fn session_key_defaults_without_guard() {
         // No guard active in this thread at entry.

@@ -19,8 +19,7 @@ pub fn execute_list_files(args: &HashMap<String, Value>) -> (String, bool) {
                 let name = entry.file_name().to_string_lossy().to_string();
                 let file_type = entry
                     .file_type()
-                    .map(|ft| if ft.is_dir() { "/" } else { "" })
-                    .unwrap_or("");
+                    .map_or("", |ft| if ft.is_dir() { "/" } else { "" });
                 items.push(format!("{name}{file_type}"));
             }
             items.sort();

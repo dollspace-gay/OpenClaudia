@@ -207,7 +207,7 @@ pub fn execute_exit_worktree(args: &HashMap<String, Value>) -> (String, bool) {
             &format!("Worktree changes from branch '{current_branch}'"),
         ]);
 
-        let committed = commit.map(|o| o.status.success()).unwrap_or(false);
+        let committed = commit.is_ok_and(|o| o.status.success());
 
         // Switch to main worktree
         let _ = std::env::set_current_dir(main_path);
@@ -350,7 +350,7 @@ mod tests {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     #[test]
@@ -381,7 +381,7 @@ mod tests {
 
     // ─── Spec §5: Worktree enter/exit updates session working directory ────────
 
-    /// Contract: `enter_worktree` with an empty-string branch returns is_error=true
+    /// Contract: `enter_worktree` with an empty-string branch returns `is_error=true`
     /// and an appropriate message.  (Branch is a required field on the OC side;
     /// CC's `name` field is optional.)
     #[test]
@@ -400,7 +400,7 @@ mod tests {
         );
     }
 
-    /// Contract: `enter_worktree` outside a git repo returns is_error=true with
+    /// Contract: `enter_worktree` outside a git repo returns `is_error=true` with
     /// a repo-not-found message.
     ///
     /// We simulate "not a git repo" by temporarily changing cwd to a temp dir
@@ -436,7 +436,7 @@ mod tests {
     }
 
     /// Contract: `exit_worktree` called from the main worktree (not an isolated
-    /// worktree) returns is_error=true indicating misuse.
+    /// worktree) returns `is_error=true` indicating misuse.
     #[test]
     fn exit_worktree_from_main_tree_is_error() {
         let _lock = cwd_lock();

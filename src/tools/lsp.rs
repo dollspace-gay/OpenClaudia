@@ -101,8 +101,7 @@ pub fn execute_lsp<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String,
     if Command::new("which")
         .arg(server_cmd)
         .output()
-        .map(|o| !o.status.success())
-        .unwrap_or(true)
+        .map_or(true, |o| !o.status.success())
     {
         return (
             format!("Language server '{server_cmd}' not found. Install it to use LSP features."),
@@ -816,8 +815,8 @@ mod tests {
     }
 
     /// B1b — OC stores the raw `file://…` URI, not a workspace-relative path.
-    /// Gap #643: CC normalizes LocationLink → Location; OC only handles
-    /// Location objects (requires `uri` field). A LocationLink input (with
+    /// Gap #643: CC normalizes `LocationLink` → Location; OC only handles
+    /// Location objects (requires `uri` field). A `LocationLink` input (with
     /// `targetUri` but no `uri`) is silently dropped.
     #[test]
     fn spec_b1_raw_uri_stored_not_relative_path() {
@@ -831,7 +830,7 @@ mod tests {
         assert_eq!(locs[0].uri, "file:///home/user/project/src/lib.rs");
     }
 
-    /// B1c — LocationLink objects (with `targetUri` but no `uri`) are silently
+    /// B1c — `LocationLink` objects (with `targetUri` but no `uri`) are silently
     /// dropped by OC's `parse_locations` because it requires `uri`. (Gap #643.)
     #[test]
     fn spec_b1_location_link_silently_dropped_gap643() {
@@ -854,7 +853,7 @@ mod tests {
     // Spec B2: hover — hover text extraction
     // ───────────────────────────────────────
 
-    /// B2a — OC joins MarkedString array items with "\n" (single newline).
+    /// B2a — OC joins `MarkedString` array items with "\n" (single newline).
     /// CC uses "\n\n" (double newline). Pinning OC's current join separator.
     /// Gap: array join should be "\n\n" per CC spec.
     #[test]
@@ -899,7 +898,7 @@ mod tests {
     // Spec B3: findReferences — reference location list
     // ──────────────────────────────────────────────────
 
-    /// B3a — OC's findReferences output uses the same parse_locations path as
+    /// B3a — OC's findReferences output uses the same `parse_locations` path as
     /// goToDefinition: produces Vec<LspLocation> with raw URIs, no file-grouping.
     /// Gap: CC groups references by file; OC returns a flat list.
     #[test]
@@ -952,7 +951,7 @@ mod tests {
     // Spec B4: documentSymbols — nested symbol tree
     // ──────────────────────────────────────────────
 
-    /// B4a — OC enforces MAX_SYMBOL_DEPTH = 20. A tree deeper than 20 levels
+    /// B4a — OC enforces `MAX_SYMBOL_DEPTH` = 20. A tree deeper than 20 levels
     /// is truncated: children at depth ≥ 20 are returned as empty.
     #[test]
     fn spec_b4_symbol_depth_limit_at_20() {
@@ -998,7 +997,7 @@ mod tests {
         );
     }
 
-    /// B4b — All 26 LSP SymbolKind integers map to their canonical names.
+    /// B4b — All 26 LSP `SymbolKind` integers map to their canonical names.
     /// Pinning the full mapping so renames are caught as regressions.
     #[test]
     fn spec_b4_all_26_symbol_kind_names() {
@@ -1117,7 +1116,7 @@ mod tests {
 
     /// B5b — All 5 gap operations are unknown to OC.
     /// Gap #645: workspaceSymbol, goToImplementation, prepareCallHierarchy,
-    ///           incomingCalls, outgoingCalls are absent from OC's LspAction enum.
+    ///           incomingCalls, outgoingCalls are absent from OC's `LspAction` enum.
     #[test]
     fn spec_b5_five_missing_operations_unknown_gap645() {
         let missing_ops = [

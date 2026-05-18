@@ -11,7 +11,7 @@ pub struct ProxyConfig {
     pub target: String,
     /// Maximum bytes read from an upstream response body before aborting.
     ///
-    /// Guards against memory-exhaustion DoS from malicious or buggy
+    /// Guards against memory-exhaustion `DoS` from malicious or buggy
     /// upstreams that stream gigabytes of data. Default: 50 MiB — enough
     /// for any legitimate LLM response including thinking + tool-use
     /// tokens, two orders of magnitude below a typical attack threshold.

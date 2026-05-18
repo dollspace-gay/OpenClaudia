@@ -112,7 +112,7 @@ impl Identity {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Conversation {
     /// Wire-format messages. `serde_json::Value` because the provider
-    /// adapters (Anthropic / OpenAI / Google) each want slightly
+    /// adapters (Anthropic / `OpenAI` / Google) each want slightly
     /// different on-wire shapes; we keep the Value and let the
     /// adapter pick what it needs.
     #[serde(default)]
@@ -185,7 +185,7 @@ pub enum AgentMode {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModesState {
     /// Build / Plan — legacy two-state mode. Kept for back-compat
-    /// with existing TuiSession field; new code should use
+    /// with existing `TuiSession` field; new code should use
     /// `Conversation::behavior_mode` for fine-grained control.
     #[serde(default)]
     pub agent_mode: AgentMode,

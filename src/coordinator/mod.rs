@@ -7,12 +7,12 @@
 //!   an error because no teammate-spawn path is wired yet — nothing
 //!   in the harness calls it.
 //! - **Phase 2**: spawn one teammate per task sequentially via the
-//!   existing `subagent::run_subagent`, fire SubagentStart /
-//!   SubagentStop hooks (already defined in #513).
+//!   existing `subagent::run_subagent`, fire `SubagentStart` /
+//!   `SubagentStop` hooks (already defined in #513).
 //! - **Phase 3**: parallel teammates + leader permission bridge +
 //!   agent color assignment.
 //!
-//! Process-scoped handles (hook_engine, permission_mgr, service
+//! Process-scoped handles (`hook_engine`, `permission_mgr`, service
 //! registry) arrive via the `Coordinator::new` constructor rather
 //! than living on the coordinator struct long-term — Phase 2 will
 //! convert them to an `AppHandles` param passed per dispatch.
@@ -66,26 +66,26 @@ impl Coordinator {
     /// a `TaskId` — for now, tests construct tasks directly and
     /// call `queue_mut` to submit.
     #[must_use]
-    pub fn queue(&self) -> &TaskQueue {
+    pub const fn queue(&self) -> &TaskQueue {
         &self.queue
     }
 
     /// Mutable access to the queue — used during Phase 1 tests and
     /// by the Phase 2 dispatch loop. Tighten the visibility to
     /// `pub(crate)` when a stable submit API lands.
-    pub fn queue_mut(&mut self) -> &mut TaskQueue {
+    pub const fn queue_mut(&mut self) -> &mut TaskQueue {
         &mut self.queue
     }
 
     /// Live teammate registry (empty in Phase 1).
     #[must_use]
-    pub fn teammates(&self) -> &HashMap<TeammateId, Teammate> {
+    pub const fn teammates(&self) -> &HashMap<TeammateId, Teammate> {
         &self.teammates
     }
 
     /// Permission bridge that serializes prompts across teammates.
     #[must_use]
-    pub fn permission_bridge(&self) -> &LeaderPermissionBridge {
+    pub const fn permission_bridge(&self) -> &LeaderPermissionBridge {
         &self.permission_bridge
     }
 
@@ -179,7 +179,7 @@ mod phase2_spec_pins {
 
     // ── B2: dispatch always returns NotImplemented ───────────────────
 
-    /// B2a: empty coordinator returns NotImplemented immediately.
+    /// B2a: empty coordinator returns `NotImplemented` immediately.
     #[tokio::test]
     async fn b2_empty_coordinator_dispatch_not_implemented() {
         let mut co = Coordinator::new();
@@ -190,7 +190,7 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B2b: coordinator with pending tasks still returns NotImplemented
+    /// B2b: coordinator with pending tasks still returns `NotImplemented`
     /// without touching the queue (#532 B2 side-effect: none).
     #[tokio::test]
     async fn b2_pending_tasks_not_executed_by_dispatch() {
@@ -221,8 +221,8 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B2d: the Queue error variant round-trips through CoordinatorError.
-    /// Uses a TaskId from a side queue — TaskId's inner field is private
+    /// B2d: the Queue error variant round-trips through `CoordinatorError`.
+    /// Uses a `TaskId` from a side queue — `TaskId`'s inner field is private
     /// and not accessible from this module's scope.
     #[test]
     fn b2_queue_error_wraps_correctly() {

@@ -36,7 +36,7 @@ impl std::fmt::Debug for QueuedPermission {
 }
 
 /// Permission bridge state. Pure data — the async machinery that
-/// actually serves the queue (receive PermissionRequest → push →
+/// actually serves the queue (receive `PermissionRequest` → push →
 /// pop when user replies) lands in Phase 3.
 #[derive(Debug, Default)]
 pub struct LeaderPermissionBridge {
@@ -250,7 +250,7 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B4-allow-2: pending_count tracks enqueue/dequeue correctly.
+    /// B4-allow-2: `pending_count` tracks enqueue/dequeue correctly.
     #[test]
     fn b4_pending_count_tracks_mutations() {
         let mut bridge = LeaderPermissionBridge::new();
@@ -268,7 +268,7 @@ mod phase2_spec_pins {
 
     // ── B4-3 · always-allow cache isolation ───────────────────────────────
 
-    /// B4-deny-1: always_allow for t1+bash must NOT grant t2+bash.
+    /// B4-deny-1: `always_allow` for t1+bash must NOT grant t2+bash.
     /// Per-teammate isolation matches CC's "a reply doesn't leak across teammates".
     #[test]
     fn b4_always_allow_does_not_cross_teammate_boundary() {
@@ -288,7 +288,7 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B4-deny-2: always_allow for t1+bash must NOT grant t1+edit_file.
+    /// B4-deny-2: `always_allow` for t1+bash must NOT grant `t1+edit_file`.
     #[test]
     fn b4_always_allow_does_not_cross_tool_boundary() {
         let mut bridge = LeaderPermissionBridge::new();
@@ -306,7 +306,7 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B4-deny-3: always_allow for unknown tool name → not cached.
+    /// B4-deny-3: `always_allow` for unknown tool name → not cached.
     #[test]
     fn b4_always_allow_unknown_tool_not_cached() {
         let bridge = LeaderPermissionBridge::new();
@@ -341,7 +341,7 @@ mod phase2_spec_pins {
     // ── B4-4 · is_idle semantics ──────────────────────────────────────────
 
     /// B4-deny-1: bridge with only always-allow cache (no pending) is NOT idle.
-    /// Spec §B4 edge case: is_idle() = pending.is_empty() && always_allowed.is_empty().
+    /// Spec §B4 edge case: `is_idle()` = `pending.is_empty()` && `always_allowed.is_empty()`.
     #[test]
     fn b4_is_idle_false_when_only_cache_populated() {
         let mut bridge = LeaderPermissionBridge::new();
@@ -370,7 +370,7 @@ mod phase2_spec_pins {
         let mut bridge = LeaderPermissionBridge::new();
         let tm = TeammateId::new();
         bridge.enqueue(req(&tm, "bash"));
-        bridge.always_allow(tm.clone(), "bash");
+        bridge.always_allow(tm, "bash");
         bridge.dequeue();
 
         // Pending is now empty, but cache still has an entry.
@@ -382,8 +382,8 @@ mod phase2_spec_pins {
 
     // ── B4-5 · CC divergence gap: always_allow bypasses target/pattern check ─
 
-    /// B4-gap-1 (SECURITY): OC always_allow is keyed (teammate, tool_name) only —
-    /// no target/pattern check. Granting always_allow for ("t1", "bash") bypasses
+    /// B4-gap-1 (SECURITY): OC `always_allow` is keyed (teammate, `tool_name`) only —
+    /// no target/pattern check. Granting `always_allow` for ("t1", "bash") bypasses
     /// ALL bash permission checks for teammate t1 regardless of command.
     ///
     /// CC's equivalent always-allow goes through the full rule pipeline on the leader
@@ -412,7 +412,7 @@ mod phase2_spec_pins {
 
     // ── B4-6 · tool_args preserved in queued request ──────────────────────
 
-    /// B4-allow-1: tool_args string is preserved through enqueue→dequeue round-trip.
+    /// B4-allow-1: `tool_args` string is preserved through enqueue→dequeue round-trip.
     #[test]
     fn b4_tool_args_preserved_in_queue() {
         let mut bridge = LeaderPermissionBridge::new();
@@ -420,7 +420,7 @@ mod phase2_spec_pins {
         let args = r#"{"command":"cargo test","timeout":60}"#;
 
         bridge.enqueue(QueuedPermission {
-            teammate: tm.clone(),
+            teammate: tm,
             tool_name: "bash".into(),
             tool_args: args.into(),
         });

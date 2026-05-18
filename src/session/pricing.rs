@@ -189,7 +189,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// B5: cache-read tokens apply the 0.1× fixed ratio on OC.
-    /// CC uses per-model `promptCacheReadTokens` from MODEL_COSTS; OC uses
+    /// CC uses per-model `promptCacheReadTokens` from `MODEL_COSTS`; OC uses
     /// `input_per_million × 0.1`.  This test pins OC's ratio.
     #[test]
     fn b5_cache_read_tokens_apply_point_one_ratio() {
@@ -244,7 +244,7 @@ mod tests {
             cache_write_tokens: 1_000_000,
         };
         let cost = calculate_cost("claude-3-haiku-20240307", &usage).unwrap();
-        let expected = 0.25 + 1.25 + 0.25 * 0.1 + 0.25 * 1.25;
+        let expected = 0.25f64.mul_add(1.25, 0.25f64.mul_add(0.1, 0.25 + 1.25));
         assert!(
             (cost - expected).abs() < 1e-9,
             "four-bucket sum wrong; got {cost}, expected {expected}"

@@ -448,9 +448,9 @@ impl HookEngine {
         hook_result
     }
 
-    /// Get hook entries for a specific event. PostToolUseFailure falls
-    /// back to PostToolUse when no failure-specific handlers are defined
-    /// — matches Claude Code's behavior where a single PostToolUse hook
+    /// Get hook entries for a specific event. `PostToolUseFailure` falls
+    /// back to `PostToolUse` when no failure-specific handlers are defined
+    /// — matches Claude Code's behavior where a single `PostToolUse` hook
     /// sees both success and failure paths unless a dedicated handler
     /// exists.
     fn get_entries_for_event(&self, event: HookEvent) -> &[HookEntry] {
@@ -508,7 +508,7 @@ impl HookEngine {
     }
 
     /// Validate regex pattern and check for match
-    /// Maximum pattern length to prevent ReDoS via complex expressions.
+    /// Maximum pattern length to prevent `ReDoS` via complex expressions.
     const MAX_PATTERN_LEN: usize = 1024;
     /// Maximum compiled regex size (bytes) to limit pathological backtracking.
     const MAX_REGEX_SIZE: usize = 10 * 1024; // 10KB
@@ -1108,31 +1108,31 @@ mod tests {
     fn test_hook_error_display() {
         let timeout_err = HookError::Timeout(30);
         assert_eq!(
-            format!("{}", timeout_err),
+            format!("{timeout_err}"),
             "Hook timed out after 30 seconds"
         );
 
         let cmd_err = HookError::CommandFailed("Process exited with code 1".to_string());
         assert_eq!(
-            format!("{}", cmd_err),
+            format!("{cmd_err}"),
             "Hook command failed: Process exited with code 1"
         );
 
         let parse_err = HookError::ParseError("Invalid JSON".to_string());
         assert_eq!(
-            format!("{}", parse_err),
+            format!("{parse_err}"),
             "Hook output parse error: Invalid JSON"
         );
 
         let blocked_err = HookError::Blocked("File write not allowed".to_string());
         assert_eq!(
-            format!("{}", blocked_err),
+            format!("{blocked_err}"),
             "Hook blocked action: File write not allowed"
         );
 
         let matcher_err = HookError::InvalidMatcher("(unclosed".to_string());
         assert_eq!(
-            format!("{}", matcher_err),
+            format!("{matcher_err}"),
             "Invalid matcher regex: (unclosed"
         );
     }
@@ -1344,13 +1344,11 @@ mod tests {
             let key = event.config_key();
             assert!(
                 !key.is_empty(),
-                "Event {:?} should have non-empty config key",
-                event
+                "Event {event:?} should have non-empty config key"
             );
             assert!(
                 key.chars().all(|c| c.is_lowercase() || c == '_'),
-                "Config key '{}' should be snake_case",
-                key
+                "Config key '{key}' should be snake_case"
             );
         }
     }
@@ -1431,9 +1429,9 @@ mod tests {
         assert_eq!(result.outputs.len(), 2);
     }
 
-    /// PostToolUseFailure with no dedicated handlers falls back to the
-    /// PostToolUse entries. Matches Claude Code's single-handler-sees-both
-    /// behavior (see claude_compat.rs PostToolUse mapping).
+    /// `PostToolUseFailure` with no dedicated handlers falls back to the
+    /// `PostToolUse` entries. Matches Claude Code's single-handler-sees-both
+    /// behavior (see `claude_compat.rs` `PostToolUse` mapping).
     #[tokio::test]
     async fn post_tool_use_failure_falls_back_to_post_tool_use() {
         let config = HooksConfig {

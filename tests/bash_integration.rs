@@ -1,6 +1,6 @@
 //! Phase 2 behavioral pinning tests for the bash tool subsystem.
 //!
-//! Pins OpenClaudia's CURRENT contracts for the 7 behaviors defined in
+//! Pins `OpenClaudia`'s CURRENT contracts for the 7 behaviors defined in
 //! crosslink issue #526. These tests document what OC actually does —
 //! they do NOT fix divergences from the CC reference. Divergences are
 //! annotated with gap-issue references.
@@ -31,10 +31,10 @@ fn make_tool_call(name: &str, args: Value) -> ToolCall {
 
 /// B1a — background spawn returns a non-error result that contains "ID:"
 ///
-/// OC shell_id is an 8-char UUID prefix (mod.rs:57).
+/// OC `shell_id` is an 8-char UUID prefix (mod.rs:57).
 /// CC uses a longer `backgroundTaskId` (BashTool.tsx:614); format differs.
 ///
-/// GAP: CC output is file-based (OUTPUT_FILE_TAG); OC is in-process ring
+/// GAP: CC output is file-based (`OUTPUT_FILE_TAG`); OC is in-process ring
 /// buffers — no disk file is written. Ref crosslink #583 (stall watchdog).
 #[test]
 #[cfg(unix)]
@@ -68,9 +68,9 @@ fn b1a_background_spawn_returns_shell_id() {
     }
 }
 
-/// B1b — `bash_output` without shell_id lists all background shells
+/// B1b — `bash_output` without `shell_id` lists all background shells
 ///
-/// OC: output.rs:10-26 — no shell_id arg → list all shells.
+/// OC: output.rs:10-26 — no `shell_id` arg → list all shells.
 /// CC: no equivalent `bash_output` RPC; CC uses disk file paths (#526 §B1).
 ///
 /// GAP: CC has no listing RPC. OC listing is OC-specific behavior.
@@ -100,8 +100,8 @@ fn b1b_bash_output_no_arg_lists_shells() {
 
 /// B1c — `bash_output` drains buffers incrementally (atomic swap)
 ///
-/// OC: get_output uses std::mem::take (mod.rs:190); each call drains the buffer.
-/// The same shell_id polled twice returns the first batch then a smaller/empty second.
+/// OC: `get_output` uses `std::mem::take` (mod.rs:190); each call drains the buffer.
+/// The same `shell_id` polled twice returns the first batch then a smaller/empty second.
 ///
 /// GAP: CC output is file-based (append-only, not drained). OC draining is OC-specific.
 #[test]
@@ -205,10 +205,10 @@ fn b1e_bash_output_finished_shell_reports_finished() {
 // OC source: src/tools/bash/kill.rs, src/tools/bash/mod.rs:230-249
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// B2a — kill_shell on a running shell returns success and a confirmation message
+/// B2a — `kill_shell` on a running shell returns success and a confirmation message
 ///
 /// OC message format: "Shell '{id}' terminated (command: {cmd}, pid: {pid})"
-/// CC does not expose a kill_shell tool to the model (kill is session-level).
+/// CC does not expose a `kill_shell` tool to the model (kill is session-level).
 #[test]
 #[cfg(unix)]
 fn b2a_kill_shell_running_succeeds_with_message() {
@@ -243,7 +243,7 @@ fn b2a_kill_shell_running_succeeds_with_message() {
     );
 }
 
-/// B2b — kill_shell on a shell that has already finished still returns success
+/// B2b — `kill_shell` on a shell that has already finished still returns success
 ///
 /// OC: mod.rs:237 — checks `!shell.finished.load()` and skips SIGTERM if done.
 /// The shell entry is removed from the map regardless.
@@ -277,7 +277,7 @@ fn b2b_kill_shell_already_finished_returns_success() {
     );
 }
 
-/// B2c — kill_shell with missing shell_id argument returns is_error=true
+/// B2c — `kill_shell` with missing `shell_id` argument returns `is_error=true`
 ///
 /// OC: kill.rs:8-10 — missing arg check before any shell lookup.
 #[test]
@@ -295,9 +295,9 @@ fn b2c_kill_shell_missing_arg_returns_error() {
     );
 }
 
-/// B2d — kill_shell on an unknown shell_id returns is_error=true with "not found"
+/// B2d — `kill_shell` on an unknown `shell_id` returns `is_error=true` with "not found"
 ///
-/// OC: kill.rs:13-15 via BackgroundShellManager::kill; "Shell 'id' not found".
+/// OC: kill.rs:13-15 via `BackgroundShellManager::kill`; "Shell 'id' not found".
 #[test]
 fn b2d_kill_shell_unknown_id_returns_not_found_error() {
     let kill = execute_tool(&make_tool_call(
@@ -322,7 +322,7 @@ fn b2d_kill_shell_unknown_id_returns_not_found_error() {
 /// OC: no equivalent. Pinning the absence. Ref crosslink #584.
 ///
 /// GAP: crosslink #584 — agent-scoped shell cleanup missing.
-/// The tool dispatch does not recognise a "kill_shells_for_agent" tool.
+/// The tool dispatch does not recognise a "`kill_shells_for_agent`" tool.
 #[test]
 fn b2e_gap_584_no_agent_scoped_kill_tool() {
     let result = execute_tool(&make_tool_call(
@@ -344,10 +344,10 @@ fn b2e_gap_584_no_agent_scoped_kill_tool() {
 // OC source: src/tools/bash/output.rs:28-48, src/tools/bash/mod.rs:179-181
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// B3a — unknown shell_id → is_error=true, message contains "not found"
+/// B3a — unknown `shell_id` → `is_error=true`, message contains "not found"
 ///
 /// OC: output.rs Err propagated as (e, true). No panic.
-/// CC: has no bash_output RPC; CC is file-based so this path does not exist.
+/// CC: has no `bash_output` RPC; CC is file-based so this path does not exist.
 #[test]
 fn b3a_bash_output_unknown_shell_id_is_error() {
     let out = execute_tool(&make_tool_call(
@@ -366,9 +366,9 @@ fn b3a_bash_output_unknown_shell_id_is_error() {
     );
 }
 
-/// B3b — the supplied shell_id is echoed verbatim in the error message
+/// B3b — the supplied `shell_id` is echoed verbatim in the error message
 ///
-/// OC: format!("Shell '{{shell_id}}' not found") — exact quoting.
+/// OC: format!("Shell '{{`shell_id`}}' not found") — exact quoting.
 #[test]
 fn b3b_bash_output_error_echoes_shell_id() {
     let bogus_id = "cafebabe";
@@ -384,9 +384,9 @@ fn b3b_bash_output_error_echoes_shell_id() {
     );
 }
 
-/// B3c — bash_output does not panic on unknown shell_id (no unwrap)
+/// B3c — `bash_output` does not panic on unknown `shell_id` (no unwrap)
 ///
-/// OC: mod.rs:176-177 uses unwrap_or_else on PoisonError. get_output uses ok_or_else.
+/// OC: mod.rs:176-177 uses `unwrap_or_else` on `PoisonError`. `get_output` uses `ok_or_else`.
 /// If this test runs to completion without panicking, the contract is satisfied.
 #[test]
 fn b3c_bash_output_no_panic_on_unknown_id() {
@@ -402,8 +402,8 @@ fn b3c_bash_output_no_panic_on_unknown_id() {
 /// B3d — GC sweep: after a finished shell's output is fully drained and a new
 /// spawn triggers GC, a subsequent poll returns the not-found error.
 ///
-/// OC GC: shells.retain on the next spawn() (mod.rs:90-94).
-/// After GC the entry is removed; get_output returns Err.
+/// OC GC: shells.retain on the next `spawn()` (mod.rs:90-94).
+/// After GC the entry is removed; `get_output` returns Err.
 ///
 /// NOTE: OC GC fires on the NEXT spawn, not on the poll itself.
 #[test]
@@ -464,7 +464,7 @@ fn b3d_bash_output_after_gc_sweep_returns_not_found_or_finished() {
 /// Strategy: set a sentinel value in the current process using a key that
 /// matches the `_API_KEY` suffix rule, spawn bash, verify the child cannot see it.
 ///
-/// OC: apply_env_scrub calls cmd.env_remove for each matched key (policy.rs:149).
+/// OC: `apply_env_scrub` calls `cmd.env_remove` for each matched key (policy.rs:149).
 /// Distinct test key avoids clobbering real env vars.
 #[test]
 #[cfg(unix)]
@@ -500,8 +500,8 @@ fn b4a_env_scrub_removes_api_key_suffix_var() {
 
 /// B4b — non-sensitive var (PATH) is NOT scrubbed; child inherits it
 ///
-/// OC: apply_env_scrub does NOT call env_clear() (policy.rs comment at line 143).
-/// PATH, HOME, CARGO_HOME pass through.
+/// OC: `apply_env_scrub` does NOT call `env_clear()` (policy.rs comment at line 143).
+/// PATH, HOME, `CARGO_HOME` pass through.
 #[test]
 #[cfg(unix)]
 fn b4b_env_scrub_preserves_path() {
@@ -524,7 +524,7 @@ fn b4b_env_scrub_preserves_path() {
 
 /// B4c — `_TOKEN` suffix var is scrubbed; `_HOME` suffix is not
 ///
-/// OC: suffix rules in is_sensitive_env (policy.rs:74-79).
+/// OC: suffix rules in `is_sensitive_env` (policy.rs:74-79).
 #[test]
 #[cfg(unix)]
 fn b4c_env_scrub_token_suffix_scrubbed_home_suffix_not() {
@@ -570,9 +570,9 @@ fn b4c_env_scrub_token_suffix_scrubbed_home_suffix_not() {
 // OC source: src/tools/bash/policy.rs:89-175
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// B5a — `rm -rf /` is blocked with is_error=true
+/// B5a — `rm -rf /` is blocked with `is_error=true`
 ///
-/// OC: denied_reason matches "rm -rf /" substring (policy.rs:94).
+/// OC: `denied_reason` matches "rm -rf /" substring (policy.rs:94).
 /// GAP: OC does NOT check IFS injection, unicode whitespace, process substitution,
 /// UNC paths, CR tokenization, obfuscated flags, brace expansion, /proc/environ.
 /// Ref crosslink #589.
@@ -656,9 +656,9 @@ fn b5f_denylist_blocks_pipe_to_shell() {
     );
 }
 
-/// B5g — PIPE_TO_SHELL regex is case-insensitive (lowercased before match)
+/// B5g — `PIPE_TO_SHELL` regex is case-insensitive (lowercased before match)
 ///
-/// OC: denied_reason lowercases before regex match (policy.rs:90).
+/// OC: `denied_reason` lowercases before regex match (policy.rs:90).
 #[test]
 fn b5g_denylist_pipe_to_shell_case_insensitive() {
     let result = execute_tool(&make_tool_call(
@@ -699,7 +699,7 @@ fn b5h_safe_commands_not_blocked() {
 
 /// B5i — command exceeding 4096 bytes is blocked
 ///
-/// OC: validate_command checks command.len() > MAX_COMMAND_LEN (policy.rs:160-165).
+/// OC: `validate_command` checks `command.len()` > `MAX_COMMAND_LEN` (policy.rs:160-165).
 #[test]
 fn b5i_length_cap_blocks_oversized_command() {
     let long_cmd = "x".repeat(4097);
@@ -748,7 +748,7 @@ fn b5j_denylist_blocks_dd_to_block_device() {
 /// OC passes the command verbatim to `bash -c`. Single-quoted paths with
 /// spaces are handled by bash itself, not by OC.
 ///
-/// CC: classifies this as read-only via READONLY_COMMAND_REGEXES then
+/// CC: classifies this as read-only via `READONLY_COMMAND_REGEXES` then
 /// validates against allowed dirs. OC: skips both steps.
 ///
 /// GAP: crosslink #594 — path allowlist validation missing.
@@ -847,7 +847,7 @@ fn b6c_cd_double_quoted_path_with_spaces_executes() {
 
 /// B7a — OC accepts `dangerouslyDisableSandbox` field but ignores it
 ///
-/// CC: field is parsed and passed to shouldUseSandbox() (BashTool.tsx:241).
+/// CC: field is parsed and passed to `shouldUseSandbox()` (BashTool.tsx:241).
 /// OC: field is not in the input schema; unknown JSON args are silently ignored.
 /// Passing the field must not cause an error.
 ///
@@ -878,7 +878,7 @@ fn b7a_dangerously_disable_sandbox_ignored_no_error() {
 /// CC: tools/PowerShellTool/ implements PowerShell support on Windows.
 /// OC: Windows support uses Git Bash (mod.rs:63-73). No PowerShell tool.
 ///
-/// GAP: crosslink #573 — PowerShellTool missing.
+/// GAP: crosslink #573 — `PowerShellTool` missing.
 #[test]
 fn b7b_gap_573_powershell_tool_not_registered() {
     // The tool dispatch must not recognise "powershell" as a valid tool.
@@ -895,7 +895,7 @@ fn b7b_gap_573_powershell_tool_not_registered() {
 
 /// B7c — GAP: commands run unsandboxed (filesystem writes succeed)
 ///
-/// OC: process_group(0) is NOT a security sandbox — it exists only for
+/// OC: `process_group(0)` is NOT a security sandbox — it exists only for
 /// clean SIGTERM delivery. Ref crosslink #575.
 ///
 /// Pin: a command with filesystem side-effects succeeds, proving no sandbox blocks it.

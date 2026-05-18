@@ -22,7 +22,7 @@ use std::time::Duration;
 
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// Chat session state — compatible with the CLI's ChatSession JSON format
+/// Chat session state — compatible with the CLI's `ChatSession` JSON format
 /// so sessions saved by one can be loaded by the other.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TuiSession {
@@ -730,10 +730,10 @@ impl App {
         if self.pending_permission.is_some() {
             use super::events::PermissionResponse;
             let response = match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') => Some(PermissionResponse::Allow),
-                KeyCode::Char('n') | KeyCode::Char('N') => Some(PermissionResponse::Deny),
-                KeyCode::Char('a') | KeyCode::Char('A') => Some(PermissionResponse::AlwaysAllow),
-                KeyCode::Char('d') | KeyCode::Char('D') => Some(PermissionResponse::AlwaysDeny),
+                KeyCode::Char('y' | 'Y') => Some(PermissionResponse::Allow),
+                KeyCode::Char('n' | 'N') => Some(PermissionResponse::Deny),
+                KeyCode::Char('a' | 'A') => Some(PermissionResponse::AlwaysAllow),
+                KeyCode::Char('d' | 'D') => Some(PermissionResponse::AlwaysDeny),
                 KeyCode::Esc => Some(PermissionResponse::Deny),
                 _ => None,
             };
@@ -778,12 +778,11 @@ impl App {
         }
 
         match key.code {
-            KeyCode::Enter => {
-                if !self.input.is_empty() {
+            KeyCode::Enter
+                if !self.input.is_empty() => {
                     let text = self.input.take();
                     self.handle_input(text);
                 }
-            }
             KeyCode::Char(c) => self.input.insert(c),
             KeyCode::Backspace => self.input.backspace(),
             KeyCode::Delete => self.input.delete(),
@@ -1262,18 +1261,18 @@ impl App {
                 // Rough cost estimate based on model
                 #[allow(clippy::cast_precision_loss)]
                 let cost = match self.model.as_str() {
-                    m if m.contains("opus") => tokens as f64 * 0.000015 + tokens as f64 * 0.000075,
+                    m if m.contains("opus") => (tokens as f64).mul_add(0.000015, tokens as f64 * 0.000075),
                     m if m.contains("sonnet") => {
-                        tokens as f64 * 0.000003 + tokens as f64 * 0.000015
+                        (tokens as f64).mul_add(0.000003, tokens as f64 * 0.000015)
                     }
                     m if m.contains("haiku") => {
-                        tokens as f64 * 0.00000025 + tokens as f64 * 0.00000125
+                        (tokens as f64).mul_add(0.00000025, tokens as f64 * 0.00000125)
                     }
                     _ => 0.0,
                 };
                 self.messages.add(DisplayMessage {
                     role: "system".to_string(),
-                    content: format!("Session cost estimate:\n  ~{tokens} tokens\n  ~${cost:.4}",),
+                    content: format!("Session cost estimate:\n  ~{tokens} tokens\n  ~${cost:.4}"),
                     tool_name: None,
                     is_error: false,
                     is_thinking: false,
@@ -1291,7 +1290,7 @@ impl App {
                             .flatten()
                             .map(|e| {
                                 let name = e.file_name().to_string_lossy().to_string();
-                                let suffix = if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                                let suffix = if e.file_type().is_ok_and(|t| t.is_dir()) {
                                     "/"
                                 } else {
                                     ""
@@ -1433,33 +1432,30 @@ impl App {
 
             // /init — initialize project config
             if text == "/init" {
-                match crate::config::config_file_exists() {
-                    true => {
-                        self.messages.add(DisplayMessage {
-                            role: "system".to_string(),
-                            content: "Config already exists. Use /doctor to check it.".to_string(),
-                            tool_name: None,
-                            is_error: false,
-                            is_thinking: false,
-                        });
-                    }
-                    false => {
-                        // Run init in the background
-                        let output = std::process::Command::new("openclaudia")
-                            .arg("init")
-                            .output();
-                        let content = match output {
-                            Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
-                            Err(e) => format!("Init failed: {e}"),
-                        };
-                        self.messages.add(DisplayMessage {
-                            role: "system".to_string(),
-                            content,
-                            tool_name: None,
-                            is_error: false,
-                            is_thinking: false,
-                        });
-                    }
+                if crate::config::config_file_exists() {
+                    self.messages.add(DisplayMessage {
+                        role: "system".to_string(),
+                        content: "Config already exists. Use /doctor to check it.".to_string(),
+                        tool_name: None,
+                        is_error: false,
+                        is_thinking: false,
+                    });
+                } else {
+                    // Run init in the background
+                    let output = std::process::Command::new("openclaudia")
+                        .arg("init")
+                        .output();
+                    let content = match output {
+                        Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
+                        Err(e) => format!("Init failed: {e}"),
+                    };
+                    self.messages.add(DisplayMessage {
+                        role: "system".to_string(),
+                        content,
+                        tool_name: None,
+                        is_error: false,
+                        is_thinking: false,
+                    });
                 }
                 return true;
             }
@@ -1618,9 +1614,7 @@ impl App {
                 if !hook_result.allowed {
                     let reason = hook_result
                         .errors
-                        .first()
-                        .map(|e| e.to_string())
-                        .unwrap_or_else(|| "Hook blocked the request".to_string());
+                        .first().map_or_else(|| "Hook blocked the request".to_string(), std::string::ToString::to_string);
                     let _ = tx.send(AppEvent::ApiError(format!("Blocked by hook: {reason}")));
                     return;
                 }
@@ -1960,16 +1954,14 @@ impl App {
         } else {
             format!("Welcome back, {username}!")
         };
-        let cwd = std::env::current_dir()
-            .map(|p| {
+        let cwd = std::env::current_dir().map_or_else(|_| ".".to_string(), |p| {
                 if let Some(home) = dirs::home_dir() {
                     if let Ok(rel) = p.strip_prefix(&home) {
                         return format!("~/{}", rel.display());
                     }
                 }
                 p.display().to_string()
-            })
-            .unwrap_or_else(|_| ".".to_string());
+            });
 
         let left = Paragraph::new(vec![
             Line::from(Span::styled(

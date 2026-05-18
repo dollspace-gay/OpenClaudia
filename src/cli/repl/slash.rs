@@ -862,8 +862,7 @@ session:
             if !Command::new("git")
                 .args(["rev-parse", "--is-inside-work-tree"])
                 .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
+                .is_ok_and(|o| o.status.success())
             {
                 println!("\nNot inside a git repository.\n");
                 return Some(SlashCommandResult::Handled);
@@ -875,12 +874,10 @@ session:
             let unstaged = Command::new("git").args(["diff", "--stat"]).output();
             let has_staged = staged
                 .as_ref()
-                .map(|o| !o.stdout.is_empty())
-                .unwrap_or(false);
+                .is_ok_and(|o| !o.stdout.is_empty());
             let has_unstaged = unstaged
                 .as_ref()
-                .map(|o| !o.stdout.is_empty())
-                .unwrap_or(false);
+                .is_ok_and(|o| !o.stdout.is_empty());
 
             if !has_staged && !has_unstaged {
                 println!("\nNo changes to commit.\n");
@@ -961,8 +958,7 @@ session:
             if !Command::new("git")
                 .args(["rev-parse", "--is-inside-work-tree"])
                 .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
+                .is_ok_and(|o| o.status.success())
             {
                 println!("\nNot inside a git repository.\n");
                 return Some(SlashCommandResult::Handled);
@@ -975,12 +971,10 @@ session:
             let unstaged = Command::new("git").args(["diff", "--stat"]).output();
             let has_staged = staged
                 .as_ref()
-                .map(|o| !o.stdout.is_empty())
-                .unwrap_or(false);
+                .is_ok_and(|o| !o.stdout.is_empty());
             let has_unstaged = unstaged
                 .as_ref()
-                .map(|o| !o.stdout.is_empty())
-                .unwrap_or(false);
+                .is_ok_and(|o| !o.stdout.is_empty());
 
             if has_staged || has_unstaged {
                 if !has_staged {
@@ -1052,8 +1046,7 @@ session:
             if Command::new("which")
                 .arg("gh")
                 .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
+                .is_ok_and(|o| o.status.success())
             {
                 let last_msg = Command::new("git")
                     .args(["log", "-1", "--format=%s"])
@@ -2031,7 +2024,7 @@ fn parse_axis_overrides(parts: &[&str]) -> Option<SlashCommandResult> {
         return Some(SlashCommandResult::Handled);
     }
 
-    println!("\n\u{2713} Mode: \x1b[36mcustom\x1b[0m ({})\n", mode);
+    println!("\n\u{2713} Mode: \x1b[36mcustom\x1b[0m ({mode})\n");
 
     Some(SlashCommandResult::SetBehaviorMode(mode))
 }
@@ -2119,7 +2112,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Some(SlashCommandResult::Handled) | Some(SlashCommandResult::LoadSession(_))
+                Some(SlashCommandResult::Handled | SlashCommandResult::LoadSession(_))
             ),
             "bare /resume must return Handled or LoadSession, never None"
         );
@@ -2366,7 +2359,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Some(SlashCommandResult::SwitchModel(_)) | Some(SlashCommandResult::Handled)
+                Some(SlashCommandResult::SwitchModel(_) | SlashCommandResult::Handled)
             ),
             "/model default must not return None (OC treats it as a name, not a reset)"
         );

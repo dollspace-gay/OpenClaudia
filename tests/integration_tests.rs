@@ -1,4 +1,4 @@
-//! End-to-end integration tests for OpenClaudia tools
+//! End-to-end integration tests for `OpenClaudia` tools
 //!
 //! These tests verify that each tool actually performs its documented function
 //! against real filesystem, processes, and network operations.
@@ -12,18 +12,18 @@ use std::fs;
 use std::sync::Mutex;
 use tempfile::TempDir;
 
-/// Global lock for tests that depend on the shared READ_TRACKER state.
-/// Tests that call reset_read_tracker() must hold this lock to avoid races.
+/// Global lock for tests that depend on the shared `READ_TRACKER` state.
+/// Tests that call `reset_read_tracker()` must hold this lock to avoid races.
 static READ_TRACKER_LOCK: Mutex<()> = Mutex::new(());
 
-/// Global lock for tests that depend on the shared TODO_LIST state.
-/// Tests that call clear_todo_list() must hold this lock to avoid races.
+/// Global lock for tests that depend on the shared `TODO_LIST` state.
+/// Tests that call `clear_todo_list()` must hold this lock to avoid races.
 static TODO_LIST_LOCK: Mutex<()> = Mutex::new(());
 
-/// Helper to create a ToolCall from name and arguments
+/// Helper to create a `ToolCall` from name and arguments
 fn make_tool_call(name: &str, args: Value) -> ToolCall {
     ToolCall {
-        id: format!("test_{}", name),
+        id: format!("test_{name}"),
         call_type: "function".to_string(),
         function: FunctionCall {
             name: name.to_string(),
@@ -391,7 +391,7 @@ mod file_tools {
         let file_path = dir.path().join("large.txt");
 
         // Create a large file (10000 lines)
-        let content: String = (0..10000).map(|i| format!("Line {}\n", i)).collect();
+        let content: String = (0..10000).map(|i| format!("Line {i}\n")).collect();
         fs::write(&file_path, &content).expect("Failed to write large file");
 
         let tool_call = make_tool_call(
@@ -419,7 +419,7 @@ mod file_tools {
         let dir = TempDir::new().expect("Failed to create temp dir");
         let file_path = dir.path().join("large_limit.txt");
 
-        let content: String = (0..1000).map(|i| format!("Line {}\n", i)).collect();
+        let content: String = (0..1000).map(|i| format!("Line {i}\n")).collect();
         fs::write(&file_path, &content).expect("Failed to write");
 
         let tool_call = make_tool_call(
@@ -1215,7 +1215,7 @@ mod bash_tools {
         );
         // Should contain at least some of the output
         assert!(
-            result.content.contains("1"),
+            result.content.contains('1'),
             "Should contain start of output"
         );
         // Content should be non-trivially sized
@@ -1228,7 +1228,7 @@ mod bash_tools {
 }
 
 /// Extract shell ID from bash background output
-/// Output format: "Background shell started with ID: xxxxx\nUse bash_output..."
+/// Output format: "Background shell started with ID: xxxxx\nUse `bash_output`..."
 fn extract_shell_id(output: &str) -> String {
     // Look for "ID: " pattern and extract what follows
     if let Some(idx) = output.find("ID: ") {
@@ -1269,7 +1269,7 @@ mod web_tools {
         // This is a real network call - might fail in CI/offline environments
         // We check if it either succeeded or failed gracefully
         if !result.is_error {
-            assert!(result.content.len() > 0, "Should return content from fetch");
+            assert!(!result.content.is_empty(), "Should return content from fetch");
         }
     }
 
@@ -1424,9 +1424,7 @@ mod auto_learn_integration {
 
         // Use absolute paths to avoid canonicalization mismatches
         // (normalize_path canonicalizes real files but keeps fictitious ones as-is)
-        let abs_a = std::fs::canonicalize("src/main.rs")
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "/tmp/test_a.rs".to_string());
+        let abs_a = std::fs::canonicalize("src/main.rs").map_or_else(|_| "/tmp/test_a.rs".to_string(), |p| p.to_string_lossy().to_string());
         let abs_b = "/tmp/nonexistent_test_b.rs".to_string();
 
         let args_a = json!({"path": &abs_a});
@@ -1521,7 +1519,7 @@ mod tool_definitions {
         assert!(tools.is_array(), "Tool definitions should be an array");
 
         let tools_array = tools.as_array().unwrap();
-        assert!(tools_array.len() > 0, "Should have at least one tool");
+        assert!(!tools_array.is_empty(), "Should have at least one tool");
 
         // Verify each tool has required fields
         for tool in tools_array {
@@ -1586,9 +1584,7 @@ mod tool_definitions {
         for required in required_tools {
             assert!(
                 tool_names.contains(&required),
-                "Required tool '{}' should exist. Found: {:?}",
-                required,
-                tool_names
+                "Required tool '{required}' should exist. Found: {tool_names:?}"
             );
         }
     }
@@ -2392,8 +2388,8 @@ mod token_tracking {
         assert_eq!(session.request_count, 0); // increment_requests not called
         assert_eq!(session.cumulative_usage.input_tokens, 4800 + 7500 + 11000);
         assert_eq!(session.cumulative_usage.output_tokens, 1200 + 2000 + 3000);
-        assert_eq!(session.cumulative_usage.cache_read_tokens, 0 + 1000 + 2000);
-        assert_eq!(session.cumulative_usage.cache_write_tokens, 0 + 0 + 500);
+        assert_eq!(session.cumulative_usage.cache_read_tokens, 1000 + 2000);
+        assert_eq!(session.cumulative_usage.cache_write_tokens, 500);
         assert_eq!(
             session.cumulative_usage.total(),
             (4800 + 7500 + 11000) + (1200 + 2000 + 3000)
@@ -2413,32 +2409,27 @@ mod token_tracking {
 
         let summary = session.stats_summary();
 
-        assert!(summary.contains("Turns: 1"), "Summary: {}", summary);
+        assert!(summary.contains("Turns: 1"), "Summary: {summary}");
         assert!(
             summary.contains("Input tokens:  4800"),
-            "Summary: {}",
-            summary
+            "Summary: {summary}"
         );
         assert!(
             summary.contains("Output tokens: 1200"),
-            "Summary: {}",
-            summary
+            "Summary: {summary}"
         );
         assert!(
             summary.contains("Cache read:    300"),
-            "Summary: {}",
-            summary
+            "Summary: {summary}"
         );
         assert!(
             summary.contains("Cache write:   100"),
-            "Summary: {}",
-            summary
+            "Summary: {summary}"
         );
-        assert!(summary.contains("Last turn #1"), "Summary: {}", summary);
+        assert!(summary.contains("Last turn #1"), "Summary: {summary}");
         assert!(
             summary.contains("actual 4800in/1200out"),
-            "Summary: {}",
-            summary
+            "Summary: {summary}"
         );
     }
 
@@ -2455,18 +2446,16 @@ mod token_tracking {
 
         let handoff = session.generate_handoff();
 
-        assert!(handoff.contains("### Token Usage"), "Handoff: {}", handoff);
+        assert!(handoff.contains("### Token Usage"), "Handoff: {handoff}");
         assert!(
             handoff.contains("Input: 4800 tokens"),
-            "Handoff: {}",
-            handoff
+            "Handoff: {handoff}"
         );
         assert!(
             handoff.contains("Output: 1200 tokens"),
-            "Handoff: {}",
-            handoff
+            "Handoff: {handoff}"
         );
-        assert!(handoff.contains("Turns: 1"), "Handoff: {}", handoff);
+        assert!(handoff.contains("Turns: 1"), "Handoff: {handoff}");
     }
 
     #[test]
@@ -2639,16 +2628,16 @@ mod token_tracking {
         let usage = response.get("usage").unwrap();
         let input = usage
             .get("prompt_tokens")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(0);
         let output = usage
             .get("completion_tokens")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(0);
         let cached = usage
             .get("prompt_tokens_details")
             .and_then(|d| d.get("cached_tokens"))
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(0);
 
         assert_eq!(input, 1500);
@@ -2672,19 +2661,19 @@ mod token_tracking {
         let usage = response.get("usage").unwrap();
         let input = usage
             .get("input_tokens")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(0);
         let output = usage
             .get("output_tokens")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(0);
         let cache_read = usage
             .get("cache_read_input_tokens")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(0);
         let cache_write = usage
             .get("cache_creation_input_tokens")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(0);
 
         assert_eq!(input, 2000);
@@ -2838,7 +2827,7 @@ mod token_tracking {
     fn test_estimate_tokens_rough_accuracy() {
         // "Hello world" is approximately 2 tokens in most tokenizers
         let estimate = estimate_tokens("Hello world");
-        assert!(estimate >= 1 && estimate <= 5, "Estimate: {}", estimate);
+        assert!((1..=5).contains(&estimate), "Estimate: {estimate}");
 
         // Longer text should scale roughly linearly
         let short = estimate_tokens("Hello");
@@ -2855,9 +2844,7 @@ mod token_tracking {
         // Message tokens should be more than just text (includes role overhead)
         assert!(
             tokens > text_tokens,
-            "Message should have overhead: msg={}, text={}",
-            tokens,
-            text_tokens
+            "Message should have overhead: msg={tokens}, text={text_tokens}"
         );
     }
 
@@ -2886,9 +2873,7 @@ mod token_tracking {
 
         assert!(
             tokens_with_tools > tokens_no_tools,
-            "Tools should add tokens: with={}, without={}",
-            tokens_with_tools,
-            tokens_no_tools
+            "Tools should add tokens: with={tokens_with_tools}, without={tokens_no_tools}"
         );
     }
 
@@ -2969,7 +2954,7 @@ mod vdd_tests {
     use std::collections::HashMap;
     use tempfile::TempDir;
 
-    /// Helper to create an AppConfig with VDD enabled for a given mode
+    /// Helper to create an `AppConfig` with VDD enabled for a given mode
     fn make_vdd_config(mode: VddMode, adversary_provider: &str) -> AppConfig {
         AppConfig {
             proxy: ProxyConfig {
@@ -3220,7 +3205,7 @@ mod vdd_tests {
         for event in &events {
             // config_key should return a non-empty string
             let key = event.config_key();
-            assert!(!key.is_empty(), "VDD event {:?} has no config key", event);
+            assert!(!key.is_empty(), "VDD event {event:?} has no config key");
         }
     }
 
@@ -3440,7 +3425,7 @@ mod gated_dispatch_460 {
 
     /// End-to-end: a bash tool call goes through the new gated dispatch
     /// entry point and the permission gate blocks it BEFORE the tool body
-    /// runs. The denial payload is returned to the caller as a ToolResult
+    /// runs. The denial payload is returned to the caller as a `ToolResult`
     /// with `is_error=true` and a message mentioning the denial, with no
     /// trace of the would-be command output.
     #[test]
@@ -3458,8 +3443,7 @@ mod gated_dispatch_460 {
             ExecutionOutcome::Result(r) => {
                 assert!(
                     r.is_error,
-                    "denial path must mark result as error, got: {:?}",
-                    r
+                    "denial path must mark result as error, got: {r:?}"
                 );
                 assert!(
                     r.content.to_lowercase().contains("denied"),

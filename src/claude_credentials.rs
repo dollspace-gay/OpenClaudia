@@ -72,7 +72,7 @@ fn lock_path() -> Option<PathBuf> {
 
 /// Advisory file lock for credential access.
 /// Prevents TOCTOU race conditions when multiple processes refresh tokens.
-/// Uses flock on Unix, CreateFile exclusive lock on Windows.
+/// Uses flock on Unix, `CreateFile` exclusive lock on Windows.
 struct CredentialLock {
     _file: std::fs::File,
 }
@@ -146,8 +146,7 @@ pub async fn load_credentials() -> Result<LoadedCredentials, String> {
     // Reject symlinks to prevent credential theft via symlink attacks
     if path
         .symlink_metadata()
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false)
+        .is_ok_and(|m| m.file_type().is_symlink())
     {
         return Err(format!(
             "Credentials file {} is a symlink — refusing to read for security",
@@ -311,8 +310,7 @@ async fn refresh_and_load(
     // Reject symlinks before writing refreshed tokens
     if path
         .symlink_metadata()
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false)
+        .is_ok_and(|m| m.file_type().is_symlink())
     {
         return Err(format!(
             "Credentials file {} is a symlink — refusing to write for security",
@@ -354,7 +352,7 @@ pub fn get_oauth_headers(access_token: &str) -> Vec<(String, String)> {
         // Beta headers matching what Claude Code sends (required for OAuth model access)
         (
             "anthropic-beta".to_string(),
-            format!("{CLAUDE_CODE_BETA_HEADER},{OAUTH_BETA_HEADER},{INTERLEAVED_THINKING_BETA}",),
+            format!("{CLAUDE_CODE_BETA_HEADER},{OAUTH_BETA_HEADER},{INTERLEAVED_THINKING_BETA}"),
         ),
     ]
 }
@@ -379,7 +377,7 @@ pub const CLAUDIA_SYSTEM_PROMPT: &str = include_str!("claude_code_prompt.txt");
 /// Inject the Claude Code system prompt into a request body.
 ///
 /// Block 0: The exact one-liner prefix (API validates this string for OAuth)
-/// Block 1: Full behavioral instructions + Claudia persona (from claude_code_prompt.txt)
+/// Block 1: Full behavioral instructions + Claudia persona (from `claude_code_prompt.txt`)
 /// Block 2+: Whatever was already in the system array (our per-session prompt)
 ///
 /// This matches Claude Code's multi-block system array structure.
@@ -452,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_parse_credentials_no_oauth() {
-        let json = r#"{}"#;
+        let json = r"{}";
         let creds: CredentialsFile = serde_json::from_str(json).unwrap();
         assert!(creds.claude_ai_oauth.is_none());
     }

@@ -124,7 +124,7 @@ pub fn build_anthropic_request(
     req
 }
 
-/// Build an OpenAI-compatible request body (used by OpenAI, DeepSeek, Qwen, Z.AI).
+/// Build an OpenAI-compatible request body (used by `OpenAI`, `DeepSeek`, Qwen, Z.AI).
 ///
 /// `effort_level` propagates as `reasoning_effort` for `high`/`max` to
 /// unlock o1/o3 reasoning; `max` downgrades to `high` because the API
@@ -306,18 +306,15 @@ pub async fn run_turn(
         system_blocks = request_body
             .get("system")
             .and_then(|v| v.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0),
+            .map_or(0, std::vec::Vec::len),
         messages = request_body
             .get("messages")
             .and_then(|v| v.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0),
+            .map_or(0, std::vec::Vec::len),
         has_tools = request_body
             .get("tools")
             .and_then(|v| v.as_array())
-            .map(|a| !a.is_empty())
-            .unwrap_or(false),
+            .is_some_and(|a| !a.is_empty()),
         "Sending API request"
     );
 
@@ -421,7 +418,7 @@ async fn handle_google_response(
             .get("message")
             .and_then(|m| m.as_str())
             .unwrap_or("Unknown error");
-        let code = error.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
+        let code = error.get("code").and_then(serde_json::Value::as_u64).unwrap_or(0);
         return Err(format!("Gemini API error ({code}): {msg}"));
     }
 
@@ -443,9 +440,7 @@ async fn handle_google_response(
                     let fc = p.get("functionCall")?;
                     let name = fc.get("name")?.as_str()?.to_string();
                     let args = fc
-                        .get("args")
-                        .map(|a| serde_json::to_string(a).unwrap_or_default())
-                        .unwrap_or_else(|| "{}".to_string());
+                        .get("args").map_or_else(|| "{}".to_string(), |a| serde_json::to_string(a).unwrap_or_default());
                     Some(ToolCall {
                         id: format!("call_{}", uuid::Uuid::new_v4()),
                         call_type: "function".to_string(),
@@ -500,7 +495,7 @@ async fn handle_google_response(
     })
 }
 
-/// Stream an SSE response (Anthropic or OpenAI format), sending events to the TUI.
+/// Stream an SSE response (Anthropic or `OpenAI` format), sending events to the TUI.
 async fn stream_sse_response(
     response: reqwest::Response,
     provider: &str,
@@ -656,15 +651,14 @@ pub fn process_sse_event(
 
     // Thinking block detection (Anthropic)
     if let Some(event_type) = json.get("type").and_then(|t| t.as_str()) {
-        if event_type == "content_block_start" {
-            if let Some("thinking") = json
+        if event_type == "content_block_start"
+            && json
                 .get("content_block")
                 .and_then(|b| b.get("type"))
-                .and_then(|t| t.as_str())
+                .and_then(|t| t.as_str()) == Some("thinking")
             {
                 return SseAction::ThinkingStart;
             }
-        }
         if event_type == "content_block_stop" && in_thinking_block {
             return SseAction::ThinkingEnd;
         }
@@ -875,51 +869,35 @@ async fn execute_tool_calls_for_tui(
             match tool_name.as_str() {
                 "read_file" => args
                     .get("path")
-                    .and_then(|v| v.as_str())
-                    .map(|p| format!("Reading {p}"))
-                    .unwrap_or_else(|| "Reading file".to_string()),
+                    .and_then(|v| v.as_str()).map_or_else(|| "Reading file".to_string(), |p| format!("Reading {p}")),
                 "write_file" => args
                     .get("path")
-                    .and_then(|v| v.as_str())
-                    .map(|p| format!("Writing {p}"))
-                    .unwrap_or_else(|| "Writing file".to_string()),
+                    .and_then(|v| v.as_str()).map_or_else(|| "Writing file".to_string(), |p| format!("Writing {p}")),
                 "edit_file" => args
                     .get("path")
-                    .and_then(|v| v.as_str())
-                    .map(|p| format!("Editing {p}"))
-                    .unwrap_or_else(|| "Editing file".to_string()),
+                    .and_then(|v| v.as_str()).map_or_else(|| "Editing file".to_string(), |p| format!("Editing {p}")),
                 "bash" => args
                     .get("command")
-                    .and_then(|v| v.as_str())
-                    .map(|c| {
+                    .and_then(|v| v.as_str()).map_or_else(|| "Running command".to_string(), |c| {
                         let truncated = if c.len() > 80 {
                             crate::tools::safe_truncate(c, 77)
                         } else {
                             c
                         };
                         format!("$ {truncated}")
-                    })
-                    .unwrap_or_else(|| "Running command".to_string()),
+                    }),
                 "list_files" => args
                     .get("path")
-                    .and_then(|v| v.as_str())
-                    .map(|p| format!("Listing {p}"))
-                    .unwrap_or_else(|| "Listing files".to_string()),
+                    .and_then(|v| v.as_str()).map_or_else(|| "Listing files".to_string(), |p| format!("Listing {p}")),
                 "web_search" => args
                     .get("query")
-                    .and_then(|v| v.as_str())
-                    .map(|q| format!("Searching: {q}"))
-                    .unwrap_or_else(|| "Searching web".to_string()),
+                    .and_then(|v| v.as_str()).map_or_else(|| "Searching web".to_string(), |q| format!("Searching: {q}")),
                 "web_fetch" => args
                     .get("url")
-                    .and_then(|v| v.as_str())
-                    .map(|u| format!("Fetching {u}"))
-                    .unwrap_or_else(|| "Fetching URL".to_string()),
+                    .and_then(|v| v.as_str()).map_or_else(|| "Fetching URL".to_string(), |u| format!("Fetching {u}")),
                 "chainlink" => args
                     .get("args")
-                    .and_then(|v| v.as_str())
-                    .map(|a| format!("crosslink {a}"))
-                    .unwrap_or_else(|| "Running crosslink".to_string()),
+                    .and_then(|v| v.as_str()).map_or_else(|| "Running crosslink".to_string(), |a| format!("crosslink {a}")),
                 _ => format!("Running {tool_name}"),
             }
         };
@@ -1231,7 +1209,7 @@ mod tests {
 
     /// B2 — high effort attaches `thinking.type = "enabled"` with budget > 0.
     ///
-    /// Pins the exact budget constant (31999 = CC's ULTRATHINK_BUDGET_TOKENS).
+    /// Pins the exact budget constant (31999 = CC's `ULTRATHINK_BUDGET_TOKENS`).
     #[test]
     fn b2_high_effort_attaches_thinking_budget() {
         let prev = std::env::var("MAX_THINKING_TOKENS").ok();

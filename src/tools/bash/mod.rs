@@ -425,7 +425,7 @@ mod tests {
     // B1 — background spawn: shell_id format and manager state
     // Spec: crosslink #526 §B1 | OC source: mod.rs:49-169
 
-    /// B1-mod-a: spawn returns an 8-char shell_id (UUID prefix, mod.rs:57).
+    /// B1-mod-a: spawn returns an 8-char `shell_id` (UUID prefix, mod.rs:57).
     #[test]
     fn b1_spawn_returns_8_char_shell_id() {
         let id = BACKGROUND_SHELLS
@@ -438,8 +438,8 @@ mod tests {
         );
     }
 
-    /// B1-mod-b: execute_bash with run_in_background=true returns is_error=false
-    /// and a message containing "ID:" and the shell_id.
+    /// B1-mod-b: `execute_bash` with `run_in_background=true` returns `is_error=false`
+    /// and a message containing "ID:" and the `shell_id`.
     ///
     /// OC source: mod.rs:334-339.
     #[test]
@@ -456,7 +456,7 @@ mod tests {
         );
     }
 
-    /// B1-mod-c: spawned shell appears in BACKGROUND_SHELLS.list().
+    /// B1-mod-c: spawned shell appears in `BACKGROUND_SHELLS.list()`.
     #[test]
     fn b1_spawned_shell_appears_in_list() {
         let id = BACKGROUND_SHELLS
@@ -473,10 +473,10 @@ mod tests {
     /// OC source: mod.rs:96-100. OC cap = 50; CC has no equivalent limit.
     ///
     /// NOTE: this test drives the manager's internal state directly to approach
-    /// the limit. It spawns enough "sleep" processes to reach MAX_BACKGROUND_SHELLS.
+    /// the limit. It spawns enough "sleep" processes to reach `MAX_BACKGROUND_SHELLS`.
     /// Those processes are killed at the end of the test to avoid leaking.
     ///
-    /// Because the global BACKGROUND_SHELLS is shared across the test binary,
+    /// Because the global `BACKGROUND_SHELLS` is shared across the test binary,
     /// this test might interact with others. The "sleep" commands are short (2 s)
     /// and are cleaned up below. The test still pinning the error message format
     /// is the important contract; the live saturation path is best-effort.
@@ -501,7 +501,7 @@ mod tests {
     // B2 — kill: BackgroundShellManager::kill behavior
     // Spec: crosslink #526 §B2 | OC source: mod.rs:230-249
 
-    /// B2-mod-a: kill on an unknown shell_id returns Err("Shell 'id' not found").
+    /// B2-mod-a: kill on an unknown `shell_id` returns Err("Shell 'id' not found").
     ///
     /// OC source: mod.rs:246-248.
     #[test]
@@ -521,7 +521,7 @@ mod tests {
 
     /// B2-mod-b: kill on a running shell returns Ok and removes it from the map.
     ///
-    /// OC source: mod.rs:236-245 — shells.remove(shell_id).
+    /// OC source: mod.rs:236-245 — `shells.remove(shell_id)`.
     #[test]
     #[cfg(unix)]
     fn b2_kill_running_shell_removes_entry() {
@@ -594,7 +594,7 @@ mod tests {
     /// B2-mod-d: kill on an already-finished shell skips SIGTERM but still
     /// removes the entry and returns Ok.
     ///
-    /// OC source: mod.rs:237 — !shell.finished.load() gates the terminate call.
+    /// OC source: mod.rs:237 — !`shell.finished.load()` gates the terminate call.
     #[test]
     #[cfg(unix)]
     fn b2_kill_finished_shell_skips_sigterm_returns_ok() {
@@ -617,9 +617,9 @@ mod tests {
     // B3 — get_output: error paths
     // Spec: crosslink #526 §B3 | OC source: mod.rs:173-222
 
-    /// B3-mod-a: get_output on unknown shell_id returns Err without panicking.
+    /// B3-mod-a: `get_output` on unknown `shell_id` returns Err without panicking.
     ///
-    /// OC source: mod.rs:179-181 — ok_or_else.
+    /// OC source: mod.rs:179-181 — `ok_or_else`.
     #[test]
     fn b3_get_output_unknown_id_returns_err_no_panic() {
         let result = BACKGROUND_SHELLS.get_output("ffffffff");
@@ -631,7 +631,7 @@ mod tests {
         );
     }
 
-    /// B3-mod-b: get_output for a running shell returns Ok with is_running=true.
+    /// B3-mod-b: `get_output` for a running shell returns Ok with `is_running=true`.
     ///
     /// OC source: mod.rs:211-213.
     #[test]
@@ -654,10 +654,10 @@ mod tests {
         let _ = BACKGROUND_SHELLS.kill(&id);
     }
 
-    /// B3-mod-c: get_output for a finished shell returns is_running=false and
-    /// a Some exit_code.
+    /// B3-mod-c: `get_output` for a finished shell returns `is_running=false` and
+    /// a Some `exit_code`.
     ///
-    /// OC source: mod.rs:211-213 — is_running = !is_finished.
+    /// OC source: mod.rs:211-213 — `is_running` = !`is_finished`.
     #[test]
     #[cfg(unix)]
     fn b3_get_output_finished_shell_is_running_false() {
@@ -684,7 +684,7 @@ mod tests {
     // B5 — execute_bash policy enforcement
     // Spec: crosslink #526 §B5 | OC source: mod.rs:319-401
 
-    /// B5-mod-a: execute_bash with missing "command" arg returns is_error=true.
+    /// B5-mod-a: `execute_bash` with missing "command" arg returns `is_error=true`.
     ///
     /// OC source: mod.rs:320-322.
     #[test]
@@ -698,10 +698,10 @@ mod tests {
         );
     }
 
-    /// B5-mod-b: execute_bash with a denylist command returns is_error=true
+    /// B5-mod-b: `execute_bash` with a denylist command returns `is_error=true`
     /// before any process is spawned.
     ///
-    /// OC source: mod.rs:324-326 — validate_command called before spawn.
+    /// OC source: mod.rs:324-326 — `validate_command` called before spawn.
     #[test]
     fn b5_execute_bash_denylist_command_is_error() {
         let (msg, is_error) = execute_bash(&bash_args("rm -rf /"));
@@ -712,7 +712,7 @@ mod tests {
         );
     }
 
-    /// B5-mod-c: execute_bash with a valid command returns is_error=false
+    /// B5-mod-c: `execute_bash` with a valid command returns `is_error=false`
     /// and output from the child.
     #[test]
     #[cfg(unix)]
@@ -725,9 +725,9 @@ mod tests {
         );
     }
 
-    /// B5-mod-d: non-zero exit code sets is_error=true in synchronous mode.
+    /// B5-mod-d: non-zero exit code sets `is_error=true` in synchronous mode.
     ///
-    /// OC source: mod.rs:397 — !output.status.success().
+    /// OC source: mod.rs:397 — !`output.status.success()`.
     #[test]
     #[cfg(unix)]
     fn b5_execute_bash_nonzero_exit_is_error() {

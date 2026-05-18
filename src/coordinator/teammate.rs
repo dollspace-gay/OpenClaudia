@@ -222,7 +222,7 @@ mod phase2_spec_pins {
 
     // ── B3: Teammate struct field invariants ─────────────────────────
 
-    /// B3a: session_id and transcript_path are stored exactly as
+    /// B3a: `session_id` and `transcript_path` are stored exactly as
     /// supplied (#532 B3 field table).
     #[test]
     fn b3_fields_stored_as_supplied() {
@@ -237,7 +237,7 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B3b: agent_type is stored as supplied (#532 B3).
+    /// B3b: `agent_type` is stored as supplied (#532 B3).
     #[test]
     fn b3_agent_type_stored_as_supplied() {
         let tm = Teammate::new(AgentType::GeneralPurpose, 0, "s", PathBuf::from("/t"));
@@ -281,8 +281,8 @@ mod phase2_spec_pins {
         assert!(!tm.state.is_available(), "Spawning must not be available");
     }
 
-    /// B3e: only Idle satisfies is_available; all other alive states
-    /// do not (#532 B3 is_available contract).
+    /// B3e: only Idle satisfies `is_available`; all other alive states
+    /// do not (#532 B3 `is_available` contract).
     #[test]
     fn b3_is_available_only_for_idle() {
         assert!(!TeammateState::Spawning.is_available());
@@ -291,8 +291,8 @@ mod phase2_spec_pins {
         assert!(!TeammateState::Dead("reason".into()).is_available());
     }
 
-    /// B3f: Dead is the only state where is_alive returns false
-    /// (#532 B3 is_alive contract).
+    /// B3f: Dead is the only state where `is_alive` returns false
+    /// (#532 B3 `is_alive` contract).
     #[test]
     fn b3_is_alive_false_only_for_dead() {
         assert!(TeammateState::Spawning.is_alive());
@@ -322,7 +322,7 @@ mod phase2_spec_pins {
         assert_eq!(AgentColor::PALETTE.len(), 7);
     }
 
-    /// B4c: for_index(n % 7) == for_index(n) for representative
+    /// B4c: `for_index(n` % 7) == `for_index(n)` for representative
     /// values (#532 B4 invariant).
     #[test]
     fn b4_for_index_modular_identity() {
@@ -330,20 +330,19 @@ mod phase2_spec_pins {
             assert_eq!(
                 AgentColor::for_index(n),
                 AgentColor::for_index(n % 7),
-                "for_index({n}) != for_index({} % 7)",
-                n,
+                "for_index({n}) != for_index({n} % 7)",
             );
         }
     }
 
-    /// B4d: usize::MAX does not panic (#532 B4 no-OOB invariant).
+    /// B4d: `usize::MAX` does not panic (#532 B4 no-OOB invariant).
     #[test]
     fn b4_usize_max_does_not_panic() {
         // Just calling it is the assertion — no panic == pass.
         let _ = AgentColor::for_index(usize::MAX);
     }
 
-    /// B4e: AgentColor serializes to lowercase strings per serde attr
+    /// B4e: `AgentColor` serializes to lowercase strings per serde attr
     /// (#532 B4 serde round-trip).
     #[test]
     fn b4_serde_round_trip_lowercase() {
@@ -368,8 +367,8 @@ mod phase2_spec_pins {
         }
     }
 
-    /// B4f: color assigned via Teammate::new matches for_index(ordinal)
-    /// (#532 B3 field table: color set via AgentColor::for_index).
+    /// B4f: color assigned via `Teammate::new` matches `for_index(ordinal)`
+    /// (#532 B3 field table: color set via `AgentColor::for_index`).
     #[test]
     fn b4_teammate_color_matches_for_index() {
         for ordinal in 0..14usize {

@@ -37,7 +37,7 @@ use tracing::{debug, error, info};
 ///    expired, leading to infinite 401-retry loops.
 ///  * `2^63` — would wrap via `.cast_signed()` to a negative duration
 ///    landing the session in the past.
-///  * absurdly long values (e.g. 31_536_000_000 = 1000 years) — stores
+///  * absurdly long values (e.g. `31_536_000_000` = 1000 years) — stores
 ///    a token on disk with no re-check.
 ///
 /// We clamp to `[MIN_EXPIRES_IN_SECS, MAX_EXPIRES_IN_SECS]` and emit
@@ -110,7 +110,7 @@ pub(crate) fn redact_oauth_error_body(body: &str) -> String {
     "<redacted: body contains sensitive fields>".to_string()
 }
 
-/// True when an error_description is safe to surface (does not look like
+/// True when an `error_description` is safe to surface (does not look like
 /// it carries a token, code, or long base64/hex run).
 fn description_looks_safe(desc: &str) -> bool {
     if desc.is_empty() {
@@ -481,8 +481,7 @@ impl OAuthStore {
         // we already have the real file's handle — this just warns us.
         if path
             .symlink_metadata()
-            .map(|sm| sm.file_type().is_symlink())
-            .unwrap_or(false)
+            .is_ok_and(|sm| sm.file_type().is_symlink())
         {
             error!(
                 "OAuth session file {} is a symlink — refusing to read for security",

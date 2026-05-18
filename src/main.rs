@@ -168,7 +168,7 @@ async fn main() -> anyhow::Result<()> {
         "openclaudia=info,tower_http=warn"
     };
 
-    let tui_mode_active = matches!(cli.command, None) && !cli.tui_mode;
+    let tui_mode_active = cli.command.is_none() && !cli.tui_mode;
     let log_writer: tracing_subscriber::fmt::writer::BoxMakeWriter = if tui_mode_active {
         let dir = std::path::Path::new(".openclaudia/logs");
         let file = std::fs::create_dir_all(dir).ok().and_then(|()| {
@@ -637,13 +637,13 @@ fn maybe_resume_session(chat_session: &mut ChatSession, resume: bool, session_id
 /// banners for recent-session count and auto-learning stats.
 ///
 /// Returns `None` if the database cannot be opened — the caller then
-/// runs without memory (a tracing::warn! is logged, but the session
+/// runs without memory (a `tracing::warn`! is logged, but the session
 /// still starts). Extracted from `cmd_chat` per crosslink #262.
 fn init_memory_with_banner() -> Option<memory::MemoryDb> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     match memory::MemoryDb::open_for_project(&cwd) {
         Ok(db) => {
-            let recent_count = db.get_recent_sessions(10).map(|s| s.len()).unwrap_or(0);
+            let recent_count = db.get_recent_sessions(10).map_or(0, |s| s.len());
             if recent_count > 0 {
                 println!("\x1b[90m📝 {recent_count} recent session(s) loaded from memory\x1b[0m");
             }
@@ -686,7 +686,7 @@ fn init_vdd_engine_if_enabled(config: &config::AppConfig) -> Option<vdd::VddEngi
         return None;
     }
     let http_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
+        .timeout(std::time::Duration::from_mins(2))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
     println!(
@@ -1819,13 +1819,11 @@ async fn cmd_chat(
                                                                 .as_str()?
                                                                 .to_string();
                                                             let args = fc
-                                                                .get("args")
-                                                                .map(|a| {
+                                                                .get("args").map_or_else(|| {
+                                                                    "{}".to_string()
+                                                                }, |a| {
                                                                     serde_json::to_string(a)
                                                                         .unwrap_or_default()
-                                                                })
-                                                                .unwrap_or_else(|| {
-                                                                    "{}".to_string()
                                                                 });
                                                             Some(tools::ToolCall {
                                                                 id: format!(

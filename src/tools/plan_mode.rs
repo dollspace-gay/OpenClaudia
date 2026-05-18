@@ -46,7 +46,7 @@ mod tests {
     // ─── Spec §1: Plan-mode enforcement — entering blocks write/edit/bash ──────
 
     /// Contract: `enter_plan_mode` returns a JSON marker (not an error) and the
-    /// is_error flag is false.  The REPL uses this marker to flip mode.
+    /// `is_error` flag is false.  The REPL uses this marker to flip mode.
     #[test]
     fn enter_plan_mode_returns_marker_not_error() {
         let (output, is_err) = execute_enter_plan_mode();
@@ -108,7 +108,7 @@ mod tests {
     }
 
     /// Contract: an `allowed_prompts` entry missing the `tool` field returns an
-    /// error response (is_error = true).
+    /// error response (`is_error` = true).
     #[test]
     fn exit_plan_mode_rejects_allowed_prompt_missing_tool() {
         let mut args = HashMap::new();
@@ -125,7 +125,7 @@ mod tests {
     }
 
     /// Contract: an `allowed_prompts` entry missing the `prompt` field also
-    /// returns is_error=true.
+    /// returns `is_error=true`.
     #[test]
     fn exit_plan_mode_rejects_allowed_prompt_missing_prompt_field() {
         let mut args = HashMap::new();
@@ -139,7 +139,7 @@ mod tests {
     }
 
     /// Contract: absent `allowed_prompts` key behaves the same as an empty
-    /// array — the marker is returned with an empty allowed_prompts list.
+    /// array — the marker is returned with an empty `allowed_prompts` list.
     #[test]
     fn exit_plan_mode_absent_allowed_prompts_defaults_to_empty() {
         let args = HashMap::new();

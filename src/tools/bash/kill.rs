@@ -78,9 +78,9 @@ mod tests {
     // ── Phase 2 pinning tests (crosslink #541) ────────────────────────────────
     // Pins OC's CURRENT kill_shell contracts per spec crosslink #526 §B2.
 
-    /// B2-kill-a: missing shell_id arg → is_error=true, message contains "Missing".
+    /// B2-kill-a: missing `shell_id` arg → `is_error=true`, message contains "Missing".
     ///
-    /// OC source: kill.rs:8-10 — arg check fires before any BACKGROUND_SHELLS call.
+    /// OC source: kill.rs:8-10 — arg check fires before any `BACKGROUND_SHELLS` call.
     #[test]
     fn b2_kill_missing_shell_id_arg() {
         let args: HashMap<String, serde_json::Value> = HashMap::new();
@@ -92,9 +92,9 @@ mod tests {
         );
     }
 
-    /// B2-kill-b: unknown shell_id → is_error=true, message contains "not found".
+    /// B2-kill-b: unknown `shell_id` → `is_error=true`, message contains "not found".
     ///
-    /// OC source: kill.rs:13-15 via BackgroundShellManager::kill (mod.rs:246-248).
+    /// OC source: kill.rs:13-15 via `BackgroundShellManager::kill` (mod.rs:246-248).
     #[test]
     fn b2_kill_unknown_shell_id() {
         let mut args = HashMap::new();
@@ -110,11 +110,11 @@ mod tests {
         );
     }
 
-    /// B2-kill-c: kill of a running shell returns is_error=false and a
-    /// confirmation message containing "terminated" and the shell_id.
+    /// B2-kill-c: kill of a running shell returns `is_error=false` and a
+    /// confirmation message containing "terminated" and the `shell_id`.
     ///
     /// OC source: kill.rs:12-14 (Ok branch), mod.rs:242-245.
-    /// Uses BACKGROUND_SHELLS.spawn to create a real process.
+    /// Uses `BACKGROUND_SHELLS.spawn` to create a real process.
     #[test]
     #[cfg(unix)]
     fn b2_kill_running_shell_returns_terminated_message() {
@@ -144,10 +144,10 @@ mod tests {
         );
     }
 
-    /// B2-kill-d: killing the same shell_id twice — second call must return
-    /// is_error=true ("not found"), because the entry is removed on first kill.
+    /// B2-kill-d: killing the same `shell_id` twice — second call must return
+    /// `is_error=true` ("not found"), because the entry is removed on first kill.
     ///
-    /// OC source: mod.rs:236 — shells.remove(shell_id) evicts the entry.
+    /// OC source: mod.rs:236 — `shells.remove(shell_id)` evicts the entry.
     #[test]
     #[cfg(unix)]
     fn b2_kill_same_shell_twice_second_is_not_found() {

@@ -46,8 +46,7 @@ pub fn execute_write_file(args: &HashMap<String, Value>) -> (String, bool) {
 
     // Read existing content for diff tracking
     let old_lines = fs::read_to_string(path)
-        .map(|c| u32::try_from(c.lines().count()).unwrap_or(u32::MAX))
-        .unwrap_or(0);
+        .map_or(0, |c| u32::try_from(c.lines().count()).unwrap_or(u32::MAX));
     let new_lines = u32::try_from(content.lines().count()).unwrap_or(u32::MAX);
 
     // Create parent directories if needed

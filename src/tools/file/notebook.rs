@@ -346,8 +346,8 @@ mod tests {
         })
     }
 
-    /// Write a notebook JSON to a NamedTempFile, mark it read in READ_TRACKER,
-    /// and return (file, canonical_path_string).
+    /// Write a notebook JSON to a `NamedTempFile`, mark it read in `READ_TRACKER`,
+    /// and return (file, `canonical_path_string`).
     fn tmp_notebook(nb: &Value) -> (NamedTempFile, String) {
         let mut f = NamedTempFile::new().expect("tempfile");
         let text = serde_json::to_string_pretty(nb).expect("serialize");
@@ -547,7 +547,7 @@ mod tests {
         // OC: execution_count and outputs are preserved (not reset to null/[])
         // CC parity: CC would reset both. Pinned as current OC behavior.
         assert!(
-            !cells[0]["outputs"].as_array().is_none_or(|a| a.is_empty()),
+            !cells[0]["outputs"].as_array().is_none_or(std::vec::Vec::is_empty),
             "OC does NOT clear outputs on replace (CC parity gap — CC clears them)"
         );
         assert!(

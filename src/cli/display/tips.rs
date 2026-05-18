@@ -36,8 +36,7 @@ pub fn get_random_tip() -> &'static str {
     use std::time::{SystemTime, UNIX_EPOCH};
     let seed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     #[allow(clippy::cast_possible_truncation)]
     // seed is a Unix timestamp in seconds; truncation on 32-bit is harmless for modulo indexing
     TIPS[(seed as usize) % TIPS.len()]

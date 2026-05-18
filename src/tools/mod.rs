@@ -837,7 +837,7 @@ fn warn_missing_permission_manager_once(entry_point: &'static str) {
 }
 
 /// Gate a tool call through the permission system and return either a
-/// ready-to-return [`ToolResult`] (for Denied / NeedsPrompt in legacy
+/// ready-to-return [`ToolResult`] (for Denied / `NeedsPrompt` in legacy
 /// string form) or `None` to signal "continue with normal dispatch".
 ///
 /// This is the internal choke point used by every `execute_tool*` dispatch
@@ -1166,27 +1166,24 @@ pub fn check_tool_permission_strict(
     permission_mgr: Option<&PermissionManager>,
 ) -> PermissionOutcome {
     let tool_name = tool_call.function.name.as_str();
-    match permission_mgr {
-        Some(m) => check_tool_permission_outcome(tool_call, Some(m)),
-        None => {
-            tracing::warn!(
-                tool = %tool_name,
-                "strict permission check DENIED: no PermissionManager supplied"
-            );
-            PermissionOutcome::Denied(ToolResult {
-                tool_call_id: tool_call.id.clone(),
-                content: format!(
-                    "Permission denied: no permission manager is configured for tool '{tool_name}'. \
-                     Construct PermissionManager::unrestricted() if you explicitly want allow-all."
-                ),
-                is_error: true,
-            })
-        }
+    if let Some(m) = permission_mgr { check_tool_permission_outcome(tool_call, Some(m)) } else {
+        tracing::warn!(
+            tool = %tool_name,
+            "strict permission check DENIED: no PermissionManager supplied"
+        );
+        PermissionOutcome::Denied(ToolResult {
+            tool_call_id: tool_call.id.clone(),
+            content: format!(
+                "Permission denied: no permission manager is configured for tool '{tool_name}'. \
+                 Construct PermissionManager::unrestricted() if you explicitly want allow-all."
+            ),
+            is_error: true,
+        })
     }
 }
 
 /// Back-compat wrapper. Returns `None` on Allowed, `Some(ToolResult)` on
-/// Denied, and a `PERMISSION_PROMPT:` stringly-typed result on NeedsPrompt.
+/// Denied, and a `PERMISSION_PROMPT:` stringly-typed result on `NeedsPrompt`.
 /// New code should call [`check_tool_permission_outcome`] and switch on the
 /// enum instead.
 #[must_use]
@@ -1353,7 +1350,7 @@ pub fn execute_tool_with_permission_required(
 
 /// Typed-outcome dispatch: runs the permission gate, executes the tool
 /// body on Allowed, and returns a structured [`ExecutionOutcome`] instead
-/// of a stringly-typed `PERMISSION_PROMPT:` message on NeedsPrompt. New
+/// of a stringly-typed `PERMISSION_PROMPT:` message on `NeedsPrompt`. New
 /// call sites that want to interactively handle the prompt path should
 /// use this. See crosslink #460 mandated point 3.
 #[must_use]
@@ -1456,9 +1453,7 @@ mod tests {
         for name in &required {
             assert!(
                 tool_names.contains(name),
-                "Missing required tool '{}'. Found: {:?}",
-                name,
-                tool_names
+                "Missing required tool '{name}'. Found: {tool_names:?}"
             );
         }
 
@@ -1495,8 +1490,7 @@ mod tests {
         // Running in the project root, Cargo.toml must be present
         assert!(
             output.contains("Cargo.toml"),
-            "Project root should contain Cargo.toml, got: {}",
-            output
+            "Project root should contain Cargo.toml, got: {output}"
         );
     }
 
@@ -1807,7 +1801,7 @@ mod tests {
         fs::write(&nb_path, serde_json::to_string_pretty(&notebook).unwrap()).unwrap();
 
         let (output, is_error) = read_notebook_file(nb_path.to_str().unwrap());
-        assert!(!is_error, "read_notebook_file should succeed: {}", output);
+        assert!(!is_error, "read_notebook_file should succeed: {output}");
         assert!(output.contains("Cell 0 (markdown)"));
         assert!(output.contains("# Title"));
         assert!(output.contains("Cell 1 (code)"));
@@ -1852,8 +1846,7 @@ mod tests {
         let (output, is_error) = file::execute_notebook_edit(&args);
         assert!(
             !is_error,
-            "notebook_edit replace should succeed: {}",
-            output
+            "notebook_edit replace should succeed: {output}"
         );
         assert!(output.contains("Replaced cell 0"));
 
@@ -1898,7 +1891,7 @@ mod tests {
         args.insert("edit_mode".to_string(), json!("insert"));
 
         let (output, is_error) = file::execute_notebook_edit(&args);
-        assert!(!is_error, "notebook_edit insert should succeed: {}", output);
+        assert!(!is_error, "notebook_edit insert should succeed: {output}");
         assert!(output.contains("Inserted new markdown cell"));
 
         // Verify - should now have 2 cells
@@ -1949,7 +1942,7 @@ mod tests {
         args.insert("edit_mode".to_string(), json!("delete"));
 
         let (output, is_error) = file::execute_notebook_edit(&args);
-        assert!(!is_error, "notebook_edit delete should succeed: {}", output);
+        assert!(!is_error, "notebook_edit delete should succeed: {output}");
         assert!(output.contains("Deleted cell 0"));
 
         // Verify - should now have 1 cell
@@ -2086,7 +2079,7 @@ mod tests {
         args.insert("edit_mode".to_string(), json!("insert"));
 
         let (output, is_error) = file::execute_notebook_edit(&args);
-        assert!(!is_error, "insert code cell should succeed: {}", output);
+        assert!(!is_error, "insert code cell should succeed: {output}");
 
         let content = fs::read_to_string(&nb_path).unwrap();
         let updated: Value = serde_json::from_str(&content).unwrap();
@@ -2213,7 +2206,7 @@ mod tests {
         args.insert("active_form".to_string(), json!("Fixing the bug"));
 
         let (output, is_error) = task::execute_task_create(&args, &mut task_mgr);
-        assert!(!is_error, "task_create should succeed: {}", output);
+        assert!(!is_error, "task_create should succeed: {output}");
         assert!(output.contains("task-1"));
         assert!(output.contains("Fix the bug"));
 
@@ -2233,7 +2226,7 @@ mod tests {
         args.insert("status".to_string(), json!("in_progress"));
 
         let (output, is_error) = task::execute_task_update(&args, &mut task_mgr);
-        assert!(!is_error, "task_update should succeed: {}", output);
+        assert!(!is_error, "task_update should succeed: {output}");
         assert!(output.contains("in_progress"));
     }
 
@@ -2286,7 +2279,7 @@ mod tests {
         args.insert("task_id".to_string(), json!("task-1"));
         args.insert("status".to_string(), json!("deleted"));
         let (output, is_error) = task::execute_task_update(&args, &mut task_mgr);
-        assert!(!is_error, "delete should not be an error: {}", output);
+        assert!(!is_error, "delete should not be an error: {output}");
         assert!(output.contains("deleted"));
         assert!(task_mgr.list_tasks().is_empty());
     }

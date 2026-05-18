@@ -150,7 +150,7 @@ pub fn extract_compact_boundary_metadata(msg: &ChatMessage) -> Option<CompactBou
     }
     let text = match &msg.content {
         MessageContent::Text(t) => t.as_str(),
-        MessageContent::Parts(parts) => parts.iter().filter_map(|p| p.text.as_deref()).next()?,
+        MessageContent::Parts(parts) => parts.iter().find_map(|p| p.text.as_deref())?,
     };
     // First line after the marker is the JSON blob.
     let first_line = text.lines().next()?;
@@ -1221,7 +1221,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut compactor = ContextCompactor::new(config.clone());
+        let mut compactor = ContextCompactor::new(config);
         assert_eq!(compactor.config().max_context_tokens, 50000);
 
         // Update config
@@ -1286,10 +1286,10 @@ mod tests {
     #[test]
     fn test_compaction_error_display() {
         let hook_err = CompactionError::HookBlocked("Hook prevented compaction".to_string());
-        assert!(format!("{}", hook_err).contains("Hook prevented compaction"));
+        assert!(format!("{hook_err}").contains("Hook prevented compaction"));
 
         let failed_err = CompactionError::Failed("Insufficient tokens freed".to_string());
-        assert!(format!("{}", failed_err).contains("Insufficient tokens freed"));
+        assert!(format!("{failed_err}").contains("Insufficient tokens freed"));
     }
 
     #[test]
@@ -1468,7 +1468,7 @@ mod tests {
         );
     }
 
-    /// B1b — when needs_compaction is false, tokens_to_free is exactly 0.
+    /// B1b — when `needs_compaction` is false, `tokens_to_free` is exactly 0.
     #[test]
     fn b1_tokens_to_free_is_zero_when_no_compaction_needed() {
         let messages = vec![create_test_message("user", "Hello")];
@@ -1480,8 +1480,8 @@ mod tests {
         assert_eq!(analysis.tokens_to_free, 0);
     }
 
-    /// B1c — tokens_to_free = current_tokens - target_tokens when compaction needed.
-    /// target_tokens = threshold_tokens / 2.
+    /// B1c — `tokens_to_free` = `current_tokens` - `target_tokens` when compaction needed.
+    /// `target_tokens` = `threshold_tokens` / 2.
     #[test]
     fn b1_tokens_to_free_equals_current_minus_target() {
         // threshold_tokens_for(10_000, 0.85) = (10_000/1000)*850 = 8_500
@@ -1506,7 +1506,7 @@ mod tests {
 
     // -- B2: compact boundary marker shape -----------------------------------
 
-    /// B2a — MessageContent::Parts variant: marker in any text part is detected.
+    /// B2a — `MessageContent::Parts` variant: marker in any text part is detected.
     #[test]
     fn b2_boundary_detected_in_parts_variant() {
         use crate::proxy::ContentPart;
@@ -1516,8 +1516,7 @@ mod tests {
             content: MessageContent::Parts(vec![ContentPart {
                 content_type: "text".to_string(),
                 text: Some(format!(
-                    "{} {{\"trigger\":\"auto\",\"pre_tokens\":1,\"messages_summarized\":1}}\nbody",
-                    COMPACT_BOUNDARY_MARKER
+                    "{COMPACT_BOUNDARY_MARKER} {{\"trigger\":\"auto\",\"pre_tokens\":1,\"messages_summarized\":1}}\nbody"
                 )),
                 image_url: None,
             }]),
@@ -1540,13 +1539,13 @@ mod tests {
         assert_eq!(meta.trigger, "auto");
     }
 
-    /// B2c — serde fallback: corrupt JSON still lets is_compact_boundary_message return true.
+    /// B2c — serde fallback: corrupt JSON still lets `is_compact_boundary_message` return true.
     /// (Pins the fallback to "{}" behavior from compaction.rs line 110.)
     #[test]
     fn b2_serde_fallback_emits_boundary_even_on_corrupt_json() {
         // We can't force serde_json::to_string to fail in a unit test, but we can verify
         // that a message with "{}" as the JSON line is still detected as a boundary.
-        let content = format!("{} {{}}\nhuman readable suffix", COMPACT_BOUNDARY_MARKER);
+        let content = format!("{COMPACT_BOUNDARY_MARKER} {{}}\nhuman readable suffix");
         let msg = ChatMessage {
             role: "system".to_string(),
             content: MessageContent::Text(content),
@@ -1570,13 +1569,13 @@ mod tests {
         assert_eq!(get_context_window("gpt-5"), GPT5_CONTEXT);
     }
 
-    /// B3b — plain "claude" (no specific variant) falls back to CLAUDE_SONNET_CONTEXT.
+    /// B3b — plain "claude" (no specific variant) falls back to `CLAUDE_SONNET_CONTEXT`.
     #[test]
     fn b3_claude_generic_returns_sonnet_context() {
         assert_eq!(get_context_window("claude"), CLAUDE_SONNET_CONTEXT);
     }
 
-    /// B3c — for_model sets other fields to Default (threshold=0.85, preserve_recent=4, etc.).
+    /// B3c — `for_model` sets other fields to Default (threshold=0.85, `preserve_recent=4`, etc.).
     #[test]
     fn b3_for_model_uses_default_fields_except_context_window() {
         let config = CompactionConfig::for_model("gpt-4");
@@ -1637,8 +1636,8 @@ mod tests {
     }
 
     /// B4d — known exact formula output for a simple ASCII string.
-    /// "hi" → char_count=2, word_count=1, char_est=0, word_est=1, base=(0+1)/3=0,
-    /// non_ascii=0 → result=0.  Pin the current (trivially zero) output.
+    /// "hi" → `char_count=2`, `word_count=1`, `char_est=0`, `word_est=1`, base=(0+1)/3=0,
+    /// `non_ascii=0` → result=0.  Pin the current (trivially zero) output.
     #[test]
     fn b4_single_short_word_result_is_small() {
         let v = estimate_tokens("hi");
@@ -1652,7 +1651,7 @@ mod tests {
 
     // -- B5: preserve_system and preserve_recent categorization --------------
 
-    /// B5a — all-system input: messages_to_summarize is empty → compact returns compacted:false.
+    /// B5a — all-system input: `messages_to_summarize` is empty → compact returns compacted:false.
     #[tokio::test]
     async fn b5_all_system_messages_is_noop() {
         let messages = vec![
@@ -1687,7 +1686,7 @@ mod tests {
         assert_eq!(result.messages_summarized, 0);
     }
 
-    /// B5b — preserve_system:false means system messages follow preserve_recent rules only.
+    /// B5b — `preserve_system:false` means system messages follow `preserve_recent` rules only.
     #[test]
     fn b5_preserve_system_false_does_not_auto_preserve_system() {
         let messages = vec![
@@ -1717,7 +1716,7 @@ mod tests {
         assert!(summarize.contains(&2));
     }
 
-    /// B5c — build_compacted_messages output order: system → boundary → summary → non-system.
+    /// B5c — `build_compacted_messages` output order: system → boundary → summary → non-system.
     #[test]
     fn b5_output_order_system_boundary_summary_nonsystem() {
         let analysis = CompactionAnalysis {
@@ -1819,7 +1818,7 @@ mod tests {
 
     // -- B7: empty conversation is a no-op (not a panic) ---------------------
 
-    /// B7a — compact() on a completely empty message list returns compacted:false.
+    /// B7a — `compact()` on a completely empty message list returns compacted:false.
     #[tokio::test]
     async fn b7_empty_messages_returns_not_compacted() {
         let mut request = create_test_request(vec![]);
@@ -1842,7 +1841,7 @@ mod tests {
         assert!(result.summary.is_none());
     }
 
-    /// B7b — analyze_with_hint on empty messages does not panic and reports false.
+    /// B7b — `analyze_with_hint` on empty messages does not panic and reports false.
     #[test]
     fn b7_analyze_empty_messages_no_panic() {
         let request = create_test_request(vec![]);
@@ -1882,9 +1881,9 @@ mod tests {
 
     // -- OC-only: generate_summary is local keyword concatenation, not LLM --
 
-    /// Pins OC's local generate_summary behavior: wraps in <context-summary> tags and
+    /// Pins OC's local `generate_summary` behavior: wraps in <context-summary> tags and
     /// concatenates truncated role content. This is NOT an LLM call. Divergence from
-    /// CC's streamCompactSummary() tracked in issue #534 additional gaps.
+    /// CC's `streamCompactSummary()` tracked in issue #534 additional gaps.
     #[test]
     fn oc_generate_summary_is_local_keyword_concatenation() {
         let messages = [

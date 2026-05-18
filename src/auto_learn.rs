@@ -508,9 +508,7 @@ mod tests {
         learner.on_tool_success("edit_file", &args, "success");
 
         // normalize_path canonicalizes if file exists, keeps as-is otherwise
-        let expected = std::fs::canonicalize("src/main.rs")
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "src/main.rs".to_string());
+        let expected = std::fs::canonicalize("src/main.rs").map_or_else(|_| "src/main.rs".to_string(), |p| p.to_string_lossy().to_string());
         assert!(learner.session_files_modified.contains(&expected));
     }
 

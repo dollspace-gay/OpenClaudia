@@ -39,7 +39,7 @@ impl AnthropicAdapter {
     /// assistant `tool_calls` → `tool_use` blocks. Previously this method
     /// had its own simpler conversion that silently dropped tool-result
     /// semantics, causing every agentic tool-loop request to fail with
-    /// Anthropic 400 "each tool_use must have a matching tool_result"
+    /// Anthropic 400 "each `tool_use` must have a matching `tool_result`"
     /// (crosslink #475).
     fn convert_messages(messages: &[ChatMessage]) -> Vec<Value> {
         let as_values: Vec<Value> = messages
@@ -283,7 +283,7 @@ impl AnthropicAdapter {
 ///
 /// Returns two blocks for cache efficiency:
 /// - Block 0: stable prefix with `cache_control: { type: "ephemeral" }`
-/// - Block 1: dynamic suffix without cache_control (reprocessed each turn)
+/// - Block 1: dynamic suffix without `cache_control` (reprocessed each turn)
 ///
 /// If the dynamic suffix is empty, only one block is returned.
 #[must_use]

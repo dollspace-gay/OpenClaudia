@@ -1075,7 +1075,7 @@ mod tests {
         let mut manager = PluginManager::with_paths(vec![plugins_dir]);
         let errors = manager.discover();
 
-        assert!(errors.is_empty(), "Errors: {:?}", errors);
+        assert!(errors.is_empty(), "Errors: {errors:?}");
         assert_eq!(manager.count(), 3);
         assert!(manager.get("plugin-a").is_some());
         assert!(manager.get("plugin-b").is_some());
@@ -1424,7 +1424,7 @@ mod tests {
         // Step 5: PluginManager discovers the installed plugin
         let mut manager = PluginManager::with_paths(vec![install_dir.path().to_path_buf()]);
         let errors = manager.discover();
-        assert!(errors.is_empty(), "Discovery errors: {:?}", errors);
+        assert!(errors.is_empty(), "Discovery errors: {errors:?}");
         assert_eq!(manager.count(), 1);
 
         let plugin = manager.get("my-test-plugin").unwrap();
@@ -1576,7 +1576,7 @@ mod tests {
 
     #[test]
     fn test_command_front_matter_parsing() {
-        let content = r#"---
+        let content = r"---
 description: Create a git commit
 allowed-tools: Bash(git add:*), Bash(git status:*), Bash(git commit:*)
 ---
@@ -1584,7 +1584,7 @@ allowed-tools: Bash(git add:*), Bash(git status:*), Bash(git commit:*)
 ## Context
 
 Based on the above changes, create a single git commit.
-"#;
+";
         let fm = parse_command_front_matter(content);
         assert_eq!(fm.description.as_deref(), Some("Create a git commit"));
         assert!(fm.allowed_tools.is_some());
@@ -1597,7 +1597,7 @@ Based on the above changes, create a single git commit.
 
     #[test]
     fn test_command_front_matter_array_syntax() {
-        let content = r#"---
+        let content = r"---
 description: An example command
 argument-hint: <required-arg> [optional-arg]
 allowed-tools: [Read, Glob, Grep, Bash]
@@ -1607,7 +1607,7 @@ model: haiku
 # Example Command
 
 Do something.
-"#;
+";
         let fm = parse_command_front_matter(content);
         assert_eq!(fm.description.as_deref(), Some("An example command"));
         assert_eq!(
@@ -1649,7 +1649,7 @@ Do something.
         // Write a command with front matter (matching real Claude plugin format)
         fs::write(
             commands_dir.join("commit.md"),
-            r#"---
+            r"---
 allowed-tools: Bash(git add:*), Bash(git status:*), Bash(git commit:*)
 description: Create a git commit
 ---
@@ -1661,7 +1661,7 @@ description: Create a git commit
 ## Your task
 
 Based on the above changes, create a single git commit.
-"#,
+",
         )
         .unwrap();
 

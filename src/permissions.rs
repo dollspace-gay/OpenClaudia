@@ -111,7 +111,7 @@ impl PermissionManager {
     /// everything") at the call site rather than smuggling it in via a
     /// missing argument. See crosslink #460.
     #[must_use]
-    pub fn unrestricted() -> Self {
+    pub const fn unrestricted() -> Self {
         // `enabled = false` short-circuits `check()` to `CheckResult::Allowed`.
         Self {
             persisted_rules: Vec::new(),
@@ -604,8 +604,7 @@ mod tests {
         let result = mgr.check("bash", &json!({"command": 123}));
         assert!(
             matches!(result, CheckResult::Denied(_)),
-            "Malformed bash command (non-string) must be denied, got: {:?}",
-            result
+            "Malformed bash command (non-string) must be denied, got: {result:?}"
         );
         // path is an array, not a string
         let result = mgr.check("edit_file", &json!({"path": ["/etc/passwd"]}));
@@ -725,7 +724,7 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B1-deny-1: session Deny fires before default_allow.
+    /// B1-deny-1: session Deny fires before `default_allow`.
     #[test]
     fn b1_session_deny_beats_default_allow() {
         let (mut mgr, _dir) = enabled(vec!["rm **"]);
@@ -745,7 +744,7 @@ mod phase2_spec_pins {
 
     /// B1-deny-2: OC has NO pre-allow deny tier (gap vs CC alwaysDenyRules).
     /// A pattern that would be a CC alwaysDenyRule can only be expressed in OC
-    /// as a session Deny. Without that session rule, default_allow wins.
+    /// as a session Deny. Without that session rule, `default_allow` wins.
     /// Documents the gap from spec §B1 "Security divergence".
     #[test]
     fn b1_gap_no_pre_allow_deny_tier_default_allow_wins() {
@@ -764,7 +763,7 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B1-deny-3: empty default_allow with no rules → NeedsPrompt (deny-by-default).
+    /// B1-deny-3: empty `default_allow` with no rules → `NeedsPrompt` (deny-by-default).
     #[test]
     fn b1_empty_default_allow_yields_needs_prompt() {
         let (mgr, _dir) = enabled(vec![]);
@@ -777,8 +776,8 @@ mod phase2_spec_pins {
 
     // ── B2 · Invalid glob logs warning and is skipped (no panic) ──────────
 
-    /// B2-deny-1: an invalid glob in default_allow never matches — the guarded
-    /// call falls through to NeedsPrompt rather than being auto-allowed.
+    /// B2-deny-1: an invalid glob in `default_allow` never matches — the guarded
+    /// call falls through to `NeedsPrompt` rather than being auto-allowed.
     #[test]
     fn b2_invalid_glob_in_default_allow_never_matches() {
         // "[unclosed" is an invalid regex that glob_to_regex_cached will fail to compile.
@@ -838,7 +837,7 @@ mod phase2_spec_pins {
 
     // ── B3 · unrestricted() bypasses ALL checks ────────────────────────────
 
-    /// B3-deny-1 (SECURITY: #586): unrestricted() allows destructive bash commands.
+    /// B3-deny-1 (SECURITY: #586): `unrestricted()` allows destructive bash commands.
     /// CC bypassPermissions still enforces step 1g safetyCheck; OC does not.
     #[test]
     fn b3_unrestricted_allows_destructive_bash() {
@@ -853,7 +852,7 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B3-deny-2 (SECURITY: #586): unrestricted() allows writes to `.git/config`.
+    /// B3-deny-2 (SECURITY: #586): `unrestricted()` allows writes to `.git/config`.
     /// CC's bypassPermissions mode still blocks .git/ writes via step 1g.
     #[test]
     fn b3_unrestricted_allows_git_config_write() {
@@ -868,7 +867,7 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B3-deny-3 (SECURITY: #586): unrestricted() allows writes to `.claude/settings.json`.
+    /// B3-deny-3 (SECURITY: #586): `unrestricted()` allows writes to `.claude/settings.json`.
     #[test]
     fn b3_unrestricted_allows_claude_settings_write() {
         let mgr = PermissionManager::unrestricted();
@@ -881,8 +880,8 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B3-deny-4 (SECURITY: #586): dangerously_disable_sandbox check in enabled mode
-    /// is unreachable via unrestricted() — the short-circuit fires first.
+    /// B3-deny-4 (SECURITY: #586): `dangerously_disable_sandbox` check in enabled mode
+    /// is unreachable via `unrestricted()` — the short-circuit fires first.
     #[test]
     fn b3_unrestricted_bypasses_sandbox_flag_check() {
         let mgr = PermissionManager::unrestricted();
@@ -905,8 +904,8 @@ mod phase2_spec_pins {
     // ── B5 · Denial tracking missing (gap #572) ───────────────────────────
 
     /// B5-gap-1 (SECURITY: #572): OC has no denial tracking state.
-    /// Repeated NeedsPrompt for the same denied tool call returns NeedsPrompt
-    /// every time — there is no escalation to auto-deny or AbortError.
+    /// Repeated `NeedsPrompt` for the same denied tool call returns `NeedsPrompt`
+    /// every time — there is no escalation to auto-deny or `AbortError`.
     /// CC escalates to fallback-prompt after 3 consecutive denials.
     #[test]
     fn b5_repeated_denied_call_stays_needs_prompt_no_escalation() {
@@ -995,7 +994,7 @@ mod phase2_spec_pins {
 
     // ── B7 · enabled=false (default) is allow-all; enabled=true + empty → deny ─
 
-    /// B7-deny-1 (SECURITY: #581): default PermissionsConfig has enabled=false,
+    /// B7-deny-1 (SECURITY: #581): default `PermissionsConfig` has enabled=false,
     /// so a manager built from defaults allows all tool calls including rm -rf /.
     #[test]
     fn b7_disabled_allows_all_including_destructive() {
@@ -1022,7 +1021,7 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B7-allow-1: enabled=true + empty default_allow → deny-by-default (NeedsPrompt).
+    /// B7-allow-1: enabled=true + empty `default_allow` → deny-by-default (`NeedsPrompt`).
     /// This is the correct CC-equivalent behaviour when the system is actually on.
     #[test]
     fn b7_enabled_empty_default_allow_is_deny_by_default() {
@@ -1036,7 +1035,7 @@ mod phase2_spec_pins {
         }
     }
 
-    /// B7-deny-3: `"*"` in default_allow does NOT catch commands with `/` (OC vs CC divergence).
+    /// B7-deny-3: `"*"` in `default_allow` does NOT catch commands with `/` (OC vs CC divergence).
     /// Spec §B7 edge case: OC `*` → `[^/]*`; CC `*` → `.*` (catches `/`).
     #[test]
     fn b7_catchall_star_does_not_allow_slash_commands() {
@@ -1051,7 +1050,7 @@ mod phase2_spec_pins {
 
     // ── Denial path edge-case battery ────────────────────────────────────
 
-    /// Deny: session Deny on write_file fires before default_allow.
+    /// Deny: session Deny on `write_file` fires before `default_allow`.
     #[test]
     fn deny_session_deny_write_beats_default_allow() {
         let (mut mgr, _dir) = enabled(vec!["**"]);
@@ -1086,7 +1085,7 @@ mod phase2_spec_pins {
     }
 
     /// Deny: malformed bash args (non-string command) are denied, not allowed.
-    /// This is a security invariant regardless of default_allow.
+    /// This is a security invariant regardless of `default_allow`.
     #[test]
     fn deny_malformed_bash_args_denied_regardless_of_default_allow() {
         let (mgr, _dir) = enabled(vec!["**"]);
@@ -1097,7 +1096,7 @@ mod phase2_spec_pins {
         );
     }
 
-    /// Deny: malformed edit_file args are denied even with permissive default_allow.
+    /// Deny: malformed `edit_file` args are denied even with permissive `default_allow`.
     #[test]
     fn deny_malformed_edit_args_denied_regardless_of_default_allow() {
         let (mgr, _dir) = enabled(vec!["**"]);

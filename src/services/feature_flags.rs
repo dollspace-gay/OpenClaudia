@@ -6,7 +6,7 @@
 //! `false` unless explicitly turned on via [`StaticFlags::set`] or the
 //! `OPENCLAUDIA_FEATURE_<NAME>` environment variable.
 //!
-//! Flag names are expected to be snake_case. The env-var lookup
+//! Flag names are expected to be `snake_case`. The env-var lookup
 //! uppercases the name and prepends `OPENCLAUDIA_FEATURE_`, so
 //! `ultrathink_enabled` reads `OPENCLAUDIA_FEATURE_ULTRATHINK_ENABLED`.
 
@@ -88,7 +88,7 @@ mod tests {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     struct EnvGuard {
@@ -185,7 +185,7 @@ mod tests {
     // ── B2 spec pins (#536 §B2) ──────────────────────────────────────────────
 
     /// B2: env var key is `OPENCLAUDIA_FEATURE_` + uppercased flag name.
-    /// snake_case names must be uppercased exactly. Pins the key-construction
+    /// `snake_case` names must be uppercased exactly. Pins the key-construction
     /// logic in `env_override` (`feature_flags.rs` lines 57-65).
     #[test]
     fn b2_env_var_key_is_prefix_plus_upper_name() {

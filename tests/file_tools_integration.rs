@@ -2,7 +2,7 @@
 //!
 //! Each test covers a cross-tool or cross-behavior flow that cannot be verified
 //! in a single-function unit test. The write → read → edit → read flow (Behavior 1+4+6)
-//! is the primary focus; presence/absence of GlobTool and GrepTool exports (gap issues
+//! is the primary focus; presence/absence of `GlobTool` and `GrepTool` exports (gap issues
 //! #567 and #568) is also pinned here.
 //!
 //! Naming convention: `<behavior_slug>_<scenario>` so the audit mapping is clear.
@@ -13,7 +13,7 @@ use std::fs;
 use std::sync::Mutex;
 use tempfile::TempDir;
 
-/// Serialise-and-reset guard so every test that touches READ_TRACKER runs in
+/// Serialise-and-reset guard so every test that touches `READ_TRACKER` runs in
 /// isolation even when `cargo test` uses multiple threads.
 static READ_TRACKER_LOCK: Mutex<()> = Mutex::new(());
 

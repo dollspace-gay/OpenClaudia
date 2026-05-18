@@ -1567,7 +1567,7 @@ async fn convert_response(response: reqwest::Response) -> Result<Response, Proxy
 /// Build a `ProxyState` from the given config, initializing all subsystems.
 async fn build_proxy_state(config: AppConfig) -> anyhow::Result<ProxyState> {
     let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
+        .timeout(std::time::Duration::from_mins(5))
         .build()?;
 
     // Load hooks from both OpenClaudia config and Claude Code settings.json
@@ -1892,7 +1892,7 @@ mod tests {
         assert_eq!(usage.input_tokens, 0);
     }
 
-    /// Spec — `extract_usage_from_sse_event` handles OpenAI final chunk with `usage`.
+    /// Spec — `extract_usage_from_sse_event` handles `OpenAI` final chunk with `usage`.
     #[test]
     fn extract_usage_openai_final_chunk() {
         let event = serde_json::json!({

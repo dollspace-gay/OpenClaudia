@@ -408,22 +408,19 @@ impl ToolInterceptor {
                 "bash" => {
                     parameters.insert("command".to_string(), content);
                 }
-                "read" | "read_file" => {
-                    if !parameters.contains_key("path") && !parameters.contains_key("file_path") {
+                "read" | "read_file"
+                    if !parameters.contains_key("path") && !parameters.contains_key("file_path") => {
                         parameters.insert("path".to_string(), content);
                     }
-                }
-                "write" | "write_file" => {
+                "write" | "write_file"
                     // Content is the file content, path should be in attributes
-                    if !content.is_empty() {
+                    if !content.is_empty() => {
                         parameters.insert("content".to_string(), content);
                     }
-                }
-                "glob" | "grep" => {
-                    if !parameters.contains_key("pattern") {
+                "glob" | "grep"
+                    if !parameters.contains_key("pattern") => {
                         parameters.insert("pattern".to_string(), content);
                     }
-                }
                 // edit/edit_file: params are in attributes; other tools: no special handling
                 _ => {}
             }
@@ -849,11 +846,11 @@ Some text after."#;
         let mut interceptor = ToolInterceptor::new();
 
         // Shorthand format Claude sometimes uses: <bash>command</bash>
-        let content = r#"I'll check the directory.
+        let content = r"I'll check the directory.
 
 <bash>pwd</bash>
 
-That's the current directory."#;
+That's the current directory.";
 
         interceptor.push(content);
         assert!(interceptor.has_pending_tool_calls());
@@ -872,7 +869,7 @@ That's the current directory."#;
     fn test_parse_shorthand_read() {
         let mut interceptor = ToolInterceptor::new();
 
-        let content = r#"<read>/path/to/file.txt</read>"#;
+        let content = r"<read>/path/to/file.txt</read>";
 
         interceptor.push(content);
         assert!(interceptor.has_complete_block());
@@ -891,7 +888,7 @@ That's the current directory."#;
     fn test_parse_shorthand_glob() {
         let mut interceptor = ToolInterceptor::new();
 
-        let content = r#"<glob>**/*.rs</glob>"#;
+        let content = r"<glob>**/*.rs</glob>";
 
         interceptor.push(content);
         assert!(interceptor.has_complete_block());
@@ -911,12 +908,12 @@ That's the current directory."#;
         let mut interceptor = ToolInterceptor::new();
 
         // Claude Code format: <write_file><path>file</path><content>...</content></write_file>
-        let content = r#"<write_file>
+        let content = r"<write_file>
 <path>hello.c</path>
 <content>#include <stdio.h>
 int main() { return 0; }
 </content>
-</write_file>"#;
+</write_file>";
 
         interceptor.push(content);
         assert!(interceptor.has_complete_block());
@@ -941,11 +938,11 @@ int main() { return 0; }
         let mut interceptor = ToolInterceptor::new();
 
         // Claude Code format for edit
-        let content = r#"<edit_file>
+        let content = r"<edit_file>
 <path>src/main.rs</path>
 <old_string>fn old() {}</old_string>
 <new_string>fn new() {}</new_string>
-</edit_file>"#;
+</edit_file>";
 
         interceptor.push(content);
         assert!(interceptor.has_complete_block());

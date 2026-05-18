@@ -210,7 +210,7 @@ impl HelpOverlay {
     }
 
     /// Max scroll offset given the current lines and viewport.
-    fn max_scroll(&self, lines: u16, viewport: u16) -> u16 {
+    const fn max_scroll(&self, lines: u16, viewport: u16) -> u16 {
         lines.saturating_sub(viewport)
     }
 }
@@ -240,7 +240,7 @@ impl Overlay for HelpOverlay {
 
     fn handle_key(&mut self, key: KeyEvent) -> OverlayAction {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => OverlayAction::Close,
+            KeyCode::Esc | KeyCode::Char('q' | '?') => OverlayAction::Close,
             // Ctrl+C closes too (matches CC dismiss semantics).
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 OverlayAction::Close

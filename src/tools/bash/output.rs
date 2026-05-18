@@ -56,11 +56,11 @@ mod tests {
     // ── Phase 2 pinning tests (crosslink #541) ────────────────────────────────
     // Pins OC's CURRENT bash_output contracts per spec crosslink #526 §B1 + §B3.
 
-    /// B3-output-a: unknown shell_id → is_error=true, message contains "not found".
+    /// B3-output-a: unknown `shell_id` → `is_error=true`, message contains "not found".
     ///
     /// OC source: output.rs:47 — Err branch returns (e, true).
-    /// No panic on unknown ID (mod.rs:178-181 uses ok_or_else).
-    /// CC has no bash_output RPC; this path is OC-specific.
+    /// No panic on unknown ID (mod.rs:178-181 uses `ok_or_else`).
+    /// CC has no `bash_output` RPC; this path is OC-specific.
     #[test]
     fn b3_output_unknown_shell_id_is_error() {
         let mut args = HashMap::new();
@@ -79,9 +79,9 @@ mod tests {
         );
     }
 
-    /// B3-output-b: the supplied shell_id is echoed verbatim in the error message.
+    /// B3-output-b: the supplied `shell_id` is echoed verbatim in the error message.
     ///
-    /// OC source: mod.rs:180 — format!("Shell '{{shell_id}}' not found").
+    /// OC source: mod.rs:180 — format!("Shell '{{`shell_id`}}' not found").
     #[test]
     fn b3_output_error_echoes_shell_id() {
         let bogus = "cafebabe";
@@ -98,9 +98,9 @@ mod tests {
         );
     }
 
-    /// B1-output-a: no shell_id arg → listing path, is_error=false.
+    /// B1-output-a: no `shell_id` arg → listing path, `is_error=false`.
     ///
-    /// OC source: output.rs:10-26 — absent shell_id triggers BACKGROUND_SHELLS.list().
+    /// OC source: output.rs:10-26 — absent `shell_id` triggers `BACKGROUND_SHELLS.list()`.
     /// Result is either "No background shells running." or "Background shells (N):...".
     #[test]
     fn b1_output_no_arg_returns_listing_not_error() {
@@ -160,7 +160,7 @@ mod tests {
 
     /// B1-output-d: incremental drain — second poll does not re-emit first poll's output.
     ///
-    /// OC source: mod.rs:187-197 — std::mem::take swaps the buffer on each call.
+    /// OC source: mod.rs:187-197 — `std::mem::take` swaps the buffer on each call.
     /// GAP: CC output is file-based (append-only); OC draining is OC-specific.
     #[test]
     #[cfg(unix)]
@@ -191,7 +191,7 @@ mod tests {
 
     /// B1-output-e: finished shell shows "finished" in status, not "running".
     ///
-    /// OC source: output.rs:31-36 — exit_code.map_or_else formats "finished (exit code: N)".
+    /// OC source: output.rs:31-36 — `exit_code.map_or_else` formats "finished (exit code: N)".
     #[test]
     #[cfg(unix)]
     fn b1_output_finished_shell_status_says_finished() {

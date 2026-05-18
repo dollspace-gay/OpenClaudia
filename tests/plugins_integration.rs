@@ -202,7 +202,7 @@ fn b2_blocked_reason_string_is_canonical() {
     let pm = PluginManager::with_paths(vec![]);
     let policy = PluginPolicy {
         blocked_marketplaces: vec![MarketplaceSource::Directory {
-            path: canonical_path.clone(),
+            path: canonical_path,
         }],
         ..PluginPolicy::default()
     };
@@ -625,7 +625,7 @@ fn b5_b6_load_skills_serial() {
     // runs tests in a thread pool.  The Mutex is per-process, so any
     // other test that mutates HOME or cwd should acquire it too.
     static LOCK: Mutex<()> = Mutex::new(());
-    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
     // ---- fixture roots ----
     let user_home = TempDir::new().unwrap();

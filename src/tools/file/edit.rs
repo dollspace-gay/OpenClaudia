@@ -129,8 +129,8 @@ mod tests {
     use std::path::Path;
     use tempfile::NamedTempFile;
 
-    /// Write content to a NamedTempFile, mark it as read in READ_TRACKER,
-    /// and return (file, canonical_path_string).
+    /// Write content to a `NamedTempFile`, mark it as read in `READ_TRACKER`,
+    /// and return (file, `canonical_path_string`).
     fn tmp_readable(content: &str) -> (NamedTempFile, String) {
         let mut f = NamedTempFile::new().expect("tempfile");
         f.write_all(content.as_bytes()).expect("write");
@@ -250,7 +250,7 @@ mod tests {
         let (msg, is_err) = super::execute_edit_file(&args);
         assert!(is_err, "multi-occurrence must error: {msg}");
         assert!(
-            msg.contains("2"),
+            msg.contains('2'),
             "error must mention occurrence count: {msg}"
         );
     }
@@ -303,7 +303,7 @@ mod tests {
         let path_str = path.to_string_lossy().to_string();
         // Use a path that was never marked read; ensure it's unique so unrelated tests
         // don't accidentally mark it.
-        let fresh_path = format!("{}_never_read", path_str);
+        let fresh_path = format!("{path_str}_never_read");
         std::fs::copy(&path, Path::new(&fresh_path)).ok(); // best-effort copy
         let args = make_args(&fresh_path, "some content", "other");
         let (msg, is_err) = super::execute_edit_file(&args);

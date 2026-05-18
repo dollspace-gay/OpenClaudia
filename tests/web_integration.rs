@@ -400,7 +400,7 @@ fn execute_web_fetch_missing_url_arg_returns_error() {
         call_type: "function".to_string(),
         function: FunctionCall {
             name: "web_fetch".to_string(),
-            arguments: r#"{}"#.to_string(),
+            arguments: r"{}".to_string(),
         },
     };
     let result = execute_tool(&call);
@@ -454,7 +454,7 @@ fn execute_web_search_missing_query_returns_error() {
         call_type: "function".to_string(),
         function: FunctionCall {
             name: "web_search".to_string(),
-            arguments: r#"{}"#.to_string(),
+            arguments: r"{}".to_string(),
         },
     };
     let result = execute_tool(&call);
@@ -491,12 +491,12 @@ fn web_search_domain_filter_blocks_blocked_domain() {
     ];
 
     // Apply blocked_domains filter as execute_web_search does
-    let blocked = vec!["blocked.example.org".to_string()];
+    let blocked = ["blocked.example.org".to_string()];
     let filtered: Vec<_> = results
         .into_iter()
         .filter(|r| {
             let host = host_of_test(&r.url);
-            host.map_or(true, |h| {
+            host.is_none_or(|h| {
                 !blocked.iter().any(|d| domain_matches_test(&h, d))
             })
         })
@@ -525,12 +525,12 @@ fn web_search_domain_filter_keeps_allowed_domain() {
         },
     ];
 
-    let allowed = vec!["docs.rs".to_string()];
+    let allowed = ["docs.rs".to_string()];
     let filtered: Vec<_> = results
         .into_iter()
         .filter(|r| {
             let host = host_of_test(&r.url);
-            host.map_or(true, |h| allowed.iter().any(|d| domain_matches_test(&h, d)))
+            host.is_none_or(|h| allowed.iter().any(|d| domain_matches_test(&h, d)))
         })
         .collect();
 
@@ -574,10 +574,10 @@ fn domain_matches_test(host: &str, needle: &str) -> bool {
 /// GAP #603 — No preapproved domain allowlist (CC preapproved.ts).
 ///
 /// CC: ~130 code-documentation domains (docs.python.org, react.dev, etc.) bypass
-/// the permission prompt for web_fetch (GET-only). OC has no equivalent.
+/// the permission prompt for `web_fetch` (GET-only). OC has no equivalent.
 ///
 /// This test pins the absence: a fetch to a "preapproved" CC domain still
-/// goes through the full validate_url path in OC with no special treatment.
+/// goes through the full `validate_url` path in OC with no special treatment.
 /// When #603 lands, this test should be updated to verify the allowlist.
 #[test]
 fn gap_603_no_preapproved_allowlist() {
@@ -604,11 +604,11 @@ fn gap_603_no_preapproved_allowlist() {
     // No assertion — this test documents the gap, not a current bug.
 }
 
-/// GAP #605 — No citation reminder appended to web_search results.
+/// GAP #605 — No citation reminder appended to `web_search` results.
 ///
 /// CC WebSearchTool.ts:427 appends:
 /// "REMINDER: You MUST include the sources above ..."
-/// OC format_search_results does NOT include this reminder.
+/// OC `format_search_results` does NOT include this reminder.
 #[test]
 fn gap_605_no_citation_reminder() {
     let results = vec![SearchResult {
@@ -652,15 +652,15 @@ fn gap_608_no_prompt_parameter() {
     // PIN: prompt parameter is silently ignored. Tracked as #608.
 }
 
-/// GAP #610 — DuckDuckGo scraper does NOT validate extracted URLs against SSRF guard.
+/// GAP #610 — `DuckDuckGo` scraper does NOT validate extracted URLs against SSRF guard.
 ///
-/// SECURITY: search_duckduckgo (src/web.rs:475) extracts URLs from DDG HTML
-/// and returns them WITHOUT calling validate_url on each result URL.
+/// SECURITY: `search_duckduckgo` (src/web.rs:475) extracts URLs from DDG HTML
+/// and returns them WITHOUT calling `validate_url` on each result URL.
 /// A malicious or compromised DDG response could surface SSRF-interesting URLs
 /// (private IPs, cloud metadata endpoints) into the agent's result list.
 ///
-/// // SECURITY: #610 — missing validate_url call on extracted DDG result URLs.
-/// // DO NOT ADD the validate_url call here until #610 is resolved through the
+/// // SECURITY: #610 — missing `validate_url` call on extracted DDG result URLs.
+/// // DO NOT ADD the `validate_url` call here until #610 is resolved through the
 /// // proper issue workflow. This test pins the CURRENT (vulnerable) behavior.
 ///
 /// Filed as HIGH priority at crosslink #610.
@@ -709,7 +709,7 @@ fn gap_610_ddg_ssrf_urls_not_validated() {
 
 /// Browser fetch test — requires headless Chrome.
 ///
-/// Verifies fetch_with_browser calls validate_url before launching Chrome,
+/// Verifies `fetch_with_browser` calls `validate_url` before launching Chrome,
 /// so SSRF-blocked URLs never reach the browser.
 #[tokio::test]
 #[ignore = "requires headless Chrome — set OPENCLAUDIA_TEST_BROWSER=1 and run with --ignored"]

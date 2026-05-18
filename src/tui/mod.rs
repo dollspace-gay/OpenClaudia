@@ -810,8 +810,7 @@ pub struct WelcomeScreen {
 impl WelcomeScreen {
     #[must_use]
     pub fn new(version: &str, provider: &str, model: &str) -> Self {
-        let cwd = std::env::current_dir()
-            .map(|p| {
+        let cwd = std::env::current_dir().map_or_else(|_| ".".to_string(), |p| {
                 // Shorten home dir to ~
                 if let Some(home) = dirs::home_dir() {
                     if let Ok(rel) = p.strip_prefix(&home) {
@@ -819,8 +818,7 @@ impl WelcomeScreen {
                     }
                 }
                 p.display().to_string()
-            })
-            .unwrap_or_else(|_| ".".to_string());
+            });
 
         Self {
             version: version.to_string(),
@@ -1022,7 +1020,7 @@ pub fn redraw_pinned_bar(effort: &str) -> io::Result<()> {
     let status_row = bar_row + 1;
     write!(stdout, "\x1b[{status_row};1H")?;
     let left = "? for shortcuts";
-    let right = format!("\u{25CF} {} \u{00B7} /effort", effort);
+    let right = format!("\u{25CF} {effort} \u{00B7} /effort");
     let total = left.len() + right.len();
     let pad = if cols as usize > total {
         " ".repeat(cols as usize - total)
@@ -1050,12 +1048,12 @@ pub fn redraw_pinned_bar(effort: &str) -> io::Result<()> {
 /// # Errors
 ///
 /// Returns an error if writing to stdout fails.
-pub fn render_input_prompt(_mode: &str) -> io::Result<()> {
+pub const fn render_input_prompt(_mode: &str) -> io::Result<()> {
     Ok(())
 }
 
 /// Render the bottom status bar.
-/// Delegates to redraw_pinned_bar which uses absolute positioning.
+/// Delegates to `redraw_pinned_bar` which uses absolute positioning.
 ///
 /// # Errors
 ///
@@ -1096,7 +1094,7 @@ pub fn clear_screen() -> io::Result<()> {
 
 /// Print a visual separator between conversation turns.
 pub fn print_turn_separator() {
-    let width = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
+    let width = terminal::size().map_or(80, |(w, _)| w as usize);
     let mut out = stdout();
     let _ = out.execute(SetForegroundColor(CtColor::Rgb {
         r: 60,

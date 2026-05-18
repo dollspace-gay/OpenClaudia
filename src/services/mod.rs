@@ -2,7 +2,7 @@
 //! cross-cutting concerns that would otherwise scatter across the
 //! codebase.
 //!
-//! Port of Claude Code's `services/` layer (analytics / GrowthBook /
+//! Port of Claude Code's `services/` layer (analytics / `GrowthBook` /
 //! LSP manager / remote settings). Rather than one giant registry
 //! struct, each service is defined by its own trait with a default
 //! no-op impl. [`ServiceRegistry`] holds one `Arc<dyn Trait>` per

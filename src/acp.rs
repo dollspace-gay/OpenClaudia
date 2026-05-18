@@ -160,7 +160,7 @@ pub struct AcpServer {
 /// Port of the `ide/*` MCP notifications Claude Code consumes in
 /// `hooks/useIdeSelection.ts`, `hooks/useIdeLogging.ts`, and the
 /// broader bridge layer. Matches the field names used in Claude
-/// Code's SelectionChangedSchema / file-opened notifications so
+/// Code's `SelectionChangedSchema` / file-opened notifications so
 /// editor plugins can target both harnesses with one implementation.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct IdeState {
@@ -174,7 +174,7 @@ pub struct IdeState {
     /// system prompt.
     pub recent_files: Vec<String>,
     /// Current text selection, if any. Matches Claude Code's
-    /// SelectionData shape: file path + start line + line count + text.
+    /// `SelectionData` shape: file path + start line + line count + text.
     pub selection: Option<IdeSelection>,
     /// Diagnostics pushed by LSP over `ide/diagnostics`. Keyed by
     /// file path for fast replacement when a file's diagnostics
@@ -360,7 +360,7 @@ impl AcpServer {
     /// builder to inject editor context into the system prompt on
     /// the next turn.
     #[must_use]
-    pub fn ide_state(&self) -> &IdeState {
+    pub const fn ide_state(&self) -> &IdeState {
         &self.ide_state
     }
 
@@ -416,7 +416,7 @@ impl AcpServer {
         }
 
         // Await response with timeout
-        match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
+        match tokio::time::timeout(std::time::Duration::from_mins(5), rx).await {
             Ok(Ok(Ok(value))) => Ok(value),
             Ok(Ok(Err(rpc_err))) => Err(format!("RPC error {}: {}", rpc_err.code, rpc_err.message)),
             Ok(Err(_)) => Err("Client request channel closed".to_string()),

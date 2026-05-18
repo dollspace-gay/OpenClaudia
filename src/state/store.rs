@@ -111,6 +111,7 @@ impl StateStore {
     /// `&mut SessionState`; on drop it emits the accumulated events
     /// via the broadcast channel. Call [`StateWriteGuard::note`]
     /// from inside the scope to record what changed.
+    #[must_use] 
     pub fn write(&self) -> StateWriteGuard<'_> {
         let inner = self.inner.write().expect("state store lock poisoned");
         StateWriteGuard {

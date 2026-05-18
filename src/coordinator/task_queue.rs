@@ -115,7 +115,7 @@ pub struct TaskQueue {
 
 impl TaskQueue {
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             next_id: 1,
             tasks: Vec::new(),
@@ -124,13 +124,13 @@ impl TaskQueue {
 
     /// How many tasks are in the queue, regardless of state.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.tasks.len()
     }
 
     /// Is the queue empty?
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.tasks.is_empty()
     }
 
@@ -382,8 +382,8 @@ mod phase2_spec_pins {
 
     // ── B1: dependency semantics ─────────────────────────────────────
 
-    /// B1a: task with empty depends_on is immediately eligible (#532
-    /// B1 edge-case: "empty depends_on vec is immediately eligible").
+    /// B1a: task with empty `depends_on` is immediately eligible (#532
+    /// B1 edge-case: "empty `depends_on` vec is immediately eligible").
     #[test]
     fn b1_no_deps_task_immediately_ready() {
         let mut q = TaskQueue::new();
@@ -394,7 +394,7 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B1b: TaskId(0) is the sentinel used by Task::new before submit;
+    /// B1b: TaskId(0) is the sentinel used by `Task::new` before submit;
     /// submit always returns an id >= 1 (#532 B1).
     #[test]
     fn b1_submitted_id_never_zero() {
@@ -404,7 +404,7 @@ mod phase2_spec_pins {
     }
 
     /// B1c: Running dep does NOT unblock a dependent task — only Done
-    /// does (#532 B1, OC task_queue.rs:232).
+    /// does (#532 B1, OC `task_queue.rs:232`).
     #[test]
     fn b1_running_dep_still_blocks_dependent() {
         let mut q = TaskQueue::new();
@@ -423,7 +423,7 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B1d: submit with an unknown dep id returns UnknownTask and
+    /// B1d: submit with an unknown dep id returns `UnknownTask` and
     /// does NOT insert the task (#532 B1).
     #[test]
     fn b1_submit_unknown_dep_not_inserted() {
@@ -452,7 +452,7 @@ mod phase2_spec_pins {
         }
     }
 
-    /// B1f: len() counts tasks in ALL states, not just Pending
+    /// B1f: `len()` counts tasks in ALL states, not just Pending
     /// (#532 B1 edge-case).
     #[test]
     fn b1_len_counts_all_states_exhaustive() {
@@ -472,7 +472,7 @@ mod phase2_spec_pins {
 
     // ── B5: cycle detection ──────────────────────────────────────────
 
-    /// B5a: add_dependency with unknown `from` returns UnknownTask
+    /// B5a: `add_dependency` with unknown `from` returns `UnknownTask`
     /// (#532 B5).
     #[test]
     fn b5_add_dep_unknown_from_rejected() {
@@ -483,7 +483,7 @@ mod phase2_spec_pins {
         assert_eq!(err, TaskQueueError::UnknownTask { missing: ghost });
     }
 
-    /// B5b: add_dependency with unknown `to` returns UnknownTask
+    /// B5b: `add_dependency` with unknown `to` returns `UnknownTask`
     /// (#532 B5).
     #[test]
     fn b5_add_dep_unknown_to_rejected() {
@@ -518,7 +518,7 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B5d: CycleDetected carries the correct from/to ids (#532 B5
+    /// B5d: `CycleDetected` carries the correct from/to ids (#532 B5
     /// error-format clause).
     #[test]
     fn b5_cycle_detected_error_format() {
@@ -537,8 +537,8 @@ mod phase2_spec_pins {
         }
     }
 
-    /// B5e: non-cycling add_dependency succeeds and the edge is
-    /// appended to depends_on (#532 B5 Ok-path).
+    /// B5e: non-cycling `add_dependency` succeeds and the edge is
+    /// appended to `depends_on` (#532 B5 Ok-path).
     #[test]
     fn b5_valid_add_dependency_appended() {
         let mut q = TaskQueue::new();

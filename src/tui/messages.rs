@@ -69,8 +69,7 @@ impl MessageList {
         }
         let duration = self
             .thinking_start
-            .map(|start| start.elapsed().as_secs_f64())
-            .unwrap_or(0.0);
+            .map_or(0.0, |start| start.elapsed().as_secs_f64());
         self.messages.push(DisplayMessage {
             role: "thinking".to_string(),
             content: format!("Thought for {duration:.1}s"),
@@ -93,13 +92,13 @@ impl MessageList {
 
     /// Number of messages in the display list.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.messages.len()
     }
 
     /// Returns `true` if there are no messages in the display list.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.messages.is_empty()
     }
 
@@ -282,8 +281,7 @@ impl MessageList {
         if self.is_thinking_now {
             let elapsed = self
                 .thinking_start
-                .map(|s| s.elapsed().as_secs_f64())
-                .unwrap_or(0.0);
+                .map_or(0.0, |s| s.elapsed().as_secs_f64());
             lines.push(Line::from(Span::styled(
                 format!("  \u{2234} Thinking\u{2026} ({elapsed:.1}s)"),
                 Style::default()

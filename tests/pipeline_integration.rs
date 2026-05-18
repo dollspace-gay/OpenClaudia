@@ -106,11 +106,11 @@ fn b3_openai_tool_accumulator_partial_arguments() {
 
 /// B1 — OC retries exactly 3 times on 429 then fails.
 ///
-/// CURRENT CONTRACT (broken): max_retries is hard-coded to 3.
+/// CURRENT CONTRACT (broken): `max_retries` is hard-coded to 3.
 /// Gap #592 tracks raising this to match CC's default of 10.
 ///
 /// The retry loop runs `for attempt in 0..=max_retries` (0,1,2,3).
-/// On the final attempt (attempt == 3 == max_retries), the
+/// On the final attempt (attempt == 3 == `max_retries`), the
 /// `attempt < max_retries` guard is false so OC falls through to
 /// `if !resp.status().is_success()` and returns `Err("API error 429: …")`.
 /// Total requests = 4 (initial + 3 retries).

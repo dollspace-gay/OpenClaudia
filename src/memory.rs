@@ -103,7 +103,7 @@ pub struct LearnedPreference {
 
 /// Escape a user-supplied string into a single FTS5 phrase literal.
 ///
-/// The SQLite FTS5 MATCH grammar treats words as operators (`AND`, `OR`,
+/// The `SQLite` FTS5 MATCH grammar treats words as operators (`AND`, `OR`,
 /// `NOT`, `NEAR`), supports column filters (`colname:token`), prefix
 /// matching with `*`, parentheses, and bare double-quotes for phrase
 /// expressions. Wrapping the entire query in a double-quoted phrase and
@@ -1560,8 +1560,8 @@ mod tests {
     // Each sub-test uses a fresh tempfile DB to stay isolated.
     // -----------------------------------------------------------------------
 
-    /// B4: fresh DB migrates to schema_version = 3 and pre-populates the
-    /// three core memory sections (persona, project_info, user_preferences).
+    /// B4: fresh DB migrates to `schema_version` = 3 and pre-populates the
+    /// three core memory sections (persona, `project_info`, `user_preferences`).
     #[test]
     fn b4_schema_migration_reaches_v3_with_core_sections() {
         let dir = tempdir().unwrap();
@@ -1698,7 +1698,7 @@ mod tests {
         assert_eq!(p.confidence, 2);
     }
 
-    /// B4: memory_delete removes the row; subsequent get returns None.
+    /// B4: `memory_delete` removes the row; subsequent get returns None.
     #[test]
     fn b4_archival_memory_delete_removes_row() {
         let dir = tempdir().unwrap();
@@ -1719,7 +1719,7 @@ mod tests {
     // missing file — SQLite creates it).
     // -----------------------------------------------------------------------
 
-    /// B6 (MemoryDb side): opening a DB at a non-existent path creates it
+    /// B6 (`MemoryDb` side): opening a DB at a non-existent path creates it
     /// rather than returning an error.  Callers get a valid DB, not None.
     #[test]
     fn b6_open_new_path_creates_db_without_error() {
@@ -1749,7 +1749,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// Pin B4: FTS5 search with query that contains FTS5 operator keywords
-    /// does not panic or return an error — escape_fts5_phrase neutralizes them.
+    /// does not panic or return an error — `escape_fts5_phrase` neutralizes them.
     #[test]
     fn b4_fts_search_with_operator_keywords_does_not_error() {
         let dir = tempdir().unwrap();

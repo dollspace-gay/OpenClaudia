@@ -344,7 +344,7 @@ mod tests {
     // Behavior 1: read_text_file offset + limit — 1-indexed line slice
     // =========================================================================
 
-    /// Helper: write content to a NamedTempFile and return (file, path_string).
+    /// Helper: write content to a `NamedTempFile` and return (file, `path_string`).
     fn tmp_text(content: &str) -> (NamedTempFile, String) {
         let mut f = NamedTempFile::new().expect("tempfile");
         f.write_all(content.as_bytes()).expect("write");
