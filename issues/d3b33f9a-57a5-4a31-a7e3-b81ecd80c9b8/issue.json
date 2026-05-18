@@ -1,0 +1,12 @@
+{
+  "uuid": "d3b33f9a-57a5-4a31-a7e3-b81ecd80c9b8",
+  "display_id": 628,
+  "title": "Add connection-establishment timeout to McpServer::new (initialize handshake)",
+  "description": "CC connectToServer (client.ts:1048-1077) races client.connect(transport) against getConnectionTimeoutMs() ms (default configurable via env). A non-responsive server causes the race to reject with a TelemetrySafeError. OC McpServer::new (src/mcp.rs:360-432) calls initialize() which calls transport.request('initialize', ...) with no timeout guard. A non-responsive MCP server hangs the async task indefinitely. Required: wrap the initialize() call (and the subsequent refresh_tools()) in tokio::time::timeout with a configurable deadline; surface McpError::Timeout on expiry.",
+  "status": "open",
+  "priority": "high",
+  "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
+  "created_by": "lOrm",
+  "created_at": "2026-05-18T16:03:48.285767850Z",
+  "updated_at": "2026-05-18T16:03:48.285767850Z"
+}
