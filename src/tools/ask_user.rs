@@ -58,10 +58,7 @@ pub fn execute_ask_user_question(args: &HashMap<String, Value>) -> (String, bool
         for key in ["multiSelect", "multi_select"] {
             if let Some(v) = q.get(key) {
                 if !v.is_boolean() {
-                    return (
-                        format!("Question {i} '{key}' must be a boolean"),
-                        true,
-                    );
+                    return (format!("Question {i} '{key}' must be a boolean"), true);
                 }
             }
         }
@@ -194,7 +191,10 @@ mod tests {
             ]
         }]));
         let (msg, is_err) = execute_ask_user_question(&args);
-        assert!(!is_err, "valid multi_select + preview should succeed: {msg}");
+        assert!(
+            !is_err,
+            "valid multi_select + preview should succeed: {msg}"
+        );
         // Canonical output uses `multiSelect`.
         assert!(msg.contains("\"multiSelect\":true"));
     }

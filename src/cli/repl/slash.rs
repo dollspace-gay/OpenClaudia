@@ -500,9 +500,7 @@ session:
                 println!("  \u{2022} {:<20} {}", kind.name(), kind.description());
             }
             println!();
-            println!(
-                "Invoke via the `task` tool with `subagent_type: \"<name>\"`."
-            );
+            println!("Invoke via the `task` tool with `subagent_type: \"<name>\"`.");
             println!();
             Some(SlashCommandResult::Handled)
         }

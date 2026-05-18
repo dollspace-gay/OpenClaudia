@@ -35,36 +35,96 @@ const SECTIONS: &[(&str, &[Shortcut])] = &[
     (
         "Input",
         &[
-            Shortcut { keys: "Enter",       description: "send message" },
-            Shortcut { keys: "Shift+Enter", description: "insert newline" },
-            Shortcut { keys: "Ctrl+L",      description: "clear the screen" },
-            Shortcut { keys: "Ctrl+C",      description: "cancel current turn / exit when idle" },
+            Shortcut {
+                keys: "Enter",
+                description: "send message",
+            },
+            Shortcut {
+                keys: "Shift+Enter",
+                description: "insert newline",
+            },
+            Shortcut {
+                keys: "Ctrl+L",
+                description: "clear the screen",
+            },
+            Shortcut {
+                keys: "Ctrl+C",
+                description: "cancel current turn / exit when idle",
+            },
         ],
     ),
     (
         "Navigation",
         &[
-            Shortcut { keys: "PageUp / PageDown", description: "scroll the transcript" },
-            Shortcut { keys: "Up / Down",         description: "previous / next input in history" },
-            Shortcut { keys: "Esc",               description: "close overlays, dismiss prompts" },
+            Shortcut {
+                keys: "PageUp / PageDown",
+                description: "scroll the transcript",
+            },
+            Shortcut {
+                keys: "Up / Down",
+                description: "previous / next input in history",
+            },
+            Shortcut {
+                keys: "Esc",
+                description: "close overlays, dismiss prompts",
+            },
         ],
     ),
     (
         "Slash commands",
         &[
-            Shortcut { keys: "/help",     description: "show this overlay" },
-            Shortcut { keys: "/agents",   description: "list subagent types" },
-            Shortcut { keys: "/sessions", description: "list saved sessions" },
-            Shortcut { keys: "/resume",   description: "resume a session by id or index" },
-            Shortcut { keys: "/compact",  description: "summarize old messages to free context" },
-            Shortcut { keys: "/export",   description: "export the conversation to markdown" },
-            Shortcut { keys: "/effort",   description: "switch effort level (low / medium / high / max)" },
-            Shortcut { keys: "/model",    description: "switch the model in use" },
-            Shortcut { keys: "/mode",     description: "switch behavioral mode" },
-            Shortcut { keys: "/plan",     description: "toggle plan mode (read-only)" },
-            Shortcut { keys: "/undo",     description: "drop the last user + assistant pair" },
-            Shortcut { keys: "/redo",     description: "restore the last undone pair" },
-            Shortcut { keys: "/quit",     description: "exit OpenClaudia" },
+            Shortcut {
+                keys: "/help",
+                description: "show this overlay",
+            },
+            Shortcut {
+                keys: "/agents",
+                description: "list subagent types",
+            },
+            Shortcut {
+                keys: "/sessions",
+                description: "list saved sessions",
+            },
+            Shortcut {
+                keys: "/resume",
+                description: "resume a session by id or index",
+            },
+            Shortcut {
+                keys: "/compact",
+                description: "summarize old messages to free context",
+            },
+            Shortcut {
+                keys: "/export",
+                description: "export the conversation to markdown",
+            },
+            Shortcut {
+                keys: "/effort",
+                description: "switch effort level (low / medium / high / max)",
+            },
+            Shortcut {
+                keys: "/model",
+                description: "switch the model in use",
+            },
+            Shortcut {
+                keys: "/mode",
+                description: "switch behavioral mode",
+            },
+            Shortcut {
+                keys: "/plan",
+                description: "toggle plan mode (read-only)",
+            },
+            Shortcut {
+                keys: "/undo",
+                description: "drop the last user + assistant pair",
+            },
+            Shortcut {
+                keys: "/redo",
+                description: "restore the last undone pair",
+            },
+            Shortcut {
+                keys: "/quit",
+                description: "exit OpenClaudia",
+            },
         ],
     ),
     (
@@ -100,7 +160,10 @@ pub struct HelpOverlay {
 impl HelpOverlay {
     #[must_use]
     pub const fn new() -> Self {
-        Self { scroll: 0, last_height: 0 }
+        Self {
+            scroll: 0,
+            last_height: 0,
+        }
     }
 
     /// Flatten the section tree into one `Vec<Line>` for the paragraph
@@ -132,10 +195,7 @@ impl HelpOverlay {
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::raw("  "),
-                    Span::styled(
-                        sc.description,
-                        Style::default().fg(Color::White),
-                    ),
+                    Span::styled(sc.description, Style::default().fg(Color::White)),
                 ]));
             }
             lines.push(Line::from(""));

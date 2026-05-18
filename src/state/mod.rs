@@ -19,8 +19,8 @@ pub mod persist;
 pub mod store;
 
 pub use categories::{
-    AgentMode, BudgetsState, Conversation, EffortLevel, Identity, ModesState,
-    PermissionsState, SessionId, TranscriptState, UiState,
+    AgentMode, BudgetsState, Conversation, EffortLevel, Identity, ModesState, PermissionsState,
+    SessionId, TranscriptState, UiState,
 };
 pub use persist::SessionStateV1;
 pub use store::{StateEvent, StateStore, StateWriteGuard};

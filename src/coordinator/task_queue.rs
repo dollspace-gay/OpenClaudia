@@ -19,9 +19,7 @@ use super::TeammateId;
 /// used by dependency edges and for re-attaching results after
 /// teammate completion. Wrapping a `u64` keeps it `Copy` so the
 /// usual `Vec<TaskId>` manipulation doesn't force clones.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TaskId(u64);
 
 impl TaskId {
@@ -169,11 +167,7 @@ impl TaskQueue {
     ///
     /// `UnknownTask` if either id is missing; `CycleDetected` if
     /// the edge would close a loop.
-    pub fn add_dependency(
-        &mut self,
-        from: TaskId,
-        to: TaskId,
-    ) -> Result<(), TaskQueueError> {
+    pub fn add_dependency(&mut self, from: TaskId, to: TaskId) -> Result<(), TaskQueueError> {
         if !self.tasks.iter().any(|t| t.id == from) {
             return Err(TaskQueueError::UnknownTask { missing: from });
         }

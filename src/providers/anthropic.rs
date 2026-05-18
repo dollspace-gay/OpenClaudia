@@ -263,7 +263,10 @@ impl AnthropicAdapter {
     #[must_use]
     pub fn oauth_headers(bearer_token: &str) -> Vec<(String, String)> {
         vec![
-            ("authorization".to_string(), format!("Bearer {bearer_token}")),
+            (
+                "authorization".to_string(),
+                format!("Bearer {bearer_token}"),
+            ),
             (
                 "anthropic-beta".to_string(),
                 "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,\
@@ -593,9 +596,7 @@ mod tests {
             .expect("transform ok");
         let messages = body["messages"].as_array().expect("messages array");
         assert_eq!(messages.len(), 1);
-        let content = messages[0]["content"]
-            .as_array()
-            .expect("content is array");
+        let content = messages[0]["content"].as_array().expect("content is array");
         assert!(content.len() >= 2, "multimodal parts lost: {content:?}");
     }
 

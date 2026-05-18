@@ -86,10 +86,7 @@ impl Migration for FakeOnceOnlyMigration {
 /// going through the real `registry::all()`. Used by the framework
 /// tests so we can assert ledger + policy behavior without depending
 /// on whatever real migrations exist today.
-fn run_fake(
-    ctx: &MigrationContext,
-    migrations: Vec<Box<dyn Migration>>,
-) -> Vec<MigrationReport> {
+fn run_fake(ctx: &MigrationContext, migrations: Vec<Box<dyn Migration>>) -> Vec<MigrationReport> {
     let mut ledger = CompletionLedger::load(&ctx.ledger_path());
     let mut out = Vec::new();
     for migration in migrations {
@@ -187,10 +184,8 @@ fn stamp_transcript_schema_v1_writes_marker() {
     let text = std::fs::read_to_string(&marker).unwrap();
     assert!(text.contains("\"transcripts\""));
     assert!(text.contains('1'));
-    assert!(reports
-        .iter()
-        .any(|r| r.id == "stamp-transcript-schema-v1"
-            && matches!(r.outcome, MigrationOutcome::Applied(_))));
+    assert!(reports.iter().any(|r| r.id == "stamp-transcript-schema-v1"
+        && matches!(r.outcome, MigrationOutcome::Applied(_))));
 }
 
 #[test]

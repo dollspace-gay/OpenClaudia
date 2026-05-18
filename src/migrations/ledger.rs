@@ -71,8 +71,7 @@ impl CompletionLedger {
         let file = LedgerFile {
             applied: self.applied.clone(),
         };
-        let text = serde_json::to_string_pretty(&file)
-            .map_err(std::io::Error::other)?;
+        let text = serde_json::to_string_pretty(&file).map_err(std::io::Error::other)?;
         std::fs::write(path, text)
     }
 }

@@ -34,7 +34,9 @@ pub struct StampTranscriptSchemaV1;
 
 impl StampTranscriptSchemaV1 {
     fn marker_path(ctx: &MigrationContext) -> PathBuf {
-        ctx.claude_home.join("projects").join(".schema-version.json")
+        ctx.claude_home
+            .join("projects")
+            .join(".schema-version.json")
     }
 }
 

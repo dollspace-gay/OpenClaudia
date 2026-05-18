@@ -771,7 +771,12 @@ pub async fn run_subagent(
         .get(&app_config.proxy.target)
         .map_or_else(
             || ("https://api.anthropic.com/v1".to_string(), None),
-            |provider_config| (provider_config.base_url.clone(), provider_config.api_key.clone()),
+            |provider_config| {
+                (
+                    provider_config.base_url.clone(),
+                    provider_config.api_key.clone(),
+                )
+            },
         );
 
     // Run the agent loop
@@ -816,7 +821,8 @@ pub async fn run_subagent(
         });
 
         // Make the API call
-        let response = match make_api_call(client, &base_url, api_key.as_ref(), &request_body).await {
+        let response = match make_api_call(client, &base_url, api_key.as_ref(), &request_body).await
+        {
             Ok(r) => r,
             Err(e) => {
                 BACKGROUND_AGENTS.fail(&agent_id, e.clone());
@@ -927,11 +933,7 @@ pub async fn run_subagent(
             // `agentId ?? sessionId` fallback; here agent_id is always
             // present. Closes crosslink #518 for subagents.
             let _session_guard = crate::tools::SessionIdGuard::set(&agent_id);
-            let result = crate::tools::execute_tool_with_memory(
-                &tc,
-                None,
-                Some(&permission_mgr),
-            );
+            let result = crate::tools::execute_tool_with_memory(&tc, None, Some(&permission_mgr));
 
             messages.push(json!({
                 "role": "tool",

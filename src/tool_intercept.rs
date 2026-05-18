@@ -614,8 +614,7 @@ pub fn execute_intercepted_tools(
 
         println!("\n\x1b[36m⚡ Running {} locally...\x1b[0m", tool.name);
 
-        let result =
-            crate::tools::execute_tool_with_memory(&tool_call, memory_db, permission_mgr);
+        let result = crate::tools::execute_tool_with_memory(&tool_call, memory_db, permission_mgr);
 
         // Show preview
         let preview: String = result

@@ -745,8 +745,7 @@ async fn apply_vdd_review(
                 chainlink_issues = blocking.chainlink_issues.len(),
                 "VDD blocking loop complete"
             );
-            serde_json::to_vec(&blocking.final_response)
-                .unwrap_or_else(|_| response_bytes.to_vec())
+            serde_json::to_vec(&blocking.final_response).unwrap_or_else(|_| response_bytes.to_vec())
         }
         Ok(VddResult::Skipped(reason)) => {
             debug!(reason = %reason, "VDD skipped");
@@ -1110,9 +1109,9 @@ async fn proxy_anthropic_messages(
         let mut builder = state.client.post(&url).json(&request);
         // Centralized OAuth header construction — every Anthropic-specific
         // header literal now lives on the adapter. See crosslink #338.
-        for (name, value) in crate::providers::AnthropicAdapter::oauth_headers(
-            &session.credentials.access_token,
-        ) {
+        for (name, value) in
+            crate::providers::AnthropicAdapter::oauth_headers(&session.credentials.access_token)
+        {
             builder = builder.header(name.as_str(), value.as_str());
         }
         let response = builder.send().await?;

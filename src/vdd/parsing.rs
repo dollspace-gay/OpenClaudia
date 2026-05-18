@@ -245,7 +245,6 @@ mod tests {
 
     #[test]
     // --- Regression tests for crosslink #337 (UTF-8 safety) ---
-
     #[test]
     fn extract_json_survives_leading_emoji() {
         // 4-byte UTF-8 codepoint immediately before the fence (🔥 = U+1F525).

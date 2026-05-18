@@ -305,15 +305,11 @@ impl PluginManager {
     /// Convert a [`PolicyRejection`] into a [`PluginError`]. Centralizes
     /// the human-readable reason string so CLI / TUI / audit logs get
     /// consistent messaging regardless of which guard rejected.
-    fn policy_rejection_to_error(
-        rejection: PolicyRejection,
-        policy: &PluginPolicy,
-    ) -> PluginError {
+    fn policy_rejection_to_error(rejection: PolicyRejection, policy: &PluginPolicy) -> PluginError {
         let reason = match rejection {
             PolicyRejection::Blocked => "source is on the block list".to_string(),
             PolicyRejection::NotInAllowlist => {
-                "source is not on the allowed list (strict_known_marketplaces)"
-                    .to_string()
+                "source is not on the allowed list (strict_known_marketplaces)".to_string()
             }
         };
         PluginError::PolicyRejected {
@@ -855,11 +851,7 @@ mod policy_tests {
             ..PluginPolicy::default()
         };
         let err = pm
-            .add_marketplace_from_git_with_policy(
-                "https://example.com/unknown",
-                None,
-                &policy,
-            )
+            .add_marketplace_from_git_with_policy("https://example.com/unknown", None, &policy)
             .expect_err("unknown source must be rejected");
         match err {
             PluginError::PolicyRejected { scope, reason } => {

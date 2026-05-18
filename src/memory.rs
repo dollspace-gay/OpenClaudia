@@ -113,10 +113,7 @@ pub struct LearnedPreference {
 /// Also strips ASCII control characters that FTS5's tokenizer would
 /// choke on or that could produce surprising matches. See crosslink #444.
 fn escape_fts5_phrase(raw: &str) -> String {
-    let cleaned: String = raw
-        .chars()
-        .filter(|c| !c.is_ascii_control())
-        .collect();
+    let cleaned: String = raw.chars().filter(|c| !c.is_ascii_control()).collect();
     let inner = cleaned.replace('"', "\"\"");
     format!("\"{inner}\"")
 }

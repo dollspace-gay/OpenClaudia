@@ -31,9 +31,7 @@ pub mod worktree;
 pub use accumulator::{
     AnthropicContentBlock, AnthropicToolAccumulator, PartialToolCall, ToolCallAccumulator,
 };
-pub use todo::{
-    clear_all_todo_lists, clear_todo_list, get_todo_list, SessionIdGuard, TodoItem,
-};
+pub use todo::{clear_all_todo_lists, clear_todo_list, get_todo_list, SessionIdGuard, TodoItem};
 
 use crate::config::AppConfig;
 use crate::memory::MemoryDb;
@@ -1335,9 +1333,7 @@ pub fn execute_tool_with_permission_required(
         } => {
             return ToolResult {
                 tool_call_id,
-                content: format!(
-                    "PERMISSION_PROMPT: Allow {tool} on '{target}'? [y/n/a(lways)]"
-                ),
+                content: format!("PERMISSION_PROMPT: Allow {tool} on '{target}'? [y/n/a(lways)]"),
                 is_error: true,
             };
         }
@@ -2125,14 +2121,16 @@ mod tests {
 
         // Replace by cell_id — no cell_number supplied.
         let mut args = HashMap::new();
-        args.insert("notebook_path".to_string(), json!(nb_path.to_str().unwrap()));
+        args.insert(
+            "notebook_path".to_string(),
+            json!(nb_path.to_str().unwrap()),
+        );
         args.insert("cell_id".to_string(), json!("cell-b"));
         args.insert("new_source".to_string(), json!("replaced-b"));
         let (output, is_error) = file::execute_notebook_edit(&args);
         assert!(!is_error, "replace by cell_id should succeed: {output}");
 
-        let updated: Value =
-            serde_json::from_str(&fs::read_to_string(&nb_path).unwrap()).unwrap();
+        let updated: Value = serde_json::from_str(&fs::read_to_string(&nb_path).unwrap()).unwrap();
         assert_eq!(updated["cells"][1]["source"][0], json!("replaced-b"));
         // cell-a was left alone.
         assert_eq!(updated["cells"][0]["source"][0], json!("a"));
@@ -2154,7 +2152,10 @@ mod tests {
 
         // Insert AFTER "one" — should land at position 1, pushing "two" to position 2.
         let mut args = HashMap::new();
-        args.insert("notebook_path".to_string(), json!(nb_path.to_str().unwrap()));
+        args.insert(
+            "notebook_path".to_string(),
+            json!(nb_path.to_str().unwrap()),
+        );
         args.insert("cell_id".to_string(), json!("one"));
         args.insert("edit_mode".to_string(), json!("insert"));
         args.insert("cell_type".to_string(), json!("markdown"));
@@ -2162,8 +2163,7 @@ mod tests {
         let (output, is_error) = file::execute_notebook_edit(&args);
         assert!(!is_error, "insert after cell_id should succeed: {output}");
 
-        let updated: Value =
-            serde_json::from_str(&fs::read_to_string(&nb_path).unwrap()).unwrap();
+        let updated: Value = serde_json::from_str(&fs::read_to_string(&nb_path).unwrap()).unwrap();
         let cells = updated["cells"].as_array().unwrap();
         assert_eq!(cells.len(), 3);
         assert_eq!(cells[0]["source"][0], json!("1"));
@@ -2186,7 +2186,10 @@ mod tests {
         READ_TRACKER.mark_read(&nb_path);
 
         let mut args = HashMap::new();
-        args.insert("notebook_path".to_string(), json!(nb_path.to_str().unwrap()));
+        args.insert(
+            "notebook_path".to_string(),
+            json!(nb_path.to_str().unwrap()),
+        );
         args.insert("cell_id".to_string(), json!("does-not-exist"));
         args.insert("new_source".to_string(), json!("x"));
         let (output, is_error) = file::execute_notebook_edit(&args);
@@ -2366,9 +2369,9 @@ mod tests {
         let mgr = PermissionManager::new(tmp.path().join("p.json"), false, vec![]);
         match check_tool_permission_strict(&tool_call, Some(&mgr)) {
             PermissionOutcome::Allowed => {}
-            other => panic!(
-                "expected Allowed for explicitly-disabled (unrestricted) mgr, got {other:?}"
-            ),
+            other => {
+                panic!("expected Allowed for explicitly-disabled (unrestricted) mgr, got {other:?}")
+            }
         }
     }
 
@@ -2556,8 +2559,7 @@ mod tests {
         // fires when there is genuinely no manager, not when the intent of
         // the caller is an explicit "allow all".
         let mgr = PermissionManager::unrestricted();
-        let result =
-            execute_tool_with_permission_required(&tool_call, None, None, None, &mgr);
+        let result = execute_tool_with_permission_required(&tool_call, None, None, None, &mgr);
         assert!(
             !result.is_error,
             "unrestricted manager should pass through; got: {}",

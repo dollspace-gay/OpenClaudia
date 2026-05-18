@@ -181,9 +181,7 @@ pub fn run_all_count_applied(ctx: &MigrationContext) -> usize {
 /// a `serde_json::Value`. Returns `Ok(None)` when the file doesn't
 /// exist — a missing file is a valid skip case, not an error.
 #[allow(dead_code)] // first real migration will use this
-pub(crate) fn read_json_if_exists(
-    path: &Path,
-) -> anyhow::Result<Option<serde_json::Value>> {
+pub(crate) fn read_json_if_exists(path: &Path) -> anyhow::Result<Option<serde_json::Value>> {
     if !path.exists() {
         return Ok(None);
     }

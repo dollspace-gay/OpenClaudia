@@ -262,8 +262,7 @@ pub(crate) fn apply_ide_selection_changed(state: &mut IdeState, params: &Value) 
             let line_end = end
                 .get("line")
                 .and_then(serde_json::Value::as_u64)
-                .unwrap_or(u64::from(line_start))
-                as u32;
+                .unwrap_or(u64::from(line_start)) as u32;
             let line_count = line_end.saturating_sub(line_start).saturating_add(1);
             state.selection = Some(IdeSelection {
                 file_path: fp,
@@ -1853,10 +1852,7 @@ mod ide_tests {
     fn recent_files_ring_is_capped() {
         let mut state = IdeState::default();
         for i in 0..20 {
-            apply_ide_file_opened(
-                &mut state,
-                &json!({"filePath": format!("/f-{i}.rs")}),
-            );
+            apply_ide_file_opened(&mut state, &json!({"filePath": format!("/f-{i}.rs")}));
         }
         assert_eq!(state.recent_files.len(), IDE_FILE_RING_CAP);
         // Most recent first.
@@ -1896,10 +1892,7 @@ mod ide_tests {
         assert_eq!(sel.line_count, 3);
 
         // Empty-text notification drops the selection.
-        apply_ide_selection_changed(
-            &mut state,
-            &json!({"filePath": "/x.rs", "text": ""}),
-        );
+        apply_ide_selection_changed(&mut state, &json!({"filePath": "/x.rs", "text": ""}));
         assert!(state.selection.is_none());
     }
 
@@ -1936,10 +1929,7 @@ mod ide_tests {
         assert_eq!(diags[1].line, 8);
 
         // Empty-diagnostics notification clears the file's entries.
-        apply_ide_diagnostics(
-            &mut state,
-            &json!({"filePath": "/x.rs", "diagnostics": []}),
-        );
+        apply_ide_diagnostics(&mut state, &json!({"filePath": "/x.rs", "diagnostics": []}));
         assert!(state.diagnostics.get("/x.rs").is_none());
     }
 

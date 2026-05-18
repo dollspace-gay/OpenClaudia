@@ -46,9 +46,7 @@ impl fmt::Display for TeammateId {
 /// Fixed 7-color palette for teammate display — matches Claude
 /// Code's rainbow order so transcripts viewed in either harness
 /// color-code identically.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentColor {
     Red,
@@ -156,8 +154,9 @@ mod tests {
 
     #[test]
     fn palette_exhausts_before_repeating() {
-        let colors: Vec<_> =
-            (0..AgentColor::PALETTE.len()).map(AgentColor::for_index).collect();
+        let colors: Vec<_> = (0..AgentColor::PALETTE.len())
+            .map(AgentColor::for_index)
+            .collect();
         // All 7 must be distinct.
         let unique: std::collections::HashSet<_> = colors.iter().copied().collect();
         assert_eq!(unique.len(), AgentColor::PALETTE.len());

@@ -51,9 +51,7 @@ pub enum ApiKeyError {
     /// The value exceeded [`MAX_API_KEY_LEN`] bytes. Legitimate API keys are
     /// well under this cap (Anthropic: ~108 chars, OpenAI: ~56); an
     /// 8 KiB header is an attack shape, not a real key. See crosslink #452.
-    #[error(
-        "API key is {actual} bytes, exceeding the {max}-byte cap"
-    )]
+    #[error("API key is {actual} bytes, exceeding the {max}-byte cap")]
     TooLong {
         /// Observed length of the rejected value.
         actual: usize,
@@ -101,7 +99,9 @@ impl ApiKey {
         }
         for c in raw.chars() {
             if c.is_ascii_control() {
-                return Err(ApiKeyError::ControlChar { codepoint: c as u32 });
+                return Err(ApiKeyError::ControlChar {
+                    codepoint: c as u32,
+                });
             }
         }
         Ok(Self(raw))
@@ -191,7 +191,10 @@ mod tests {
         let key = ApiKey::try_from_string("sk-ant-api03-SECRET_VALUE_HERE_XYZ_TAIL".to_string())
             .expect("valid key");
         let debug = format!("{key:?}");
-        assert!(!debug.contains("SECRET_VALUE_HERE"), "leaked middle: {debug}");
+        assert!(
+            !debug.contains("SECRET_VALUE_HERE"),
+            "leaked middle: {debug}"
+        );
         assert!(!debug.contains("api03-SECRET"), "leaked middle: {debug}");
         assert!(debug.contains("sk-a"), "missing head fingerprint: {debug}");
         assert!(
@@ -205,15 +208,18 @@ mod tests {
         let key = ApiKey::try_from_string("sk-ant-api03-SECRET_VALUE_HERE_XYZ_TAIL".to_string())
             .expect("valid key");
         let shown = format!("{key}");
-        assert!(!shown.contains("SECRET_VALUE_HERE"), "leaked middle: {shown}");
+        assert!(
+            !shown.contains("SECRET_VALUE_HERE"),
+            "leaked middle: {shown}"
+        );
         assert!(!shown.contains("VALUE_HERE"), "leaked middle: {shown}");
         assert!(shown.contains('…'), "no ellipsis: {shown}");
     }
 
     #[test]
     fn try_from_rejects_crlf() {
-        let err = ApiKey::try_from_string("sk-legit\r\nX-Injected-Header: evil".to_string())
-            .unwrap_err();
+        let err =
+            ApiKey::try_from_string("sk-legit\r\nX-Injected-Header: evil".to_string()).unwrap_err();
         assert!(matches!(err, ApiKeyError::ControlChar { codepoint: 0x0D }));
     }
 

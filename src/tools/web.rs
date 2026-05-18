@@ -143,13 +143,13 @@ pub fn execute_web_search(args: &HashMap<String, Value>) -> (String, bool) {
             // caller might still want to see.
             if !allowed.is_empty() || !blocked.is_empty() {
                 results.retain(|r| {
-                    let Some(host) = host_of(&r.url) else { return true };
+                    let Some(host) = host_of(&r.url) else {
+                        return true;
+                    };
                     if blocked.iter().any(|d| domain_matches(&host, d)) {
                         return false;
                     }
-                    if !allowed.is_empty()
-                        && !allowed.iter().any(|d| domain_matches(&host, d))
-                    {
+                    if !allowed.is_empty() && !allowed.iter().any(|d| domain_matches(&host, d)) {
                         return false;
                     }
                     true
@@ -167,9 +167,18 @@ mod tests {
 
     #[test]
     fn host_of_handles_common_shapes() {
-        assert_eq!(host_of("https://example.com/path"), Some("example.com".into()));
-        assert_eq!(host_of("http://www.example.com"), Some("example.com".into()));
-        assert_eq!(host_of("https://EXAMPLE.com:8080/x"), Some("example.com".into()));
+        assert_eq!(
+            host_of("https://example.com/path"),
+            Some("example.com".into())
+        );
+        assert_eq!(
+            host_of("http://www.example.com"),
+            Some("example.com".into())
+        );
+        assert_eq!(
+            host_of("https://EXAMPLE.com:8080/x"),
+            Some("example.com".into())
+        );
         assert_eq!(host_of("://no-scheme"), Some("no-scheme".into()));
         assert_eq!(host_of(""), None);
     }

@@ -17,15 +17,7 @@ use serde::{Deserialize, Serialize};
 /// don't get confused with teammate / agent / transcript ids at call
 /// sites (the subagent module already uses raw `String`s for
 /// `agent_id`; this one is deliberately typed).
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    Serialize,
-    Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SessionId(String);
 

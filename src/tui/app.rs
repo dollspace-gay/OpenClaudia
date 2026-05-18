@@ -367,9 +367,7 @@ impl App {
     /// Open the help-cheatsheet overlay. Subsequent keystrokes go to
     /// the overlay until it returns `OverlayAction::Close`.
     pub fn open_help_overlay(&mut self) {
-        self.overlay = Some(ActiveOverlay::Help(
-            super::components::HelpOverlay::new(),
-        ));
+        self.overlay = Some(ActiveOverlay::Help(super::components::HelpOverlay::new()));
     }
 
     /// Resume the session whose id equals or prefix-matches `id`.
@@ -378,8 +376,7 @@ impl App {
     /// with a user-visible system message when no match is found.
     fn resume_session_by_id(&mut self, id: &str) {
         let sessions = list_sessions();
-        let Some(loaded) = sessions.iter().find(|s| s.id.starts_with(id)).cloned()
-        else {
+        let Some(loaded) = sessions.iter().find(|s| s.id.starts_with(id)).cloned() else {
             self.messages.add(DisplayMessage {
                 role: "system".to_string(),
                 content: format!("No session found with id prefix '{id}'."),
@@ -395,8 +392,7 @@ impl App {
         self.provider = loaded.provider.clone();
         self.mode = loaded.mode.clone();
         self.tokens = self.chat_session.estimate_tokens();
-        self.transcript_cwd =
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        self.transcript_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         self.transcript_watermark = self.session_messages.len();
         // Repaint the transcript.
         self.messages = super::messages::MessageList::new();
@@ -448,10 +444,8 @@ impl App {
             let engine = engine.clone();
             let session_id = self.chat_session.id.clone();
             handle.spawn(async move {
-                let input = crate::hooks::HookInput::new(
-                    crate::hooks::HookEvent::Stop,
-                )
-                .with_session_id(session_id);
+                let input = crate::hooks::HookInput::new(crate::hooks::HookEvent::Stop)
+                    .with_session_id(session_id);
                 let _ = engine.run(crate::hooks::HookEvent::Stop, &input).await;
             });
         }
@@ -492,12 +486,8 @@ impl App {
                 .and_then(|r| r.as_str())
                 .unwrap_or("system")
                 .to_string();
-            let entry = crate::transcript::envelope_for(
-                &kind,
-                &cwd,
-                &session_id,
-                Some(msg.clone()),
-            );
+            let entry =
+                crate::transcript::envelope_for(&kind, &cwd, &session_id, Some(msg.clone()));
             if let Err(err) = crate::transcript::append_entry(&cwd, &session_id, &entry) {
                 tracing::warn!(error = %err, "transcript append failed");
                 break;
@@ -690,11 +680,11 @@ impl App {
             let session_id = self.chat_session.id.clone();
             let engine = engine.clone();
             handle.block_on(async move {
-                let input = crate::hooks::HookInput::new(
-                    crate::hooks::HookEvent::SessionEnd,
-                )
-                .with_session_id(session_id);
-                let _ = engine.run(crate::hooks::HookEvent::SessionEnd, &input).await;
+                let input = crate::hooks::HookInput::new(crate::hooks::HookEvent::SessionEnd)
+                    .with_session_id(session_id);
+                let _ = engine
+                    .run(crate::hooks::HookEvent::SessionEnd, &input)
+                    .await;
             });
         }
 
@@ -1047,7 +1037,7 @@ impl App {
                             is_thinking: false,
                         });
                         let _ = save_session(&self.chat_session);
-                    self.persist_transcript_tail();
+                        self.persist_transcript_tail();
                     } else {
                         self.messages.add(DisplayMessage {
                             role: "system".to_string(),

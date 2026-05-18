@@ -20,11 +20,7 @@ use super::PluginError;
 ///
 /// Returns an error if the URL fails validation, git is not available,
 /// the clone operation fails, or `git rev-parse HEAD` fails in the clone.
-pub fn git_clone(
-    url: &str,
-    dest: &Path,
-    git_ref: Option<&str>,
-) -> Result<String, PluginError> {
+pub fn git_clone(url: &str, dest: &Path, git_ref: Option<&str>) -> Result<String, PluginError> {
     validate_source_url(url)?;
 
     let mut cmd = std::process::Command::new("git");

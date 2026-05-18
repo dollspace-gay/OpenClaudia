@@ -140,8 +140,7 @@ pub fn execute_todo_write(args: &HashMap<String, Value>) -> (String, bool) {
     // instead of keeping a list of done items. Keeps the session cleanup
     // clean and signals the agent to stop referring back to finished work.
     // See claude-code/tools/TodoWriteTool/TodoWriteTool.ts (`allDone` branch).
-    let all_done = !new_todos.is_empty()
-        && new_todos.iter().all(|t| t.status == "completed");
+    let all_done = !new_todos.is_empty() && new_todos.iter().all(|t| t.status == "completed");
     let stored_todos = if all_done {
         Vec::new()
     } else {

@@ -184,5 +184,4 @@ mod tests {
         let result: Result<ProviderConfig, _> = serde_json::from_str(json);
         assert!(result.is_err(), "empty api_key must fail deserialize");
     }
-
 }

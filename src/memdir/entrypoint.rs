@@ -295,11 +295,7 @@ mod tests {
         // Both files exist — root MEMORY.md must win.
         std::fs::write(tmp.path().join("MEMORY.md"), "# root").unwrap();
         std::fs::create_dir_all(tmp.path().join(".openclaudia")).unwrap();
-        std::fs::write(
-            tmp.path().join(".openclaudia/MEMORY.md"),
-            "# openclaudia",
-        )
-        .unwrap();
+        std::fs::write(tmp.path().join(".openclaudia/MEMORY.md"), "# openclaudia").unwrap();
 
         let loaded = load_entrypoint(tmp.path()).expect("root MEMORY.md hit");
         assert_eq!(loaded.content.trim(), "# root");
@@ -324,20 +320,11 @@ mod tests {
         }
 
         std::fs::create_dir_all(tmp.path().join(".openclaudia")).unwrap();
-        std::fs::write(
-            tmp.path().join(".openclaudia/MEMORY.md"),
-            "# from subdir",
-        )
-        .unwrap();
+        std::fs::write(tmp.path().join(".openclaudia/MEMORY.md"), "# from subdir").unwrap();
 
         let loaded = load_entrypoint(tmp.path()).expect("subdir MEMORY.md hit");
         assert_eq!(loaded.content.trim(), "# from subdir");
-        assert!(
-            loaded
-                .path
-                .to_string_lossy()
-                .contains(".openclaudia")
-        );
+        assert!(loaded.path.to_string_lossy().contains(".openclaudia"));
 
         unsafe {
             match prev_home {
@@ -378,7 +365,7 @@ mod tests {
     fn utf8_safe_truncate_never_splits_codepoints() {
         // "Hello" in Japanese — each char is 3 bytes.
         let s = "\u{3053}\u{3093}\u{306B}\u{3061}\u{306F}"; // こんにちは, 15 bytes
-        // Ask to truncate at a byte offset that falls mid-codepoint (7).
+                                                            // Ask to truncate at a byte offset that falls mid-codepoint (7).
         let out = utf8_safe_truncate(s, 7);
         // Must decode cleanly — if we split a codepoint this would
         // return a FromUtf8Error on the String conversion above.

@@ -38,10 +38,7 @@ const EVENT_CHANNEL_CAPACITY: usize = 64;
 pub enum StateEvent {
     /// `SessionState::identity.session_id` changed — a different
     /// session became active.
-    SessionSwitched {
-        from: SessionId,
-        to: SessionId,
-    },
+    SessionSwitched { from: SessionId, to: SessionId },
     /// `SessionState::conversation.messages` grew by at least one
     /// entry. Payload carries the role of the just-appended message
     /// so the transcript writer can skip redundant kind lookups.
@@ -115,10 +112,7 @@ impl StateStore {
     /// via the broadcast channel. Call [`StateWriteGuard::note`]
     /// from inside the scope to record what changed.
     pub fn write(&self) -> StateWriteGuard<'_> {
-        let inner = self
-            .inner
-            .write()
-            .expect("state store lock poisoned");
+        let inner = self.inner.write().expect("state store lock poisoned");
         StateWriteGuard {
             inner,
             events: &self.events,

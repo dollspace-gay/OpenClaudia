@@ -1482,11 +1482,15 @@ mod tests {
             ..Default::default()
         };
         let engine = HookEngine::new(config);
-        let input = HookInput::new(HookEvent::PostToolUseFailure)
-            .with_tool("bash", serde_json::json!({}));
+        let input =
+            HookInput::new(HookEvent::PostToolUseFailure).with_tool("bash", serde_json::json!({}));
 
         let result = engine.run(HookEvent::PostToolUseFailure, &input).await;
-        assert_eq!(result.outputs.len(), 1, "dedicated handlers run exactly once");
+        assert_eq!(
+            result.outputs.len(),
+            1,
+            "dedicated handlers run exactly once"
+        );
         // Dedicated handler ran `true` — the failing `post_tool_use` entry
         // must not have fired.
         assert!(result.errors.is_empty());

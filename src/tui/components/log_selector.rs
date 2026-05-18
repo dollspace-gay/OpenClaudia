@@ -101,7 +101,9 @@ impl Overlay for LogSelector {
                 Line::from(""),
                 Line::from(Span::styled(
                     "  Esc to close.",
-                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::ITALIC),
                 )),
             ])
             .block(block);
@@ -118,10 +120,7 @@ impl Overlay for LogSelector {
                     .get(..8)
                     .unwrap_or(&row.session_id)
                     .to_string();
-                let prompt = row
-                    .first_prompt
-                    .as_deref()
-                    .unwrap_or("(no prompt yet)");
+                let prompt = row.first_prompt.as_deref().unwrap_or("(no prompt yet)");
                 let prompt = truncate_display(prompt, 60);
                 let count = row.message_count;
                 ListItem::new(Line::from(vec![
@@ -131,10 +130,7 @@ impl Overlay for LogSelector {
                             .fg(Color::Rgb(100, 180, 255))
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        format!("{prompt}  "),
-                        Style::default().fg(Color::White),
-                    ),
+                    Span::styled(format!("{prompt}  "), Style::default().fg(Color::White)),
                     Span::styled(
                         format!("({count} msgs, {})", row.modified_iso),
                         Style::default().fg(Color::DarkGray),
@@ -270,10 +266,7 @@ mod tests {
 
     #[test]
     fn vim_keys_work() {
-        let mut sel = LogSelector::new(vec![
-            row("a", Some("x"), 1),
-            row("b", Some("y"), 1),
-        ]);
+        let mut sel = LogSelector::new(vec![row("a", Some("x"), 1), row("b", Some("y"), 1)]);
         sel.handle_key(key(KeyCode::Char('j')));
         assert_eq!(sel.state.selected(), Some(1));
         sel.handle_key(key(KeyCode::Char('k')));

@@ -167,10 +167,7 @@ pub fn append_entry(
         set_secure_perms(parent, 0o700);
     }
     let line = serde_json::to_string(entry).map_err(std::io::Error::other)?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
     writeln!(file, "{line}")?;
     set_secure_perms(&path, 0o600);
     Ok(())
@@ -231,9 +228,7 @@ fn is_compact_boundary(entry: &SerializedMessage) -> bool {
 /// exists, returns `entries` unchanged. Used by `--resume` to avoid
 /// re-feeding the model content that was already summarized away.
 #[must_use]
-pub fn entries_after_last_boundary(
-    entries: &[SerializedMessage],
-) -> &[SerializedMessage] {
+pub fn entries_after_last_boundary(entries: &[SerializedMessage]) -> &[SerializedMessage] {
     match entries.iter().rposition(is_compact_boundary) {
         Some(idx) => &entries[idx..],
         None => entries,
@@ -401,7 +396,10 @@ mod tests {
     #[test]
     fn sanitize_matches_claude_code() {
         // No env lock needed — sanitize_path is pure.
-        assert_eq!(sanitize_path("/home/doll/OpenClaudia"), "-home-doll-OpenClaudia");
+        assert_eq!(
+            sanitize_path("/home/doll/OpenClaudia"),
+            "-home-doll-OpenClaudia"
+        );
         // Every non-alphanumeric char becomes one dash: `:` → `-`, `\` → `-`.
         assert_eq!(sanitize_path("C:\\Users\\Foo"), "C--Users-Foo");
         assert_eq!(sanitize_path("plain"), "plain");
@@ -411,10 +409,7 @@ mod tests {
     fn env_overrides_home_dir() {
         let _lock = env_lock();
         let tmp = TempDir::new().unwrap();
-        let _g = EnvGuard::set(
-            "CLAUDE_CONFIG_HOME_DIR",
-            tmp.path().to_str().unwrap(),
-        );
+        let _g = EnvGuard::set("CLAUDE_CONFIG_HOME_DIR", tmp.path().to_str().unwrap());
         assert_eq!(claude_config_home_dir(), tmp.path());
         assert_eq!(projects_dir(), tmp.path().join("projects"));
     }
@@ -423,10 +418,7 @@ mod tests {
     fn append_and_load_roundtrip() {
         let _lock = env_lock();
         let tmp = TempDir::new().unwrap();
-        let _g = EnvGuard::set(
-            "CLAUDE_CONFIG_HOME_DIR",
-            tmp.path().to_str().unwrap(),
-        );
+        let _g = EnvGuard::set("CLAUDE_CONFIG_HOME_DIR", tmp.path().to_str().unwrap());
         let cwd = PathBuf::from("/home/doll/OpenClaudia");
         let session_id = "11111111-2222-3333-4444-555555555555";
 
@@ -458,10 +450,7 @@ mod tests {
     fn list_transcripts_sorts_newest_first() {
         let _lock = env_lock();
         let tmp = TempDir::new().unwrap();
-        let _g = EnvGuard::set(
-            "CLAUDE_CONFIG_HOME_DIR",
-            tmp.path().to_str().unwrap(),
-        );
+        let _g = EnvGuard::set("CLAUDE_CONFIG_HOME_DIR", tmp.path().to_str().unwrap());
         let cwd = PathBuf::from("/tmp/proj");
         for id in ["aaa", "bbb"] {
             let entry = envelope_for("user", &cwd, id, Some(json!({"content": id})));
@@ -492,7 +481,10 @@ mod tests {
         let entries = vec![
             make("user", "old question"),
             make("assistant", "old answer"),
-            make("system", &format!("{COMPACT_BOUNDARY_MARKER} {{}}\nsummary")),
+            make(
+                "system",
+                &format!("{COMPACT_BOUNDARY_MARKER} {{}}\nsummary"),
+            ),
             make("user", "new question"),
             make("assistant", "new answer"),
         ];
@@ -530,10 +522,7 @@ mod tests {
     fn find_by_id_searches_all_projects() {
         let _lock = env_lock();
         let tmp = TempDir::new().unwrap();
-        let _g = EnvGuard::set(
-            "CLAUDE_CONFIG_HOME_DIR",
-            tmp.path().to_str().unwrap(),
-        );
+        let _g = EnvGuard::set("CLAUDE_CONFIG_HOME_DIR", tmp.path().to_str().unwrap());
         let cwd = PathBuf::from("/tmp/elsewhere");
         let session_id = "needle-id";
         let entry = envelope_for("user", &cwd, session_id, None);

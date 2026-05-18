@@ -1016,9 +1016,7 @@ impl VddEngine {
             .transform_request(request)
             .map_err(|e| VddError::AdversaryRequestFailed(format!("verifier transform: {e}")))?;
 
-        let headers = api_key
-            .map(|k| adapter.get_headers(k))
-            .unwrap_or_default();
+        let headers = api_key.map(|k| adapter.get_headers(k)).unwrap_or_default();
         let endpoint = adapter.chat_endpoint(&request.model);
 
         let response = forward_request(
@@ -1301,9 +1299,7 @@ impl VddEngine {
             .transform_request(request)
             .map_err(|e| VddError::BuilderRevisionFailed(e.to_string()))?;
 
-        let headers = api_key
-            .map(|k| adapter.get_headers(k))
-            .unwrap_or_default();
+        let headers = api_key.map(|k| adapter.get_headers(k)).unwrap_or_default();
         let endpoint = adapter.chat_endpoint(&request.model);
 
         let response = forward_request(
@@ -1844,13 +1840,7 @@ mod tests {
         // Layer 1 (duplicate detection) catches this before Layer 3 (AI)
         // would be reached, so no API call is made.
         engine
-            .triage_findings(
-                &mut findings,
-                &previous_fps,
-                "fn main() {}",
-                "test",
-                None,
-            )
+            .triage_findings(&mut findings, &previous_fps, "fn main() {}", "test", None)
             .await;
         assert_eq!(findings[0].status, FindingStatus::FalsePositive);
     }

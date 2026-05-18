@@ -107,8 +107,7 @@ pub fn build_compact_boundary_message(
         pre_tokens,
         messages_summarized,
     };
-    let metadata_json =
-        serde_json::to_string(&metadata).unwrap_or_else(|_| "{}".to_string());
+    let metadata_json = serde_json::to_string(&metadata).unwrap_or_else(|_| "{}".to_string());
     let content = format!(
         "{COMPACT_BOUNDARY_MARKER} {metadata_json}\nConversation compacted — {messages_summarized} earlier message(s) summarized to free context."
     );
@@ -145,18 +144,13 @@ pub fn is_compact_boundary_message(msg: &ChatMessage) -> bool {
 /// malformed (reader should treat this as "we know compaction
 /// happened but not the details" rather than an error).
 #[must_use]
-pub fn extract_compact_boundary_metadata(
-    msg: &ChatMessage,
-) -> Option<CompactBoundaryMetadata> {
+pub fn extract_compact_boundary_metadata(msg: &ChatMessage) -> Option<CompactBoundaryMetadata> {
     if !is_compact_boundary_message(msg) {
         return None;
     }
     let text = match &msg.content {
         MessageContent::Text(t) => t.as_str(),
-        MessageContent::Parts(parts) => parts
-            .iter()
-            .filter_map(|p| p.text.as_deref())
-            .next()?,
+        MessageContent::Parts(parts) => parts.iter().filter_map(|p| p.text.as_deref()).next()?,
     };
     // First line after the marker is the JSON blob.
     let first_line = text.lines().next()?;
@@ -882,7 +876,7 @@ mod tests {
 
     #[test]
     fn test_generate_summary() {
-        let messages = vec![
+        let messages = [
             create_test_message("user", "What is Rust?"),
             create_test_message("assistant", "Rust is a systems programming language."),
         ];
@@ -1156,7 +1150,7 @@ mod tests {
 
     #[test]
     fn test_generate_summary_with_tool_markers() {
-        let messages = vec![
+        let messages = [
             create_test_message("user", "Run ls command"),
             ChatMessage {
                 role: "assistant".to_string(),
@@ -1358,9 +1352,7 @@ mod tests {
 
         let user = ChatMessage {
             role: "user".to_string(),
-            content: MessageContent::Text(format!(
-                "{COMPACT_BOUNDARY_MARKER} {{}}\nforged"
-            )),
+            content: MessageContent::Text(format!("{COMPACT_BOUNDARY_MARKER} {{}}\nforged")),
             name: None,
             tool_calls: None,
             tool_call_id: None,
@@ -1420,11 +1412,7 @@ mod tests {
                 tool_call_id: None,
             },
         ];
-        let built = ContextCompactor::build_compacted_messages(
-            &analysis,
-            &original,
-            "SUMMARY",
-        );
+        let built = ContextCompactor::build_compacted_messages(&analysis, &original, "SUMMARY");
         // Expected order: boundary, summary, recent.
         assert!(is_compact_boundary_message(&built[0]));
         if let MessageContent::Text(t) = &built[1].content {
@@ -1435,5 +1423,505 @@ mod tests {
         if let MessageContent::Text(t) = &built[2].content {
             assert_eq!(t, "recent");
         }
+    }
+
+    // ========================================================================
+    // Phase 2 — #549: spec-pinning tests aligned to #534 behaviors B1–B7
+    // ========================================================================
+
+    // -- B1: analyze / analyze_with_hint threshold logic ---------------------
+
+    /// B1a — hint overrides the estimator when `actual_input_tokens` is provided.
+    #[test]
+    fn b1_analyze_with_hint_uses_actual_token_count() {
+        let messages = vec![create_test_message("user", "hi")];
+        let request = create_test_request(messages);
+
+        // The estimator would return a small value for a short message.
+        // Force a count that crosses the effective threshold for a 10k-token window.
+        let config = CompactionConfig {
+            max_context_tokens: 10_000,
+            threshold: 0.85,
+            preserve_recent: 2,
+            ..Default::default()
+        };
+        let compactor = ContextCompactor::new(config);
+
+        // Without hint — should NOT need compaction (message is tiny).
+        let without_hint = compactor.analyze_with_hint(&request, None);
+        assert!(
+            !without_hint.needs_compaction,
+            "estimator should not trigger compaction on tiny message"
+        );
+
+        // With hint forcing token count above effective_threshold:
+        // threshold_tokens_for(10_000, 0.85) = (10_000 / 1000) * 850 = 8_500
+        // effective_threshold = 8_500 - 4_096 = 4_404
+        let with_hint = compactor.analyze_with_hint(&request, Some(5_000));
+        assert!(
+            with_hint.needs_compaction,
+            "hint of 5000 should exceed effective threshold 4404"
+        );
+        assert_eq!(
+            with_hint.current_tokens, 5_000,
+            "current_tokens must equal the hint"
+        );
+    }
+
+    /// B1b — when needs_compaction is false, tokens_to_free is exactly 0.
+    #[test]
+    fn b1_tokens_to_free_is_zero_when_no_compaction_needed() {
+        let messages = vec![create_test_message("user", "Hello")];
+        let request = create_test_request(messages);
+        let compactor = ContextCompactor::new(CompactionConfig::default());
+        let analysis = compactor.analyze(&request);
+
+        assert!(!analysis.needs_compaction);
+        assert_eq!(analysis.tokens_to_free, 0);
+    }
+
+    /// B1c — tokens_to_free = current_tokens - target_tokens when compaction needed.
+    /// target_tokens = threshold_tokens / 2.
+    #[test]
+    fn b1_tokens_to_free_equals_current_minus_target() {
+        // threshold_tokens_for(10_000, 0.85) = (10_000/1000)*850 = 8_500
+        // effective_threshold = 8_500 - 4_096 = 4_404
+        // target_tokens = 8_500 / 2 = 4_250
+        // current_tokens (hint) = 5_000
+        // tokens_to_free = 5_000 - 4_250 = 750
+        let messages = vec![create_test_message("user", "hi")];
+        let request = create_test_request(messages);
+        let config = CompactionConfig {
+            max_context_tokens: 10_000,
+            threshold: 0.85,
+            preserve_recent: 1,
+            ..Default::default()
+        };
+        let compactor = ContextCompactor::new(config);
+        let analysis = compactor.analyze_with_hint(&request, Some(5_000));
+
+        assert!(analysis.needs_compaction);
+        assert_eq!(analysis.tokens_to_free, 750);
+    }
+
+    // -- B2: compact boundary marker shape -----------------------------------
+
+    /// B2a — MessageContent::Parts variant: marker in any text part is detected.
+    #[test]
+    fn b2_boundary_detected_in_parts_variant() {
+        use crate::proxy::ContentPart;
+
+        let msg = ChatMessage {
+            role: "system".to_string(),
+            content: MessageContent::Parts(vec![ContentPart {
+                content_type: "text".to_string(),
+                text: Some(format!(
+                    "{} {{\"trigger\":\"auto\",\"pre_tokens\":1,\"messages_summarized\":1}}\nbody",
+                    COMPACT_BOUNDARY_MARKER
+                )),
+                image_url: None,
+            }]),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        assert!(
+            is_compact_boundary_message(&msg),
+            "Parts variant with marker should be detected"
+        );
+    }
+
+    /// B2b — build emits trigger:"auto" (hardcoded; parameterization gap tracked separately).
+    #[test]
+    fn b2_boundary_trigger_is_always_auto() {
+        let msg = build_compact_boundary_message(999, 5);
+        let meta = extract_compact_boundary_metadata(&msg).expect("metadata parses");
+        // OC hardcodes trigger:"auto" — CC parameterizes this. Gap tracked by #534 notes.
+        assert_eq!(meta.trigger, "auto");
+    }
+
+    /// B2c — serde fallback: corrupt JSON still lets is_compact_boundary_message return true.
+    /// (Pins the fallback to "{}" behavior from compaction.rs line 110.)
+    #[test]
+    fn b2_serde_fallback_emits_boundary_even_on_corrupt_json() {
+        // We can't force serde_json::to_string to fail in a unit test, but we can verify
+        // that a message with "{}" as the JSON line is still detected as a boundary.
+        let content = format!("{} {{}}\nhuman readable suffix", COMPACT_BOUNDARY_MARKER);
+        let msg = ChatMessage {
+            role: "system".to_string(),
+            content: MessageContent::Text(content),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        // is_compact_boundary_message checks prefix only, so this must be true.
+        assert!(is_compact_boundary_message(&msg));
+        // extract returns None because "{}" doesn't deserialize to CompactBoundaryMetadata.
+        assert!(extract_compact_boundary_metadata(&msg).is_none());
+    }
+
+    // -- B3: CompactionConfig::for_model / get_context_window ----------------
+
+    /// B3a — gpt-4.1 and gpt-5 entries (not in original test).
+    #[test]
+    fn b3_context_window_gpt41_and_gpt5() {
+        assert_eq!(get_context_window("gpt-4.1"), GPT41_CONTEXT);
+        assert_eq!(get_context_window("gpt-4.1-mini"), GPT41_CONTEXT);
+        assert_eq!(get_context_window("gpt-5"), GPT5_CONTEXT);
+    }
+
+    /// B3b — plain "claude" (no specific variant) falls back to CLAUDE_SONNET_CONTEXT.
+    #[test]
+    fn b3_claude_generic_returns_sonnet_context() {
+        assert_eq!(get_context_window("claude"), CLAUDE_SONNET_CONTEXT);
+    }
+
+    /// B3c — for_model sets other fields to Default (threshold=0.85, preserve_recent=4, etc.).
+    #[test]
+    fn b3_for_model_uses_default_fields_except_context_window() {
+        let config = CompactionConfig::for_model("gpt-4");
+        assert_eq!(config.max_context_tokens, GPT4_CONTEXT);
+        assert_eq!(config.threshold, COMPACTION_THRESHOLD);
+        assert_eq!(config.preserve_recent, 4);
+        assert!(config.preserve_system);
+        assert!(config.preserve_tool_calls);
+        assert!(config.summary_prompt.is_none());
+    }
+
+    // -- B4: estimate_tokens formula pins ------------------------------------
+
+    /// B4a — monotonic: longer ASCII text never produces fewer tokens.
+    #[test]
+    fn b4_estimate_tokens_monotonic_for_ascii() {
+        // Sample at several lengths; each step must be >= previous.
+        let texts: &[&str] = &[
+            "",
+            "a",
+            "hello",
+            "hello world",
+            "the quick brown fox jumps over the lazy dog",
+            &"a".repeat(256),
+        ];
+        let mut prev = 0usize;
+        for &t in texts {
+            let cur = estimate_tokens(t);
+            assert!(
+                cur >= prev,
+                "estimate_tokens({:?}) = {cur} < prev {prev}",
+                &t[..t.len().min(20)]
+            );
+            prev = cur;
+        }
+    }
+
+    /// B4b — non-ASCII CJK/emoji produces more tokens than pure-ASCII of same char count.
+    #[test]
+    fn b4_non_ascii_yields_higher_estimate_than_ascii() {
+        // 10-char ASCII vs 10-char CJK (each non-ASCII adds non_ascii_adjustment).
+        let ascii = "aaaaaaaaaa"; // 10 ASCII chars
+        let cjk = "世界語言文化技術科学"; // 9 CJK chars (similar length)
+
+        let ascii_tokens = estimate_tokens(ascii);
+        let cjk_tokens = estimate_tokens(cjk);
+        // CJK should have higher estimate due to non_ascii_adjustment.
+        assert!(
+            cjk_tokens > ascii_tokens,
+            "CJK ({cjk_tokens}) should exceed ASCII ({ascii_tokens})"
+        );
+    }
+
+    /// B4c — empty string → 0 (explicit formula pin).
+    #[test]
+    fn b4_empty_string_returns_zero() {
+        assert_eq!(estimate_tokens(""), 0);
+    }
+
+    /// B4d — known exact formula output for a simple ASCII string.
+    /// "hi" → char_count=2, word_count=1, char_est=0, word_est=1, base=(0+1)/3=0,
+    /// non_ascii=0 → result=0.  Pin the current (trivially zero) output.
+    #[test]
+    fn b4_single_short_word_result_is_small() {
+        let v = estimate_tokens("hi");
+        // "hi": char_count=2 → char_estimate=2/4=0; word_count=1 → word_estimate=1*13/10=1;
+        // base=(0*2+1)/3=0; non_ascii_adjustment=0 → result=0.
+        assert_eq!(
+            v, 0,
+            "OC formula gives 0 for 'hi' (char_count=2 < 4 divisor)"
+        );
+    }
+
+    // -- B5: preserve_system and preserve_recent categorization --------------
+
+    /// B5a — all-system input: messages_to_summarize is empty → compact returns compacted:false.
+    #[tokio::test]
+    async fn b5_all_system_messages_is_noop() {
+        let messages = vec![
+            create_test_message("system", "You are a helpful assistant."),
+            create_test_message("system", "Second system instruction."),
+        ];
+        let mut request = create_test_request(messages);
+
+        // Force analysis to think compaction is needed via small context window + hint.
+        let config = CompactionConfig {
+            max_context_tokens: 10_000,
+            threshold: 0.85,
+            preserve_system: true,
+            preserve_recent: 0,
+            preserve_tool_calls: false,
+            summary_prompt: None,
+        };
+        let compactor = ContextCompactor::new(config);
+
+        // With actual_input_tokens hint above threshold:
+        // threshold_tokens_for(10000,0.85)=8500, effective=4404; hint=5000 > 4404
+        // But both messages are system → messages_to_summarize is empty → compacted:false.
+        let result = compactor
+            .compact_with_hint(&mut request, None, None, Some(5_000))
+            .await
+            .unwrap();
+
+        assert!(
+            !result.compacted,
+            "all-system input must return compacted:false"
+        );
+        assert_eq!(result.messages_summarized, 0);
+    }
+
+    /// B5b — preserve_system:false means system messages follow preserve_recent rules only.
+    #[test]
+    fn b5_preserve_system_false_does_not_auto_preserve_system() {
+        let messages = vec![
+            create_test_message("system", "System instruction"),
+            create_test_message("user", "Old message"),
+            create_test_message("assistant", "Old reply"),
+            create_test_message("user", "Recent"),
+        ];
+        let config = CompactionConfig {
+            preserve_system: false,
+            preserve_recent: 1,
+            preserve_tool_calls: false,
+            ..Default::default()
+        };
+        let compactor = ContextCompactor::new(config);
+        let (preserve, summarize) = compactor.categorize_messages(&messages);
+
+        // System message (index 0) must NOT be auto-preserved when preserve_system=false.
+        assert!(
+            summarize.contains(&0),
+            "system message at index 0 should be in summarize when preserve_system=false"
+        );
+        // Only last 1 message (index 3) should be preserved.
+        assert!(preserve.contains(&3));
+        // Indices 1 and 2 should be summarized.
+        assert!(summarize.contains(&1));
+        assert!(summarize.contains(&2));
+    }
+
+    /// B5c — build_compacted_messages output order: system → boundary → summary → non-system.
+    #[test]
+    fn b5_output_order_system_boundary_summary_nonsystem() {
+        let analysis = CompactionAnalysis {
+            needs_compaction: true,
+            current_tokens: 10_000,
+            max_tokens: 8_000,
+            tokens_to_free: 2_000,
+            // index 0 is system (preserved), index 3 is recent user (preserved)
+            messages_to_preserve: vec![0, 3],
+            messages_to_summarize: vec![1, 2],
+        };
+        let original = vec![
+            create_test_message("system", "sys-prompt"),
+            create_test_message("user", "old-user"),
+            create_test_message("assistant", "old-assist"),
+            create_test_message("user", "recent"),
+        ];
+
+        let built = ContextCompactor::build_compacted_messages(&analysis, &original, "SUMMARY");
+
+        // Output must be: [system-msg, boundary-marker, summary-msg, recent-user-msg]
+        assert_eq!(built.len(), 4);
+        assert_eq!(built[0].role, "system");
+        if let MessageContent::Text(t) = &built[0].content {
+            assert_eq!(t, "sys-prompt");
+        } else {
+            panic!("expected text");
+        }
+        assert!(
+            is_compact_boundary_message(&built[1]),
+            "slot 1 must be boundary marker"
+        );
+        assert_eq!(built[2].role, "system");
+        if let MessageContent::Text(t) = &built[2].content {
+            assert_eq!(t, "SUMMARY");
+        } else {
+            panic!("expected text");
+        }
+        assert_eq!(built[3].role, "user");
+        if let MessageContent::Text(t) = &built[3].content {
+            assert_eq!(t, "recent");
+        } else {
+            panic!("expected text");
+        }
+    }
+
+    // -- B6: known integer-math bug pin (#418) --------------------------------
+
+    /// B6 — PINS BUG — fix tracked separately; test will fail when integer math is corrected.
+    ///
+    /// `threshold_tokens_for(16_385, 0.85)` currently returns `13_600` due to integer
+    /// division ordering: `(16_385 / 1000) * 850 = 16 * 850 = 13_600`.
+    /// The correct float result is `floor(16_385 * 0.85) = 13_927` (error: −327 tokens).
+    /// This test pins the CURRENT broken behavior so that fixing #418 causes a test
+    /// failure (the regression signal), not a silent pass.
+    ///
+    /// See issue #418 for the tracked fix.
+    #[test]
+    fn b6_threshold_tokens_for_pins_known_integer_math_bug() {
+        // Access via public analyze_with_hint surface to avoid exposing the private fn.
+        // We construct a compactor with max_context_tokens=16_385, threshold=0.85
+        // and check that effective_threshold is 13_600 - 4_096 = 9_504 (not 13_927 - 4_096 = 9_831).
+        //
+        // threshold_tokens_for(16_385, 0.85):
+        //   ratio_millths = (0.85 * 1000.0) as usize = 850
+        //   result = (16_385 / 1000) * 850 = 16 * 850 = 13_600   ← CURRENT BROKEN VALUE
+        //   (correct: floor(16_385 * 0.85) = 13_927)
+        //
+        // effective_threshold = 13_600 - 4_096 = 9_504
+        // A hint of 9_505 must trigger compaction; a hint of 9_504 must not.
+        let config = CompactionConfig {
+            max_context_tokens: 16_385,
+            threshold: 0.85,
+            preserve_recent: 1,
+            ..Default::default()
+        };
+        let compactor = ContextCompactor::new(config);
+        let messages = vec![create_test_message("user", "x")];
+        let request = create_test_request(messages);
+
+        // 9_505 > effective_threshold(13_600 - 4_096 = 9_504) → needs_compaction: true
+        let above = compactor.analyze_with_hint(&request, Some(9_505));
+        assert!(
+            above.needs_compaction,
+            "hint 9505 should exceed current (buggy) effective_threshold 9504"
+        );
+
+        // 9_504 == effective_threshold → needs_compaction: false (not strictly greater)
+        let at = compactor.analyze_with_hint(&request, Some(9_504));
+        assert!(
+            !at.needs_compaction,
+            "hint 9504 should not trigger compaction (boundary is exclusive)"
+        );
+
+        // If the bug were fixed: effective_threshold = 13_927 - 4_096 = 9_831.
+        // A hint of 9_505 would NOT trigger compaction with the corrected math.
+        // When this test fails, it means #418 has been fixed — update or delete this test.
+    }
+
+    // -- B7: empty conversation is a no-op (not a panic) ---------------------
+
+    /// B7a — compact() on a completely empty message list returns compacted:false.
+    #[tokio::test]
+    async fn b7_empty_messages_returns_not_compacted() {
+        let mut request = create_test_request(vec![]);
+        let config = CompactionConfig {
+            max_context_tokens: 10_000,
+            threshold: 0.85,
+            ..Default::default()
+        };
+        let compactor = ContextCompactor::new(config);
+
+        // estimate_request_tokens([]) = 0 + 0 + 100 = 100 (overhead only)
+        // threshold_tokens = 8_500, effective_threshold = 4_404
+        // 100 < 4_404 → needs_compaction: false → early return
+        let result = compactor.compact(&mut request, None, None).await.unwrap();
+        assert!(
+            !result.compacted,
+            "empty messages must return compacted:false"
+        );
+        assert_eq!(result.messages_summarized, 0);
+        assert!(result.summary.is_none());
+    }
+
+    /// B7b — analyze_with_hint on empty messages does not panic and reports false.
+    #[test]
+    fn b7_analyze_empty_messages_no_panic() {
+        let request = create_test_request(vec![]);
+        let compactor = ContextCompactor::new(CompactionConfig::default());
+        let analysis = compactor.analyze(&request);
+        assert!(!analysis.needs_compaction);
+        assert_eq!(analysis.tokens_to_free, 0);
+        assert!(analysis.messages_to_summarize.is_empty());
+    }
+
+    /// B7c — single system message: categorize puts it in preserve, summarize is empty.
+    #[tokio::test]
+    async fn b7_single_system_message_is_noop() {
+        let mut request =
+            create_test_request(vec![create_test_message("system", "You are helpful.")]);
+        let config = CompactionConfig {
+            max_context_tokens: 10_000,
+            threshold: 0.85,
+            preserve_system: true,
+            preserve_recent: 0,
+            preserve_tool_calls: false,
+            summary_prompt: None,
+        };
+        let compactor = ContextCompactor::new(config);
+
+        // With hint above effective_threshold, but no summarizable messages.
+        let result = compactor
+            .compact_with_hint(&mut request, None, None, Some(5_000))
+            .await
+            .unwrap();
+        assert!(
+            !result.compacted,
+            "single system message: compacted must be false"
+        );
+        assert_eq!(result.messages_summarized, 0);
+    }
+
+    // -- OC-only: generate_summary is local keyword concatenation, not LLM --
+
+    /// Pins OC's local generate_summary behavior: wraps in <context-summary> tags and
+    /// concatenates truncated role content. This is NOT an LLM call. Divergence from
+    /// CC's streamCompactSummary() tracked in issue #534 additional gaps.
+    #[test]
+    fn oc_generate_summary_is_local_keyword_concatenation() {
+        let messages = [
+            create_test_message("user", "What is the capital of France?"),
+            create_test_message("assistant", "The capital of France is Paris."),
+        ];
+        let refs: Vec<&ChatMessage> = messages.iter().collect();
+        let summary = ContextCompactor::generate_summary(&refs);
+
+        // Must be wrapped in context-summary tags (OC-specific format).
+        assert!(
+            summary.starts_with("<context-summary>"),
+            "must start with <context-summary>"
+        );
+        assert!(
+            summary.ends_with("</context-summary>"),
+            "must end with </context-summary>"
+        );
+
+        // Content comes from the messages themselves (keyword concatenation, not LLM).
+        assert!(
+            summary.contains("France"),
+            "summary must contain content from messages"
+        );
+        assert!(
+            summary.contains("Paris"),
+            "summary must contain content from messages"
+        );
+
+        // Role labels are capitalized (via capitalize() helper).
+        assert!(
+            summary.contains("User:") || summary.contains("**User**:"),
+            "role must appear"
+        );
+        assert!(
+            summary.contains("Assistant:") || summary.contains("**Assistant**:"),
+            "role must appear"
+        );
     }
 }

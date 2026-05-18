@@ -187,8 +187,7 @@ pub fn build_google_request(messages: &[Value], effort_level: &str) -> Value {
         let budget = crate::thinking::anthropic_thinking_budget(Some(effort_level))
             .unwrap_or(crate::thinking::ULTRATHINK_BUDGET_TOKENS)
             .min(GEMINI_THINKING_CAP);
-        generation_config["thinkingConfig"] =
-            serde_json::json!({"thinkingBudget": budget});
+        generation_config["thinkingConfig"] = serde_json::json!({"thinkingBudget": budget});
     }
     let mut req = serde_json::json!({
         "contents": contents,
@@ -223,13 +222,9 @@ pub fn build_request(
     let resolved = crate::thinking::resolve_effort(effort_level, messages);
     let effective = resolved.as_deref().unwrap_or("medium");
     match provider {
-        "anthropic" => build_anthropic_request(
-            model,
-            messages,
-            effective,
-            claude_code_token,
-            prompt_blocks,
-        ),
+        "anthropic" => {
+            build_anthropic_request(model, messages, effective, claude_code_token, prompt_blocks)
+        }
         "google" => build_google_request(messages, effective),
         _ => build_openai_request(model, messages, effective),
     }
@@ -981,8 +976,8 @@ async fn execute_tool_calls_for_tui(
         // scripts. Best-effort: hook errors are logged inside the engine
         // and don't affect the tool result the caller sees.
         if let Some(engine) = hook_engine.as_ref() {
-            let tool_input: Value = serde_json::from_str(&tool_call.function.arguments)
-                .unwrap_or(Value::Null);
+            let tool_input: Value =
+                serde_json::from_str(&tool_call.function.arguments).unwrap_or(Value::Null);
             engine
                 .fire_post_tool(
                     !result.is_error,
@@ -1175,7 +1170,9 @@ mod tests {
         // MAX_THINKING_TOKENS override.
         // SAFETY: no other test in this module mutates MAX_THINKING_TOKENS.
         let prev = std::env::var("MAX_THINKING_TOKENS").ok();
-        unsafe { std::env::remove_var("MAX_THINKING_TOKENS"); }
+        unsafe {
+            std::env::remove_var("MAX_THINKING_TOKENS");
+        }
         let messages = vec![serde_json::json!({"role": "user", "content": "hi"})];
 
         let high = build_anthropic_request("claude-sonnet-4-6", &messages, "high", None, None);
@@ -1199,7 +1196,9 @@ mod tests {
         assert!(med.get("thinking").is_none());
         assert_eq!(med["max_tokens"], crate::DEFAULT_MAX_TOKENS);
         if let Some(v) = prev {
-            unsafe { std::env::set_var("MAX_THINKING_TOKENS", v); }
+            unsafe {
+                std::env::set_var("MAX_THINKING_TOKENS", v);
+            }
         }
     }
 
@@ -1231,7 +1230,15 @@ mod tests {
             req["thinking"]["budget_tokens"],
             crate::thinking::ULTRATHINK_BUDGET_TOKENS,
         );
-        if let Some(v) = prev.0 { unsafe { std::env::set_var("MAX_THINKING_TOKENS", v); } }
-        if let Some(v) = prev.1 { unsafe { std::env::set_var("CLAUDE_CODE_EFFORT_LEVEL", v); } }
+        if let Some(v) = prev.0 {
+            unsafe {
+                std::env::set_var("MAX_THINKING_TOKENS", v);
+            }
+        }
+        if let Some(v) = prev.1 {
+            unsafe {
+                std::env::set_var("CLAUDE_CODE_EFFORT_LEVEL", v);
+            }
+        }
     }
 }

@@ -138,9 +138,7 @@ mod tests {
             .unwrap();
         let _c = co
             .queue_mut()
-            .submit(
-                Task::new(AgentType::GeneralPurpose, "implement").depends_on(vec![b]),
-            )
+            .submit(Task::new(AgentType::GeneralPurpose, "implement").depends_on(vec![b]))
             .unwrap();
         assert_eq!(co.queue().len(), 3);
     }

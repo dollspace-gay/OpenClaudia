@@ -121,7 +121,10 @@ pub fn validate_plugin_dir_name(name: &str) -> Result<(), PluginError> {
         )));
     }
     let forbidden: &[char] = &['/', '\\', '\0', ':'];
-    if name.chars().any(|c| forbidden.contains(&c) || c.is_control()) {
+    if name
+        .chars()
+        .any(|c| forbidden.contains(&c) || c.is_control())
+    {
         return Err(PluginError::InvalidManifest(format!(
             "Derived directory name '{name}' contains path separator, NUL, or control character"
         )));

@@ -48,8 +48,7 @@ fn find_whole_word(haystack: &str, needle: &str) -> bool {
     while let Some(pos) = haystack[start..].find(needle) {
         let abs = start + pos;
         let before_ok = abs == 0 || !is_word_byte(bytes[abs - 1]);
-        let after_ok =
-            abs + needle_len == bytes.len() || !is_word_byte(bytes[abs + needle_len]);
+        let after_ok = abs + needle_len == bytes.len() || !is_word_byte(bytes[abs + needle_len]);
         if before_ok && after_ok {
             return true;
         }
@@ -188,21 +187,33 @@ mod tests {
         let plain = vec![json!({"role": "user", "content": "hi"})];
         assert_eq!(resolve_effort("medium", &plain), Some("medium".to_string()));
         if let Some(v) = prev {
-            unsafe { std::env::set_var("CLAUDE_CODE_EFFORT_LEVEL", v); }
+            unsafe {
+                std::env::set_var("CLAUDE_CODE_EFFORT_LEVEL", v);
+            }
         }
     }
 
     #[test]
     fn anthropic_budget_high_is_ultrathink() {
         let prev = std::env::var("MAX_THINKING_TOKENS").ok();
-        unsafe { std::env::remove_var("MAX_THINKING_TOKENS"); }
-        assert_eq!(anthropic_thinking_budget(Some("high")), Some(ULTRATHINK_BUDGET_TOKENS));
-        assert_eq!(anthropic_thinking_budget(Some("max")), Some(ULTRATHINK_BUDGET_TOKENS));
+        unsafe {
+            std::env::remove_var("MAX_THINKING_TOKENS");
+        }
+        assert_eq!(
+            anthropic_thinking_budget(Some("high")),
+            Some(ULTRATHINK_BUDGET_TOKENS)
+        );
+        assert_eq!(
+            anthropic_thinking_budget(Some("max")),
+            Some(ULTRATHINK_BUDGET_TOKENS)
+        );
         assert_eq!(anthropic_thinking_budget(Some("medium")), None);
         assert_eq!(anthropic_thinking_budget(Some("low")), None);
         assert_eq!(anthropic_thinking_budget(None), None);
         if let Some(v) = prev {
-            unsafe { std::env::set_var("MAX_THINKING_TOKENS", v); }
+            unsafe {
+                std::env::set_var("MAX_THINKING_TOKENS", v);
+            }
         }
     }
 }

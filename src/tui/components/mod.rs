@@ -21,8 +21,8 @@ pub mod log_selector;
 pub use help::HelpOverlay;
 pub use log_selector::{LogSelector, SelectedSession};
 
-use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::Frame;
 
 /// What the event loop should do after handing a key event to an
 /// overlay. Returned by `handle_key` so the loop can close the overlay

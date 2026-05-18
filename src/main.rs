@@ -13,7 +13,9 @@
 mod cli;
 
 use openclaudia::{
-    config, guardrails, memory, permissions::PermissionManager, plugins, prompt, proxy,
+    config, guardrails, memory,
+    permissions::PermissionManager,
+    plugins, prompt, proxy,
     proxy::normalize_base_url,
     session, tool_intercept,
     tools::{self, safe_truncate},
@@ -178,7 +180,9 @@ async fn main() -> anyhow::Result<()> {
                 .ok()
         });
         match file {
-            Some(f) => tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::sync::Mutex::new(f)),
+            Some(f) => {
+                tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::sync::Mutex::new(f))
+            }
             // If we can't open a log file, fall back to sink so we never spray
             // stderr onto the TUI.
             None => tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::sink),
@@ -201,9 +205,8 @@ async fn main() -> anyhow::Result<()> {
     // Run on-disk schema migrations before any subsystem touches the
     // stores they manage. Failures never abort startup — the runner
     // logs each and continues.
-    let _ = openclaudia::migrations::run_all(
-        &openclaudia::migrations::MigrationContext::from_env(),
-    );
+    let _ =
+        openclaudia::migrations::run_all(&openclaudia::migrations::MigrationContext::from_env());
 
     match cli.command {
         None if cli.tui_mode => {
@@ -291,44 +294,45 @@ async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
     // log-safe newtype semantics (crosslink #256). In the OAuth/Claude-Code
     // path it's `None` — `resolve_headers` ignores it when `claude_code_token`
     // is provided. Otherwise we require a real key from provider config.
-    let api_key: Option<openclaudia::providers::ApiKey> =
-        if config.proxy.target == "anthropic" && provider.api_key.is_none() {
-            if openclaudia::claude_credentials::has_claude_code_credentials() {
-                match openclaudia::claude_credentials::load_credentials().await {
-                    Ok(creds) => {
-                        claude_code_token = Some(creds.access_token);
-                        None
-                    }
-                    Err(e) => {
-                        eprintln!("Error: Claude Code credentials unusable: {e}");
-                        eprintln!(
-                            "Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY."
-                        );
-                        return Ok(());
-                    }
+    let api_key: Option<openclaudia::providers::ApiKey> = if config.proxy.target == "anthropic"
+        && provider.api_key.is_none()
+    {
+        if openclaudia::claude_credentials::has_claude_code_credentials() {
+            match openclaudia::claude_credentials::load_credentials().await {
+                Ok(creds) => {
+                    claude_code_token = Some(creds.access_token);
+                    None
                 }
-            } else {
-                eprintln!("No API key configured for Anthropic.");
-                eprintln!("Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY.");
-                return Ok(());
+                Err(e) => {
+                    eprintln!("Error: Claude Code credentials unusable: {e}");
+                    eprintln!(
+                        "Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY."
+                    );
+                    return Ok(());
+                }
             }
-        } else if let Some(k) = &provider.api_key {
-            Some(k.clone())
         } else {
-            let env_var = match config.proxy.target.as_str() {
-                "openai" => "OPENAI_API_KEY",
-                "google" => "GOOGLE_API_KEY",
-                "zai" => "ZAI_API_KEY",
-                "deepseek" => "DEEPSEEK_API_KEY",
-                "qwen" => "QWEN_API_KEY",
-                _ => "API_KEY",
-            };
-            eprintln!(
-                "No API key configured for '{}'. Set {} or add to config.",
-                config.proxy.target, env_var
-            );
+            eprintln!("No API key configured for Anthropic.");
+            eprintln!("Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY.");
             return Ok(());
+        }
+    } else if let Some(k) = &provider.api_key {
+        Some(k.clone())
+    } else {
+        let env_var = match config.proxy.target.as_str() {
+            "openai" => "OPENAI_API_KEY",
+            "google" => "GOOGLE_API_KEY",
+            "zai" => "ZAI_API_KEY",
+            "deepseek" => "DEEPSEEK_API_KEY",
+            "qwen" => "QWEN_API_KEY",
+            _ => "API_KEY",
         };
+        eprintln!(
+            "No API key configured for '{}'. Set {} or add to config.",
+            config.proxy.target, env_var
+        );
+        return Ok(());
+    };
 
     let model = model_override
         .or_else(|| provider.model.clone())
@@ -611,11 +615,7 @@ fn init_permission_manager(config: &config::AppConfig) -> PermissionManager {
 /// Prints a user-facing status line in either case.
 ///
 /// Extracted from `cmd_chat` per crosslink #262.
-fn maybe_resume_session(
-    chat_session: &mut ChatSession,
-    resume: bool,
-    session_id: Option<&str>,
-) {
+fn maybe_resume_session(chat_session: &mut ChatSession, resume: bool, session_id: Option<&str>) {
     if !resume && session_id.is_none() {
         return;
     }
@@ -866,9 +866,7 @@ async fn resolve_chat_auth(
     if target == "anthropic" && provider.api_key.is_none() {
         if !openclaudia::claude_credentials::has_claude_code_credentials() {
             eprintln!("No API key configured for Anthropic.");
-            eprintln!(
-                "Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY."
-            );
+            eprintln!("Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY.");
             return Ok(None);
         }
         match openclaudia::claude_credentials::load_credentials().await {
@@ -990,11 +988,8 @@ async fn cmd_chat(
         return Ok(());
     };
 
-    let mut model = resolve_model_name(
-        model_override,
-        provider.model.clone(),
-        &config.proxy.target,
-    );
+    let mut model =
+        resolve_model_name(model_override, provider.model.clone(), &config.proxy.target);
 
     let adapter = get_adapter(&config.proxy.target);
     let client = reqwest::Client::new();
@@ -4024,14 +4019,20 @@ mod tests {
 
     #[test]
     fn resolve_model_per_target_defaults() {
-        assert_eq!(resolve_model_name(None, None, "anthropic"), "claude-opus-4-6");
+        assert_eq!(
+            resolve_model_name(None, None, "anthropic"),
+            "claude-opus-4-6"
+        );
         assert_eq!(resolve_model_name(None, None, "openai"), "gpt-5.2");
         assert_eq!(resolve_model_name(None, None, "google"), "gemini-2.5-flash");
         assert_eq!(resolve_model_name(None, None, "zai"), "glm-5");
         assert_eq!(resolve_model_name(None, None, "deepseek"), "deepseek-chat");
         assert_eq!(resolve_model_name(None, None, "qwen"), "qwen3.5-plus");
         // Unknown target falls back to the OpenAI default.
-        assert_eq!(resolve_model_name(None, None, "unknown-provider"), "gpt-5.2");
+        assert_eq!(
+            resolve_model_name(None, None, "unknown-provider"),
+            "gpt-5.2"
+        );
     }
 
     #[test]

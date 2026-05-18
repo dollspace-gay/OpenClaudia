@@ -131,11 +131,7 @@ fn sources_match(candidate: &MarketplaceSource, rule: &MarketplaceSource) -> boo
                 git_ref: ref2,
                 path: p2,
             },
-        ) => {
-            r1.eq_ignore_ascii_case(r2)
-                && wild_match_opt(ref1, ref2)
-                && wild_match_opt(p1, p2)
-        }
+        ) => r1.eq_ignore_ascii_case(r2) && wild_match_opt(ref1, ref2) && wild_match_opt(p1, p2),
         (
             MarketplaceSource::Git {
                 url: u1,
@@ -152,18 +148,13 @@ fn sources_match(candidate: &MarketplaceSource, rule: &MarketplaceSource) -> boo
                 && wild_match_opt(ref1, ref2)
                 && wild_match_opt(p1, p2)
         }
-        (
-            MarketplaceSource::Url { url: u1, .. },
-            MarketplaceSource::Url { url: u2, .. },
-        ) => u1 == u2,
-        (
-            MarketplaceSource::File { path: p1 },
-            MarketplaceSource::File { path: p2 },
-        ) => p1 == p2,
-        (
-            MarketplaceSource::Directory { path: p1 },
-            MarketplaceSource::Directory { path: p2 },
-        ) => p1 == p2,
+        (MarketplaceSource::Url { url: u1, .. }, MarketplaceSource::Url { url: u2, .. }) => {
+            u1 == u2
+        }
+        (MarketplaceSource::File { path: p1 }, MarketplaceSource::File { path: p2 }) => p1 == p2,
+        (MarketplaceSource::Directory { path: p1 }, MarketplaceSource::Directory { path: p2 }) => {
+            p1 == p2
+        }
         _ => false,
     }
 }
@@ -278,9 +269,7 @@ mod tests {
             ..PluginPolicy::default()
         };
         // Same upstream, different spelling.
-        assert!(
-            check_marketplace_allowed(&git("https://example.com/foo"), &policy).is_ok()
-        );
+        assert!(check_marketplace_allowed(&git("https://example.com/foo"), &policy).is_ok());
     }
 
     #[test]
@@ -290,9 +279,7 @@ mod tests {
             ..PluginPolicy::default()
         };
         // Rule omits `ref` → any candidate ref is allowed.
-        assert!(
-            check_marketplace_allowed(&github_with_ref("x/y", "v2"), &policy).is_ok()
-        );
+        assert!(check_marketplace_allowed(&github_with_ref("x/y", "v2"), &policy).is_ok());
     }
 
     #[test]
@@ -301,9 +288,7 @@ mod tests {
             strict_known_marketplaces: Some(vec![github_with_ref("x/y", "main")]),
             ..PluginPolicy::default()
         };
-        assert!(
-            check_marketplace_allowed(&github_with_ref("x/y", "main"), &policy).is_ok()
-        );
+        assert!(check_marketplace_allowed(&github_with_ref("x/y", "main"), &policy).is_ok());
         assert_eq!(
             check_marketplace_allowed(&github_with_ref("x/y", "dev"), &policy),
             Err(PolicyRejection::NotInAllowlist),
