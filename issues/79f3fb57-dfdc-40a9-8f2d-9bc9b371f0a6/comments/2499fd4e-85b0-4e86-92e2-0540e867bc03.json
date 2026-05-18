@@ -1,0 +1,10 @@
+{
+  "uuid": "2499fd4e-85b0-4e86-92e2-0540e867bc03",
+  "issue_uuid": "79f3fb57-dfdc-40a9-8f2d-9bc9b371f0a6",
+  "author": "lOrm",
+  "content": "Delivered: Replaced all three Command::new('kill') PATH-lookups with direct libc::kill() syscalls. Uses pid.cast_signed() (clippy pedantic preferred form), process_group_id variable name (avoids similar_names lint). SIGTERM/SIGKILL errors are now logged via tracing::debug instead of let _-discarded. Windows path unchanged (uses taskkill, no PATH issue there). 1135 tests pass, clippy clean, rustfmt exit 0.",
+  "created_at": "2026-05-18T22:46:11.606228971Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA/qAhG4X25SWf+EU+Ov7+UwbXoFR1N/643KMMCcjkVyM7z42HHg5ZdiAp5yd5lnd3MtElxItoi4KUKFs0r+VeCw=="
+}
