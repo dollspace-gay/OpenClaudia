@@ -1,0 +1,10 @@
+{
+  "uuid": "3ed50ca2-9a8b-46ab-9195-ccaf1d12ba68",
+  "issue_uuid": "c267e7f8-36be-4df0-aefd-a8d6e9c06d3e",
+  "author": "lOrm",
+  "content": "Delivered: tests/web_integration.rs — 27 passing tests, 2 browser-gated #[ignore] tests. All 5 spec behaviors covered. 4 gap issues pinned with comments referencing #603, #605, #608, #610. No production code changed. cargo build, cargo test, cargo clippy --tests (for new file — 0 new errors), cargo fmt --check all pass.",
+  "created_at": "2026-05-18T16:41:10.848938030Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAm/GOVPEJ282/l6yvdnHNAMWkcnC6tpnHy/5wgrJuLM+dw6hN9sL7KlDHsSlShLJsJYjZrTKwN/mNIuGocdg/Cg=="
+}
