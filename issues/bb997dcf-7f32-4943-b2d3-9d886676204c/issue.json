@@ -8,8 +8,9 @@
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:53:34.678023338Z",
-  "updated_at": "2026-05-18T15:53:38.565500035Z",
+  "updated_at": "2026-05-18T15:53:45.980641282Z",
   "labels": [
-    "feature"
+    "feature",
+    "cc-parity"
   ]
 }
