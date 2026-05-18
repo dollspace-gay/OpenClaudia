@@ -1,0 +1,11 @@
+{
+  "uuid": "a0313a20-9f1b-4b76-a79c-d090fd6a5890",
+  "display_id": 669,
+  "title": "coordinator/mod.rs: rewrite doc_lazy_continuation justifying comment + actually fix the inherited docs",
+  "description": "Filed from architect audit of #547. Subagent added `#![allow(clippy::doc_lazy_continuation)]` at `src/coordinator/mod.rs:21` with a justifying comment that contains forbidden phrasing (\"out of scope for #547\"). Two follow-ups:\n\n1. Rewrite the comment to drop scope-narrowing language. The lint comment template per rust-fix-discipline is \"lint is wrong here because X\", not \"fixing is out of scope.\"\n2. Actually fix the underlying lint by re-flowing the inherited Phase 1 doc bullets so the continuation lines indent correctly, then remove the module-level allow.\n\nLow priority — the allow is doing the right thing (Category C, pre-existing lint not caused by #547's tests). This is comment + cleanup hygiene.",
+  "status": "open",
+  "priority": "low",
+  "created_by": "lOrm",
+  "created_at": "2026-05-18T17:50:28.599450704Z",
+  "updated_at": "2026-05-18T17:50:28.599450704Z"
+}
