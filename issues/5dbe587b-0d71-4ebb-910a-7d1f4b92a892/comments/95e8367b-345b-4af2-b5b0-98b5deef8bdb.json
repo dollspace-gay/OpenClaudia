@@ -1,0 +1,10 @@
+{
+  "uuid": "95e8367b-345b-4af2-b5b0-98b5deef8bdb",
+  "issue_uuid": "5dbe587b-0d71-4ebb-910a-7d1f4b92a892",
+  "author": "lOrm",
+  "content": "Committed: tests: pin LSP Phase 1 spec contracts in lsp.rs (#550) | Files: 1 file changed, 464 insertions(+) | Tests: 19 → 35 in tools::lsp (all 6 spec behaviors covered, 0 ignored, 0 live-server deps)",
+  "created_at": "2026-05-18T16:38:28.289846568Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABASF3YY6t4ZoQK+w5C3gNbyF9qyWJytqm9mm9xFw4EAgsadjqRHLYxcUUiZ73X5Y+1YOBdTSTftvbbEjKG84rvCA=="
+}
