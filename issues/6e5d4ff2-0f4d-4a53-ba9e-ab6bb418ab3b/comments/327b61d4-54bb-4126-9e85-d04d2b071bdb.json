@@ -1,0 +1,10 @@
+{
+  "uuid": "327b61d4-54bb-4126-9e85-d04d2b071bdb",
+  "issue_uuid": "6e5d4ff2-0f4d-4a53-ba9e-ab6bb418ab3b",
+  "author": "lOrm",
+  "content": "Spec extraction complete. 6 behaviors specified (B1–B6). 1 new gap filed as #604 (team memory, child of #523). G2 (semantic ranking) and G3 (extractMemories agent) noted as already tracked under #508. 6 OC test gaps enumerated (UTF-8 boundaries, trailing-newline edge case, whitespace-only file, HOME-unset path).",
+  "created_at": "2026-05-18T16:03:22.263671469Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAUtTD7b+DNpCM407cFmckSt4Q+D7ChcTGuNb7BH2x8+QJ62/zZ3wrqcy08MZM30+0kZ7x/OjaNEsKXwVUIUFGBw=="
+}
