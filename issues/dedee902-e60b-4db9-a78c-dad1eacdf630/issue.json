@@ -1,0 +1,11 @@
+{
+  "uuid": "dedee902-e60b-4db9-a78c-dad1eacdf630",
+  "display_id": 943,
+  "title": "PermissionsConfig::default_allow Vec<String> globs loaded but never validated",
+  "description": "## Severity\nMinor\n## Dimension\nsecurity\n## Location\nsrc/config/permissions.rs:7-17\n## Violation\ndefault_allow accepts arbitrary glob strings from YAML with no validation. An unbounded glob like `**` permits ALL operations matching the tool's primary argument — effectively disabling the permission system while LOOKING enabled. Regex-style entries are treated as literal globs (silent mismatch). No per-tool scoping.\n## Mandated refactor\nType as Vec<AllowEntry> { tool, pattern, mode } with Deserialize validating pattern via globset. Reject unbounded patterns unless allow_unbounded_globs=true. Warn if default_allow is non-empty but enabled=false.\n## Filed from QA review dispatch",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-05-18T22:18:46.203105081Z",
+  "updated_at": "2026-05-18T22:18:46.203105081Z"
+}
