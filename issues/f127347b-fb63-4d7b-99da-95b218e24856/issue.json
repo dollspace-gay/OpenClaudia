@@ -1,0 +1,11 @@
+{
+  "uuid": "f127347b-fb63-4d7b-99da-95b218e24856",
+  "display_id": 592,
+  "title": "Raise pipeline retry limit from 3 to 10 (parity with CC withRetry.ts DEFAULT_MAX_RETRIES)",
+  "status": "open",
+  "priority": "medium",
+  "parent_uuid": "5e625118-78a2-470d-b9fd-644b77070cb7",
+  "created_by": "lOrm",
+  "created_at": "2026-05-18T15:54:03.524187243Z",
+  "updated_at": "2026-05-18T15:54:03.524187243Z"
+}
