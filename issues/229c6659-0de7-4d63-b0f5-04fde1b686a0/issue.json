@@ -3,11 +3,12 @@
   "display_id": 676,
   "title": "subagent: double-registered agent_id makes background results unreachable via agent_output",
   "description": "## Severity\nCritical\n## Dimension\nconcurrency\n## Location\nsrc/subagent.rs:1312-1331 (execute_task_tool background path) and src/subagent.rs:688-689 (run_subagent registration)\n## Violation\nIn `execute_task_tool` the background branch registers an agent and returns its id to the caller:\n\n```rust\nlet agent_id = BACKGROUND_AGENTS.register(agent_type, description);\n// ...\nhandle.spawn(async move {\n    let result = run_subagent(&config_bg, &app_config_bg, &client_bg).await;\n    if !result.success {\n        BACKGROUND_AGENTS.fail(&agent_id_bg, result.output);\n    }\n});\n```\n\nBut `run_subagent` itself unconditionally calls:\n\n```rust\nlet id = BACKGROUND_AGENTS.register(config.agent_type, &config.task);\n```\n\n(line 689) producing a *second*, different id. All `increment_turns`, `finish`, and transcript storage inside `run_subagent` are keyed on that inner id; the caller-visible id is only ever touched on the `result.success == false` branch. The user is handed an `agent_id` that will report `turns=0`, no result, and is_finished=false forever, even after the agent completes successfully. `agent_output` cannot recover the real output.\n\n## Mandated refactor\nMake `run_subagent` accept an optional pre-allocated `agent_id` (or remove the inner `register` and require callers to register), so the id the caller sees is the id the subagent uses for tracking / transcript / finish. The background spawn path must not double-register.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:46:35.861584071Z",
-  "updated_at": "2026-05-18T21:46:38.669806673Z",
+  "updated_at": "2026-05-19T20:02:15.460964587Z",
+  "closed_at": "2026-05-19T20:02:15.460964587Z",
   "labels": [
     "qa-review",
     "concurrency"
