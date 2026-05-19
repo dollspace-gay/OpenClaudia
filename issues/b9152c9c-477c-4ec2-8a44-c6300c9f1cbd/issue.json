@@ -3,11 +3,12 @@
   "display_id": 794,
   "title": "convert_response copies the entire upstream body into memory before forwarding",
   "description": "## Severity\nMajor\n## Dimension\ncomplexity\n## Location\nsrc/proxy.rs:1513-1553, 1285-1313\n## Violation\nBoth convert_response and convert_response_with_usage buffer the entire upstream response via response.bytes().await before constructing the axum Response::Body. For non-streaming responses this is fine. For SSE the proxy never streams — every response is fully buffered. A long-running streaming generation (e.g. claude-opus-4 with 8k tokens, 5 min wall-clock) means the client sits idle for the full generation. Worse, body_max_size is implicit (no cap) so a malicious or buggy upstream that emits megabytes of SSE OOMs the proxy.\n## Mandated refactor\nFor streaming responses (content-type: text/event-stream), use Body::from_stream(response.bytes_stream()) so axum forwards bytes as they arrive. Apply max_response_bytes from config to bound the streaming path too (use a wrapping stream that errors past the limit). Only buffer for non-streaming JSON responses where extract_usage requires the full body.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:59:18.062338858Z",
-  "updated_at": "2026-05-18T22:00:09.439177356Z",
+  "updated_at": "2026-05-19T23:18:37.520369875Z",
+  "closed_at": "2026-05-19T23:18:37.520369875Z",
   "labels": [
     "qa-review",
     "complexity"
