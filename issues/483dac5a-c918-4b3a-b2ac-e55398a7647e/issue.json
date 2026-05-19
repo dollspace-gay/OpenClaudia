@@ -3,9 +3,10 @@
   "display_id": 774,
   "title": "ContextInjector::inject ignores allowlist; system messages from disallowed hooks still injected",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/context.rs:88-119 (ContextInjector::inject)\n## Violation\n```rust\npub fn inject(request: &mut ChatCompletionRequest, hook_result: &HookResult) {\n    let system_messages: Vec<&str> = hook_result.system_messages();\n    if system_messages.is_empty() { return; }\n    let combined = system_messages.join(\"\\n\\n\");\n    let reminder = wrap_system_reminder(&combined);\n    ...\n}\n```\n\nThe injector checks neither `hook_result.allowed` nor `hook_result.errors`. A hook that explicitly denied the operation (`allowed = false`) but still produced an output is treated identically to a passing one — its `system_message` field is injected into the next turn's user message, silently. This couples failed authorization with passed prompt context.\n\nWorse, when a hook's `system_message` includes attacker-controlled content sourced from a tool's output (file content, web fetch result), the only defense is the delimiter-neutralization escape — there is no other sanitization, no length cap, and no content-type validation. A 10 MB web-fetch result inserted into a hook output ships verbatim into the model's user message.\n## Mandated refactor\nAdd an explicit `if !hook_result.allowed { return; }` guard, OR change the API to take a `&PermittedHookResult` newtype that can only be constructed from an allowed result. Add a per-hook output length cap (e.g. 32 KiB after envelope) and surface oversize-truncation in the injected text. Document in the function doc-comment that hook outputs are routed through the model — and that hooks therefore must NEVER include unsanitized tool output.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:55:53.549880287Z",
-  "updated_at": "2026-05-18T21:55:53.549880287Z"
+  "updated_at": "2026-05-19T23:23:26.169194652Z",
+  "closed_at": "2026-05-19T23:23:26.169194652Z"
 }
