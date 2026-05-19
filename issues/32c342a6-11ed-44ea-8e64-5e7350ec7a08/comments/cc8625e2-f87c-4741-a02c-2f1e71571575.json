@@ -1,0 +1,10 @@
+{
+  "uuid": "cc8625e2-f87c-4741-a02c-2f1e71571575",
+  "issue_uuid": "32c342a6-11ed-44ea-8e64-5e7350ec7a08",
+  "author": "lOrm",
+  "content": "fix: persist_to_disk uses OpenOptions::create_new(true).mode(0o600).open() on Unix — atomic O_EXCL|O_CREAT|O_WRONLY at owner-only perms in a single syscall. Closes both the mid-write 0o644 window and the .tmp symlink-clobber surface. Error paths now remove the half-written tmp. Non-Unix targets refuse to persist (logged error). Four #[cfg(unix)] regression tests added: (1) destination is 0o600 under permissive umask, (2) tmp file never observable at non-0600 mode across a 500-iter race vs a watcher thread, (3) pre-existing .tmp causes fail-closed (attacker file untouched, destination not written), (4) round-trip control proving token bytes do reach disk. cargo test --lib oauth::: 20 pass / 0 fail. No allow attrs, no clippy.toml, no #[ignore].",
+  "created_at": "2026-05-19T23:42:39.295308229Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABASSOAaui79uVRbKCHDOwx9dEfboDeOu97rG0/RcKI9/z9alMMz0caYVA06tkaqIWEAK8lJ+BiIRYCPCjnRxCtDg=="
+}
