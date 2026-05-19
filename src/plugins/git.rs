@@ -93,19 +93,97 @@ pub fn git_pull(dir: &Path) -> Result<(), PluginError> {
     Ok(())
 }
 
-/// Recursively copy a directory.
+/// Recursively copy a directory, rejecting symlinks at every entry.
+///
+/// Every entry is checked with [`std::fs::symlink_metadata`] — which does
+/// **not** follow symlinks — before any further action is taken. Symlinks
+/// are rejected unconditionally: marketplace plugin directories must not
+/// contain them (policy documented in crosslink #258).
 ///
 /// # Errors
 ///
-/// Returns an error if any directory creation or file copy operation fails.
+/// Returns an error if any directory creation or file copy operation fails,
+/// if a symlink is encountered, or if an entry's resolved path escapes
+/// `allowed_root`.
 pub fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    copy_dir_recursive_checked(src, dst, None)
+}
+
+/// Like [`copy_dir_recursive`] but enforces that every entry (recursively)
+/// resolves within `allowed_root` after canonicalization.
+///
+/// Use this in preference to [`copy_dir_recursive`] whenever the source
+/// tree comes from a marketplace or other user-controlled directory, so
+/// that every node of the walk is re-checked against the containment
+/// boundary — closing the per-entry TOCTOU window described in crosslink #258.
+///
+/// # Errors
+///
+/// Same as [`copy_dir_recursive`], plus path-escape and symlink errors.
+pub fn copy_dir_recursive_within(
+    src: &Path,
+    dst: &Path,
+    allowed_root: &Path,
+) -> std::io::Result<()> {
+    copy_dir_recursive_checked(src, dst, Some(allowed_root))
+}
+
+fn copy_dir_recursive_checked(
+    src: &Path,
+    dst: &Path,
+    allowed_root: Option<&Path>,
+) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        if src_path.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path)?;
+
+        // Use symlink_metadata so we see the symlink itself, not its target.
+        // Symlinks within marketplace plugin trees are rejected by policy
+        // (crosslink #258): accepting them would re-open the TOCTOU window
+        // the top-level canonicalize+starts_with guard closes, because a
+        // swap after the root check but before an individual copy can
+        // redirect any entry outside the allowed root.
+        let meta = std::fs::symlink_metadata(&src_path)?;
+        if meta.file_type().is_symlink() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "symlink rejected in marketplace plugin directory: {}",
+                    src_path.display()
+                ),
+            ));
+        }
+
+        // Per-entry containment check: canonicalize after the symlink guard
+        // (the entry is not a symlink, so canonicalize just resolves `.`/`..`
+        // and normalizes the path) and verify it still lives under the allowed
+        // root. This closes the sub-entry TOCTOU window: even if an attacker
+        // swaps a directory entry between readdir and this check, the symlink
+        // guard above means they cannot plant a symlink, and the directory
+        // itself must resolve within the boundary.
+        if let Some(root) = allowed_root {
+            let canonical_entry = src_path.canonicalize().map_err(|e| {
+                std::io::Error::new(
+                    e.kind(),
+                    format!("failed to canonicalize entry {}: {}", src_path.display(), e),
+                )
+            })?;
+            if !canonical_entry.starts_with(root) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!(
+                        "path traversal detected: entry {} escapes allowed root {}",
+                        canonical_entry.display(),
+                        root.display()
+                    ),
+                ));
+            }
+        }
+
+        if meta.is_dir() {
+            copy_dir_recursive_checked(&src_path, &dst_path, allowed_root)?;
         } else {
             std::fs::copy(&src_path, &dst_path)?;
         }

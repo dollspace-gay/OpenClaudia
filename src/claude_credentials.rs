@@ -26,6 +26,30 @@ pub const CLAUDE_CODE_BETA_HEADER: &str = "claude-code-20250219";
 /// Interleaved thinking beta
 pub const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
 
+/// Fine-grained tool streaming beta
+pub const FINE_GRAINED_TOOL_STREAMING_BETA: &str = "fine-grained-tool-streaming-2025-05-14";
+
+/// The canonical `anthropic-beta` header value sent on every OAuth request.
+///
+/// All OAuth code paths **must** call this function instead of interpolating
+/// individual constants, so that adding or removing a beta flag is a
+/// single-file change with no risk of drift. See crosslink #272.
+///
+/// # Examples
+///
+/// ```
+/// use openclaudia::claude_credentials::claude_code_beta_header_value;
+/// let v = claude_code_beta_header_value();
+/// assert!(v.contains("oauth-2025-04-20"));
+/// assert!(v.contains("claude-code-20250219"));
+/// ```
+#[must_use]
+pub fn claude_code_beta_header_value() -> String {
+    format!(
+        "{CLAUDE_CODE_BETA_HEADER},{OAUTH_BETA_HEADER},{INTERLEAVED_THINKING_BETA},{FINE_GRAINED_TOOL_STREAMING_BETA}"
+    )
+}
+
 /// 5 minute buffer before expiry to trigger refresh
 const REFRESH_BUFFER_MS: i64 = 5 * 60 * 1000;
 
@@ -357,10 +381,11 @@ pub fn get_oauth_headers(access_token: &str) -> Vec<(String, String)> {
         ),
         ("anthropic-version".to_string(), "2023-06-01".to_string()),
         ("content-type".to_string(), "application/json".to_string()),
-        // Beta headers matching what Claude Code sends (required for OAuth model access)
+        // Beta headers matching what Claude Code sends (required for OAuth model access).
+        // Uses claude_code_beta_header_value() as the single source of truth — see crosslink #272.
         (
             "anthropic-beta".to_string(),
-            format!("{CLAUDE_CODE_BETA_HEADER},{OAUTH_BETA_HEADER},{INTERLEAVED_THINKING_BETA}"),
+            claude_code_beta_header_value(),
         ),
     ]
 }
@@ -481,5 +506,50 @@ mod tests {
     fn test_has_credentials_function() {
         // Just verify it doesn't panic
         let _ = has_claude_code_credentials();
+    }
+
+    // --- Regression guard for crosslink #272: beta-header string drift ---
+
+    #[test]
+    fn beta_header_consts_have_expected_values() {
+        assert_eq!(CLAUDE_CODE_BETA_HEADER, "claude-code-20250219");
+        assert_eq!(OAUTH_BETA_HEADER, "oauth-2025-04-20");
+        assert_eq!(INTERLEAVED_THINKING_BETA, "interleaved-thinking-2025-05-14");
+        assert_eq!(
+            FINE_GRAINED_TOOL_STREAMING_BETA,
+            "fine-grained-tool-streaming-2025-05-14"
+        );
+    }
+
+    #[test]
+    fn claude_code_beta_header_value_contains_all_flags() {
+        let v = claude_code_beta_header_value();
+        assert!(
+            v.contains("claude-code-20250219"),
+            "missing claude-code beta in: {v}"
+        );
+        assert!(v.contains("oauth-2025-04-20"), "missing oauth beta in: {v}");
+        assert!(
+            v.contains("interleaved-thinking-2025-05-14"),
+            "missing interleaved-thinking beta in: {v}"
+        );
+        assert!(
+            v.contains("fine-grained-tool-streaming-2025-05-14"),
+            "missing fine-grained-tool-streaming beta in: {v}"
+        );
+    }
+
+    #[test]
+    fn get_oauth_headers_beta_includes_fine_grained_tool_streaming() {
+        let headers = get_oauth_headers("tok");
+        let beta = headers
+            .iter()
+            .find(|(k, _)| k == "anthropic-beta")
+            .expect("anthropic-beta header must be present");
+        assert!(
+            beta.1.contains("fine-grained-tool-streaming-2025-05-14"),
+            "fine-grained-tool-streaming missing from anthropic-beta: {}",
+            beta.1
+        );
     }
 }

@@ -238,7 +238,7 @@ async fn auth_device_page() -> impl IntoResponse {
 async fn auth_device_start(
     State(state): State<ProxyState>,
 ) -> Result<impl IntoResponse, ProxyError> {
-    use crate::oauth::{PkceParams, ANTHROPIC_CLIENT_ID, ANTHROPIC_REDIRECT_URI};
+    use crate::oauth::PkceParams;
 
     let pkce = PkceParams::generate();
     let oauth_state = pkce.state.clone();
@@ -246,15 +246,12 @@ async fn auth_device_start(
     // Store PKCE for later verification
     state.oauth_store.store_challenge(pkce.clone());
 
-    // Build authorization URL
-    let auth_url = format!(
-        "https://claude.ai/oauth/authorize?code=true&client_id={}&response_type=code&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256&state={}",
-        ANTHROPIC_CLIENT_ID,
-        urlencoding::encode(ANTHROPIC_REDIRECT_URI),
-        urlencoding::encode("org:create_api_key user:profile user:inference"),
-        pkce.challenge,
-        oauth_state
-    );
+    // Build authorization URL via the canonical builder so OAUTH_SCOPES and
+    // OAUTH_AUTHORIZE_URL remain the single source of truth.
+    // Previously used a hand-rolled format! with stale scope list
+    // ("org:create_api_key user:profile user:inference") missing
+    // "user:sessions:claude_code". See crosslink #272.
+    let auth_url = pkce.build_auth_url();
 
     info!("Device flow auth URL generated");
 

@@ -269,9 +269,8 @@ impl AnthropicAdapter {
             ),
             (
                 "anthropic-beta".to_string(),
-                "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,\
-                 fine-grained-tool-streaming-2025-05-14"
-                    .to_string(),
+                // Single source of truth — see crosslink #272.
+                crate::claude_credentials::claude_code_beta_header_value(),
             ),
             ("anthropic-version".to_string(), "2023-06-01".to_string()),
             ("content-type".to_string(), "application/json".to_string()),

@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
-use super::git::{copy_dir_recursive, git_clone, git_pull};
+use super::git::{copy_dir_recursive_within, git_clone, git_pull};
 use super::install::{InstallScope, InstalledPlugins, PluginInstallEntry};
 use super::marketplace::{
     MarketplaceManifest, MarketplacePlugin, MarketplaceSource, PluginSource, PluginSourceDef,
@@ -546,7 +546,15 @@ impl PluginManager {
                 manifest.name
             )));
         }
-        copy_dir_recursive(source_path, &dest).map_err(|e| PluginError::IoError(e.to_string()))?;
+        let canonical_source = source_path.canonicalize().map_err(|e| {
+            PluginError::IoError(format!(
+                "Failed to canonicalize marketplace source path {}: {}",
+                source_path.display(),
+                e
+            ))
+        })?;
+        copy_dir_recursive_within(&canonical_source, &dest, &canonical_source)
+            .map_err(|e| PluginError::IoError(e.to_string()))?;
 
         info!(name = %manifest.name, plugins = manifest.plugins.len(), "Added marketplace");
         Ok(manifest)
@@ -713,6 +721,17 @@ impl PluginManager {
 
         // Install based on source type
         let marketplace_dir = Self::marketplaces_dir().join(marketplace_name);
+        // Canonicalize the marketplace root once. This canonical path is the
+        // immutable containment boundary used both for the top-level
+        // starts_with pre-flight and for the per-entry guard inside
+        // copy_dir_recursive_within (crosslink #258).
+        let canonical_marketplace = marketplace_dir.canonicalize().map_err(|e| {
+            PluginError::IoError(format!(
+                "Failed to canonicalize marketplace dir {}: {}",
+                marketplace_dir.display(),
+                e
+            ))
+        })?;
         let source_path = match &mp_plugin.source {
             PluginSource::Path(rel_path) => {
                 let full = marketplace_dir.join(rel_path);
@@ -722,30 +741,25 @@ impl PluginManager {
                         full.display()
                     )));
                 }
-                // Verify the canonical path is still within the marketplace directory
-                // to prevent path traversal attacks (e.g., rel_path = "../../etc/passwd")
-                let canonical = full.canonicalize().map_err(|e| {
+                // Top-level containment pre-flight: canonicalize the full path
+                // and verify it sits inside canonical_marketplace. The per-entry
+                // check inside copy_dir_recursive_within provides the definitive
+                // per-node guard (crosslink #258).
+                let canonical_plugin = full.canonicalize().map_err(|e| {
                     PluginError::IoError(format!(
                         "Failed to canonicalize plugin path {}: {}",
                         full.display(),
                         e
                     ))
                 })?;
-                let canonical_marketplace = marketplace_dir.canonicalize().map_err(|e| {
-                    PluginError::IoError(format!(
-                        "Failed to canonicalize marketplace dir {}: {}",
-                        marketplace_dir.display(),
-                        e
-                    ))
-                })?;
-                if !canonical.starts_with(&canonical_marketplace) {
+                if !canonical_plugin.starts_with(&canonical_marketplace) {
                     return Err(PluginError::IoError(format!(
                         "Plugin path traversal detected: {} escapes marketplace directory {}",
                         full.display(),
                         marketplace_dir.display()
                     )));
                 }
-                canonical
+                canonical_plugin
             }
             PluginSource::Structured(def) => {
                 // For structured sources, clone/download directly to dest.
@@ -813,9 +827,14 @@ impl PluginManager {
             }
         };
 
-        // Copy plugin to install directory
+        // Copy plugin to install directory.
+        // source_path is the canonical_plugin path returned from the match arm
+        // above — already verified to be within canonical_marketplace.
+        // copy_dir_recursive_within enforces containment on every entry in
+        // the directory walk, closing the per-entry TOCTOU window (crosslink #258).
         fs::create_dir_all(&plugins_dir).map_err(|e| PluginError::IoError(e.to_string()))?;
-        copy_dir_recursive(&source_path, &dest).map_err(|e| PluginError::IoError(e.to_string()))?;
+        copy_dir_recursive_within(&source_path, &dest, &canonical_marketplace)
+            .map_err(|e| PluginError::IoError(e.to_string()))?;
 
         // Track installation
         let plugin_id = format!("{plugin_name}@{marketplace_name}");
@@ -1014,5 +1033,134 @@ mod policy_tests {
         let s = err.to_string();
         assert!(s.contains("block list"));
         assert!(s.contains("managed"));
+    }
+}
+
+/// Tests that directly exercise the TOCTOU path-traversal fix from
+/// crosslink #258. Each test creates a real filesystem layout (tempdir)
+/// and asserts the copy walker accepts or rejects it without going near
+/// actual marketplace plumbing.
+#[cfg(test)]
+mod toctou_tests {
+    use crate::plugins::git::{copy_dir_recursive, copy_dir_recursive_within};
+    use std::fs;
+    use tempfile::TempDir;
+
+    /// A plain directory tree with no symlinks copies successfully and stays
+    /// within the allowed root. Validates the happy-path is not broken by
+    /// the new per-entry guard.
+    #[test]
+    fn legitimate_path_within_root_passes() {
+        let root = TempDir::new().unwrap();
+        let plugin_dir = root.path().join("plugin");
+        let sub_dir = plugin_dir.join("sub");
+        fs::create_dir_all(&sub_dir).unwrap();
+        fs::write(plugin_dir.join("manifest.json"), r#"{"name":"ok"}"#).unwrap();
+        fs::write(sub_dir.join("file.txt"), "data").unwrap();
+
+        let dst = TempDir::new().unwrap();
+        let output_path = dst.path().join("out");
+
+        let canonical_root = root.path().canonicalize().unwrap();
+        let canonical_plugin = plugin_dir.canonicalize().unwrap();
+
+        copy_dir_recursive_within(&canonical_plugin, &output_path, &canonical_root)
+            .expect("legitimate tree within root must copy without error");
+
+        assert!(output_path.join("manifest.json").exists());
+        assert!(output_path.join("sub/file.txt").exists());
+        assert_eq!(
+            fs::read_to_string(output_path.join("sub/file.txt")).unwrap(),
+            "data"
+        );
+    }
+
+    /// A symlink inside the source tree that points outside the allowed root
+    /// must be rejected. This is the primary TOCTOU scenario from crosslink
+    /// #258: an attacker plants a symlink in the marketplace directory that
+    /// redirects a copy operation to an arbitrary path.
+    #[cfg(unix)]
+    #[test]
+    fn symlink_to_outside_root_is_rejected() {
+        let root = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        fs::write(outside.path().join("secret.txt"), "secret").unwrap();
+
+        let plugin_dir = root.path().join("plugin");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(plugin_dir.join("ok.txt"), "ok").unwrap();
+        std::os::unix::fs::symlink(outside.path(), plugin_dir.join("evil")).unwrap();
+
+        let dst = TempDir::new().unwrap();
+        let output_path = dst.path().join("out");
+
+        let canonical_root = root.path().canonicalize().unwrap();
+        let canonical_plugin = plugin_dir.canonicalize().unwrap();
+
+        let err = copy_dir_recursive_within(&canonical_plugin, &output_path, &canonical_root)
+            .expect_err("symlink to outside root must be rejected");
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("symlink rejected"),
+            "error message must name symlink rejection, got: {msg}"
+        );
+        assert!(
+            !output_path.join("evil").exists(),
+            "symlink target must not have been copied"
+        );
+    }
+
+    /// A path resolved outside the allowed root must be rejected even when
+    /// no symlinks are present — defence-in-depth for the case where the
+    /// top-level `canonicalize+starts_with` check is bypassed.
+    #[test]
+    fn path_outside_root_is_rejected() {
+        let root = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        fs::write(outside.path().join("file.txt"), "exfil").unwrap();
+
+        let canonical_root = root.path().canonicalize().unwrap();
+        let canonical_outside = outside.path().canonicalize().unwrap();
+
+        // Precondition: outside is genuinely disjoint from root.
+        assert!(!canonical_outside.starts_with(&canonical_root));
+
+        let dst = TempDir::new().unwrap();
+        let output_path = dst.path().join("out");
+
+        let err = copy_dir_recursive_within(&canonical_outside, &output_path, &canonical_root)
+            .expect_err("path outside allowed root must be rejected");
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("path traversal") || msg.contains("escapes allowed root"),
+            "error message must name traversal, got: {msg}"
+        );
+        assert!(
+            !output_path.join("file.txt").exists(),
+            "file outside root must not have been copied"
+        );
+    }
+
+    /// The unconstrained `copy_dir_recursive` (no `allowed_root`) still rejects
+    /// symlinks — the symlink guard is not conditional on `allowed_root` being set.
+    #[cfg(unix)]
+    #[test]
+    fn copy_dir_recursive_rejects_symlinks_even_without_root_constraint() {
+        let src = TempDir::new().unwrap();
+        let target = TempDir::new().unwrap();
+        fs::write(target.path().join("secret"), "secret data").unwrap();
+        std::os::unix::fs::symlink(target.path(), src.path().join("link")).unwrap();
+
+        let dst = TempDir::new().unwrap();
+        let output_path = dst.path().join("out");
+
+        let err = copy_dir_recursive(src.path(), &output_path)
+            .expect_err("symlink must be rejected even without root constraint");
+        assert!(
+            err.to_string().contains("symlink rejected"),
+            "error must name symlink rejection, got: {err}"
+        );
     }
 }
