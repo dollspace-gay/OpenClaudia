@@ -1,0 +1,10 @@
+{
+  "uuid": "b0da6194-b311-4ddf-a72e-13650aff6833",
+  "issue_uuid": "45bb659e-5d03-41a1-866a-63f7209e607c",
+  "author": "lOrm",
+  "content": "Fixed: load-modify-save TOCTOU eliminated via flock(2) LOCK_EX on schedules.json.lock (libc::flock, matching claude_credentials.rs pattern). Writes atomic via tempfile+rename(2). All 3 call sites hold the lock; lock released on Drop. Forensic tests added: cron_create_concurrent_writes_do_not_corrupt_store (8 threads, lost-update race detector), schedule_lock_blocks_then_releases_on_drop (exclusive + Drop release with mpsc timing), schedule_lock_acquire_surfaces_open_failure (errors surface, no silent degradation), schedule_save_locked_is_atomic_via_rename (no tempfile after save). All pass. Cargo clippy --lib --tests -D warnings exits 0 (#403 changes in isolation). No #[allow], no clippy.toml, no #[ignore].",
+  "created_at": "2026-05-19T16:00:30.073697750Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAowfQ9NZFJqVxmv6Om+yPUGaotWOdD1CiVt6vdoFMfzo5j4uzJV2v8vzxBS9giA5XMuMbMqH2w9Pa1gHun9P0Cw=="
+}
