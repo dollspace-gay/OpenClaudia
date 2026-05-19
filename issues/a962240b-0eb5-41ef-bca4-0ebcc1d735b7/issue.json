@@ -3,9 +3,10 @@
   "display_id": 679,
   "title": "git_clone / git_pull / git rev-parse may execute via PATH-injected git binary",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/plugins/git.rs:26-46, src/plugins/git.rs:55-71, src/plugins/git.rs:80-93\n## Violation\nAll three subprocess invocations construct the git command with a bare program name. \\\"std::process::Command::new(\"git\")\\\" resolves \\\"git\\\" by walking the runtime PATH, so any directory writeable by an attacker that ends up earlier on PATH (e.g. a poisoned \\\".openclaudia/plugins/\\\" workspace, a manipulated user shell, a CI runner with a misordered PATH) lets a malicious binary masquerade as git and run with the user's privileges during plugin install/update. Quoted lines:\n\n    let mut cmd = std::process::Command::new(\\\"git\\\");\n    cmd.arg(\\\"clone\\\").arg(\\\"--depth\\\").arg(\\\"1\\\");\n    ...\n    let output = std::process::Command::new(\\\"git\\\")\n        .arg(\\\"rev-parse\\\").arg(\\\"HEAD\\\")\n    ...\n    let output = std::process::Command::new(\\\"git\\\")\n        .arg(\\\"pull\\\")\n\nPlugin install is already an untrusted-code path (a marketplace can redirect to an arbitrary repo), so PATH-injection escalation here is a Major-severity supply-chain hole.\n## Mandated refactor\nResolve git's absolute path once at process start using \\\"which::which(\\\"git\\\")\\\" (or equivalent) and cache the resulting PathBuf in a module-level OnceLock; pass that absolute PathBuf to Command::new throughout git.rs. Reject the install path entirely if the canonical git binary is not under a system-trusted prefix (e.g. /usr/bin, /usr/local/bin) when running under a managed PluginPolicy.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:46:49.011202755Z",
-  "updated_at": "2026-05-18T21:46:49.011202755Z"
+  "updated_at": "2026-05-19T20:56:21.998067886Z",
+  "closed_at": "2026-05-19T20:56:21.998067886Z"
 }
