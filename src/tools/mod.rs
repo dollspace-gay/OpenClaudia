@@ -35,7 +35,7 @@ pub use accumulator::{
 /// Credential-sensitivity classifier re-exported for use outside the tools
 /// module (e.g. `hooks::mod` env-scrub logic). Avoids making `bash` public.
 pub(crate) use bash::is_sensitive_env;
-pub use registry::{ToolContext, ToolHandler, ToolRegistry};
+pub use registry::{PermissionTarget, ToolContext, ToolHandler, ToolRegistry};
 pub use todo::{clear_all_todo_lists, clear_todo_list, get_todo_list, SessionIdGuard, TodoItem};
 
 use crate::config::AppConfig;

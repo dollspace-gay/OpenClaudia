@@ -16,9 +16,24 @@ use std::collections::{HashSet, VecDeque};
 
 use super::teammate::TeammateId;
 
-/// A permission request from a specific teammate, awaiting the
-/// leader's decision. The reply channel lets the teammate's task
-/// thread resume once the user decides.
+/// A permission request from a specific teammate, parked in the leader
+/// bridge's FIFO until a decision is made.
+///
+/// **Fire-and-forget at this phase (crosslink #793).** The struct
+/// intentionally has no reply channel: no `oneshot::Sender`, no
+/// `Notify`, no correlation id. Phase 1 only ships the queue data
+/// structures, and there is no async machinery yet that could await
+/// a reply, so a channel here would be dead state with no consumer.
+///
+/// Phase 3 (which wires the bridge into the event loop) will need a
+/// resume path for the teammate task. The two options on the table
+/// are: (a) add `reply: oneshot::Sender<PermissionDecision>` to this
+/// struct and require callers to construct one, or (b) keep
+/// `QueuedPermission` as plain data and key replies through a parallel
+/// correlation map on the bridge. Either way, the current shape
+/// (plain data, no channel) is honest about Phase 1 limits but cannot
+/// resume teammates as-is — callers must not assume `enqueue` carries
+/// a future reply.
 pub struct QueuedPermission {
     pub teammate: TeammateId,
     pub tool_name: String,
@@ -430,5 +445,83 @@ mod phase2_spec_pins {
             popped.tool_args, args,
             "B4: tool_args must be preserved through the queue"
         );
+    }
+
+    // ── Crosslink #793 — `QueuedPermission` is fire-and-forget at Phase 1 ──
+
+    /// #793-1: The struct must remain plain data with only the three
+    /// public fields it ships today. If a `reply` channel is added in
+    /// Phase 3, this test will need to be updated *and* the doc comment
+    /// updated in lockstep — preventing a recurrence of the doc/impl
+    /// mismatch that filed #793.
+    #[test]
+    fn issue_793_queued_permission_has_no_reply_channel_field() {
+        let tm = TeammateId::new();
+        let q = QueuedPermission {
+            teammate: tm,
+            tool_name: "bash".into(),
+            tool_args: "{}".into(),
+        };
+        // Field-by-name access proves the struct shape at compile time.
+        let _ = &q.teammate;
+        let _ = &q.tool_name;
+        let _ = &q.tool_args;
+
+        // Render via Debug; the formatter only lists the three known
+        // fields. If a reply/sender/notify field is added later, this
+        // assertion will fail and force the doc comment to be updated
+        // alongside the new field.
+        let dbg = format!("{q:?}");
+        assert!(
+            !dbg.contains("reply"),
+            "QueuedPermission Debug output must not mention 'reply' until Phase 3 \
+             actually wires one in (crosslink #793): {dbg}"
+        );
+        assert!(
+            !dbg.contains("sender"),
+            "QueuedPermission must not carry a Sender field at Phase 1: {dbg}"
+        );
+        assert!(
+            !dbg.contains("notify"),
+            "QueuedPermission must not carry a Notify field at Phase 1: {dbg}"
+        );
+        // Sanity: the three documented fields ARE present.
+        assert!(
+            dbg.contains("teammate"),
+            "Debug must include teammate: {dbg}"
+        );
+        assert!(
+            dbg.contains("tool_name"),
+            "Debug must include tool_name: {dbg}"
+        );
+    }
+
+    /// #793-2: Once a request has been dequeued, the bridge has no way
+    /// to deliver a decision back to the originating teammate — the
+    /// dequeue is the end of the bridge's responsibility. Pins the
+    /// honest Phase 1 contract: enqueue → dequeue, no reply.
+    #[test]
+    fn issue_793_enqueue_dequeue_round_trip_has_no_reply_handle() {
+        let mut bridge = LeaderPermissionBridge::new();
+        let tm = TeammateId::new();
+        bridge.enqueue(QueuedPermission {
+            teammate: tm.clone(),
+            tool_name: "edit_file".into(),
+            tool_args: r#"{"path":"/etc/passwd"}"#.into(),
+        });
+        let popped = bridge.dequeue().expect("just enqueued");
+
+        // The popped value yields plain data — there is no `.reply(...)`,
+        // no `.send(...)`, no `.respond(...)` method on the bridge for
+        // the dequeued request.
+        assert_eq!(popped.teammate, tm);
+        assert_eq!(popped.tool_name, "edit_file");
+
+        // After dequeue the bridge has no record of the in-flight
+        // request — there is nothing for a reply to address. Phase 3
+        // will need either a separate in-flight map keyed by a
+        // correlation id, or a reply channel on QueuedPermission. The
+        // current shape supports neither.
+        assert_eq!(bridge.pending_count(), 0);
     }
 }

@@ -49,6 +49,19 @@ pub struct TurnResult {
     pub usage: TokenUsage,
     /// Whether the model returned tool calls that need a follow-up API call.
     pub needs_followup: bool,
+    /// Normalized finish reason surfaced to the caller, when the provider
+    /// reports one. `None` for normal stop on streams that do not propagate
+    /// a distinct termination cause through this layer.
+    ///
+    /// Values currently emitted by [`handle_google_response`] (crosslink #788):
+    /// - `Some("safety_blocked")` — Gemini set `finishReason` to `SAFETY`,
+    ///   `RECITATION`, or `BLOCKLIST`. Text may be empty; callers should
+    ///   surface a user-visible error rather than treating this as a normal
+    ///   empty completion.
+    /// - `Some("length")` — `MAX_TOKENS` truncation.
+    /// - `Some("stop")` — explicit `STOP` from the provider.
+    /// - `Some(other)` — verbatim pass-through for unrecognized reasons.
+    pub finish_reason: Option<String>,
 }
 
 // ─── Request building ───────────────────────────────────────────────────────
@@ -405,6 +418,138 @@ pub async fn run_turn(p: RunTurnParams<'_>) -> Result<TurnResult, String> {
     .await
 }
 
+/// Outcome of classifying the top-level `finishReason` from a Gemini
+/// non-streaming response.
+///
+/// Pure data carrier produced by [`classify_google_finish_reason`] so the
+/// mapping logic stays unit-testable in isolation from the channels and
+/// HTTP plumbing in [`handle_google_response`]. See crosslink #788 for
+/// the gap this addresses: the prior implementation silently dropped
+/// `SAFETY` / `RECITATION` / `BLOCKLIST` and returned an empty
+/// completion to the TUI with no signal whatsoever.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct GoogleFinishClassification {
+    /// Normalized finish reason to surface on `TurnResult.finish_reason`.
+    pub finish_reason: Option<String>,
+    /// When `Some`, a user-visible error message the caller must push
+    /// onto the TUI via `AppEvent::ApiError`. Set for filtered output
+    /// (`SAFETY` / `RECITATION` / `BLOCKLIST`); `None` otherwise.
+    pub user_error: Option<String>,
+}
+
+/// Classify `candidates[0].finishReason` from a Gemini JSON response.
+///
+/// Maps Gemini's enum vocabulary to OC's normalized vocabulary:
+/// - `SAFETY` / `RECITATION` / `BLOCKLIST` → `Some("safety_blocked")`
+///   plus a user-facing error and a `tracing::warn!` log.
+/// - `MAX_TOKENS` → `Some("length")` plus a `tracing::warn!` log.
+/// - `STOP` → `Some("stop")`.
+/// - Any other non-empty string → `Some(other)` (verbatim pass-through;
+///   never classified as a safety block).
+/// - Missing / non-string → `None`.
+///
+/// `text_len_bytes` is the length of the text body already extracted by
+/// the caller; it is included in the warn log so operators can correlate
+/// "blocked + had partial text" vs "blocked + empty completion".
+#[must_use]
+pub fn classify_google_finish_reason(
+    gemini_json: &Value,
+    text_len_bytes: usize,
+) -> GoogleFinishClassification {
+    let raw = gemini_json
+        .get("candidates")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("finishReason"))
+        .and_then(|r| r.as_str());
+
+    match raw {
+        Some(reason @ ("SAFETY" | "RECITATION" | "BLOCKLIST")) => {
+            tracing::warn!(
+                finish_reason = reason,
+                text_len = text_len_bytes,
+                "Gemini suppressed candidate output (filtered response)"
+            );
+            GoogleFinishClassification {
+                finish_reason: Some("safety_blocked".to_string()),
+                user_error: Some(format!(
+                    "Gemini blocked the response (finishReason={reason}). \
+                     The model returned no usable content."
+                )),
+            }
+        }
+        Some("MAX_TOKENS") => {
+            tracing::warn!(
+                finish_reason = "MAX_TOKENS",
+                text_len = text_len_bytes,
+                "Gemini truncated response at max_tokens"
+            );
+            GoogleFinishClassification {
+                finish_reason: Some("length".to_string()),
+                user_error: None,
+            }
+        }
+        Some("STOP") => GoogleFinishClassification {
+            finish_reason: Some("stop".to_string()),
+            user_error: None,
+        },
+        Some(other) => GoogleFinishClassification {
+            // Unknown / future finish reasons: pass through verbatim so
+            // the caller can decide. Do NOT classify these as safety
+            // blocks — that would over-trigger user-visible errors on
+            // benign new Gemini enum values.
+            finish_reason: Some(other.to_string()),
+            user_error: None,
+        },
+        None => GoogleFinishClassification::default(),
+    }
+}
+
+/// Extract structured tool calls from a Gemini non-streaming response.
+fn extract_google_tool_calls(gemini_json: &Value) -> Vec<ToolCall> {
+    gemini_json
+        .get("candidates")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("content"))
+        .and_then(|c| c.get("parts"))
+        .and_then(|p| p.as_array())
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|p| {
+                    let fc = p.get("functionCall")?;
+                    let name = fc.get("name")?.as_str()?.to_string();
+                    let args = fc.get("args").map_or_else(
+                        || "{}".to_string(),
+                        |a| serde_json::to_string(a).unwrap_or_default(),
+                    );
+                    Some(ToolCall {
+                        id: format!("call_{}", uuid::Uuid::new_v4()),
+                        call_type: "function".to_string(),
+                        function: tools::FunctionCall {
+                            name,
+                            arguments: args,
+                        },
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Extract `(prompt_tokens, candidates_tokens)` from a Gemini response.
+fn extract_google_usage(gemini_json: &Value) -> (u64, u64) {
+    let usage = gemini_json.get("usageMetadata");
+    let input = usage
+        .and_then(|u| u.get("promptTokenCount"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output = usage
+        .and_then(|u| u.get("candidatesTokenCount"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    (input, output)
+}
+
 /// Handle a non-streaming Google Gemini response.
 async fn handle_google_response(
     response: reqwest::Response,
@@ -446,51 +591,21 @@ async fn handle_google_response(
         return Err(format!("Gemini API error ({code}): {msg}"));
     }
 
+    // #788: surface Gemini SAFETY / RECITATION / BLOCKLIST blocks via the pure helper.
+    let GoogleFinishClassification {
+        finish_reason,
+        user_error,
+    } = classify_google_finish_reason(&gemini_json, text.len());
+    if let Some(msg) = user_error {
+        send_event!(tx, AppEvent::ApiError(msg));
+    }
+
     if !text.is_empty() {
         send_event!(tx, AppEvent::StreamText(text.clone()));
     }
 
-    // Extract tool calls
-    let tool_calls: Vec<ToolCall> = gemini_json
-        .get("candidates")
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("content"))
-        .and_then(|c| c.get("parts"))
-        .and_then(|p| p.as_array())
-        .map(|parts| {
-            parts
-                .iter()
-                .filter_map(|p| {
-                    let fc = p.get("functionCall")?;
-                    let name = fc.get("name")?.as_str()?.to_string();
-                    let args = fc.get("args").map_or_else(
-                        || "{}".to_string(),
-                        |a| serde_json::to_string(a).unwrap_or_default(),
-                    );
-                    Some(ToolCall {
-                        id: format!("call_{}", uuid::Uuid::new_v4()),
-                        call_type: "function".to_string(),
-                        function: tools::FunctionCall {
-                            name,
-                            arguments: args,
-                        },
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    // Extract usage
-    let input_tokens = gemini_json
-        .get("usageMetadata")
-        .and_then(|u| u.get("promptTokenCount"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let output_tokens = gemini_json
-        .get("usageMetadata")
-        .and_then(|u| u.get("candidatesTokenCount"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
+    let tool_calls = extract_google_tool_calls(&gemini_json);
+    let (input_tokens, output_tokens) = extract_google_usage(&gemini_json);
 
     // Execute tool calls if any
     let (tool_results, needs_followup) = execute_tool_calls_for_tui(
@@ -518,6 +633,7 @@ async fn handle_google_response(
             cache_write_tokens: 0,
         },
         needs_followup,
+        finish_reason,
     })
 }
 
@@ -717,6 +833,11 @@ async fn stream_sse_response(
         tool_results,
         usage: stream_usage,
         needs_followup: has_tools,
+        // The SSE accumulators expose stop_reason internally but this
+        // layer does not currently surface it. Anthropic / OpenAI
+        // streams report `None`; only the Google JSON path populates
+        // this field today (crosslink #788).
+        finish_reason: None,
     })
 }
 
@@ -1800,5 +1921,106 @@ mod tests {
         assert!(buffer.contains('\n'));
         let post_outcome = enforce_sse_line_cap(&mut buffer);
         assert_eq!(post_outcome, SseLineCapOutcome::WithinCap);
+    }
+
+    // ── Crosslink #788 — Gemini SAFETY finish-reason handling ────────────
+
+    /// #788-1: `SAFETY` finish reason maps to `safety_blocked` and surfaces
+    /// a user-visible error string. Pinning the prior bug: the function
+    /// used to drop this signal silently and the TUI saw an empty completion.
+    #[test]
+    fn issue_788_safety_finish_reason_maps_to_safety_blocked_with_user_error() {
+        let body = serde_json::json!({
+            "candidates": [{
+                "finishReason": "SAFETY",
+                "content": { "parts": [] }
+            }]
+        });
+        let out = classify_google_finish_reason(&body, 0);
+        assert_eq!(
+            out.finish_reason.as_deref(),
+            Some("safety_blocked"),
+            "SAFETY must normalize to safety_blocked"
+        );
+        let err = out.user_error.expect("SAFETY must produce a user error");
+        assert!(
+            err.contains("SAFETY"),
+            "user error must name the original Gemini finishReason: {err}"
+        );
+        assert!(
+            err.contains("blocked"),
+            "user error must explain that the response was blocked: {err}"
+        );
+    }
+
+    /// #788-2: `RECITATION` and `BLOCKLIST` map to the same normalized
+    /// `safety_blocked` outcome — they are all "suppressed by filter"
+    /// from the caller's perspective.
+    #[test]
+    fn issue_788_recitation_and_blocklist_also_map_to_safety_blocked() {
+        for reason in ["RECITATION", "BLOCKLIST"] {
+            let body = serde_json::json!({
+                "candidates": [{ "finishReason": reason }]
+            });
+            let out = classify_google_finish_reason(&body, 0);
+            assert_eq!(
+                out.finish_reason.as_deref(),
+                Some("safety_blocked"),
+                "{reason} must normalize to safety_blocked"
+            );
+            assert!(
+                out.user_error.is_some(),
+                "{reason} must surface a user-visible error"
+            );
+        }
+    }
+
+    /// #788-3: Normal `STOP` and `MAX_TOKENS` must NOT trigger a user
+    /// error — they are non-block terminations. `MAX_TOKENS` maps to
+    /// `length` (matching OpenAI-side naming used elsewhere); `STOP`
+    /// maps to `stop`. Missing `finishReason` yields the default
+    /// (all `None`).
+    #[test]
+    fn issue_788_benign_finish_reasons_do_not_surface_error() {
+        let stop = classify_google_finish_reason(
+            &serde_json::json!({"candidates":[{"finishReason":"STOP"}]}),
+            42,
+        );
+        assert_eq!(stop.finish_reason.as_deref(), Some("stop"));
+        assert!(stop.user_error.is_none(), "STOP must not produce an error");
+
+        let max = classify_google_finish_reason(
+            &serde_json::json!({"candidates":[{"finishReason":"MAX_TOKENS"}]}),
+            128,
+        );
+        assert_eq!(max.finish_reason.as_deref(), Some("length"));
+        assert!(
+            max.user_error.is_none(),
+            "MAX_TOKENS must not surface an ApiError (only a warn log)"
+        );
+
+        let none = classify_google_finish_reason(&serde_json::json!({"candidates":[{}]}), 0);
+        assert_eq!(none, GoogleFinishClassification::default());
+    }
+
+    /// #788-4: Unknown finish reasons must pass through verbatim, NOT
+    /// silently re-classified as a safety block. Pins behaviour against
+    /// accidental over-triggering of user-visible errors if Google adds
+    /// a new enum variant.
+    #[test]
+    fn issue_788_unknown_finish_reason_passes_through_verbatim_without_error() {
+        let body = serde_json::json!({
+            "candidates": [{ "finishReason": "FUTURE_REASON_X" }]
+        });
+        let out = classify_google_finish_reason(&body, 0);
+        assert_eq!(
+            out.finish_reason.as_deref(),
+            Some("FUTURE_REASON_X"),
+            "unknown finish reasons must pass through unchanged"
+        );
+        assert!(
+            out.user_error.is_none(),
+            "unknown finish reasons must NOT trigger a user-visible error"
+        );
     }
 }

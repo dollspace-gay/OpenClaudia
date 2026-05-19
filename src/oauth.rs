@@ -408,6 +408,18 @@ impl OAuthStore {
         store
     }
 
+    /// Construct a store with a caller-supplied persistence path. Used by
+    /// the `persist_to_disk` regression suite (crosslink #801) so tests
+    /// don't have to clobber `$XDG_DATA_HOME`.
+    #[cfg(test)]
+    pub(crate) fn with_persist_path(path: PathBuf) -> Self {
+        Self {
+            sessions: RwLock::new(HashMap::new()),
+            pending_challenges: RwLock::new(HashMap::new()),
+            persist_path: Some(path),
+        }
+    }
+
     /// Store PKCE challenge for pending authorization
     pub fn store_challenge(&self, pkce: PkceParams) {
         let state = pkce.state.clone();
@@ -525,7 +537,30 @@ impl OAuthStore {
         }
     }
 
-    /// Persist sessions to disk with restrictive file permissions
+    /// Persist sessions to disk with restrictive file permissions.
+    ///
+    /// # Security (crosslink #801)
+    ///
+    /// On Unix, the temp file is created with `O_CREAT | O_EXCL | O_WRONLY`
+    /// at mode `0o600` in a single `open(2)` call. This closes two
+    /// pre-existing windows in which plaintext OAuth tokens were
+    /// world-readable on disk:
+    ///
+    /// 1. **Mid-write readability**: previously `fs::write` created the
+    ///    temp file with the process umask (typically `0o022` →
+    ///    `mode 0o644`), exposing the access+refresh tokens to any other
+    ///    user on the host for the window between write and the post-rename
+    ///    `chmod`. The destination also inherited the temp file's loose
+    ///    permissions across the rename.
+    /// 2. **Temp-file pre-creation / symlink attack**: `fs::write` happily
+    ///    truncates an existing `.tmp` file, including one staged as a
+    ///    symlink to e.g. `/etc/shadow`. `O_EXCL` rejects any pre-existing
+    ///    path (regular file or symlink), forcing us to fail closed.
+    ///
+    /// On non-Unix targets we refuse to persist credentials — there is no
+    /// portable way to atomically create-with-mode, and persisting plaintext
+    /// OAuth tokens to a world-readable file would be worse than losing the
+    /// session on shutdown.
     fn persist_to_disk(&self) {
         let Some(path) = &self.persist_path else {
             return;
@@ -536,41 +571,91 @@ impl OAuthStore {
             let _ = fs::create_dir_all(parent);
         }
 
-        // Atomic write to temp file then rename — prevents TOCTOU symlink attacks.
-        // If the target path is a symlink, rename replaces the symlink itself.
         let sessions = self
             .sessions
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        match serde_json::to_string_pretty(&*sessions) {
-            Ok(json) => {
-                let tmp_path = path.with_extension("tmp");
-                if let Err(e) = fs::write(&tmp_path, &json) {
-                    error!("Failed to write OAuth temp file: {}", e);
-                    return;
-                }
-                if let Err(e) = fs::rename(&tmp_path, path) {
-                    error!("Failed to rename OAuth temp file: {}", e);
-                    return;
-                }
+        let json = match serde_json::to_string_pretty(&*sessions) {
+            Ok(j) => j,
+            Err(e) => {
+                error!("Failed to serialize OAuth sessions: {}", e);
+                return;
+            }
+        };
+        drop(sessions);
 
-                // Set restrictive permissions so only the file owner can read/write
-                // (mitigates plaintext token exposure to other users on the system)
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    if let Ok(metadata) = fs::metadata(path) {
-                        let mut perms = metadata.permissions();
-                        perms.set_mode(0o600);
-                        if let Err(e) = fs::set_permissions(path, perms) {
-                            error!("Failed to set permissions on OAuth session file: {}", e);
-                        }
+        #[cfg(unix)]
+        {
+            use std::io::Write;
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+            let tmp_path = path.with_extension("tmp");
+
+            // Atomically create the temp file with O_CREAT|O_EXCL|O_WRONLY
+            // at mode 0o600. If `.tmp` already exists (stale crash residue,
+            // symlink attack, racing writer) this fails and we bail out
+            // rather than silently truncating someone else's file.
+            let mut file = match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&tmp_path)
+            {
+                Ok(f) => f,
+                Err(e) => {
+                    error!(
+                        "Failed to create OAuth temp file {} (mode 0600, exclusive): {}",
+                        tmp_path.display(),
+                        e
+                    );
+                    return;
+                }
+            };
+
+            if let Err(e) = file.write_all(json.as_bytes()) {
+                error!("Failed to write OAuth temp file: {}", e);
+                drop(file);
+                let _ = fs::remove_file(&tmp_path);
+                return;
+            }
+            if let Err(e) = file.sync_all() {
+                error!("Failed to fsync OAuth temp file: {}", e);
+                drop(file);
+                let _ = fs::remove_file(&tmp_path);
+                return;
+            }
+            drop(file);
+
+            // The rename inherits the tmp file's already-restrictive 0o600
+            // mode, so the destination is never observable as world-readable.
+            if let Err(e) = fs::rename(&tmp_path, path) {
+                error!("Failed to rename OAuth temp file: {}", e);
+                let _ = fs::remove_file(&tmp_path);
+                return;
+            }
+
+            // Defense-in-depth: re-assert 0o600 on the destination in case
+            // an older run (pre-fix) left a 0o644 destination inode that a
+            // filesystem chose to preserve across rename.
+            if let Ok(metadata) = fs::metadata(path) {
+                let mut perms = metadata.permissions();
+                if perms.mode() & 0o777 != 0o600 {
+                    perms.set_mode(0o600);
+                    if let Err(e) = fs::set_permissions(path, perms) {
+                        error!("Failed to enforce 0o600 on OAuth session file: {}", e);
                     }
                 }
             }
-            Err(e) => {
-                error!("Failed to serialize OAuth sessions: {}", e);
-            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            let _ = json; // suppress unused-variable warning on non-unix
+            error!(
+                "Refusing to persist OAuth sessions on non-Unix target: no portable way to \
+                 atomically create the file with owner-only permissions. OAuth sessions will \
+                 not survive process restart on this platform."
+            );
         }
     }
 }
@@ -997,5 +1082,205 @@ mod tests {
 
         // Already past expiry
         assert!(expired_creds.is_expired());
+    }
+
+    // --- Regression tests for crosslink #801 ---
+    //
+    // persist_to_disk historically used `fs::write` (which obeys the process
+    // umask, typically 0o022 → mode 0o644) and then chmodded the destination
+    // to 0o600 *after* rename. That left two windows in which the temp file
+    // and the destination contained plaintext OAuth tokens at a world-readable
+    // mode. The fix uses `OpenOptions::create_new(true).mode(0o600).open()`
+    // on Unix so the file is 0o600 from the very first syscall, and the
+    // rename carries that mode to the destination.
+
+    #[cfg(unix)]
+    fn make_session(token: &str) -> OAuthSession {
+        OAuthSession {
+            id: format!("session-{token}"),
+            credentials: OAuthCredentials {
+                access_token: token.to_string(),
+                refresh_token: Some(format!("refresh-{token}")),
+                expires_at: Utc::now() + Duration::seconds(3600),
+            },
+            api_key: None,
+            auth_mode: AuthMode::BearerToken,
+            granted_scopes: vec!["user:inference".to_string()],
+            created_at: Utc::now(),
+            user_id: None,
+        }
+    }
+
+    /// FORENSIC EVIDENCE #1: the destination file lands at exactly mode
+    /// 0o600 — never world-readable, never group-readable — even when the
+    /// process umask is fully permissive.
+    #[cfg(unix)]
+    #[test]
+    fn persist_to_disk_destination_is_0600_under_permissive_umask() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Force a permissive umask so any unguarded `open(2)` call would
+        // produce 0o666-derived modes. If the fix regresses, this test
+        // catches it even on machines whose default umask is 0o022.
+        // SAFETY: umask is process-global. We restore the previous value
+        // before returning.
+        let prev_umask = unsafe { libc::umask(0) };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("oauth_sessions.json");
+        let store = OAuthStore::with_persist_path(path.clone());
+        store.store_session(make_session("alpha-access-token"));
+
+        let mode = fs::metadata(&path)
+            .expect("destination file must exist")
+            .permissions()
+            .mode()
+            & 0o777;
+
+        // Restore umask before any assertion that might unwind.
+        unsafe { libc::umask(prev_umask) };
+
+        assert_eq!(
+            mode, 0o600,
+            "OAuth session file landed at mode {mode:o} (expected 0o600); \
+             other users on the host can read access+refresh tokens"
+        );
+    }
+
+    /// FORENSIC EVIDENCE #2: while `persist_to_disk` is running, the temp
+    /// file is never observable at a mode that would let another user read
+    /// the tokens. We race a watcher thread against many writes and assert
+    /// that every snapshot we caught of the `.tmp` file had mode 0o600.
+    /// Before the fix, the watcher would catch 0o666 (under zeroed umask)
+    /// containing the literal token bytes.
+    #[cfg(unix)]
+    #[test]
+    fn persist_to_disk_tmp_never_world_readable_under_race() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        use std::thread;
+        use std::time::{Duration as StdDuration, Instant};
+
+        let prev_umask = unsafe { libc::umask(0) };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("oauth_sessions.json");
+        let tmp_path_w = path.with_extension("tmp");
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_w = Arc::clone(&stop);
+
+        // Watcher: poll the tmp file as fast as we can and record every
+        // mode we observe along with whether the token bytes were there.
+        let watcher = thread::spawn(move || -> Vec<(u32, bool)> {
+            let mut observations = Vec::new();
+            let deadline = Instant::now() + StdDuration::from_secs(3);
+            while !stop_w.load(Ordering::Relaxed) && Instant::now() < deadline {
+                if let Ok(md) = fs::symlink_metadata(&tmp_path_w) {
+                    let mode = md.permissions().mode() & 0o777;
+                    let has_token = fs::read_to_string(&tmp_path_w)
+                        .is_ok_and(|s| s.contains("racy-secret-token-CANARY"));
+                    observations.push((mode, has_token));
+                }
+            }
+            observations
+        });
+
+        // Writer: hammer persist_to_disk so the watcher has many chances
+        // to catch the tmp file mid-existence. Include the canary token
+        // literal so observed `has_token` flags are meaningful.
+        let store = OAuthStore::with_persist_path(path.clone());
+        for i in 0..500 {
+            store.store_session(make_session(&format!("racy-secret-token-CANARY-{i}")));
+        }
+
+        stop.store(true, Ordering::Relaxed);
+        let observations = watcher.join().unwrap();
+        unsafe { libc::umask(prev_umask) };
+
+        // Every observation we made of the tmp file must have been at 0o600.
+        // If even one snapshot was 0o644 / 0o664 / 0o666 the fix is broken.
+        let bad: Vec<_> = observations
+            .iter()
+            .filter(|(mode, _)| *mode != 0o600)
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "tmp file observed at non-0600 mode(s): {:?} out of {} samples — \
+             tokens were readable to other host users mid-write",
+            bad,
+            observations.len()
+        );
+
+        // And the destination ends up 0o600 too.
+        let dest_mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            dest_mode, 0o600,
+            "destination mode regressed to {dest_mode:o}"
+        );
+    }
+
+    /// FORENSIC EVIDENCE #3: a pre-existing `.tmp` file (e.g. a symlink to
+    /// `/etc/shadow` staged by a local attacker, or stale crash residue)
+    /// must not be truncated. `O_EXCL` causes `persist_to_disk` to fail
+    /// closed, leaving the attacker's file untouched and the real
+    /// destination unchanged.
+    #[cfg(unix)]
+    #[test]
+    fn persist_to_disk_refuses_to_clobber_existing_tmp() {
+        use std::io::Write;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("oauth_sessions.json");
+        let tmp_path = path.with_extension("tmp");
+
+        // Stage a foreign file at the tmp path. In the real attack this
+        // would be a symlink to /etc/shadow; here we use a regular file
+        // with a sentinel we can check survived intact.
+        let attacker_sentinel = b"DO_NOT_OVERWRITE_attacker_owned_bytes";
+        {
+            let mut f = fs::File::create(&tmp_path).unwrap();
+            f.write_all(attacker_sentinel).unwrap();
+        }
+
+        let store = OAuthStore::with_persist_path(path.clone());
+        store.store_session(make_session("beta-access-token"));
+
+        // Attacker file untouched.
+        let after = fs::read(&tmp_path).expect("attacker file should still exist");
+        assert_eq!(
+            after, attacker_sentinel,
+            "persist_to_disk truncated a pre-existing .tmp file — symlink attack still possible"
+        );
+
+        // Destination was never written (no fallback path bypasses O_EXCL).
+        assert!(
+            !path.exists(),
+            "persist_to_disk wrote the destination despite failing the exclusive-create step"
+        );
+    }
+
+    /// FORENSIC EVIDENCE #4: control assertion — the round-trip actually
+    /// persists token bytes to disk. Proves the watcher in test #2 was
+    /// looking at the right bytes, and proves that a regression to
+    /// `fs::write` would in fact leak the token to disk in plaintext.
+    #[cfg(unix)]
+    #[test]
+    fn persist_to_disk_round_trips_token_at_mode_0600() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("oauth_sessions.json");
+        let store = OAuthStore::with_persist_path(path.clone());
+        store.store_session(make_session("gamma-token-marker"));
+
+        let bytes = fs::read_to_string(&path).expect("destination must exist");
+        assert!(
+            bytes.contains("gamma-token-marker"),
+            "round-trip failed: token absent from on-disk file (test #2's premise is invalid)"
+        );
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }

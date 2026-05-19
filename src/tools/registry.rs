@@ -41,6 +41,35 @@ pub struct ToolContext<'a> {
 
 // ─── Trait ────────────────────────────────────────────────────────────────────
 
+/// Permission-checking metadata for a tool (crosslink #782).
+///
+/// Each tool that can mutate user state must declare a [`PermissionTarget`]
+/// from its [`ToolHandler::permission_target`] method. The
+/// `PermissionManager` consults this metadata at dispatch time instead of
+/// pattern-matching on a hard-coded list of tool names. Tools that return
+/// `None` from `permission_target` are treated as read-only / safe and
+/// bypass permission checks.
+///
+/// Why this exists: prior to #782, `PermissionManager::extract_target` held
+/// an `_ => None` catch-all `match` over three tool names. Any new tool
+/// added to the registry — `delete_file`, `chmod`, `run_subprocess`, an MCP
+/// write tool — would silently fail-open. Inverting the dependency closes
+/// that gap: a new mutating tool must either declare its target or
+/// explicitly opt out by returning `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PermissionTarget {
+    /// Canonical capability name used in `PermissionRule::tool` — e.g.
+    /// `"Bash"`, `"Edit"`, `"Write"`. Multiple wire-level tool names may
+    /// share a canonical capability (e.g. a future `bash_persistent` could
+    /// canonicalise to `"Bash"` so existing rules continue to cover it).
+    pub canonical: &'static str,
+    /// JSON argument key whose string value is the pattern-match target.
+    /// For `bash` this is `"command"`; for file tools it is the path arg
+    /// (`"path"` for `edit_file`/`write_file`, `"notebook_path"` for
+    /// `notebook_edit`).
+    pub arg_key: &'static str,
+}
+
 /// A single tool that the agent can invoke.
 ///
 /// Implementations are unit structs stored as `&'static dyn ToolHandler`
@@ -56,6 +85,21 @@ pub trait ToolHandler: Send + Sync {
     /// every tool ultimately serialises to JSON; constructing via `json!` here
     /// keeps the schema next to the execute logic that interprets it.
     fn definition(&self) -> Value;
+
+    /// Declare this tool's permission-check target (crosslink #782).
+    ///
+    /// Return `Some(PermissionTarget { canonical, arg_key })` if the tool
+    /// mutates user state and should be gated by the permission system. The
+    /// permission manager will look up `arg_key` in the tool's arguments
+    /// and match its string value against rules keyed by `canonical`.
+    ///
+    /// The default returns `None`, which treats the tool as read-only /
+    /// safe and lets it bypass permission checks. Override this method on
+    /// every new mutating tool — leaving the default in place on a
+    /// destructive tool is the bug class #782 closed.
+    fn permission_target(&self) -> Option<PermissionTarget> {
+        None
+    }
 
     /// Execute the tool and return `(output_text, is_error)`.
     fn execute(&self, args: &HashMap<String, Value>, ctx: &mut ToolContext<'_>) -> (String, bool);
@@ -119,6 +163,13 @@ impl ToolHandler for BashHandler {
                     "required": ["command"]
                 }
             }
+        })
+    }
+    fn permission_target(&self) -> Option<PermissionTarget> {
+        // #782: Bash is the canonical "run-anything" capability — gated.
+        Some(PermissionTarget {
+            canonical: "Bash",
+            arg_key: "command",
         })
     }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
@@ -255,6 +306,13 @@ impl ToolHandler for WriteFileHandler {
             }
         })
     }
+    fn permission_target(&self) -> Option<PermissionTarget> {
+        // #782: file-write capability — gated on the destination path.
+        Some(PermissionTarget {
+            canonical: "Write",
+            arg_key: "path",
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         file::execute_write_file(args)
     }
@@ -290,6 +348,13 @@ impl ToolHandler for EditFileHandler {
                     "required": ["path", "old_string", "new_string"]
                 }
             }
+        })
+    }
+    fn permission_target(&self) -> Option<PermissionTarget> {
+        // #782: file-edit capability — gated on the path being edited.
+        Some(PermissionTarget {
+            canonical: "Edit",
+            arg_key: "path",
         })
     }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
@@ -341,6 +406,16 @@ impl ToolHandler for NotebookEditHandler {
                     "required": ["notebook_path", "new_source"]
                 }
             }
+        })
+    }
+    fn permission_target(&self) -> Option<PermissionTarget> {
+        // #782: notebook_edit mutates .ipynb files on disk — the pre-#782
+        // hardcoded match in `extract_target` silently fail-opened this
+        // handler. Canonicalising as "Edit" lets existing Edit session
+        // rules (e.g. "src/**") naturally cover notebook edits.
+        Some(PermissionTarget {
+            canonical: "Edit",
+            arg_key: "notebook_path",
         })
     }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {

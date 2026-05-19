@@ -317,37 +317,53 @@ impl PermissionManager {
     /// - `Some(Ok((tool, target)))` for tools that need permission checks with valid args
     /// - `Some(Err(tool))` for tools that need permission checks but have malformed args
     /// - `None` for tools that don't need permission checks (e.g. read-only tools)
+    ///
+    /// # Registry-driven dispatch (crosslink #782)
+    ///
+    /// This function was historically an exhaustive `match` over three
+    /// hard-coded tool names — `bash`, `edit_file`, `write_file` — with an
+    /// `_ => None` catch-all. That catch-all silently fail-opened every
+    /// other tool: adding `delete_file`, `chmod`, `run_subprocess`, or any
+    /// MCP-provided write tool would bypass permission checks entirely.
+    /// It also created an invisible coupling: the list of "permission-relevant"
+    /// tools lived here in `permissions.rs`, while the tool definitions
+    /// lived in `tools/registry.rs`, with no compile-time link between them.
+    ///
+    /// The fix inverts the dependency. Each [`ToolHandler`] now declares its
+    /// own [`PermissionTarget`] via `ToolHandler::permission_target()`,
+    /// defaulting to `None` (read-only / safe). `extract_target` looks up
+    /// the handler in the global registry and uses whatever target the
+    /// handler declared:
+    ///
+    /// - Handler not registered (unknown tool) → `None`. The caller treats
+    ///   this as `CheckResult::Allowed` because there is no target string
+    ///   to match rules against. Unknown tools also fail elsewhere in the
+    ///   dispatch pipeline, so this isn't a security regression — it just
+    ///   matches the pre-#782 behaviour for unregistered names.
+    /// - Handler declares no `PermissionTarget` → `None`. Same fall-through.
+    /// - Handler declares a target → look up the target's `arg_key` in the
+    ///   tool args. Missing key → empty-string target (preserves the
+    ///   pre-#782 "key absent" branch). Present-but-non-string key → `Err`
+    ///   (malformed args, caller denies).
     fn extract_target(
         tool_name: &str,
         tool_args: &serde_json::Value,
     ) -> Option<Result<(String, String), String>> {
-        match tool_name {
-            "bash" => {
-                let cmd = tool_args.get("command").and_then(|v| v.as_str());
-                match (cmd, tool_args.get("command")) {
-                    (Some(s), _) => Some(Ok(("Bash".to_string(), s.to_string()))),
-                    (None, Some(_)) => Some(Err("Bash".to_string())), // key present but not a string
-                    (None, None) => Some(Ok(("Bash".to_string(), String::new()))), // key absent
-                }
+        let target = crate::tools::registry::registry()
+            .get(tool_name)
+            .and_then(crate::tools::ToolHandler::permission_target)?;
+
+        let canonical = target.canonical.to_string();
+        match tool_args.get(target.arg_key) {
+            // Key present and a string — happy path.
+            Some(v) if v.is_string() => {
+                Some(Ok((canonical, v.as_str().unwrap_or_default().to_string())))
             }
-            "edit_file" => {
-                let path = tool_args.get("path").and_then(|v| v.as_str());
-                match (path, tool_args.get("path")) {
-                    (Some(s), _) => Some(Ok(("Edit".to_string(), s.to_string()))),
-                    (None, Some(_)) => Some(Err("Edit".to_string())),
-                    (None, None) => Some(Ok(("Edit".to_string(), String::new()))),
-                }
-            }
-            "write_file" => {
-                let path = tool_args.get("path").and_then(|v| v.as_str());
-                match (path, tool_args.get("path")) {
-                    (Some(s), _) => Some(Ok(("Write".to_string(), s.to_string()))),
-                    (None, Some(_)) => Some(Err("Write".to_string())),
-                    (None, None) => Some(Ok(("Write".to_string(), String::new()))),
-                }
-            }
-            // Read-only tools, task tools, and memory tools don't need permission checks
-            _ => None,
+            // Key present but wrong type — malformed args, deny.
+            Some(_) => Some(Err(canonical)),
+            // Key absent — target string is empty (legacy behaviour;
+            // matches the empty-glob test in phase2_spec_pins::b2_empty_glob).
+            None => Some(Ok((canonical, String::new()))),
         }
     }
 
@@ -1627,5 +1643,240 @@ mod phase2_spec_pins {
             "#724: always-allow decision must persist across Arc handles \
              (i.e. across execute_tool_calls_for_tui batches)"
         );
+    }
+
+    // ── #782 registry-driven extract_target ─────────────────────────────────
+    //
+    // Before #782, `extract_target` exhaustively matched on three hard-coded
+    // tool names (`bash`, `edit_file`, `write_file`). Any new tool added to
+    // the registry would silently fall through to `_ => None`, which
+    // `check()` treats as "no target → Allowed". These tests pin the
+    // post-#782 behaviour: the canonical-tool name and target-arg key come
+    // from the `ToolHandler::permission_target()` declaration, so each
+    // tool's permission posture is co-located with its `execute` body.
+
+    /// #782: `bash` resolves to its declared (Bash, command) target.
+    /// Pinning this guards against a regression where a handler edit drops
+    /// the `permission_target` override and bash silently fail-opens.
+    #[test]
+    fn registry_782_bash_target_key_resolves_command() {
+        let (mut mgr, _dir) = enabled(vec![]);
+        // Add a session Deny on Bash with a glob that requires the command
+        // string to be extracted correctly from the args.
+        mgr.add_session_rule(PermissionRule {
+            tool: "Bash".to_string(),
+            pattern: "rm **".to_string(),
+            decision: PermissionDecision::Deny,
+        });
+        let r = mgr.check("bash", &json!({"command": "rm -rf /tmp/x"}));
+        assert!(
+            matches!(r, CheckResult::Denied(_)),
+            "#782: bash's permission_target must canonicalise to Bash + arg_key='command', got: {r:?}"
+        );
+    }
+
+    /// #782: `write_file` resolves to its declared (Write, path) target.
+    /// Independently exercises a different (`canonical`, `arg_key`) pair to
+    /// catch a swap-bug between the bash and write handlers.
+    #[test]
+    fn registry_782_write_file_target_key_resolves_path() {
+        let (mut mgr, _dir) = enabled(vec![]);
+        mgr.add_session_rule(PermissionRule {
+            tool: "Write".to_string(),
+            pattern: "src/**/*.rs".to_string(),
+            decision: PermissionDecision::Allow,
+        });
+        let r = mgr.check("write_file", &json!({"path": "src/lib.rs"}));
+        assert_eq!(
+            r,
+            CheckResult::Allowed,
+            "#782: write_file's permission_target must canonicalise to Write + arg_key='path'"
+        );
+        // And a path outside the rule must still require a prompt.
+        let r2 = mgr.check("write_file", &json!({"path": "/etc/passwd"}));
+        assert!(
+            matches!(r2, CheckResult::NeedsPrompt { .. }),
+            "#782: write_file target extraction must use the path arg, got: {r2:?}"
+        );
+    }
+
+    /// #782: `edit_file` resolves to its declared (Edit, path) target.
+    #[test]
+    fn registry_782_edit_file_target_key_resolves_path() {
+        let (mut mgr, _dir) = enabled(vec![]);
+        mgr.add_session_rule(PermissionRule {
+            tool: "Edit".to_string(),
+            pattern: "src/**".to_string(),
+            decision: PermissionDecision::Allow,
+        });
+        let r = mgr.check("edit_file", &json!({"path": "src/main.rs"}));
+        assert_eq!(
+            r,
+            CheckResult::Allowed,
+            "#782: edit_file's permission_target must canonicalise to Edit + arg_key='path'"
+        );
+    }
+
+    /// #782: `notebook_edit` was the pre-fix latent hole — it mutates
+    /// `.ipynb` files on disk but was not in the hard-coded match arm.
+    /// Post-#782 it declares `(Edit, notebook_path)` so an existing Edit
+    /// session rule naturally covers notebook writes too. This is the test
+    /// that would have failed BEFORE the fix and passes after it.
+    #[test]
+    fn registry_782_notebook_edit_no_longer_fails_open() {
+        let (mut mgr, _dir) = enabled(vec![]);
+        // Deny all Edit operations on /etc/**.
+        mgr.add_session_rule(PermissionRule {
+            tool: "Edit".to_string(),
+            pattern: "/etc/**".to_string(),
+            decision: PermissionDecision::Deny,
+        });
+        let r = mgr.check(
+            "notebook_edit",
+            &json!({"notebook_path": "/etc/secret.ipynb", "new_source": "evil"}),
+        );
+        assert!(
+            matches!(r, CheckResult::Denied(_)),
+            "#782: notebook_edit must be denied by the Edit rule — pre-fix this fail-opened. Got: {r:?}"
+        );
+
+        // And without a matching rule, notebook_edit must prompt — not
+        // silently allow — confirming the registry lookup is wired in.
+        let (mgr2, _dir2) = enabled(vec![]);
+        let r2 = mgr2.check(
+            "notebook_edit",
+            &json!({"notebook_path": "/tmp/x.ipynb", "new_source": "x"}),
+        );
+        assert!(
+            matches!(r2, CheckResult::NeedsPrompt { .. }),
+            "#782: notebook_edit must NeedsPrompt when no rule matches, not Allowed. Got: {r2:?}"
+        );
+    }
+
+    /// #782: an unknown tool (not registered) returns `Allowed`. There is
+    /// no target string to match rules against, and dispatch will fail at
+    /// the executor anyway. This is the same behaviour as the pre-#782
+    /// `_ => None` arm for unknown names — preserved on purpose so existing
+    /// callers don't see a regression on typo'd or experimental tool names.
+    #[test]
+    fn registry_782_unknown_tool_returns_allowed() {
+        let (mgr, _dir) = enabled(vec![]);
+        let r = mgr.check(
+            "definitely_not_a_real_tool_name",
+            &json!({"command": "rm -rf /"}),
+        );
+        assert_eq!(
+            r,
+            CheckResult::Allowed,
+            "#782: an unregistered tool must short-circuit to Allowed (no target to match); \
+             dispatch will reject the call downstream. Got: {r:?}"
+        );
+    }
+
+    /// #782: a registered handler that returns `None` from
+    /// `permission_target` (i.e. a read-only tool like `read_file`) also
+    /// short-circuits to `Allowed` — same path as an unknown tool but
+    /// reached because the trait method explicitly opted out.
+    #[test]
+    fn registry_782_read_only_handler_returns_allowed() {
+        let (mgr, _dir) = enabled(vec![]);
+        // read_file is registered but its handler returns None from
+        // permission_target() (the trait default), so check() must allow.
+        let r = mgr.check("read_file", &json!({"path": "/etc/passwd"}));
+        assert_eq!(
+            r,
+            CheckResult::Allowed,
+            "#782: a registered handler with permission_target()==None must short-circuit to Allowed"
+        );
+        // list_files also has no permission target.
+        let r2 = mgr.check("list_files", &json!({"path": "/etc"}));
+        assert_eq!(r2, CheckResult::Allowed);
+    }
+
+    /// #782: malformed args (wrong JSON type for the declared `arg_key`)
+    /// must be Denied — the legacy invariant for `bash`/`edit_file`/
+    /// `write_file` is preserved by the registry-driven lookup, and now
+    /// extends automatically to any new tool that declares a
+    /// `PermissionTarget`.
+    #[test]
+    fn registry_782_malformed_args_for_any_target_are_denied() {
+        let (mgr, _dir) = enabled(vec!["**"]);
+        // notebook_edit declares notebook_path as its target arg_key — a
+        // non-string value must trip the malformed-args branch even with a
+        // permissive default_allow.
+        let r = mgr.check(
+            "notebook_edit",
+            &json!({"notebook_path": 42, "new_source": "x"}),
+        );
+        assert!(
+            matches!(r, CheckResult::Denied(_)),
+            "#782: malformed notebook_path (int) must be Denied regardless of default_allow, got: {r:?}"
+        );
+    }
+
+    /// #782 forensic / regression-prevention: enumerate every handler in
+    /// the registry and require an *explicit decision* — either it declares
+    /// a `PermissionTarget`, or it appears in a known-safe allowlist. A new
+    /// mutating tool added without either step trips this test loudly,
+    /// preventing the silent fail-open that #782 was filed for.
+    #[test]
+    fn registry_782_every_handler_makes_explicit_permission_decision() {
+        use crate::tools::registry::iter_handlers;
+        use crate::tools::PermissionTarget;
+
+        // Handlers whose permission_target() correctly returns None because
+        // they are genuinely read-only or non-filesystem-mutating. Every
+        // entry here is an intentional opt-out; a *new* tool added to the
+        // registry that does not declare a PermissionTarget AND is not in
+        // this list will fail this test until a decision is made.
+        const KNOWN_SAFE: &[&str] = &[
+            "bash_output",        // reads buffered output, no mutation
+            "kill_shell",         // operates on internal shell handles
+            "read_file",          // pure read
+            "list_files",         // pure read
+            "chainlink",          // delegates to crosslink CLI sandbox
+            "web_fetch",          // network read
+            "web_search",         // network read
+            "web_browser",        // network read
+            "todo_write",         // in-memory session state
+            "todo_read",          // in-memory session state
+            "ask_user_question",  // user interaction
+            "task_create",        // session task state
+            "task_update",        // session task state
+            "task_get",           // session task state
+            "task_list",          // session task state
+            "enter_plan_mode",    // mode flag
+            "exit_plan_mode",     // mode flag
+            "list_mcp_resources", // MCP read (stub today)
+            "read_mcp_resource",  // MCP read (stub today)
+            "lsp",                // LSP read
+            "enter_worktree",     // git worktree create (gated separately)
+            "exit_worktree",      // git worktree remove (gated separately)
+            "list_worktrees",     // git read
+            "cron_create",        // schedule registration (gated separately)
+            "cron_delete",        // schedule removal (gated separately)
+            "cron_list",          // schedule read
+        ];
+
+        for handler in iter_handlers() {
+            let name = handler.name();
+            let target: Option<PermissionTarget> = handler.permission_target();
+            let in_safelist = KNOWN_SAFE.contains(&name);
+            assert!(
+                target.is_some() || in_safelist,
+                "#782 REGRESSION: handler '{name}' declares no PermissionTarget and is not in \
+                 KNOWN_SAFE. Either add a `fn permission_target()` override in \
+                 src/tools/registry.rs OR (only if the tool is genuinely read-only) add the \
+                 name to KNOWN_SAFE in this test. This guards against the silent fail-open \
+                 that crosslink #782 closed."
+            );
+            // Conversely, if a handler ends up declaring a target, the
+            // safelist entry should be removed so the two stay in sync.
+            assert!(
+                !(target.is_some() && in_safelist),
+                "#782: handler '{name}' declares a PermissionTarget AND is listed in \
+                 KNOWN_SAFE. Remove it from KNOWN_SAFE — the declaration is the source of truth."
+            );
+        }
     }
 }
