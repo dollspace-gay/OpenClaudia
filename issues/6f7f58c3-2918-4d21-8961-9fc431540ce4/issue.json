@@ -3,11 +3,12 @@
   "display_id": 710,
   "title": "QA: bash denylist is fundamentally bypassable substring matching (security theater)",
   "description": "## Severity\nCritical\n## Dimension\nsecurity\n## Location\nsrc/tools/bash/policy.rs:82-136\n## Violation\nThe denylist matches lowercased substrings against a hard-coded list. The module's own doc-comment admits this is \"NOT a substitute for a real sandbox\" (policy.rs:3-7). The pinning test `b5_gap_589_advanced_injection_not_blocked` (policy.rs:453-469) further confirms process substitution, IFS injection, and `/proc/environ` reads pass through.\n\nTrivial bypasses for the canonical \"rm -rf /\" rule include: `r''m -rf /`, `\\rm -rf /`, `eval $(echo cm0gLXJmIC8K | base64 -d)`, `rm$IFS-rf$IFS/`, or any newline-separated multi-statement.\n\nQuoted (policy.rs:82-93):\n```\n/// Hard denylist of command patterns that are effectively always malicious\n/// or catastrophic. Returns `Some(reason)` when the command is denied.\n...\n    const SUBSTRINGS: &[(&str, &str)] = &[\n        (\"rm -rf /\", \"rm -rf of root filesystem\"),\n```\n\nEncoding a denylist this thin into a security boundary creates false confidence.\n## Mandated refactor\n1. Rename `validate_command` to `coarse_safety_screen` and document that it only catches naive prompt-injection.\n2. Architect a real sandbox (firejail/bubblewrap on Linux, seatbelt on macOS, AppContainer on Windows) for production bash execution.\n3. Require explicit opt-in for unsandboxed mode with loud warnings.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:49:50.457825910Z",
-  "updated_at": "2026-05-18T21:51:39.627443980Z",
+  "updated_at": "2026-05-19T21:19:39.565261506Z",
+  "closed_at": "2026-05-19T21:19:39.565261506Z",
   "labels": [
     "qa-review",
     "security"
