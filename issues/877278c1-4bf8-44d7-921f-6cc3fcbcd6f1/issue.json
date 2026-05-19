@@ -3,11 +3,12 @@
   "display_id": 755,
   "title": "QA: unrestricted() permission bypass has no safety-check tier; allows rm -rf / and .git writes",
   "description": "## Severity\nCritical\n## Dimension\nsecurity\n## Location\nsrc/permissions.rs:113-123\n## Violation\n`PermissionManager::unrestricted()` constructs a manager with\n`enabled = false`, which short-circuits `check()` at lines 132-134 to\n`CheckResult::Allowed` for every tool call:\n```rust\npub const fn unrestricted() -> Self {\n    // `enabled = false` short-circuits `check()` to `CheckResult::Allowed`.\n    Self {\n        persisted_rules: Vec::new(),\n        session_rules: Vec::new(),\n        default_allow: Vec::new(),\n        persist_path: PathBuf::new(),\n        enabled: false,\n    }\n}\n```\nPin tests `b3_unrestricted_allows_destructive_bash`,\n`b3_unrestricted_allows_git_config_write`, and\n`b3_unrestricted_allows_claude_settings_write` document that this allows\n`rm -rf /`, edits to `.git/config`, and writes to `.claude/settings.json`.\nThere is no `safetyCheck` tier as in Claude Code's bypassPermissions mode.\nThe `dangerously_disable_sandbox`-from-args check at lines 155-169 is\nunreachable in this mode.\n## Mandated refactor\nIntroduce a non-bypassable `safety_check(tool, target)` invariant that\nruns BEFORE the `enabled` short-circuit. At minimum reject `rm -rf /`,\nwrites anywhere under `.git/`, writes to `.claude/`, writes to\n`/etc/openclaudia/`, and any path matching the global denylist regardless\nof `enabled`. `unrestricted()` should bypass user-configured rules but\nNEVER the safety-check tier.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:51:40.801641697Z",
-  "updated_at": "2026-05-18T21:56:52.014707286Z",
+  "updated_at": "2026-05-19T22:18:50.798199404Z",
+  "closed_at": "2026-05-19T22:18:50.798199404Z",
   "labels": [
     "security"
   ]
