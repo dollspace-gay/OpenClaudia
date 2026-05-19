@@ -3,11 +3,12 @@
   "display_id": 721,
   "title": "QA: permissions enabled=false by default disables all checks (config/permissions.rs)",
   "description": "## Severity\nCritical\n## Dimension\nsecurity\n## Location\nsrc/config/permissions.rs:7-17\n## Violation\nThe default `PermissionsConfig` ships with the entire permission system\ndisabled:\n```rust\npub struct PermissionsConfig {\n    #[serde(default)]\n    pub enabled: bool,\n    #[serde(default)]\n    pub default_allow: Vec<String>,\n}\n```\n`bool::default()` is `false`, so any deployment that omits the field — or\nships a fresh `.openclaudia/config.yaml` — runs with\n`PermissionManager::check` short-circuiting to `CheckResult::Allowed` at\n`permissions.rs:132-134`. The existing pin test\n`b7_disabled_allows_all_including_destructive` documents this gap\n(`rm -rf /` allowed). Violates secure-by-default (OWASP A05).\n## Mandated refactor\nFlip the default to `enabled: true`. If a permissive mode is needed for\nthe proxy-only use case, gate it behind an explicit\n`PermissionsConfig::permissive()` constructor that advertises the risk in\nits name. Document the breaking change in CHANGELOG and add a startup\nlog: `warn!(\"permission system disabled — all tool calls allowed\")` when\n`enabled == false` so operators always see it.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:50:42.599906627Z",
-  "updated_at": "2026-05-18T21:51:14.991911121Z",
+  "updated_at": "2026-05-19T21:52:23.493938283Z",
+  "closed_at": "2026-05-19T21:52:23.493938283Z",
   "labels": [
     "qa-review",
     "security"
