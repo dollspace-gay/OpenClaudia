@@ -3,9 +3,10 @@
   "display_id": 722,
   "title": "StateStore uses std RwLock but exposes write() guard to async callers risking deadlock across await",
   "description": "## Severity\nCritical\n## Dimension\nconcurrency\n## Location\nsrc/state/store.rs:110-131, 144-148\n## Violation\nStateStore wraps SessionState in std::sync::RwLock and hands out RwLockWriteGuard via write(). The module docs explicitly forbid holding the guard across .await but there is no compile-time enforcement.\n\n```rust\n//! 1. Never hold a read guard across an `.await`.\n//! 2. Never hold a write guard across an `.await`.\n```\n\nAny caller that holds the guard across an await will deadlock or poison the lock. The docs say panics on poisoned lock — one mishandled await terminates all future state access for the process.\n\n## Mandated refactor\nEither switch to tokio::sync::RwLock or replace the write() guard API with a closure-passing with_write closure so the borrow cannot cross an .await by construction.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:51:15.102713028Z",
-  "updated_at": "2026-05-18T21:51:15.102713028Z"
+  "updated_at": "2026-05-19T22:09:26.557921168Z",
+  "closed_at": "2026-05-19T22:09:26.557921168Z"
 }
