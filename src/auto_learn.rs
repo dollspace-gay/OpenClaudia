@@ -273,25 +273,64 @@ impl<'a> AutoLearner<'a> {
 
     // === Internal: Preference Detection ===
 
+    /// Heuristically classify a user message as a preference statement.
+    ///
+    /// The original heuristic recorded any short message whose lowercased
+    /// text began with `always`, `never`, `prefer`, `use`, `dont use`, etc.
+    /// That captured tool-invocation imperatives ("use the `read_file` tool"),
+    /// idiomatic phrases ("never mind"), and questions ("should I always
+    /// X?") as preferences, polluting `learned_preferences` (crosslink #448).
+    ///
+    /// Tightened gate:
+    ///
+    /// * Message must be a single sentence with no `?` characters anywhere
+    ///   — preferences are imperative, not interrogative.
+    /// * The preference verb must appear at position 0 of the trimmed
+    ///   lowercased message (imperative mood), so conditionals like
+    ///   `if you always X` and subordinate clauses are rejected.
+    /// * Following the verb there must be a substantive object phrase of
+    ///   at least two alphabetic tokens.
+    /// * Idiomatic non-preferences (`never mind`, `dont worry`, etc.) are
+    ///   denylisted.
+    /// * The bare `use ` prefix is removed entirely — it almost always
+    ///   introduces a tool-invocation imperative.
+    /// * Correction prefixes must end at a clause boundary (comma or
+    ///   period) so they cannot match tool imperatives.
     fn detect_preferences(&self, message: &str) {
-        let lower = message.to_lowercase();
-        let trimmed = lower.trim();
+        let trimmed_raw = message.trim();
+        if trimmed_raw.is_empty() {
+            return;
+        }
+        let lower = trimmed_raw.to_lowercase();
 
-        // Detect explicit preference statements
-        let preference_patterns = [
+        if !is_single_imperative_sentence(&lower) {
+            return;
+        }
+
+        // Preference verbs in imperative mood. The bare `use ` prefix was
+        // removed deliberately — see doc comment above.
+        let preference_patterns: &[(&str, &str)] = &[
             ("always ", "style"),
             ("never ", "style"),
             ("prefer ", "style"),
             ("don't use ", "style"),
-            ("use ", "workflow"),
+            ("dont use ", "style"),
         ];
 
-        for (prefix, category) in &preference_patterns {
-            if trimmed.starts_with(prefix) && trimmed.len() < 200 {
-                // Short enough to be a preference, not a code block
+        for (prefix, category) in preference_patterns {
+            if let Some(rest) = lower.strip_prefix(prefix) {
+                if !is_substantive_object_phrase(rest) {
+                    continue;
+                }
+                if is_idiomatic_non_preference(&lower) {
+                    continue;
+                }
+                if trimmed_raw.len() >= 200 {
+                    continue;
+                }
                 if let Err(e) =
                     self.db
-                        .save_learned_preference(category, message.trim(), Some("user_message"))
+                        .save_learned_preference(category, trimmed_raw, Some("user_message"))
                 {
                     self.log_db_error("save_preference", &e);
                 }
@@ -299,13 +338,21 @@ impl<'a> AutoLearner<'a> {
             }
         }
 
-        // Detect corrections
-        let correction_starts = ["no,", "wrong", "don't", "stop", "actually,", "instead,"];
-        for start in &correction_starts {
-            if trimmed.starts_with(start) && trimmed.len() < 300 {
+        // Correction prefixes — each must end at a punctuation boundary.
+        let correction_patterns: &[&str] =
+            &["no, ", "wrong, ", "wrong. ", "actually, ", "instead, "];
+
+        for prefix in correction_patterns {
+            if let Some(rest) = lower.strip_prefix(prefix) {
+                if !is_substantive_object_phrase(rest) {
+                    continue;
+                }
+                if trimmed_raw.len() >= 300 {
+                    continue;
+                }
                 if let Err(e) = self.db.save_learned_preference(
                     "correction",
-                    message.trim(),
+                    trimmed_raw,
                     Some("user_correction"),
                 ) {
                     self.log_db_error("save_correction", &e);
@@ -464,6 +511,69 @@ fn parse_clippy_warning(line: &str) -> Option<ClippyPattern> {
     }
 
     None
+}
+
+/// Return `true` if `lower` is a single, non-interrogative sentence.
+///
+/// Used to gate preference detection (crosslink #448). The lowercased
+/// message must contain zero `?` characters anywhere and at most one
+/// trailing sentence terminator (`.` or `!`); any internal terminator that
+/// splits the text into two clauses with substantive alphabetic content on
+/// both sides is rejected.
+fn is_single_imperative_sentence(lower: &str) -> bool {
+    if lower.contains('?') {
+        return false;
+    }
+    let terminators = ['.', '!'];
+    let mut saw_terminator = false;
+    let mut alpha_in_current_clause = false;
+
+    for ch in lower.chars() {
+        if terminators.contains(&ch) {
+            if alpha_in_current_clause {
+                if saw_terminator {
+                    return false;
+                }
+                saw_terminator = true;
+                alpha_in_current_clause = false;
+            }
+        } else if ch.is_alphabetic() {
+            if saw_terminator {
+                // Alphabetic content after a closed sentence opens a
+                // second clause — disallowed.
+                return false;
+            }
+            alpha_in_current_clause = true;
+        }
+    }
+    true
+}
+
+/// Return `true` if `rest` (the portion of a message after the preference
+/// verb prefix) contains at least two alphabetic tokens, so we don't record
+/// bare exclamations like "always!" or "never." as preferences.
+fn is_substantive_object_phrase(rest: &str) -> bool {
+    let alpha_tokens = rest
+        .split(|c: char| !c.is_alphabetic())
+        .filter(|t| !t.is_empty())
+        .count();
+    alpha_tokens >= 2
+}
+
+/// Idiomatic phrases that pattern-match a preference verb but carry no
+/// preference content. Listed in lowercased form.
+fn is_idiomatic_non_preference(lower: &str) -> bool {
+    const IDIOMS: &[&str] = &[
+        "never mind",
+        "always has been",
+        "don't worry",
+        "dont worry",
+        "don't bother",
+        "dont bother",
+        "don't sweat it",
+        "dont sweat it",
+    ];
+    IDIOMS.iter().any(|idiom| lower.starts_with(idiom))
 }
 
 /// Truncate a string to a max length, appending "..." if truncated
@@ -626,5 +736,193 @@ mod tests {
         assert!(glob_matches("src/*", "src/main.rs"));
         assert!(!glob_matches("src/*.rs", "tests/test.rs"));
         assert!(glob_matches("*.rs", "src/main.rs"));
+    }
+
+    // === Crosslink #448 regression coverage =================================
+    //
+    // The original `detect_preferences` recorded any short message starting
+    // with `always`/`never`/`prefer`/`use`/`dont` as a preference, capturing
+    // tool-invocation imperatives, questions, conditionals, and idioms.
+    // Each test below documents one false-positive class that the tightened
+    // heuristic must reject, plus positive cases that must still record.
+
+    #[test]
+    fn fix448_question_starting_with_always_is_not_a_preference() {
+        let (_dir, db) = create_test_db();
+        let learner = AutoLearner::new(&db);
+
+        learner.detect_preferences("always run the formatter before commit?");
+
+        let prefs = db.get_all_preferences().unwrap();
+        assert!(
+            prefs.is_empty(),
+            "interrogative message must not be recorded, got {prefs:?}"
+        );
+    }
+
+    #[test]
+    fn fix448_use_as_tool_invocation_is_not_a_preference() {
+        let (_dir, db) = create_test_db();
+        let learner = AutoLearner::new(&db);
+
+        // The motivating false positive from the issue.
+        learner.detect_preferences("use the read_file tool to check config.yaml");
+
+        let prefs = db.get_all_preferences().unwrap();
+        assert!(
+            prefs.is_empty(),
+            "bare `use ...` tool invocation must not be recorded, got {prefs:?}"
+        );
+    }
+
+    #[test]
+    fn fix448_never_mind_idiom_is_not_a_preference() {
+        let (_dir, db) = create_test_db();
+        let learner = AutoLearner::new(&db);
+
+        learner.detect_preferences("never mind, try a different approach");
+
+        let prefs = db.get_all_preferences().unwrap();
+        assert!(
+            prefs.is_empty(),
+            "`never mind` idiom must not be recorded, got {prefs:?}"
+        );
+    }
+
+    #[test]
+    fn fix448_multi_sentence_message_is_not_a_preference() {
+        let (_dir, db) = create_test_db();
+        let learner = AutoLearner::new(&db);
+
+        learner.detect_preferences("always check first. then run the script and report back");
+
+        let prefs = db.get_all_preferences().unwrap();
+        assert!(
+            prefs.is_empty(),
+            "multi-sentence message must not be recorded, got {prefs:?}"
+        );
+    }
+
+    #[test]
+    fn fix448_conditional_clause_is_not_a_preference() {
+        let (_dir, db) = create_test_db();
+        let learner = AutoLearner::new(&db);
+
+        // "if you always X" is a conditional, not a directive.
+        learner.detect_preferences("if you always rerun the tests it will pass eventually");
+
+        let prefs = db.get_all_preferences().unwrap();
+        assert!(
+            prefs.is_empty(),
+            "conditional clause must not be recorded, got {prefs:?}"
+        );
+    }
+
+    #[test]
+    fn fix448_question_form_with_multiple_punctuation_is_not_a_preference() {
+        let (_dir, db) = create_test_db();
+        let learner = AutoLearner::new(&db);
+
+        learner.detect_preferences("prefer tabs?? or spaces");
+
+        let prefs = db.get_all_preferences().unwrap();
+        assert!(
+            prefs.is_empty(),
+            "message containing `?` must not be recorded, got {prefs:?}"
+        );
+    }
+
+    #[test]
+    fn fix448_prefer_with_multi_sentence_discussion_not_recorded() {
+        let (_dir, db) = create_test_db();
+        let learner = AutoLearner::new(&db);
+
+        learner.detect_preferences(
+            "prefer we skip testing for now. it will be faster and we can revisit later.",
+        );
+
+        let prefs = db.get_all_preferences().unwrap();
+        assert!(
+            prefs.is_empty(),
+            "multi-sentence `prefer ...` discussion must not be recorded, got {prefs:?}"
+        );
+    }
+
+    #[test]
+    fn fix448_genuine_preference_still_recorded() {
+        let (_dir, db) = create_test_db();
+        let learner = AutoLearner::new(&db);
+
+        learner.detect_preferences("always use snake_case for function names");
+
+        let prefs = db.get_all_preferences().unwrap();
+        assert_eq!(
+            prefs.len(),
+            1,
+            "genuine imperative preference must still be recorded, got {prefs:?}"
+        );
+        assert_eq!(prefs[0].category, "style");
+    }
+
+    #[test]
+    fn fix448_genuine_preference_with_trailing_period_recorded() {
+        let (_dir, db) = create_test_db();
+        let learner = AutoLearner::new(&db);
+
+        learner.detect_preferences("prefer explicit error types over anyhow.");
+
+        let prefs = db.get_all_preferences().unwrap();
+        assert_eq!(prefs.len(), 1);
+        assert_eq!(prefs[0].category, "style");
+    }
+
+    #[test]
+    fn fix448_genuine_correction_still_recorded() {
+        let (_dir, db) = create_test_db();
+        let learner = AutoLearner::new(&db);
+
+        learner.detect_preferences("actually, use tabs not spaces");
+
+        let prefs = db.get_all_preferences().unwrap();
+        assert_eq!(prefs.len(), 1);
+        assert_eq!(prefs[0].category, "correction");
+    }
+
+    #[test]
+    fn fix448_single_imperative_sentence_helper() {
+        assert!(is_single_imperative_sentence("always use snake_case"));
+        assert!(is_single_imperative_sentence("prefer tabs over spaces."));
+        assert!(is_single_imperative_sentence(
+            "never panic in library code!"
+        ));
+
+        assert!(!is_single_imperative_sentence(
+            "should i always run the tests?"
+        ));
+        assert!(!is_single_imperative_sentence(
+            "always check first. then run it"
+        ));
+        assert!(!is_single_imperative_sentence("prefer x? or y"));
+    }
+
+    #[test]
+    fn fix448_substantive_object_phrase_helper() {
+        assert!(is_substantive_object_phrase("use snake_case for names"));
+        assert!(is_substantive_object_phrase("tabs over spaces"));
+
+        assert!(!is_substantive_object_phrase(""));
+        assert!(!is_substantive_object_phrase("!"));
+        assert!(!is_substantive_object_phrase("x"));
+    }
+
+    #[test]
+    fn fix448_idiomatic_non_preference_helper() {
+        assert!(is_idiomatic_non_preference("never mind"));
+        assert!(is_idiomatic_non_preference("never mind, try again"));
+        assert!(is_idiomatic_non_preference("don't worry about it"));
+        assert!(is_idiomatic_non_preference("dont worry about it"));
+
+        assert!(!is_idiomatic_non_preference("never panic in library code"));
+        assert!(!is_idiomatic_non_preference("always use snake_case"));
     }
 }

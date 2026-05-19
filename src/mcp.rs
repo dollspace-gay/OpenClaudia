@@ -15,10 +15,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStderr, Command};
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
+
+// Fix #445 point 1 — ring-buffer cap for the background stderr drain.
+const STDERR_BUFFER_CAP: usize = 1024 * 1024;
+// Fix #445 point 1 — bytes of stderr surfaced inside bubbled errors.
+const STDERR_SNIPPET_BYTES: usize = 4096;
+// Fix #445 point 2 — bound BEFORE allocation on the response line.
+const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024;
 
 /// Errors that can occur during MCP operations
 #[derive(Error, Debug)]
@@ -140,6 +148,49 @@ pub struct StdioTransport {
     child: Arc<Mutex<Child>>,
     reader: Mutex<BufReader<tokio::process::ChildStdout>>,
     request_id: AtomicU64,
+    /// Ring buffer holding the last `STDERR_BUFFER_CAP` bytes the server
+    /// wrote to stderr (fix #445 point 1).
+    stderr_buf: Arc<Mutex<Vec<u8>>>,
+    /// Handle to the stderr drain task. Wrapped in `Arc` so the struct
+    /// stays `Send + Sync`. The task auto-terminates on stderr EOF.
+    _stderr_drain: Arc<JoinHandle<()>>,
+}
+
+/// Spawn a background tokio task that drains `stderr` into a ring buffer.
+/// Fix #445 point 1 — mirrors `src/tools/lsp.rs::capture_stderr` (#355)
+/// but uses tokio I/O so we don't burn a dedicated OS thread.
+fn spawn_stderr_drain(mut stderr: ChildStderr, buf: Arc<Mutex<Vec<u8>>>) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut chunk = [0u8; 4096];
+        // `while let Ok(n)` exits on read error (terminal for the drain).
+        // `n == 0` (EOF) also terminates. Both paths collapse into the
+        // same control flow, satisfying `clippy::match_same_arms` and
+        // `clippy::while_let_loop` without any `#[allow]`.
+        while let Ok(n) = stderr.read(&mut chunk).await {
+            if n == 0 {
+                break;
+            }
+            let mut guard = buf.lock().await;
+            guard.extend_from_slice(&chunk[..n]);
+            let len = guard.len();
+            if len > STDERR_BUFFER_CAP {
+                let drop_n = len - STDERR_BUFFER_CAP;
+                guard.drain(..drop_n);
+            }
+        }
+    })
+}
+
+/// Format the trailing [`STDERR_SNIPPET_BYTES`] of the stderr ring buffer.
+async fn stderr_snippet(buf: &Arc<Mutex<Vec<u8>>>) -> String {
+    let guard = buf.lock().await;
+    if guard.is_empty() {
+        return String::new();
+    }
+    let start = guard.len().saturating_sub(STDERR_SNIPPET_BYTES);
+    let text = String::from_utf8_lossy(&guard[start..]).into_owned();
+    drop(guard);
+    format!(" (server stderr tail: {text})")
 }
 
 impl StdioTransport {
@@ -147,8 +198,8 @@ impl StdioTransport {
     ///
     /// # Errors
     ///
-    /// Returns `McpError::Transport` if the process cannot be spawned or stdout
-    /// is unavailable.
+    /// Returns `McpError::Transport` if the process cannot be spawned, or if
+    /// stdout/stderr cannot be taken from the child.
     pub fn spawn(command: &str, args: &[&str]) -> Result<Self, McpError> {
         info!(command = %command, args = ?args, "Spawning MCP server");
 
@@ -167,20 +218,36 @@ impl StdioTransport {
             .ok_or_else(|| McpError::Transport("Stdout not available after spawn".to_string()))?;
         let reader = BufReader::new(stdout);
 
+        // Fix #445 point 1: take stderr and start the background drain so
+        // the OS pipe buffer never fills up. Failing to take stderr is a
+        // hard error — we asked for `Stdio::piped()`, so absence means
+        // we'd silently lose every server diagnostic on failure.
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| McpError::Transport("Stderr not available after spawn".to_string()))?;
+        let stderr_buf = Arc::new(Mutex::new(Vec::new()));
+        let drain = spawn_stderr_drain(stderr, Arc::clone(&stderr_buf));
+
         Ok(Self {
             child: Arc::new(Mutex::new(child)),
             reader: Mutex::new(reader),
             request_id: AtomicU64::new(1),
+            stderr_buf,
+            _stderr_drain: Arc::new(drain),
         })
+    }
+
+    /// Returns a clone of the stderr ring-buffer handle. Test-only.
+    #[cfg(test)]
+    pub(crate) fn stderr_buf_handle(&self) -> Arc<Mutex<Vec<u8>>> {
+        Arc::clone(&self.stderr_buf)
     }
 }
 
 #[async_trait]
 impl McpTransport for StdioTransport {
     async fn request(&self, method: &str, params: Option<Value>) -> Result<Value, McpError> {
-        // Max bytes we'll read from a single MCP response — prevents OOM from
-        // malicious servers.
-        const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10MB
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
 
         let request = JsonRpcRequest {
@@ -215,30 +282,68 @@ impl McpTransport for StdioTransport {
             return Err(McpError::Transport("Stdin not available".to_string()));
         }
 
-        // Release the child lock before reading, since stdout is stored separately
+        // Release the child lock before reading. stdin and stdout are
+        // independent file descriptors and the reader has its own mutex.
         drop(child);
 
-        // Read response from the persistent BufReader with size limit.
-        let line = {
+        // Fix #445 point 2: bound BEFORE allocation.
+        //
+        // `Take::read_until` consumes at most `MAX_RESPONSE_SIZE + 1` bytes
+        // (cap + the terminating newline). The previous code called
+        // `BufReader::read_line` with NO upper bound and only checked the
+        // length afterwards — by which point a hostile server could already
+        // have forced an arbitrarily large allocation.
+        //
+        // `buf` is `Vec<u8>` rather than `String`: `read_until` works on
+        // bytes, and bounding before UTF-8 validation avoids materialising
+        // an invalid 10 MiB string only to reject it.
+        let buf = {
             let mut reader = self.reader.lock().await;
-            let mut buf = String::new();
-            reader
-                .read_line(&mut buf)
+            let mut buf: Vec<u8> = Vec::new();
+            // `+ 1` so we can distinguish "cap reached, no newline"
+            // (oversized) from "exactly cap bytes followed by newline".
+            let cap = (MAX_RESPONSE_SIZE as u64).saturating_add(1);
+            let bytes_read = (&mut *reader)
+                .take(cap)
+                .read_until(b'\n', &mut buf)
                 .await
                 .map_err(|e| McpError::Transport(format!("Failed to read from stdout: {e}")))?;
             drop(reader);
-            if buf.len() > MAX_RESPONSE_SIZE {
+
+            if bytes_read == 0 {
+                // EOF before any byte arrived — server died.
+                let snippet = stderr_snippet(&self.stderr_buf).await;
                 return Err(McpError::Transport(format!(
-                    "MCP response too large ({} bytes, max {})",
-                    buf.len(),
-                    MAX_RESPONSE_SIZE
+                    "MCP server closed stdout before responding{snippet}"
+                )));
+            }
+
+            // Cap reached without a newline — oversized line. Reject
+            // before any further processing. This check fires on the
+            // FIRST `read_until` call, so the buffer holds at most
+            // `MAX_RESPONSE_SIZE + 1` bytes — no unbounded allocation
+            // has happened.
+            if buf.len() > MAX_RESPONSE_SIZE && !buf.ends_with(b"\n") {
+                let snippet = stderr_snippet(&self.stderr_buf).await;
+                return Err(McpError::Transport(format!(
+                    "MCP response exceeded {MAX_RESPONSE_SIZE} bytes without newline; rejecting{snippet}"
                 )));
             }
             buf
         };
 
-        let response: JsonRpcResponse = serde_json::from_str(&line)
-            .map_err(|e| McpError::Protocol(format!("Failed to parse response: {e}")))?;
+        let line = std::str::from_utf8(&buf)
+            .map_err(|e| McpError::Protocol(format!("MCP response was not valid UTF-8: {e}")))?;
+
+        let response: JsonRpcResponse = match serde_json::from_str(line) {
+            Ok(r) => r,
+            Err(e) => {
+                let snippet = stderr_snippet(&self.stderr_buf).await;
+                return Err(McpError::Protocol(format!(
+                    "Failed to parse response: {e}{snippet}"
+                )));
+            }
+        };
 
         if response.id != id {
             return Err(McpError::Protocol(format!(
@@ -1081,5 +1186,146 @@ mod tests {
         let manager = McpManager::new();
         let result = manager.read_resource("nonexistent", "file:///test").await;
         assert!(result.is_err());
+    }
+
+    // ─── Fix #445 — StdioTransport stderr drain + bounded read ──────────
+    //
+    // Each test spawns a real subprocess via `sh -c` and exercises
+    // StdioTransport end to end. <200 ms per test; POSIX-only (`sh` and
+    // `head` must exist on PATH, which matches the project baseline).
+    //
+    // Forensic evidence: with the pre-fix `BufReader::read_line` the
+    // oversized-line test would either OOM or block; with no stderr
+    // drain a server writing more than ~64 KiB to stderr would deadlock
+    // on `write(2)`. Both scenarios now complete deterministically.
+
+    fn spawn_sh(script: &str) -> Result<StdioTransport, McpError> {
+        StdioTransport::spawn("sh", &["-c", script])
+    }
+
+    /// Fix #445 point 1: a server that writes >64 KiB to stderr does NOT
+    /// deadlock the transport. Without the drain, the server would block
+    /// on `write(2)` and the stdout reply would never arrive.
+    #[tokio::test]
+    async fn fix445_stderr_drained_does_not_deadlock() {
+        let transport = spawn_sh(
+            "printf '%131072s' '' >&2; \
+             read req; \
+             printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n'",
+        )
+        .expect("spawn");
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            transport.request("ping", None),
+        )
+        .await
+        .expect("request did not deadlock");
+
+        assert!(result.is_ok(), "request failed: {result:?}");
+        assert_eq!(result.unwrap()["ok"], true);
+        let _ = transport.close().await;
+    }
+
+    /// Fix #445 point 1: the stderr drain captures server output and the
+    /// ring buffer contains a recognizable suffix.
+    #[tokio::test]
+    async fn fix445_stderr_drain_populates_ring_buffer() {
+        let transport = spawn_sh(
+            "printf 'KERNEL_PANIC_MARKER_445\\n' >&2; \
+             read req; \
+             printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":null}\n'",
+        )
+        .expect("spawn");
+
+        let _ = transport.request("ping", None).await;
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let buf_handle = transport.stderr_buf_handle();
+        let guard = buf_handle.lock().await;
+        let snippet = String::from_utf8_lossy(&guard).into_owned();
+        drop(guard);
+        assert!(
+            snippet.contains("KERNEL_PANIC_MARKER_445"),
+            "stderr drain did not capture server output; got: {snippet:?}"
+        );
+        let _ = transport.close().await;
+    }
+
+    /// Fix #445 point 2: oversized line is rejected WITHOUT buffering
+    /// the full payload. Pre-fix `read_line` would have allocated the
+    /// whole 11 MiB before the size check.
+    #[tokio::test]
+    async fn fix445_oversized_line_rejected_before_full_buffering() {
+        let script = format!(
+            "read req; head -c {size} /dev/zero",
+            size = MAX_RESPONSE_SIZE + 1024 * 1024,
+        );
+        let transport = spawn_sh(&script).expect("spawn");
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            transport.request("ping", None),
+        )
+        .await
+        .expect("oversized read did not complete within timeout");
+
+        let err = result.expect_err("oversized line should be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("exceeded") && msg.contains("without newline"),
+            "expected oversized-line error, got: {msg}"
+        );
+        let _ = transport.close().await;
+    }
+
+    /// Sanity: a normal, well-formed response round-trips correctly.
+    #[tokio::test]
+    async fn fix445_normal_line_succeeds() {
+        let transport = spawn_sh(
+            "read req; \
+             printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"value\":42}}\n'",
+        )
+        .expect("spawn");
+
+        let result = transport.request("ping", None).await.expect("request ok");
+        assert_eq!(result["value"], 42);
+        let _ = transport.close().await;
+    }
+
+    /// Fix #445 point 1: concurrent request + drain does not deadlock,
+    /// across multiple sequential requests on the same transport with
+    /// stderr traffic interleaved.
+    #[tokio::test]
+    async fn fix445_concurrent_drain_and_request_no_deadlock() {
+        let transport = spawn_sh(
+            "for i in 1 2 3 4 5; do printf 'noise-%s\\n' \"$i\" >&2; done; \
+             read req1; \
+             printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":1}\n'; \
+             for i in 6 7 8 9 10; do printf 'noise-%s\\n' \"$i\" >&2; done; \
+             read req2; \
+             printf '{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":2}\n'",
+        )
+        .expect("spawn");
+
+        let r1 = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            transport.request("first", None),
+        )
+        .await
+        .expect("first request did not deadlock")
+        .expect("first request returned error");
+        assert_eq!(r1, serde_json::json!(1));
+
+        let r2 = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            transport.request("second", None),
+        )
+        .await
+        .expect("second request did not deadlock")
+        .expect("second request returned error");
+        assert_eq!(r2, serde_json::json!(2));
+
+        let _ = transport.close().await;
     }
 }

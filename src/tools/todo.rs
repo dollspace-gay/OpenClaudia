@@ -57,9 +57,12 @@ impl Drop for SessionIdGuard {
     }
 }
 
-/// Read the current thread's session id, or `None` when no guard is
-/// active on this thread.
-fn current_session_key() -> String {
+/// Read the current thread's session id, or the default key when no
+/// guard is active on this thread. Other tool modules in this crate
+/// (e.g. `file::ReadFileTracker`) call this via the sibling
+/// `tools::todo::` path so per-session bucketing is shared instead
+/// of each module rolling its own thread-local.
+pub(super) fn current_session_key() -> String {
     CURRENT_SESSION_ID
         .with(|cell| cell.borrow().clone())
         .unwrap_or_else(|| DEFAULT_SESSION_KEY.to_string())

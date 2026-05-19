@@ -827,13 +827,73 @@ pub enum CompactionError {
     Failed(String),
 }
 
-/// Compute threshold tokens from a context size and a ratio, using integer
-/// arithmetic to avoid `usize as f32` precision loss.
+/// Compute threshold tokens from a context size and a ratio.
+///
+/// Historical note: the previous implementation used the sequence
+/// `(max_context_tokens / 1000) * ((threshold * 1000.0) as usize)` to "avoid
+/// `usize as f32` precision loss". That reasoning was wrong (f64 has a 53-bit
+/// mantissa, more than enough for realistic context sizes) and the integer
+/// division applied *before* the multiplication discarded the low three
+/// decimal digits of `max_context_tokens`. For a `16_385`-token window at
+/// threshold `0.85` the old code returned `13_600` instead of the correct
+/// `13_927` — a 327-token under-count that triggered compaction 327 tokens
+/// early. See bugs #418 / #439.
+///
+/// This implementation routes the calculation through `u64` basis-point math
+/// with half-up rounding, matching `(window * threshold).round()` semantics.
+/// The threshold is quantized to basis points (parts per `10_000`) — giving
+/// 0.01% precision, well below the granularity any operator can reason about
+/// — via a cast-free binary search so pedantic clippy is satisfied without
+/// any `#[allow]` directive.
 fn threshold_tokens_for(max_context_tokens: usize, threshold: f32) -> usize {
-    // Multiply threshold by 1000, do integer math, then divide back.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let ratio_millths = (threshold * 1000.0) as usize;
-    max_context_tokens / 1000 * ratio_millths
+    let basis_points = ratio_to_basis_points(threshold);
+
+    // Widen to u64; on 64-bit targets `usize == u64`, on 32-bit it widens
+    // losslessly. `try_from` keeps the call total at the cost of an
+    // unreachable fallback branch.
+    let max_u64 = u64::try_from(max_context_tokens).unwrap_or(u64::MAX);
+
+    // Round to nearest (half-up): `(N * bp + 5_000) / 10_000`. This matches
+    // the `(window * threshold).round()` semantics mandated by #439. For
+    // (10_007, 0.1) → bp=1_000, numerator=10_007_000, +5_000=10_012_000,
+    // /10_000 = 1_001 (versus floor's 1_000). For (16_385, 0.85) →
+    // bp=8_500, numerator=139_272_500, +5_000=139_277_500, /10_000 = 13_927.
+    let numerator = max_u64.saturating_mul(u64::from(basis_points));
+    let result_u64 = numerator.saturating_add(5_000).saturating_div(10_000);
+
+    // The result is bounded by `max_context_tokens` + at most 1 (from
+    // rounding up); `try_from` keeps the call total.
+    usize::try_from(result_u64).unwrap_or(max_context_tokens)
+}
+
+/// Quantize a `[0.0, 1.0]` ratio to basis points (`[0, 10_000]`) without an
+/// `as` cast, satisfying `clippy::cast_possible_truncation` and
+/// `clippy::cast_sign_loss` without `#[allow]`.
+///
+/// `(threshold.clamp(0, 1) * 10_000.0).round()` produces an integer-valued
+/// f32 in `[0.0, 10_000.0]`. We then locate the matching `u16` candidate by
+/// binary search. Each candidate widens losslessly to f32 via `f32::from`
+/// (values `0..=10_000` fit `u16` exactly and round-trip through f32 without
+/// loss), so the comparisons are exact. Worst case is 14 iterations.
+fn ratio_to_basis_points(threshold: f32) -> u32 {
+    let target = (threshold.clamp(0.0, 1.0) * 10_000.0).round();
+    if !target.is_finite() || target <= 0.0 {
+        return 0;
+    }
+    if target >= 10_000.0 {
+        return 10_000;
+    }
+    let mut lo: u16 = 0;
+    let mut hi: u16 = 10_000;
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if f32::from(mid) < target {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    u32::from(lo)
 }
 
 /// Check if conversation needs compaction based on token usage.
@@ -1913,30 +1973,41 @@ mod tests {
         }
     }
 
-    // -- B6: known integer-math bug pin (#418) --------------------------------
+    // -- B6: threshold_tokens_for math correctness (#418 / #439) --------------
 
-    /// B6 — PINS BUG — fix tracked separately; test will fail when integer math is corrected.
+    /// B6a — REGRESSION GUARD — `threshold_tokens_for(16_385, 0.85) == 13_927`.
     ///
-    /// `threshold_tokens_for(16_385, 0.85)` currently returns `13_600` due to integer
-    /// division ordering: `(16_385 / 1000) * 850 = 16 * 850 = 13_600`.
-    /// The correct float result is `floor(16_385 * 0.85) = 13_927` (error: −327 tokens).
-    /// This test pins the CURRENT broken behavior so that fixing #418 causes a test
-    /// failure (the regression signal), not a silent pass.
+    /// This test previously pinned the *broken* `13_600` output as the
+    /// observable behavior for the regression of #418. The bug was that the
+    /// integer-math implementation
     ///
-    /// See issue #418 for the tracked fix.
+    /// ```text
+    /// (16_385 / 1000) * ((0.85 * 1000.0) as usize)
+    ///   = 16 * 850
+    ///   = 13_600         ← WRONG: 327 tokens too low
+    /// ```
+    ///
+    /// truncated the low three decimal digits of `max_context_tokens` *before*
+    /// multiplying. The correct (half-up rounded) result is
+    /// `round(16_385 * 0.85) = 13_927`.
+    ///
+    /// We assert the math directly and the observable effect at the analyze
+    /// surface. The effective threshold is
+    /// `13_927 - 4_096 (RESPONSE_RESERVE) = 9_831`.
+    ///
+    /// * A hint of `9_832` must trigger compaction.
+    /// * A hint of `9_831` must NOT trigger compaction (boundary exclusive).
+    /// * A hint of `9_505` must NOT trigger compaction (would have under the
+    ///   buggy `9_504` boundary; load-bearing forensic assertion).
     #[test]
-    fn b6_threshold_tokens_for_pins_known_integer_math_bug() {
-        // Access via public analyze_with_hint surface to avoid exposing the private fn.
-        // We construct a compactor with max_context_tokens=16_385, threshold=0.85
-        // and check that effective_threshold is 13_600 - 4_096 = 9_504 (not 13_927 - 4_096 = 9_831).
-        //
-        // threshold_tokens_for(16_385, 0.85):
-        //   ratio_millths = (0.85 * 1000.0) as usize = 850
-        //   result = (16_385 / 1000) * 850 = 16 * 850 = 13_600   ← CURRENT BROKEN VALUE
-        //   (correct: floor(16_385 * 0.85) = 13_927)
-        //
-        // effective_threshold = 13_600 - 4_096 = 9_504
-        // A hint of 9_505 must trigger compaction; a hint of 9_504 must not.
+    fn b6a_threshold_tokens_for_returns_correct_value_for_16385_at_0_85() {
+        let direct = threshold_tokens_for(16_385, 0.85);
+        assert_eq!(
+            direct, 13_927,
+            "threshold_tokens_for(16_385, 0.85) must be 13_927 (got {direct}). \
+             If this fails the #418/#439 integer-truncation bug has regressed."
+        );
+
         let config = CompactionConfig {
             max_context_tokens: 16_385,
             threshold: 0.85,
@@ -1944,26 +2015,106 @@ mod tests {
             ..Default::default()
         };
         let compactor = ContextCompactor::new(config);
-        let messages = vec![create_test_message("user", "x")];
-        let request = create_test_request(messages);
+        let request = create_test_request(vec![create_test_message("user", "x")]);
 
-        // 9_505 > effective_threshold(13_600 - 4_096 = 9_504) → needs_compaction: true
-        let above = compactor.analyze_with_hint(&request, Some(9_505));
-        assert!(
-            above.needs_compaction,
-            "hint 9505 should exceed current (buggy) effective_threshold 9504"
-        );
-
-        // 9_504 == effective_threshold → needs_compaction: false (not strictly greater)
-        let at = compactor.analyze_with_hint(&request, Some(9_504));
+        let at = compactor.analyze_with_hint(&request, Some(9_831));
         assert!(
             !at.needs_compaction,
-            "hint 9504 should not trigger compaction (boundary is exclusive)"
+            "hint 9831 == effective_threshold must NOT trigger compaction; \
+             observed needs_compaction={} (expected false).",
+            at.needs_compaction
         );
 
-        // If the bug were fixed: effective_threshold = 13_927 - 4_096 = 9_831.
-        // A hint of 9_505 would NOT trigger compaction with the corrected math.
-        // When this test fails, it means #418 has been fixed — update or delete this test.
+        let above = compactor.analyze_with_hint(&request, Some(9_832));
+        assert!(
+            above.needs_compaction,
+            "hint 9832 > effective_threshold 9831 must trigger compaction"
+        );
+
+        let buggy_boundary = compactor.analyze_with_hint(&request, Some(9_505));
+        assert!(
+            !buggy_boundary.needs_compaction,
+            "hint 9505 must NOT trigger compaction after the #418/#439 fix; \
+             if this fails the integer-truncation bug has regressed."
+        );
+    }
+
+    /// B6b — Parameter-space sweep across the realistic provider matrix.
+    /// `threshold_tokens_for(N, t)` must equal `round(N * t)` (with f32
+    /// threshold quantized to basis points, which is exact at 0.01%).
+    #[test]
+    fn b6b_threshold_tokens_for_parameter_space_sweep() {
+        // (label, ctx, threshold, expected_threshold_tokens).
+        let cases: &[(&str, usize, f32, usize)] = &[
+            ("gpt-3.5-turbo (16_385) @ 0.85", 16_385, 0.85, 13_927),
+            ("clean 10_000 @ 0.85", 10_000, 0.85, 8_500),
+            ("gpt-3.5-turbo (16_385) @ 0.9", 16_385, 0.9, 14_747),
+            ("claude-200k @ 0.85", 200_000, 0.85, 170_000),
+            ("gpt-4-turbo (128_000) @ 0.85", 128_000, 0.85, 108_800),
+            ("gpt-4 (8_192) @ 0.85", 8_192, 0.85, 6_963),
+            // round(10_007 * 0.1) = round(1_000.7) = 1_001.
+            ("prime 10_007 @ 0.1", 10_007, 0.1, 1_001),
+        ];
+
+        for (label, ctx, threshold, expected) in cases {
+            let got = threshold_tokens_for(*ctx, *threshold);
+            assert_eq!(
+                got, *expected,
+                "{label}: threshold_tokens_for({ctx}, {threshold}) expected \
+                 {expected}, got {got}"
+            );
+
+            let effective = got.saturating_sub(super::RESPONSE_RESERVE);
+            let config = CompactionConfig {
+                max_context_tokens: *ctx,
+                threshold: *threshold,
+                preserve_recent: 1,
+                ..Default::default()
+            };
+            let compactor = ContextCompactor::new(config);
+            let request = create_test_request(vec![create_test_message("user", "x")]);
+
+            let at_boundary = compactor.analyze_with_hint(&request, Some(effective));
+            assert!(
+                !at_boundary.needs_compaction,
+                "{label}: hint == effective_threshold ({effective}) must NOT \
+                 trigger compaction"
+            );
+
+            if effective < usize::MAX {
+                let above = compactor.analyze_with_hint(&request, Some(effective + 1));
+                assert!(
+                    above.needs_compaction,
+                    "{label}: hint == effective_threshold + 1 ({}) must \
+                     trigger compaction",
+                    effective + 1
+                );
+            }
+        }
+    }
+
+    /// B6c — Edge cases: threshold values at and outside `[0.0, 1.0]` plus
+    /// special floats produce sensible, panic-free results.
+    #[test]
+    fn b6c_threshold_edge_cases_dont_panic() {
+        assert_eq!(threshold_tokens_for(10_000, 0.0), 0);
+        assert_eq!(threshold_tokens_for(10_000, 1.0), 10_000);
+        // Negative clamps to 0.
+        assert_eq!(threshold_tokens_for(10_000, -0.5), 0);
+        // Above-1.0 clamps to 1.0.
+        assert_eq!(threshold_tokens_for(10_000, 1.5), 10_000);
+        // NaN clamps to 0 via explicit non-finite guard.
+        assert_eq!(threshold_tokens_for(10_000, f32::NAN), 0);
+        // +Infinity clamps to 1.0 (f32::clamp's documented behavior).
+        assert_eq!(threshold_tokens_for(10_000, f32::INFINITY), 10_000);
+        // -Infinity clamps to 0.
+        assert_eq!(threshold_tokens_for(10_000, f32::NEG_INFINITY), 0);
+        // Sub-basis-point thresholds round to nearest basis point:
+        // 0.00005 = 0.5 bp → rounds to 1 bp → 10_000 * 1 / 10_000 = 1
+        // (half-up: numerator 10_000 + 5_000 = 15_000 / 10_000 = 1).
+        assert_eq!(threshold_tokens_for(10_000, 0.00005), 1);
+        // Zero-sized context never triggers a panic.
+        assert_eq!(threshold_tokens_for(0, 0.85), 0);
     }
 
     // -- B7: empty conversation is a no-op (not a panic) ---------------------

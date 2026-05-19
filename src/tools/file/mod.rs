@@ -15,38 +15,54 @@ pub use read::{
 };
 pub use write::execute_write_file;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
-/// Maximum number of entries in the read tracker before eviction kicks in
+/// Maximum number of entries in the read tracker, per session, before
+/// LRU eviction kicks in. Per-session so a noisy session cannot evict
+/// another session's reads. Matches the previous global ceiling.
 const READ_TRACKER_MAX_ENTRIES: usize = 10_000;
 
-/// Tracks which files have been read in the current session.
-/// `edit_file` will fail if the file hasn't been read first.
-pub static READ_TRACKER: std::sync::LazyLock<ReadFileTracker> =
-    std::sync::LazyLock::new(ReadFileTracker::new);
+/// Tracks which files have been read, bucketed per session id.
+///
+/// Each session id (set via `crate::tools::SessionIdGuard`) has its
+/// own LRU list of canonicalized paths. `edit_file` will fail if the
+/// file hasn't been read first **in the same session**. Without an
+/// active guard the bucket falls back to the shared default key so
+/// the chat REPL and legacy tests keep working out of the box.
+///
+/// crosslink #440 phase 1: session isolation lives inside this
+/// singleton (keyed by the thread-local session id), not yet threaded
+/// through `ToolContext`. Phase 2 (follow-up issue) will own the
+/// tracker on `ChatSession` / `ToolContext` directly.
+pub static READ_TRACKER: LazyLock<ReadFileTracker> = LazyLock::new(ReadFileTracker::new);
 
 pub struct ReadFileTracker {
-    /// LRU-ordered list: most recently read files at the end.
-    /// When capacity is exceeded, oldest entries (front) are evicted.
-    read_files: Mutex<Vec<PathBuf>>,
+    /// Per-session LRU lists. Key is the session id from the
+    /// thread-local guard (or the shared default key when no guard is
+    /// active). Most-recently-read paths sit at the end; over
+    /// [`READ_TRACKER_MAX_ENTRIES`] in a bucket evicts from the front.
+    buckets: Mutex<HashMap<String, Vec<PathBuf>>>,
 }
 
 impl ReadFileTracker {
-    const fn new() -> Self {
+    fn new() -> Self {
         Self {
-            read_files: Mutex::new(Vec::new()),
+            buckets: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Mark a file as having been read. Moves to end (most recent) if already tracked.
+    /// Mark a file as having been read in the **current session**.
+    /// Moves to end (most recent) if already tracked. Other sessions'
+    /// buckets are untouched.
     pub(crate) fn mark_read(&self, path: &Path) {
         let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        if let Ok(mut files) = self.read_files.lock() {
-            // Remove existing entry (if any) so we can re-add at the end
+        let key = super::todo::current_session_key();
+        if let Ok(mut buckets) = self.buckets.lock() {
+            let files = buckets.entry(key).or_default();
             files.retain(|p| p != &resolved);
             files.push(resolved);
-            // Evict oldest entries if over capacity
             if files.len() > READ_TRACKER_MAX_ENTRIES {
                 let excess = files.len() - READ_TRACKER_MAX_ENTRIES;
                 files.drain(..excess);
@@ -54,19 +70,26 @@ impl ReadFileTracker {
         }
     }
 
-    /// Check if a file has been read
+    /// Check whether a file has been read in the **current session**.
+    /// A read in another session does not satisfy this check.
     pub(crate) fn has_been_read(&self, path: &Path) -> bool {
         let check_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        self.read_files
+        let key = super::todo::current_session_key();
+        self.buckets
             .lock()
             .ok()
-            .is_some_and(|files| files.contains(&check_path))
+            .is_some_and(|buckets| buckets.get(&key).is_some_and(|f| f.contains(&check_path)))
     }
 
-    /// Clear tracking (called on new session)
-    pub(crate) fn clear(&self) {
-        if let Ok(mut files) = self.read_files.lock() {
-            files.clear();
+    /// Clear every session's bucket. Used by tests and at
+    /// session-start by `crate::tools::reset_read_tracker`. A
+    /// per-session `clear()` is intentionally deferred to phase 2
+    /// (follow-up issue): until `ToolContext` owns the tracker there
+    /// is no caller that has a session id without the thread-local
+    /// guard, so adding it now would be dead code rejected by clippy.
+    pub(crate) fn clear_all(&self) {
+        if let Ok(mut buckets) = self.buckets.lock() {
+            buckets.clear();
         }
     }
 }
@@ -81,45 +104,20 @@ static PROJECT_ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
         .unwrap_or_else(|_| PathBuf::from("."))
 });
 
-/// Process temp directory, canonicalized. Used as a second allowed jail for
-/// tests (tempfile creates paths under `/tmp/...`) and for legitimate
-/// intermediate-file workflows.
+/// Process temp directory, canonicalized.
 static TEMP_ROOT: LazyLock<Option<PathBuf>> =
     LazyLock::new(|| std::env::temp_dir().canonicalize().ok());
 
-/// Returns `true` when the strict jail is active (the default).
-///
-/// Disabled only when the operator explicitly sets
-/// `OPENCLAUDIA_ALLOW_OUT_OF_ROOT=1`. Any other value keeps strict mode on,
-/// matching the secure-by-default posture.
 fn strict_mode() -> bool {
     !matches!(std::env::var("OPENCLAUDIA_ALLOW_OUT_OF_ROOT"), Ok(ref v) if v == "1")
 }
 
-/// Returns `true` if `canonical` is inside `root` (including `root` itself).
 fn path_is_within(canonical: &Path, root: &Path) -> bool {
     canonical == root || canonical.starts_with(root)
 }
 
-/// Resolve a path argument to a canonical absolute path inside the project-root jail.
-///
-/// Defenses applied, in order:
-///  1. Early rejection of `..` components (clearer error than letting `canonicalize` eat them).
-///  2. `canonicalize()` follows symlinks; if the target does not yet exist,
-///     the first existing ancestor is canonicalized and the non-existent
-///     suffix rejoined — this closes the symlink-escape-on-read hole while
-///     still supporting write/edit of new files.
-///  3. Containment check against `PROJECT_ROOT` OR the process temp dir.
-///     Anything outside both is rejected unless
-///     `OPENCLAUDIA_ALLOW_OUT_OF_ROOT=1` is set.
-///
-/// The previous implementation returned absolute paths as-is, which allowed
-/// a prompt-injected model to read `/etc/passwd`, `/root/.ssh/id_rsa`, etc.
-/// See crosslink issue #269.
 fn resolve_path(path: &str) -> Result<PathBuf, String> {
     let p = Path::new(path);
-
-    // Step 1: absolutize (pure string join — does NOT follow symlinks yet).
     let absolute = if p.is_absolute() {
         p.to_path_buf()
     } else {
@@ -127,20 +125,12 @@ fn resolve_path(path: &str) -> Result<PathBuf, String> {
             .map_err(|e| format!("Cannot resolve relative path (no working directory): {e}"))?
             .join(p)
     };
-
-    // Step 2: reject `..` components upfront with a clearer error.
     if absolute
         .components()
         .any(|c| c == std::path::Component::ParentDir)
     {
         return Err(format!("Path traversal not allowed: '{path}'"));
     }
-
-    // Step 3: canonicalize (resolves symlinks). For paths to files that do not
-    // yet exist (write_file's target, deeply nested new directories), walk up
-    // the chain to the first existing ancestor, canonicalize THAT, then
-    // rejoin the virtual suffix — this closes the symlink-escape-on-read hole
-    // while still supporting `write_file path/to/newly/created/file.txt`.
     let canonical = if let Ok(c) = absolute.canonicalize() {
         c
     } else {
@@ -164,14 +154,11 @@ fn resolve_path(path: &str) -> Result<PathBuf, String> {
         }
         built
     };
-
-    // Step 4: enforce jail containment.
     if strict_mode() {
         let in_project = path_is_within(&canonical, &PROJECT_ROOT);
         let in_temp = TEMP_ROOT
             .as_ref()
             .is_some_and(|t| path_is_within(&canonical, t));
-
         if !in_project && !in_temp {
             return Err(format!(
                 "Path '{path}' resolves to '{}' which is outside the project root ('{}') \
@@ -182,24 +169,9 @@ fn resolve_path(path: &str) -> Result<PathBuf, String> {
             ));
         }
     }
-
     Ok(canonical)
 }
 
-/// Build the path to pass to `open(2)` for a leaf-symlink-safe write.
-///
-/// `resolve_path` follows symlinks at the leaf as part of its jail check,
-/// which is right for read but wrong for the actual `open()` call on
-/// `write`/`edit`/`notebook_edit`: if an attacker swaps the leaf for a
-/// symlink between `resolve_path` and the open, an `O_NOFOLLOW` open
-/// against `resolve_path`'s result fails to notice — the leaf component
-/// has already been resolved away.
-///
-/// This helper returns `<canonical_parent>/<original_leaf>`. The parent is
-/// canonicalized (jail still enforced via intermediate symlink resolution),
-/// but the leaf is preserved verbatim — meaning `open()` with `O_NOFOLLOW`
-/// against this result fails with `ELOOP` if the leaf was swapped for a
-/// symlink. Used by crosslink #417 (dup #428).
 pub fn resolve_open_path(user_path: &str) -> Result<PathBuf, String> {
     let p = Path::new(user_path);
     let absolute = if p.is_absolute() {
@@ -263,7 +235,6 @@ pub fn resolve_open_path(user_path: &str) -> Result<PathBuf, String> {
     Ok(canonical_parent.join(leaf))
 }
 
-/// Read a file's contents
 pub fn execute_read_file(
     args: &std::collections::HashMap<String, serde_json::Value>,
 ) -> (String, bool) {
@@ -277,10 +248,8 @@ pub fn execute_read_file(
     };
     let resolved_str = resolved.to_string_lossy();
 
-    // Track that this file has been read (for edit_file and notebook_edit enforcement)
     READ_TRACKER.mark_read(&resolved);
 
-    // Detect file type and dispatch accordingly
     match detect_file_type(&resolved_str) {
         FileType::Image(mime_type) => read_image_file(&resolved_str, mime_type),
         FileType::Pdf => {
@@ -289,5 +258,121 @@ pub fn execute_read_file(
         }
         FileType::Notebook => read_notebook_file(&resolved_str),
         FileType::Text => read_text_file(&resolved_str, args),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    fn tracker_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn two_temp_paths() -> (
+        tempfile::NamedTempFile,
+        tempfile::NamedTempFile,
+        PathBuf,
+        PathBuf,
+    ) {
+        let a = tempfile::NamedTempFile::new().expect("tempfile a");
+        let b = tempfile::NamedTempFile::new().expect("tempfile b");
+        let pa = a.path().canonicalize().expect("canonicalize a");
+        let pb = b.path().canonicalize().expect("canonicalize b");
+        (a, b, pa, pb)
+    }
+
+    /// crosslink #440 phase 1: a read marked in session A is NOT
+    /// visible in session B, despite the shared global tracker.
+    #[test]
+    fn read_tracker_isolates_marks_between_sessions() {
+        let _lock = tracker_lock();
+        READ_TRACKER.clear_all();
+        let (_keep_a, _keep_b, path_a, path_b) = two_temp_paths();
+        {
+            let _g = crate::tools::SessionIdGuard::set("session-a-440");
+            READ_TRACKER.mark_read(&path_a);
+            assert!(READ_TRACKER.has_been_read(&path_a));
+        }
+        {
+            let _g = crate::tools::SessionIdGuard::set("session-b-440");
+            assert!(
+                !READ_TRACKER.has_been_read(&path_a),
+                "session-b must NOT see session-a's read"
+            );
+            assert!(!READ_TRACKER.has_been_read(&path_b));
+            READ_TRACKER.mark_read(&path_b);
+            assert!(READ_TRACKER.has_been_read(&path_b));
+            assert!(
+                !READ_TRACKER.has_been_read(&path_a),
+                "session-a's read still invisible after session-b writes its own"
+            );
+        }
+        {
+            let _g = crate::tools::SessionIdGuard::set("session-a-440");
+            assert!(
+                READ_TRACKER.has_been_read(&path_a),
+                "session-a's mark survives session-b activity"
+            );
+            assert!(
+                !READ_TRACKER.has_been_read(&path_b),
+                "session-a must NOT see session-b's read"
+            );
+        }
+    }
+
+    /// crosslink #440 phase 1: same-session mark-then-check round-trip.
+    #[test]
+    fn read_tracker_same_session_round_trip() {
+        let _lock = tracker_lock();
+        READ_TRACKER.clear_all();
+        let _g = crate::tools::SessionIdGuard::set("session-round-trip-440");
+        let (_keep, _keep_b, path_a, _path_b) = two_temp_paths();
+        assert!(
+            !READ_TRACKER.has_been_read(&path_a),
+            "fresh session sees nothing"
+        );
+        READ_TRACKER.mark_read(&path_a);
+        assert!(
+            READ_TRACKER.has_been_read(&path_a),
+            "round-trip works inside one session"
+        );
+        READ_TRACKER.mark_read(&path_a);
+        assert!(READ_TRACKER.has_been_read(&path_a), "re-mark stays visible");
+    }
+
+    /// crosslink #440 phase 1: `clear_all()` wipes every session's bucket.
+    #[test]
+    fn read_tracker_clear_all_wipes_every_bucket() {
+        let _lock = tracker_lock();
+        READ_TRACKER.clear_all();
+        let (_keep_a, _keep_b, path_a, path_b) = two_temp_paths();
+        {
+            let _g = crate::tools::SessionIdGuard::set("session-clear-a-440");
+            READ_TRACKER.mark_read(&path_a);
+        }
+        {
+            let _g = crate::tools::SessionIdGuard::set("session-clear-b-440");
+            READ_TRACKER.mark_read(&path_b);
+        }
+        READ_TRACKER.clear_all();
+        {
+            let _g = crate::tools::SessionIdGuard::set("session-clear-a-440");
+            assert!(
+                !READ_TRACKER.has_been_read(&path_a),
+                "clear_all wipes session-a's bucket"
+            );
+        }
+        {
+            let _g = crate::tools::SessionIdGuard::set("session-clear-b-440");
+            assert!(
+                !READ_TRACKER.has_been_read(&path_b),
+                "clear_all wipes session-b's bucket"
+            );
+        }
     }
 }

@@ -61,11 +61,14 @@ pub fn safe_truncate(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
-/// Reset the read tracker - used for testing
-/// In production, this is called at the start of each new session
+/// Reset the read tracker. Used by tests and at session-start.
+///
+/// Clears every per-session bucket so legacy callers that do not
+/// activate a `SessionIdGuard` get a clean slate the same way they
+/// did before crosslink #440.
 #[doc(hidden)]
 pub fn reset_read_tracker() {
-    file::READ_TRACKER.clear();
+    file::READ_TRACKER.clear_all();
 }
 
 /// Tool call from the model
