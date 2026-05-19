@@ -1,0 +1,10 @@
+{
+  "uuid": "fe01c5bd-5b75-4725-abfd-f6b7cca2cb5c",
+  "issue_uuid": "90ed3939-45f3-4472-a731-124ea9c2e9cc",
+  "author": "lOrm",
+  "content": "Fixed in src/coordinator/permission.rs: replaced misleading doc comment that claimed QueuedPermission carries a reply channel. New doc explicitly marks it fire-and-forget at Phase 1, documents the no-channel constraint, and lays out both Phase 3 resume options (oneshot field vs parallel correlation map). 2 unit tests (issue_793_*) pin the no-reply contract via Debug introspection + dequeue round-trip — fail loud if a reply/sender/notify field is ever added without updating the doc. All tests pass; clippy --lib --tests exit 0.",
+  "created_at": "2026-05-19T23:50:34.312856412Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA5ZdMNHfTwTHjJeq2NQBpvYL2jySErmGcOYFFmtrb4OehPLScrj2/tRJZKllnfK1FVv72QQcYoEDZ9J2UpXxbCQ=="
+}
