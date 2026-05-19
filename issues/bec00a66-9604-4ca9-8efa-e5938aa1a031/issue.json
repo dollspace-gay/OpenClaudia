@@ -3,11 +3,12 @@
   "display_id": 675,
   "title": "HashMap<String,Value> argument extraction pattern duplicated across every tool",
   "description": "## Severity\nMajor\n\n## Dimension\nDRY / KISS / SOLID-S\n\n## Location\nsrc/tools/file/write.rs:9-40, src/tools/file/edit.rs:9-66, src/tools/file/notebook.rs:49-78, src/tools/file/mod.rs:188-198, src/tools/cron.rs:142-161, src/tools/todo.rs:76-127, src/tools/worktree.rs:59-68\n\n## Violation\nEvery executor reimplements identical \"extract a required string arg or return an error string\" logic, e.g. cron.rs:142-161:\n\n```rust\nlet name = match args.get(\"name\").and_then(|v| v.as_str()) {\n    Some(n) => n.to_string(),\n    None => return (\"Error: name is required\".to_string(), true),\n};\nlet cron_expression = match args.get(\"schedule\").and_then(|v| v.as_str()) { ... };\nlet prompt = match args.get(\"prompt\").and_then(|v| v.as_str()) { ... };\n```\n\nSame pattern in todo.rs:88-121, notebook.rs:50-75, etc. The error message style even drifts between files (\"Error: name is required\" vs \"Missing 'path' argument\" vs \"missing 'content' field\"). This is the textbook DRY violation: N copies of the same dispatch protocol, each free to regress independently.\n\n## Mandated refactor\nIntroduce a typed `ToolArgs` extractor (use `serde` deserialization into a per-tool input struct; e.g. `#[derive(Deserialize)] struct CronCreateArgs { name: String, schedule: String, prompt: String, ... }`). Replace the manual extraction blocks with `let args: CronCreateArgs = serde_json::from_value(raw_args.into())?;`. This gives uniform error messages, free defaults via `#[serde(default)]`, schema-level rejection of unknown fields, and eliminates the duplicate validation code entirely.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:46:21.756090440Z",
-  "updated_at": "2026-05-18T21:46:34.191217Z",
+  "updated_at": "2026-05-19T20:22:14.362053561Z",
+  "closed_at": "2026-05-19T20:22:14.362053561Z",
   "labels": [
     "qa-review",
     "dry"
