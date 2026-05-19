@@ -3,11 +3,12 @@
   "display_id": 806,
   "title": "QA: terminate_process_tree shells out to PATH-resolved kill (PATH hijack)",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/tools/bash/kill.rs:35, 42, 57\n## Violation\nThe process killer invokes `Command::new(\"kill\")` three times — resolved via `$PATH`. Because `apply_env_scrub` (policy.rs:143-151) does NOT scrub `PATH`, a malicious PATH entry can shadow `kill` and either fail-open (let the runaway child survive) or escalate. Every shell-out's result is `let _`-discarded.\n\nQuoted (kill.rs:34-42):\n```\n        let _ = Command::new(\"kill\").args([\"-TERM\", &neg_pid_str]).output();\n\n        let deadline = Instant::now() + Duration::from_secs(2);\n        let mut exited = false;\n        while Instant::now() < deadline {\n            let check = Command::new(\"kill\").args([\"-0\", &pid_str]).output();\n```\n## Mandated refactor\n1. Replace `Command::new(\"kill\")` with `nix::sys::signal::killpg` / `nix::sys::signal::kill` (libc — no PATH lookup, no fork/exec).\n2. Use `nix::sys::wait::waitpid` with `WNOHANG` instead of `kill -0` polling.\n3. Propagate signal-call failures up instead of `let _`-discarding.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:01:11.213149156Z",
-  "updated_at": "2026-05-18T22:01:30.730385114Z",
+  "updated_at": "2026-05-19T23:18:39.075476987Z",
+  "closed_at": "2026-05-19T23:18:39.075476987Z",
   "labels": [
     "qa-review",
     "security"
