@@ -3,9 +3,10 @@
   "display_id": 707,
   "title": "ACP server uses unstable Duration::from_mins on stable Rust",
   "description": "## Severity\nMajor\n## Dimension\nerror-handling\n## Location\nsrc/acp.rs:424\n## Violation\n`client_request` awaits a `oneshot::Receiver` under:\n\n```rust\nmatch tokio::time::timeout(std::time::Duration::from_mins(5), rx).await {\n```\n\n`Duration::from_mins` is a nightly-only API (unstable feature `duration_constructors`). Compilation against stable Rust fails outright. If the project is currently compiling, it is being silently built with a nightly toolchain — meaning the ACP binary shipped to users without nightly will not exist. If a `rust-toolchain.toml` is masking this, the choice is undocumented in-file and any future stable-only consumer (a packager, a CI runner, a downstream crate) breaks unannounced.\n\nThis is also a contract issue: a five-minute hard timeout is hard-coded into a transport helper that has no awareness of the operation it's gating. Token refresh, file read, and a 200-line bash run all share the same five-minute budget with no way to override per call site.\n## Mandated refactor\nReplace `Duration::from_mins(5)` with `Duration::from_secs(5 * 60)` immediately. Promote the timeout to a named constant (`const CLIENT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);`) and accept it as an optional parameter on `client_request` so caller-specific budgets (fast `fs/read_text_file`, long `terminal/wait_for_exit`) can supply their own. Pin a `rust-toolchain.toml` to `stable` and add `cargo +stable build` to CI to catch nightly-only regressions.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:49:32.386225809Z",
-  "updated_at": "2026-05-18T21:49:32.386225809Z"
+  "updated_at": "2026-05-19T20:40:52.498056528Z",
+  "closed_at": "2026-05-19T20:40:52.498056528Z"
 }
