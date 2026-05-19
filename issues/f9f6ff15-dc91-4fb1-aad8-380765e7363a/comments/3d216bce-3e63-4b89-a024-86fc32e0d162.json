@@ -1,0 +1,10 @@
+{
+  "uuid": "3d216bce-3e63-4b89-a024-86fc32e0d162",
+  "issue_uuid": "f9f6ff15-dc91-4fb1-aad8-380765e7363a",
+  "author": "lOrm",
+  "content": "All mandated refactors from the original issue are now implemented: (1) hostname denylist for metadata endpoints; (2) IpAddr-based forbidden-range checks replacing all string-prefix heuristics; (3) decimal-integer and hex-integer IPv4 parsing via parse_host_as_ip(); (4) full IPv6 matrix (fc00::/7, fe80::/10, 2002::/16, 2001::/32, IPv4-mapped) via is_ipv6_forbidden(); (5) DNS resolution via ToSocketAddrs with every returned address validated; (6) unit tests for all bypass vectors. Residual risk (DNS rebinding at dial-time) documented in validate_url docstring, tracked as crosslink #335.",
+  "created_at": "2026-05-19T11:11:38.954948665Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA/KO/6s62OCu1NXcij4Y17AbLmgoL7vfueUqnyqxMbDI/h6UEvc4c56C8aLDdODJC+rVz6dOfs4TluPZbs6PzDA=="
+}
