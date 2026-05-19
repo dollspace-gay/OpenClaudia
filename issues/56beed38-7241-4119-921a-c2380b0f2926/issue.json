@@ -3,9 +3,10 @@
   "display_id": 720,
   "title": "resolve_path is 60-line function with cyclomatic complexity > 15",
   "description": "## Severity\nMajor\n\n## Dimension\nComplexity / Cognitive Readability\n\n## Location\nsrc/tools/file/mod.rs:119-185 (`resolve_path` function)\n\n## Violation\nThis function combines:\n1. relative-to-absolute join with environment lookup,\n2. `..` rejection with `components().any(...)`,\n3. canonicalize-or-walk-up-ancestors logic with an unbounded `loop` (lines 145-158) and a manually built suffix vector,\n4. strict-mode flag check via env-var pattern match,\n5. dual-jail check (PROJECT_ROOT OR TEMP_ROOT),\n6. error formatting with file/jail interpolation.\n\nEach step has ≥2 branches → cyclomatic ≈ 18. The middle ancestor-walk:\n\n```rust\nlet canonical = if let Ok(c) = absolute.canonicalize() { c } else {\n    let mut ancestor = absolute.as_path();\n    let mut suffix_components: Vec<&std::ffi::OsStr> = Vec::new();\n    let canonical_ancestor = loop {\n        if let Ok(c) = ancestor.canonicalize() { break c; }\n        let file_name = ancestor.file_name().ok_or_else(|| { ... })?;\n        suffix_components.push(file_name);\n        ancestor = ancestor.parent().ok_or_else(|| { ... })?;\n    };\n    let mut built = canonical_ancestor;\n    for comp in suffix_components.iter().rev() { built.push(comp); }\n    built\n};\n```\n\n…is a mutable, fallible loop building a Vec inside a let-binding. Cognitive complexity is over the §3.5 threshold.\n\n## Mandated refactor\nExtract three private free-functions:\n1. `fn absolutize(p: &str) -> Result<PathBuf, String>` — steps 1+2 (relative join + `..` rejection).\n2. `fn canonicalize_or_walk_up(absolute: &Path) -> Result<PathBuf, String>` — the ancestor-walk loop, fully testable in isolation.\n3. `fn enforce_jail(canonical: &Path) -> Result<(), String>` — strict-mode + dual-jail check.\n\n`resolve_path` then becomes a linear three-step function under 15 lines.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:51:05.240821048Z",
-  "updated_at": "2026-05-18T21:51:05.240821048Z"
+  "updated_at": "2026-05-19T21:52:21.926200823Z",
+  "closed_at": "2026-05-19T21:52:21.926200823Z"
 }
