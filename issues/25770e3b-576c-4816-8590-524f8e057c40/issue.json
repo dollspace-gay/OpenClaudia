@@ -1,0 +1,11 @@
+{
+  "uuid": "25770e3b-576c-4816-8590-524f8e057c40",
+  "display_id": 994,
+  "title": "Phase 2 follow-up to #440: thread tool session-state through ToolContext",
+  "description": "Phase 1 of #440 landed per-session bucketing for READ_TRACKER (file/mod.rs) by mirroring tools::todo's thread-local SessionIdGuard pattern. Two singletons remain global per the original audit: BACKGROUND_SHELLS (bash/mod.rs L266-267, Mutex<HashMap<String,BackgroundShell>> — shared namespace across sessions, no termination on session end) and CHAINLINK_INSTALL_SHOWN (chainlink.rs L7, AtomicBool that is once-per-PROCESS not once-per-session). Phase 1 is also structurally a band-aid: state still lives in process-global LazyLock keyed by thread-local. Phase 2 finishes the audit's mandated refactor: define SessionState (or extend ToolContext) to own read_tracker + todo store + shells + chainlink-install flag; construct one per ChatSession; thread &mut SessionState through ToolContext; delete the four LazyLock globals; delete reset_read_tracker/clear_all_todo_lists (tests construct fresh SessionState); SessionState::drop terminates background shells. Hard constraints: no #[allow], no clippy.toml, no #[ignore]; baseline tests stay green.",
+  "status": "open",
+  "priority": "medium",
+  "created_by": "lOrm",
+  "created_at": "2026-05-19T17:03:32.381086033Z",
+  "updated_at": "2026-05-19T17:03:32.381086033Z"
+}
