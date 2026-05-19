@@ -1,0 +1,10 @@
+{
+  "uuid": "e52cdb92-e625-430b-8159-471c9d057f14",
+  "issue_uuid": "4718c93c-ed62-441a-8452-0eaeec58dd0a",
+  "author": "lOrm",
+  "content": "Fixed: src/config/mod.rs load_config() Environment source now uses .ignore_empty(true). Empty OPENCLAUDIA_* env vars are treated as unset and no longer blank the loaded config slot.\n\nForensic evidence: test issue_696_forensic_evidence_pre_fix_behaviour reproduces the bug (asserts that without ignore_empty, an empty env DOES blank the slot) so any future regression is caught immediately.\n\nVerification: cargo test --lib: 1442 passed / 0 failed (1437 baseline + 5 new tests). cargo clippy --lib --tests -- -D warnings: exit 0. cargo fmt --check: clean. No #[allow], no #[ignore], no clippy.toml.\n\nTests added (all pass): issue_696_empty_env_does_not_overwrite_loaded_key, issue_696_non_empty_env_does_override_loaded_key, issue_696_unset_env_preserves_loaded_key, issue_696_forensic_evidence_pre_fix_behaviour, issue_696_maybe_set_api_key_skips_empty_and_whitespace.\n\nScope note: narrow fix for empty-env-overwrites-config. The broader separator-overlap concern (DEEPSEEK_API_KEY mangled into deepseek.api.key by the single-underscore separator) is out of scope and documented in build_with_env_source() for a follow-up.",
+  "created_at": "2026-05-19T21:38:09.517535057Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAOHOeI7Flqotgr5VIl+dX94Z/8EuvHsks8h2KlxwEjvzHez40SWo5M0SHhZSGDbI6VVrt3Jx6prb/XZjYhJ0BCA=="
+}
