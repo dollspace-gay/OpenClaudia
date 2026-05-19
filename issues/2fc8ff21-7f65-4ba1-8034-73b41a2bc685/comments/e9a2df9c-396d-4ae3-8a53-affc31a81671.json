@@ -1,0 +1,10 @@
+{
+  "uuid": "e9a2df9c-396d-4ae3-8a53-affc31a81671",
+  "issue_uuid": "2fc8ff21-7f65-4ba1-8034-73b41a2bc685",
+  "author": "lOrm",
+  "content": "Fixed in src/tools/accumulator.rs: to_openai_tool_calls_json now canonicalizes arguments via Self::canonicalize_arguments. Pre-fix the raw streamed input_json was embedded verbatim with no validation: (a) empty streams emitted '\"\"' (invalid JSON); (b) truncated streams propagated to convert_messages_to_anthropic where unwrap_or_else(|_| json!({})) silently replaced them with {} and dropped the model's intent. Post-fix: empty/whitespace -> canonical '{}'; valid JSON round-trips through serde_json::to_string for byte-stable output; malformed JSON collapses to '{}' with a tracing::warn! so the corruption is observable. Raw fragment remains accessible via finalize_tool_calls. Added 4 regression tests (empty, quoted-string, nested-object, malformed). Tests: 1338 pass (baseline 1334 + 4 new). cargo clippy --lib --tests -- -D warnings exits 0. Out of scope: index-cap and finalize() JSON-closure validation — those touch the OpenAI->internal ToolCallAccumulator path; separate ticket if still needed.",
+  "created_at": "2026-05-19T16:54:40.558945907Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAbX2nhx9UY1y+VOvl6s+RgOSELewc41IZrXxmZsaxHp83aO6n3kpESZtfFeKlmYWFm2TOMQgiz9ghAGtfsltVAA=="
+}
