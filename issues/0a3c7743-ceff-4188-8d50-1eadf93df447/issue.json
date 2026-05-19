@@ -3,11 +3,12 @@
   "display_id": 749,
   "title": "QA: guardrails check_file_access fails open on Mutex poison/None state (guardrails.rs)",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/guardrails.rs:43-50, 26-35\n## Violation\nThe blast-radius check returns `Ok(())` whenever the global guardrails\nstate cannot be inspected — both when the mutex is poisoned and when the\nengine was never configured:\n```rust\npub fn check_file_access(path: &str) -> Result<(), String> {\n    if let Ok(guard) = GUARDRAILS.lock() {\n        if let Some(engine) = guard.as_ref() {\n            return engine.check_file_access(path);\n        }\n    }\n    Ok(())\n}\n```\nThe `if let Ok` swallows `PoisonError`; the inner `if let Some` covers\nthe \"never configured\" case. Either way the function returns success and\nthe caller proceeds to write `.git/config` or `/etc/shadow`. This is a\nclassic fail-open security failure (OWASP A04 Insecure Design).\n`configure()` (lines 30-35) silently no-ops on poison as well.\n## Mandated refactor\nDistinguish three states explicitly: `Disabled`, `Enabled(engine)`,\n`Poisoned`. Return `Err(\"guardrails poisoned — refusing write\")` on\npoison. Either require explicit configuration before any tool dispatches,\nor return a typed `GuardrailDecision { Unconfigured, Allowed, Denied(...) }`\nand force the caller to handle `Unconfigured` (fail-closed for write\ntools). Replace `if let Ok(guard) = ...lock()` with\n`.lock().expect(\"guardrails poisoned\")` if poison genuinely should crash\nthe process.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:54:11.741915605Z",
-  "updated_at": "2026-05-18T21:54:24.370025673Z",
+  "updated_at": "2026-05-19T22:54:12.905446267Z",
+  "closed_at": "2026-05-19T22:54:12.905446267Z",
   "labels": [
     "qa-review"
   ]
