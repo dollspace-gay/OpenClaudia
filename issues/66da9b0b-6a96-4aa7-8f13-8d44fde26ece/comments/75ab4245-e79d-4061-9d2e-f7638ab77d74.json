@@ -1,0 +1,10 @@
+{
+  "uuid": "75ab4245-e79d-4061-9d2e-f7638ab77d74",
+  "issue_uuid": "66da9b0b-6a96-4aa7-8f13-8d44fde26ece",
+  "author": "lOrm",
+  "content": "Tightened detect_preferences heuristic to reject false positives.\n\nChanges (src/auto_learn.rs):\n- New helpers: is_single_imperative_sentence (rejects ? anywhere; rejects multi-sentence), is_substantive_object_phrase (requires >=2 alpha tokens after verb), is_idiomatic_non_preference (denylists 'never mind', 'dont worry', 'always has been', etc.)\n- detect_preferences: drops the bare 'use ' prefix (was matching tool invocations like 'use the read_file tool'); gates every preference prefix on is_single_imperative_sentence + is_substantive_object_phrase + is_idiomatic_non_preference\n- correction prefixes now require trailing comma/period ('no, ', 'wrong, ', 'wrong. ', 'actually, ', 'instead, ') so 'stop the bash shell' and 'don't use the read_file tool' no longer match\n\nTests: 13 new fix448_* tests covering the false-positive classes from the issue (question-with-always, use-as-tool-invocation, never-mind idiom, multi-sentence, conditional 'if you always', double-?, prefer-with-multi-sentence) plus positive regressions and direct helper coverage.\n\nForensic evidence:\n- md5(src/auto_learn.rs) = 11a7589e004d4619822e2d9471218206 (stable across full cargo test --lib run)\n- cargo test --lib: 1357 passed; 0 failed\n- cargo test --lib auto_learn: 24 passed; 0 failed\n- cargo clippy --lib --tests: zero diagnostics mention auto_learn.rs\n- grep '#[allow|#[ignore]' src/auto_learn.rs: empty\n- clippy.toml: absent",
+  "created_at": "2026-05-19T17:01:54.404280419Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAEtK2waaYHu/rUcX7/3GJIpnrWC5f8D2EMdn64ZQW5JBG+mA5mRk/aLuWIaBOTXqPR7Xrw43nUEIzeseL6lIQAw=="
+}
