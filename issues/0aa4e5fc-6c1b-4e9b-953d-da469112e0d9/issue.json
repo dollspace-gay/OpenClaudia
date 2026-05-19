@@ -3,11 +3,12 @@
   "display_id": 692,
   "title": "Prompt injection: format_core_memory_for_prompt does not escape XML/section markers",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/memory.rs:650-662 (format_core_memory_for_prompt)\n## Violation\nCore memory section names and content are interpolated directly into XML wrapper tags emitted into the system prompt with no escaping:\n\n```rust\nlet mut output = String::from(\"<core_memory>\\n\");\nfor mem in core {\n    let _ = write!(\n        output,\n        \"<{}>\\n{}\\n</{}>\\n\",\n        mem.section, mem.content, mem.section\n    );\n}\noutput.push_str(\"</core_memory>\");\n```\n\n`update_core_memory(section, content)` is fully public and the auto-learning code path stores untrusted assistant/user-derived data into core memory (see migrate_v1_on seed text). A `content` that includes `</core_memory>` or `</persona>` literally breaks out of the framing tag, allowing instruction injection into the system-prompt construction at the next session start. Same class as crosslink #501 (FTS escape) but here the sink is the LLM, not SQLite. No control on section name either — a section called `evil><system>` is currently rejected only by the SQL PRIMARY KEY constraint after the damage is done in the prompt.\n## Mandated refactor\n1. Strip or HTML-escape `<`, `>`, `&`, and the literal substrings `</core_memory>`, `</persona>`, `</project_info>`, `</user_preferences>` from `mem.content` before write!.\n2. Enforce allowlist on `section` (`[a-z_]+`, max 32 chars) at `update_core_memory`.\n3. Add a regression test that stores `</core_memory>BAD` and asserts the rendered prompt contains an escaped form, not the raw closing tag.\n4. Apply the same escape to format_learned_preferences (line 1252-1268) and format_file_knowledge.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:47:20.011069272Z",
-  "updated_at": "2026-05-18T21:48:53.626194646Z",
+  "updated_at": "2026-05-19T21:15:38.577105203Z",
+  "closed_at": "2026-05-19T21:15:38.577105203Z",
   "labels": [
     "qa-review",
     "security"
