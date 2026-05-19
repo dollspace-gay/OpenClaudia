@@ -1,0 +1,10 @@
+{
+  "uuid": "d3c9bc28-a09e-4498-b00f-e3fd0b0df87e",
+  "issue_uuid": "2a8e56f1-88a2-4890-bdd6-bbdb53da2631",
+  "author": "lOrm",
+  "content": "Fixed: extracted MessageContent::as_line_joined / as_space_joined / text_parts helpers in src/proxy.rs; replaced 5 verbatim filter_map(p.text.clone()).join() duplicates. Tests 1314 baseline → 1317 (3 new helper tests). Clippy exit 0 with -D warnings. No #[allow], no clippy.toml, no #[ignore] introduced. Forensic: the issue header counted 7 sites; the historic anthropic.rs convert_messages site was already refactored by #475 (delegates to convert_messages_to_anthropic), and google.rs convert_messages preserves multimodal part structure so the text-join helper does not apply — left structurally intact.",
+  "created_at": "2026-05-19T16:28:07.323997650Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAkRbmxxFYIdY7I4ZLcCUx/sc/MDUO1+jPaqcarrm9jvZPk4cTQBxBd01kzLq72l0iVTsu1Y4aD38evGe4FumKAQ=="
+}
