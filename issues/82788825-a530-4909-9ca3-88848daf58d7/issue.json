@@ -3,11 +3,12 @@
   "display_id": 677,
   "title": "MCP HttpTransport accepts any URL with no SSRF or scheme validation",
   "description": "## Severity\nCritical\n## Dimension\nsecurity\n## Location\nsrc/mcp.rs:284-293 (HttpTransport::new), src/mcp.rs:635-640 (McpManager::connect_http)\n## Violation\n`HttpTransport::new` accepts an arbitrary `&str` as the MCP server base URL and trims trailing slashes; it never parses the URL, never enforces a scheme allowlist, and never invokes the SSRF guard from `src/web.rs::validate_url`. `McpManager::connect_http` forwards it directly.\n\n```rust\npub fn new(base_url: &str) -> Self {\n    Self {\n        client: reqwest::Client::new(),\n        base_url: base_url.trim_end_matches('/').to_string(),\n        request_id: AtomicU64::new(1),\n    }\n}\n```\n\nA user (or compromised config) can register `http://169.254.169.254/`, `http://localhost:8080/admin`, `file:///...` (rejected by reqwest, but inconsistent), or `http://metadata.google.internal/` — and every subsequent MCP tool call will reach that endpoint with attacker-controlled JSON-RPC bodies. The `connect_http` path is the primary trust boundary for remote tool servers and currently has no perimeter defense.\n## Mandated refactor\nIn `HttpTransport::new`, parse with `url::Url::parse` (return `Result<Self, McpError>`), enforce a scheme allowlist (`http`/`https`), and invoke the same SSRF guard used by the web tools — either by lifting `validate_url` into a shared `net::guard` module or by injecting a `UrlValidator` trait. Update `connect_http` to propagate the validation error.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:46:42.147438109Z",
-  "updated_at": "2026-05-18T21:46:44.838430815Z",
+  "updated_at": "2026-05-19T20:36:49.868793332Z",
+  "closed_at": "2026-05-19T20:36:49.868793332Z",
   "labels": [
     "qa-review",
     "security"
