@@ -1,0 +1,10 @@
+{
+  "uuid": "533c948c-e65b-4265-9cbf-20eb3e2f9e0b",
+  "issue_uuid": "de7bcc7b-4b06-4f10-b96e-86f00ae85425",
+  "author": "lOrm",
+  "content": "Approach A — deletion. streaming.rs (841 LOC, 35 tests) had exactly 1 external caller: the From<crate::streaming::TokenUsage> impl in session/state.rs (lines 50-58), which was itself never invoked (zero grep hits). Deleted streaming.rs, removed pub mod streaming from lib.rs, removed the dead From impl from session/state.rs. cargo build clean, cargo fmt --check clean, clippy errors in confabulation.rs/lsp.rs are pre-existing at HEAD.",
+  "created_at": "2026-05-19T13:24:46.103420442Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAItaX7a5h61TqGfSCImJs14TQm4ksAJadMk8qz41jRVxeabCrlqbZmqoLlG7FdNc+KihUWSiEKBPAoq+RiYJZDw=="
+}
