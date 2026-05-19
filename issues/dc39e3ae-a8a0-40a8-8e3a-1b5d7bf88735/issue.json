@@ -3,11 +3,12 @@
   "display_id": 688,
   "title": "ACP search delegates unescaped user input into a shell command (RCE)",
   "description": "## Severity\nCritical\n## Dimension\nsecurity\n## Location\nsrc/acp.rs:1685-1720 (acp_search)\n## Violation\n`acp_search` constructs shell commands by direct string interpolation of model/tool-call-supplied arguments, then ships them through `acp_bash` → `terminal/create` for execution. There is no quoting, escaping, or allowlisting:\n\n```rust\nformat!(\"find {path} -name '{pattern}' -type f 2>/dev/null | head -100\")\n...\nlet _ = write!(cmd, \" --type {ft}\");\nlet _ = write!(cmd, \" --glob '{g}'\");\nlet _ = write!(cmd, \" '{pattern}' {path} 2>/dev/null | head -200\");\n```\n\nAny value containing `;`, `$(...)`, backticks, or a closing `'` breaks out of the intended command. A glob like `' ; rm -rf ~ ; '` injects an arbitrary command into the user's terminal subprocess. Tool arguments come from the model — and from upstream prompt content — so a malicious upstream provider response or prompt-injected file can pivot to RCE on the user's box.\n## Mandated refactor\nStop building a shell string entirely. Pass `find` / `rg` / `ls` argv as a typed argv vector to the ACP `terminal/create` request (or to a `Command::new(\"rg\").args([...])` path). If a shell command must be constructed, allowlist `pattern`/`path`/`type`/`glob` with a strict regex (`^[A-Za-z0-9_./*?\\[\\]-]+$` for pattern, no shell metacharacters in `type`), reject the call on mismatch, and route through `shell-escape` / `shlex::quote` for any remaining substitution. The current head-100 pipeline assumes shell semantics — split it into argv plus a Rust-side truncation of the captured output.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:47:36.070604504Z",
-  "updated_at": "2026-05-18T21:48:24.863213107Z",
+  "updated_at": "2026-05-19T21:08:24.523116386Z",
+  "closed_at": "2026-05-19T21:08:24.523116386Z",
   "labels": [
     "qa-review",
     "security"
