@@ -1268,34 +1268,18 @@ async fn proxy_passthrough(
 }
 
 /// Determine which provider to use based on model name.
-/// Returns a static string — no allocation needed.
+///
+/// Delegates classification to the typed [`crate::providers::ProviderKind`]
+/// enum (crosslink #332). When the model name does not match any known
+/// prefix, falls back to `config.proxy.target` — preserving the contract
+/// that callers can rely on a configured default when the model is opaque.
 #[must_use]
 pub fn determine_provider(model: &str, config: &AppConfig) -> String {
-    let model_lower = model.to_lowercase();
-    let provider = if model_lower.starts_with("claude") || model_lower.starts_with("anthropic") {
-        "anthropic"
-    } else if model_lower.starts_with("gpt")
-        || model_lower.starts_with("o1")
-        || model_lower.starts_with("o3")
-        || model_lower.starts_with("o4")
-    {
-        "openai"
-    } else if model_lower.starts_with("gemini") {
-        "google"
-    } else if model_lower.starts_with("glm") {
-        "zai"
-    } else if model_lower.starts_with("deepseek") {
-        "deepseek"
-    } else if model_lower.starts_with("qwen")
-        || model_lower.starts_with("qwq")
-        || model_lower.starts_with("qvq")
-    {
-        "qwen"
-    } else {
-        // Fall back to configured target
+    let kind = crate::providers::ProviderKind::from_model(model);
+    if kind == crate::providers::ProviderKind::Unknown {
         return config.proxy.target.clone();
-    };
-    provider.to_string()
+    }
+    kind.name().to_string()
 }
 
 /// Recursively strip `ttl` from any `cache_control` objects in a JSON value.

@@ -8,6 +8,24 @@ use std::collections::HashMap;
 // `config::provider`. See crosslink #256.
 pub use crate::providers::api_key::ApiKey;
 
+/// Validate that a provider `base_url` is safe to use as an HTTP target.
+///
+/// Defensive layers (crosslink #329):
+///  1. Must parse as a [`url::Url`].
+///  2. Scheme must be `http` or `https` — `file://`, `data:`, `ftp://`,
+///     `gopher://` etc. are rejected.
+///  3. Host must NOT resolve to a private / loopback / link-local /
+///     cloud-metadata / reserved IP. Reuses the SSRF guard from
+///     [`crate::web::validate_url`] (crosslink #290).
+///
+/// # Errors
+///
+/// Returns `Err(String)` with a human-readable explanation when the URL is
+/// malformed, uses a forbidden scheme, or points to a non-public address.
+pub fn validate_base_url(url: &str) -> Result<(), String> {
+    crate::web::validate_url(url).map_err(|e| format!("provider base_url '{url}' rejected: {e}"))
+}
+
 /// Thinking/reasoning mode configuration
 #[derive(Debug, Deserialize, Clone)]
 pub struct ThinkingConfig {
@@ -183,5 +201,82 @@ mod tests {
         }"#;
         let result: Result<ProviderConfig, _> = serde_json::from_str(json);
         assert!(result.is_err(), "empty api_key must fail deserialize");
+    }
+
+    // ── Crosslink #329: base_url validation (SSRF / scheme allowlist) ───────
+
+    #[test]
+    fn validate_base_url_accepts_public_https() {
+        assert!(
+            validate_base_url("https://api.anthropic.com").is_ok(),
+            "public https URL must pass validation"
+        );
+    }
+
+    #[test]
+    fn validate_base_url_rejects_file_scheme() {
+        let err = validate_base_url("file:///etc/passwd").expect_err("file:// must be rejected");
+        assert!(
+            err.contains("Unsupported URL scheme") || err.contains("rejected"),
+            "expected scheme-rejection error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_base_url_rejects_data_scheme() {
+        let err = validate_base_url("data:text/plain,exfil").expect_err("data: must be rejected");
+        assert!(
+            err.contains("rejected"),
+            "expected rejection error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_base_url_rejects_ftp_scheme() {
+        let err =
+            validate_base_url("ftp://files.example.com/").expect_err("ftp:// must be rejected");
+        assert!(
+            err.contains("Unsupported URL scheme") || err.contains("rejected"),
+            "expected scheme rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_base_url_rejects_metadata_ip() {
+        let err = validate_base_url("http://169.254.169.254/latest/meta-data/")
+            .expect_err("link-local metadata IP must be rejected");
+        assert!(
+            err.contains("reserved/internal") || err.contains("rejected"),
+            "expected SSRF rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_base_url_rejects_metadata_hostname() {
+        let err = validate_base_url("http://metadata.google.internal/")
+            .expect_err("metadata hostname must be denylisted");
+        assert!(
+            err.contains("metadata endpoint") || err.contains("rejected"),
+            "expected metadata-endpoint rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_base_url_rejects_rfc1918_private() {
+        let err =
+            validate_base_url("http://10.0.0.1/").expect_err("RFC1918 private IP must be rejected");
+        assert!(
+            err.contains("reserved/internal") || err.contains("rejected"),
+            "expected SSRF rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_base_url_rejects_malformed() {
+        let err = validate_base_url("not a url").expect_err("garbage must fail to parse");
+        assert!(
+            err.contains("Invalid URL") || err.contains("rejected"),
+            "expected parse-error message, got: {err}"
+        );
     }
 }

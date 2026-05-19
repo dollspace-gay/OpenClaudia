@@ -206,6 +206,18 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
         return Err(ConfigError::Message(e));
     }
 
+    // Validate each provider's base_url for SSRF / scheme safety (crosslink #329).
+    let mut names: Vec<&String> = config.providers.keys().collect();
+    names.sort();
+    for name in names {
+        let provider = &config.providers[name];
+        if let Err(e) = provider::validate_base_url(&provider.base_url) {
+            return Err(ConfigError::Message(format!(
+                "provider '{name}' has invalid base_url: {e}"
+            )));
+        }
+    }
+
     Ok(config)
 }
 

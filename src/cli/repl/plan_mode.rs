@@ -40,10 +40,16 @@ pub fn handle_enter_plan_mode(chat_session: &mut ChatSession) -> String {
         }
     }
 
-    let plan_state = openclaudia::session::PlanModeState {
-        active: true,
-        plan_file: plan_file.clone(),
-        allowed_prompts: Vec::new(),
+    // Pin a TOCTOU-safe identity for the plan file (crosslink #334).
+    // PlanModeState::enter performs symlink-metadata + File::open +
+    // FD-based metadata + canonicalize, then stores the canonical
+    // realpath. If any step fails we refuse to enter plan mode --
+    // falling back to a weaker check is the exact bypass #334 closes.
+    let plan_state = match openclaudia::session::PlanModeState::enter(plan_file.clone()) {
+        Ok(state) => state,
+        Err(e) => {
+            return format!("Failed to enter plan mode (plan file identity pin failed): {e}");
+        }
     };
 
     chat_session.plan_mode = Some(plan_state);
@@ -247,7 +253,14 @@ pub fn check_plan_mode_restriction(
     let args: serde_json::Value =
         serde_json::from_str(tool_args).unwrap_or(serde_json::Value::Null);
 
-    if openclaudia::session::is_tool_allowed_in_plan_mode(tool_name, &plan_state.plan_file, &args) {
+    // Use the canonical plan_realpath pinned at entry, NOT the
+    // user-facing plan_file: re-resolving plan_file at check time is
+    // the cwd-swap bypass crosslink #334 closes.
+    if openclaudia::session::is_tool_allowed_in_plan_mode(
+        tool_name,
+        &plan_state.plan_realpath,
+        &args,
+    ) {
         None
     } else {
         Some(format!(

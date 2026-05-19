@@ -203,7 +203,7 @@ fn is_ip_forbidden(ip: &IpAddr) -> bool {
 /// validate time and a private IP at `reqwest`'s dial time still bypasses
 /// this. A custom `reqwest` resolver that re-checks at dial time is the
 /// complete mitigation and is tracked as a follow-up to crosslink #335.
-fn validate_url(url_str: &str) -> Result<(), String> {
+pub(crate) fn validate_url(url_str: &str) -> Result<(), String> {
     let parsed = Url::parse(url_str).map_err(|e| format!("Invalid URL: {e}"))?;
 
     // Scheme allowlist.
@@ -406,7 +406,9 @@ pub async fn search_web(
         return search_brave(query, api_key, limit).await;
     }
 
-    Err(format!("Web search failed. DuckDuckGo error: {ddg_error}. No fallback API keys configured (TAVILY_API_KEY or BRAVE_API_KEY)."))
+    Err(format!(
+        "Web search failed. DuckDuckGo error: {ddg_error}. No fallback API keys configured (TAVILY_API_KEY or BRAVE_API_KEY)."
+    ))
 }
 
 /// Search using Tavily API

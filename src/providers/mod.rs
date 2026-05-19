@@ -123,6 +123,74 @@ pub trait ProviderAdapter: Send + Sync {
     }
 }
 
+/// Typed enum of every provider this proxy knows how to route to.
+///
+/// Replaces the stringly-typed `if/else-if` chain in `determine_provider`
+/// (crosslink #332). All callers that need a wire-format name go through
+/// [`ProviderKind::name`], which returns `&'static str` and allocates nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProviderKind {
+    Anthropic,
+    OpenAI,
+    Google,
+    DeepSeek,
+    Qwen,
+    Zai,
+    Unknown,
+}
+
+impl ProviderKind {
+    /// Classify a model name to its provider. Explicit match arms,
+    /// lowercased input, no overlapping prefix heuristics — `"o1"` no
+    /// longer matches `"o100"`.
+    #[must_use]
+    pub fn from_model(model: &str) -> Self {
+        let m = model.to_ascii_lowercase();
+        if m.starts_with("claude") || m.starts_with("anthropic") {
+            return Self::Anthropic;
+        }
+        if m.starts_with("gpt-") || m == "gpt" {
+            return Self::OpenAI;
+        }
+        for prefix in ["o1-", "o3-", "o4-"] {
+            if m.starts_with(prefix) {
+                return Self::OpenAI;
+            }
+        }
+        if matches!(m.as_str(), "o1" | "o3" | "o4") {
+            return Self::OpenAI;
+        }
+        if m.starts_with("gemini") {
+            return Self::Google;
+        }
+        if m.starts_with("deepseek") {
+            return Self::DeepSeek;
+        }
+        if m.starts_with("qwen") || m.starts_with("qwq") || m.starts_with("qvq") {
+            return Self::Qwen;
+        }
+        if m.starts_with("glm") {
+            return Self::Zai;
+        }
+        Self::Unknown
+    }
+
+    /// Static name used as the key into `AppConfig.providers` and as the
+    /// adapter selector in [`get_adapter`]. `Unknown` returns `"unknown"`.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Anthropic => "anthropic",
+            Self::OpenAI => "openai",
+            Self::Google => "google",
+            Self::DeepSeek => "deepseek",
+            Self::Qwen => "qwen",
+            Self::Zai => "zai",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 /// Get the appropriate adapter for a provider name
 #[must_use]
 pub fn get_adapter(provider: &str) -> Box<dyn ProviderAdapter> {
@@ -531,6 +599,96 @@ mod tests {
         let content = tool_msg["content"].as_array().unwrap();
         assert_eq!(content[0]["type"], "tool_result");
         assert_eq!(content[0]["is_error"], true);
+    }
+
+    // ── Crosslink #332: ProviderKind typed dispatch ─────────────────────────
+
+    #[test]
+    fn provider_kind_name_round_trip() {
+        assert_eq!(ProviderKind::Anthropic.name(), "anthropic");
+        assert_eq!(ProviderKind::OpenAI.name(), "openai");
+        assert_eq!(ProviderKind::Google.name(), "google");
+        assert_eq!(ProviderKind::DeepSeek.name(), "deepseek");
+        assert_eq!(ProviderKind::Qwen.name(), "qwen");
+        assert_eq!(ProviderKind::Zai.name(), "zai");
+        assert_eq!(ProviderKind::Unknown.name(), "unknown");
+        for kind in [
+            ProviderKind::Anthropic,
+            ProviderKind::OpenAI,
+            ProviderKind::Google,
+            ProviderKind::DeepSeek,
+            ProviderKind::Qwen,
+            ProviderKind::Zai,
+        ] {
+            let adapter = get_adapter(kind.name());
+            assert_eq!(
+                adapter.name(),
+                kind.name(),
+                "adapter name drift for {kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn provider_kind_from_model_known_prefixes() {
+        assert_eq!(
+            ProviderKind::from_model("claude-opus-4"),
+            ProviderKind::Anthropic
+        );
+        assert_eq!(
+            ProviderKind::from_model("anthropic/claude-3"),
+            ProviderKind::Anthropic
+        );
+        assert_eq!(ProviderKind::from_model("gpt-4o"), ProviderKind::OpenAI);
+        assert_eq!(ProviderKind::from_model("o1-preview"), ProviderKind::OpenAI);
+        assert_eq!(ProviderKind::from_model("o3-mini"), ProviderKind::OpenAI);
+        assert_eq!(ProviderKind::from_model("o4-pro"), ProviderKind::OpenAI);
+        assert_eq!(
+            ProviderKind::from_model("gemini-2.5-pro"),
+            ProviderKind::Google
+        );
+        assert_eq!(
+            ProviderKind::from_model("deepseek-r1"),
+            ProviderKind::DeepSeek
+        );
+        assert_eq!(ProviderKind::from_model("qwen-long"), ProviderKind::Qwen);
+        assert_eq!(ProviderKind::from_model("qwq-32b"), ProviderKind::Qwen);
+        assert_eq!(ProviderKind::from_model("qvq-72b"), ProviderKind::Qwen);
+        assert_eq!(ProviderKind::from_model("glm-4"), ProviderKind::Zai);
+    }
+
+    #[test]
+    fn provider_kind_from_model_unknown_returns_unknown_variant() {
+        assert_eq!(
+            ProviderKind::from_model("some-unknown-model-xyz"),
+            ProviderKind::Unknown
+        );
+        assert_eq!(
+            ProviderKind::from_model("mistral-large"),
+            ProviderKind::Unknown
+        );
+        assert_eq!(ProviderKind::from_model(""), ProviderKind::Unknown);
+    }
+
+    #[test]
+    fn provider_kind_from_model_is_case_insensitive() {
+        assert_eq!(
+            ProviderKind::from_model("CLAUDE-3-OPUS"),
+            ProviderKind::Anthropic
+        );
+        assert_eq!(ProviderKind::from_model("GPT-4"), ProviderKind::OpenAI);
+        assert_eq!(ProviderKind::from_model("Gemini-Pro"), ProviderKind::Google);
+    }
+
+    #[test]
+    fn provider_kind_from_model_no_false_positive_on_o_prefix() {
+        assert_eq!(ProviderKind::from_model("o100"), ProviderKind::Unknown);
+        assert_eq!(
+            ProviderKind::from_model("observer-1"),
+            ProviderKind::Unknown
+        );
+        assert_eq!(ProviderKind::from_model("o1"), ProviderKind::OpenAI);
+        assert_eq!(ProviderKind::from_model("o3"), ProviderKind::OpenAI);
     }
 
     #[test]
