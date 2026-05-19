@@ -1,0 +1,10 @@
+{
+  "uuid": "3573f83a-8d1b-4528-b33d-5b98ca8e4c8e",
+  "issue_uuid": "0a3c7743-ceff-4188-8d50-1eadf93df447",
+  "author": "lOrm",
+  "content": "Replace fail-open Mutex pattern with explicit tri-state GuardrailsState enum (Unconfigured | Configured(engine) | Poisoned). check_file_access returns Err on poison or unconfigured at the security boundary. Non-security accessors degrade gracefully with error logging. Adding 5 regression tests serialized on a per-test mutex against the process-global state.",
+  "created_at": "2026-05-19T22:24:41.170370142Z",
+  "kind": "plan",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAUexyLK1bYsiWcLzwYFik5kWRvvAVyymCsot7ezn43kf6vnrlLlCoeZbeHwa9OuyvrcZNQA14jajwGRdzmI+GDA=="
+}
