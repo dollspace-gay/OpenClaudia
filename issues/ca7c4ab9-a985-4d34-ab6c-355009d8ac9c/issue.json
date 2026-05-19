@@ -3,11 +3,12 @@
   "display_id": 718,
   "title": "SSE buffer in stream_sse_response grows unbounded with no newline",
   "description": "## Severity\nCritical\n## Dimension\nsecurity\n## Location\nsrc/pipeline.rs:516-543\n## Violation\nThe SSE parsing loop accumulates upstream bytes into an unbounded String until a newline is found. A hostile or broken upstream that streams payloads without newline (or a single very long SSE event) will inflate the buffer until the process OOMs. The inactivity timeout is reset by every received byte, so a steady newline-free stream is welcomed. Also forces a full UTF-8 validation+copy per chunk via String::from_utf8_lossy.\n## Mandated refactor\nIntroduce MAX_SSE_LINE_BYTES and MAX_SSE_BUFFER_BYTES constants; abort and emit AppEvent::ApiError when exceeded. Switch to BytesMut + memchr to avoid per-chunk UTF-8 round-trip. Track total bytes against an absolute ceiling separate from the inactivity timeout.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:50:00.289402757Z",
-  "updated_at": "2026-05-18T21:51:09.709362019Z",
+  "updated_at": "2026-05-19T21:52:20.275043463Z",
+  "closed_at": "2026-05-19T21:52:20.275043463Z",
   "labels": [
     "security"
   ]
