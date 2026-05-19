@@ -1,0 +1,10 @@
+{
+  "uuid": "28d4afb5-c62b-4761-9013-0ff9d25d80b1",
+  "issue_uuid": "92e7f223-d931-4a35-8f77-8ce36608f409",
+  "author": "lOrm",
+  "content": "Fix implemented in src/config/mod.rs. Root cause confirmed by reading config v0.15 env.rs:collect() — naive key.replace(separator, \".\") with sep=\"_\" fragmented field names containing underscores (api_key → api.key, my_ai → my.ai). Changed to separator=\"__\" (double underscore) for both prefix_separator and separator in the canonical Environment source. Legacy OPENCLAUDIA_ single-underscore form still loaded at lower priority with tracing::warn deprecation via warn_legacy_env_vars(). Added 5 tests: routes api_key correctly, disambiguates underscored provider name, legacy resolves unambiguous keys, canonical wins over legacy, detection predicate classifies correctly. 1249 tests passing (was 1222 baseline + other additions), rustfmt clean, no new clippy errors.",
+  "created_at": "2026-05-19T12:06:02.646270271Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA+CyM8Q9YbBYyyr2BRhM6C23FFPsZU8DnnA0/jXE4Qq8n4kkSFV35eC+tm/GRN7J0CGrwXnW+XwUY3lm/UWZwCA=="
+}
