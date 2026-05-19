@@ -20,6 +20,9 @@ pub enum VddError {
     #[error("Failed to parse adversary response as findings: {0}")]
     ParseError(String),
 
+    #[error("VDD HTTP request to provider '{provider}' timed out after {elapsed_secs}s")]
+    Timeout { provider: String, elapsed_secs: u64 },
+
     #[error("Static analysis command failed: {command} (timeout: {timeout}s)")]
     StaticAnalysisTimeout { command: String, timeout: u64 },
 

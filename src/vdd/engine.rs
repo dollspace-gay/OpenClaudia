@@ -8,7 +8,7 @@ use serde_json::Value;
 use tracing::{debug, info, warn};
 
 use crate::config::{AppConfig, VddConfig, VddMode};
-use crate::providers::ApiKey;
+use crate::providers::{get_adapter, ApiKey};
 use crate::proxy::ChatCompletionRequest;
 use crate::session::TokenUsage;
 
@@ -16,7 +16,6 @@ use crate::vdd::confabulation::ConfabulationTracker;
 use crate::vdd::error::{VddAdvisoryResult, VddBlockingResult, VddError, VddResult};
 use crate::vdd::finding::{Finding, FindingStatus};
 use crate::vdd::helpers::{extract_user_task, format_findings_for_injection};
-use crate::vdd::parsing::extract_response_text;
 use crate::vdd::prompts::{build_adversary_request, build_revision_request};
 use crate::vdd::review::{AdversaryReview, VddIteration, VddSession};
 use crate::vdd::sink::{create_chainlink_issues, persist_session};
@@ -165,8 +164,18 @@ impl VddEngine {
             return Ok(VddResult::Skipped("VDD disabled".to_string()));
         }
 
-        // Extract text content from builder response
-        let builder_text = extract_response_text(builder_response);
+        // Extract text content from builder response.
+        //
+        // Crosslink #479: previously called a hand-rolled
+        // `vdd::parsing::extract_response_text` that hardcoded the
+        // `OpenAI`/Anthropic/Gemini shapes inside the VDD module. Now
+        // routed through the builder's `ProviderAdapter`, the same one
+        // the proxy hot path uses — so a new provider sees identical
+        // extraction semantics in both places.
+        let builder_adapter = get_adapter(builder_provider);
+        let builder_text = builder_adapter
+            .extract_response_text(builder_response)
+            .unwrap_or_default();
         if builder_text.is_empty() {
             return Ok(VddResult::Skipped(
                 "Builder response has no text content".to_string(),
@@ -300,6 +309,18 @@ impl VddEngine {
         let mut current_builder_response = initial_builder_response.clone();
         let mut previous_fps: Vec<String> = Vec::new();
 
+        // Crosslink #483 + #487: charge the INITIAL builder response's
+        // tokens to the session's builder ledger before the loop starts.
+        // Previously only revision-response tokens accumulated (at the
+        // bottom of the loop body), so a clean pass that converged on
+        // iteration 1 (no revisions needed) reported zero builder
+        // tokens — misleading cost accounting shown to the user.
+        let builder_adapter = get_adapter(builder_provider);
+        let initial_builder_tokens = builder_adapter
+            .extract_token_usage(initial_builder_response)
+            .unwrap_or_default();
+        session.builder_tokens.accumulate(&initial_builder_tokens);
+
         for iteration in 1..=self.config.thresholds.max_iterations {
             info!(
                 iteration,
@@ -369,33 +390,7 @@ impl VddEngine {
         }
 
         self.finalize_unconverged_session(&mut session);
-
-        // Create Chainlink issues for genuine findings from all iterations
-        let all_genuine: Vec<&Finding> = session
-            .iterations
-            .iter()
-            .flat_map(|i| &i.adversary_review.findings)
-            .filter(|f| f.status == FindingStatus::Genuine)
-            .collect();
-
-        let chainlink_issues = if all_genuine.is_empty() {
-            Vec::new()
-        } else {
-            match create_chainlink_issues(&all_genuine).await {
-                Ok(ids) => ids,
-                Err(e) => {
-                    warn!("VDD: Chainlink issue creation failed: {}", e);
-                    Vec::new()
-                }
-            }
-        };
-
-        // Persist session if configured
-        if self.config.tracking.persist {
-            if let Err(e) = persist_session(&self.config.tracking.path, &session) {
-                warn!("VDD: Session persistence failed: {}", e);
-            }
-        }
+        let chainlink_issues = self.create_issues_and_persist(&session).await;
 
         Ok(VddBlockingResult {
             final_response: current_builder_response,
@@ -473,6 +468,7 @@ impl VddEngine {
 
         match send_to_builder(
             &self.client,
+            &self.config,
             &self.app_config,
             &revision_request,
             builder_provider,
@@ -591,6 +587,39 @@ impl VddEngine {
         Ok((genuine_count, fp_count, findings))
     }
 
+    /// Create Chainlink issues for the session's genuine findings and
+    /// persist the session if configured. Extracted from
+    /// [`Self::blocking_loop`] purely to keep that function under the
+    /// project's 100-line limit; behaviour is unchanged.
+    async fn create_issues_and_persist(&self, session: &VddSession) -> Vec<String> {
+        let all_genuine: Vec<&Finding> = session
+            .iterations
+            .iter()
+            .flat_map(|i| &i.adversary_review.findings)
+            .filter(|f| f.status == FindingStatus::Genuine)
+            .collect();
+
+        let chainlink_issues = if all_genuine.is_empty() {
+            Vec::new()
+        } else {
+            match create_chainlink_issues(&all_genuine).await {
+                Ok(ids) => ids,
+                Err(e) => {
+                    warn!("VDD: Chainlink issue creation failed: {}", e);
+                    Vec::new()
+                }
+            }
+        };
+
+        if self.config.tracking.persist {
+            if let Err(e) = persist_session(&self.config.tracking.path, session) {
+                warn!("VDD: Session persistence failed: {}", e);
+            }
+        }
+
+        chainlink_issues
+    }
+
     /// Run configured static analysis commands.
     async fn run_static_analysis(&self) -> Vec<StaticAnalysisResult> {
         if !self.config.static_analysis.enabled {
@@ -638,5 +667,116 @@ fn collect_false_positives(findings: &[Finding], previous_fps: &mut Vec<String>)
         if f.status == FindingStatus::FalsePositive {
             previous_fps.push(f.description.clone());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::providers::get_adapter;
+    use serde_json::json;
+
+    // ── Crosslink #483 + #487 ───────────────────────────────────────────────
+    //
+    // The blocking loop used to accumulate ONLY revision-response tokens
+    // into `session.builder_tokens`; the initial builder response that
+    // entered the loop was never charged. The new code lifts the same
+    // adapter-based extraction the loop body uses and accumulates it
+    // BEFORE iteration 1 starts. These tests pin that behaviour at the
+    // mechanism level (extract + accumulate) so a refactor of
+    // `blocking_loop` cannot silently drop the initial charge.
+
+    /// An iteration-1 termination must show non-zero builder tokens when
+    /// the initial response reported usage. The accumulation path mirrors
+    /// what `blocking_loop` performs at the top of the function.
+    #[test]
+    fn initial_builder_tokens_are_accumulated_into_session() {
+        let mut session = VddSession::new(VddMode::Blocking);
+        // Initial builder response in `OpenAI` Chat Completions shape.
+        let initial = json!({
+            "choices": [{"message": {"content": "x".repeat(120)}}],
+            "usage": {"prompt_tokens": 500, "completion_tokens": 200}
+        });
+        // The blocking loop calls `get_adapter(builder_provider)` and then
+        // `.extract_token_usage(initial_builder_response)` before the
+        // first iteration. Replicate that exactly.
+        let adapter = get_adapter("openai");
+        let initial_tokens = adapter
+            .extract_token_usage(&initial)
+            .expect("OpenAI usage envelope present");
+        session.builder_tokens.accumulate(&initial_tokens);
+
+        assert_eq!(session.builder_tokens.input_tokens, 500);
+        assert_eq!(session.builder_tokens.output_tokens, 200);
+    }
+
+    /// When subsequent revisions also charge tokens, both the initial and
+    /// the revision charges must show up in the ledger — the new code
+    /// must not REPLACE the initial charge with the revision charge.
+    #[test]
+    fn initial_plus_revision_builder_tokens_accumulate_additively() {
+        let mut session = VddSession::new(VddMode::Blocking);
+        let initial = json!({
+            "choices": [{"message": {"content": "initial"}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 80}
+        });
+        let revision = json!({
+            "choices": [{"message": {"content": "revised"}}],
+            "usage": {"prompt_tokens": 250, "completion_tokens": 70}
+        });
+        let adapter = get_adapter("openai");
+        session
+            .builder_tokens
+            .accumulate(&adapter.extract_token_usage(&initial).unwrap());
+        session
+            .builder_tokens
+            .accumulate(&adapter.extract_token_usage(&revision).unwrap());
+
+        // 100 + 250 = 350, 80 + 70 = 150
+        assert_eq!(session.builder_tokens.input_tokens, 350);
+        assert_eq!(session.builder_tokens.output_tokens, 150);
+    }
+
+    /// A builder response that omits the `usage` envelope must not
+    /// crash the accumulation — `.unwrap_or_default()` produces a
+    /// zero-token record without panicking. Iteration-1 termination
+    /// with a no-usage initial response gracefully reports zero.
+    #[test]
+    fn initial_builder_tokens_missing_usage_is_zero_not_panic() {
+        let mut session = VddSession::new(VddMode::Blocking);
+        // No `usage` field at all.
+        let initial = json!({
+            "choices": [{"message": {"content": "no usage envelope"}}]
+        });
+        let adapter = get_adapter("openai");
+        let initial_tokens = adapter.extract_token_usage(&initial).unwrap_or_default();
+        session.builder_tokens.accumulate(&initial_tokens);
+
+        assert_eq!(session.builder_tokens.input_tokens, 0);
+        assert_eq!(session.builder_tokens.output_tokens, 0);
+    }
+
+    /// Cross-provider check: the accumulation path must work uniformly
+    /// for Anthropic-shaped initial responses too — the bug surfaced as
+    /// "Anthropic builder + OpenAI-only extractor reported zero tokens"
+    /// (see #479 corresp.), so the test guards against that regression.
+    #[test]
+    fn initial_anthropic_builder_tokens_accumulate_via_adapter() {
+        let mut session = VddSession::new(VddMode::Blocking);
+        let initial = json!({
+            "id": "msg_1",
+            "model": "claude-opus-4-7",
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": "code goes here"}],
+            "usage": {"input_tokens": 800, "output_tokens": 150}
+        });
+        let adapter = get_adapter("anthropic");
+        let initial_tokens = adapter
+            .extract_token_usage(&initial)
+            .expect("anthropic usage present");
+        session.builder_tokens.accumulate(&initial_tokens);
+
+        assert_eq!(session.builder_tokens.input_tokens, 800);
+        assert_eq!(session.builder_tokens.output_tokens, 150);
     }
 }

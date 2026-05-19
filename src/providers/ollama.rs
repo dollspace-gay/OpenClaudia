@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 use crate::proxy::{ChatCompletionRequest, ChatMessage, MessageContent};
+use crate::session::TokenUsage;
 
 use super::{ProviderAdapter, ProviderError};
 
@@ -208,5 +209,37 @@ impl ProviderAdapter for OllamaAdapter {
     fn models_endpoint(&self) -> &'static str {
         // Ollama uses /api/tags for model listing, but also supports /v1/models
         "/v1/models"
+    }
+
+    /// Ollama native shape: `message.content`. The default `OpenAI`
+    /// extractor would return `None` here because Ollama does not wrap
+    /// responses in `choices[]`. See crosslink #479.
+    fn extract_response_text(&self, response: &Value) -> Option<String> {
+        response
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .map(std::string::ToString::to_string)
+    }
+
+    /// Ollama native usage envelope: token counters live at the top
+    /// level (`prompt_eval_count` / `eval_count`), not under `usage`.
+    /// Ollama has no cache layer, so cache counters are zero.
+    /// See crosslink #479.
+    fn extract_token_usage(&self, response: &Value) -> Option<TokenUsage> {
+        // Require at least one counter to declare "usage was reported"
+        // — otherwise an unrelated response with no token data would
+        // become an indistinguishable 0/0 record.
+        let prompt = response.get("prompt_eval_count").and_then(Value::as_u64);
+        let completion = response.get("eval_count").and_then(Value::as_u64);
+        if prompt.is_none() && completion.is_none() {
+            return None;
+        }
+        Some(TokenUsage {
+            input_tokens: prompt.unwrap_or(0),
+            output_tokens: completion.unwrap_or(0),
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+        })
     }
 }

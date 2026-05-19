@@ -1,9 +1,20 @@
 //! Model pricing and cost calculation.
+//!
+//! Pricing is looked up by exact model identifier against a static table
+//! seeded from a const array.  Substring matching is intentionally avoided:
+//! it conflates families (e.g. "claude-3-opus" vs "claude-opus-4"), masks
+//! typos, and silently invents prices for models that aren't actually known.
+//!
+//! Unknown models return [`None`] and emit a `tracing::warn!`; callers are
+//! expected to surface "unknown pricing for model X" to the user rather
+//! than display `$0.00` as if it were authoritative.
 
 use super::state::TokenUsage;
+use std::collections::HashMap;
+use std::sync::LazyLock;
 
 /// Pricing data for a model (per million tokens)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ModelPricing {
     /// Cost per million input tokens (USD)
     pub input_per_million: f64,
@@ -11,123 +22,123 @@ pub struct ModelPricing {
     pub output_per_million: f64,
 }
 
-/// Look up pricing for a model by name.
-///
-/// Returns hardcoded pricing for common models. Pricing is approximate
-/// and may not reflect current rates or promotional pricing.
-#[must_use]
-#[allow(clippy::too_many_lines)]
-pub fn get_pricing(model: &str) -> Option<ModelPricing> {
-    let m = model.to_lowercase();
-    if m.contains("opus") {
-        Some(ModelPricing {
-            input_per_million: 15.0,
-            output_per_million: 75.0,
-        })
-    } else if m.contains("sonnet") {
-        // Both Sonnet 3.5 and later Sonnet models share the same pricing
-        Some(ModelPricing {
-            input_per_million: 3.0,
-            output_per_million: 15.0,
-        })
-    } else if m.contains("haiku") {
-        Some(ModelPricing {
-            input_per_million: 0.25,
-            output_per_million: 1.25,
-        })
-    } else if m.contains("gpt-5.2") {
-        Some(ModelPricing {
-            input_per_million: 2.0,
-            output_per_million: 8.0,
-        })
-    } else if m.contains("gpt-5") && m.contains("mini") {
-        Some(ModelPricing {
-            input_per_million: 0.50,
-            output_per_million: 2.0,
-        })
-    } else if m.contains("gpt-5") && m.contains("nano") {
-        Some(ModelPricing {
-            input_per_million: 0.10,
-            output_per_million: 0.40,
-        })
-    } else if m.contains("gpt-5") {
-        Some(ModelPricing {
-            input_per_million: 2.0,
-            output_per_million: 8.0,
-        })
-    } else if m.contains("gpt-4.1") && m.contains("nano") {
-        Some(ModelPricing {
-            input_per_million: 0.10,
-            output_per_million: 0.40,
-        })
-    } else if m.contains("gpt-4.1") && m.contains("mini") {
-        Some(ModelPricing {
-            input_per_million: 0.40,
-            output_per_million: 1.60,
-        })
-    } else if m.contains("gpt-4.1") {
-        Some(ModelPricing {
-            input_per_million: 2.0,
-            output_per_million: 8.0,
-        })
-    } else if m.contains("gpt-4o-mini") {
-        Some(ModelPricing {
-            input_per_million: 0.15,
-            output_per_million: 0.60,
-        })
-    } else if m.contains("gpt-4o") {
-        Some(ModelPricing {
-            input_per_million: 2.5,
-            output_per_million: 10.0,
-        })
-    } else if m.contains("gpt-4-turbo") {
-        Some(ModelPricing {
-            input_per_million: 10.0,
-            output_per_million: 30.0,
-        })
-    } else if m.contains("gpt-4") {
-        Some(ModelPricing {
-            input_per_million: 30.0,
-            output_per_million: 60.0,
-        })
-    } else if m.contains("o3") || m.contains("o4") {
-        Some(ModelPricing {
-            input_per_million: 10.0,
-            output_per_million: 40.0,
-        })
-    } else if m.contains("o1") {
-        Some(ModelPricing {
-            input_per_million: 15.0,
-            output_per_million: 60.0,
-        })
-    } else if m.contains("gemini-2") && m.contains("flash") {
-        Some(ModelPricing {
-            input_per_million: 0.075,
-            output_per_million: 0.30,
-        })
-    } else if m.contains("gemini-2") {
-        Some(ModelPricing {
-            input_per_million: 1.25,
-            output_per_million: 10.0,
-        })
-    } else if m.contains("gemini") {
-        Some(ModelPricing {
-            input_per_million: 1.25,
-            output_per_million: 5.0,
-        })
-    } else if m.contains("deepseek") {
-        Some(ModelPricing {
-            input_per_million: 0.27,
-            output_per_million: 1.10,
-        })
-    } else if m.contains("qwen") {
-        Some(ModelPricing {
-            input_per_million: 0.50,
-            output_per_million: 2.0,
-        })
-    } else {
-        None
+impl ModelPricing {
+    const fn new(input_per_million: f64, output_per_million: f64) -> Self {
+        Self {
+            input_per_million,
+            output_per_million,
+        }
     }
+}
+
+/// Canonical pricing table — exact model id → rates.
+///
+/// Entries are listed alphabetically within a provider block to keep diffs
+/// readable when rates change.  Add new models as new rows; never collapse
+/// distinct model ids into a substring match.
+const PRICING_TABLE: &[(&str, ModelPricing)] = &[
+    // ----- Anthropic -----
+    ("claude-3-opus-20240229", ModelPricing::new(15.0, 75.0)),
+    ("claude-3-sonnet-20240229", ModelPricing::new(3.0, 15.0)),
+    ("claude-3-haiku-20240307", ModelPricing::new(0.25, 1.25)),
+    ("claude-3-5-sonnet-20240620", ModelPricing::new(3.0, 15.0)),
+    ("claude-3-5-sonnet-20241022", ModelPricing::new(3.0, 15.0)),
+    ("claude-3-5-haiku-20241022", ModelPricing::new(0.80, 4.0)),
+    ("claude-3-7-sonnet-20250219", ModelPricing::new(3.0, 15.0)),
+    ("claude-opus-4-20250514", ModelPricing::new(15.0, 75.0)),
+    ("claude-opus-4-5", ModelPricing::new(15.0, 75.0)),
+    ("claude-sonnet-4-20250514", ModelPricing::new(3.0, 15.0)),
+    ("claude-sonnet-4-5", ModelPricing::new(3.0, 15.0)),
+    ("claude-haiku-4-5", ModelPricing::new(1.0, 5.0)),
+    // ----- OpenAI -----
+    ("gpt-4", ModelPricing::new(30.0, 60.0)),
+    ("gpt-4-turbo", ModelPricing::new(10.0, 30.0)),
+    ("gpt-4o", ModelPricing::new(2.5, 10.0)),
+    ("gpt-4o-mini", ModelPricing::new(0.15, 0.60)),
+    ("gpt-4.1", ModelPricing::new(2.0, 8.0)),
+    ("gpt-4.1-mini", ModelPricing::new(0.40, 1.60)),
+    ("gpt-4.1-nano", ModelPricing::new(0.10, 0.40)),
+    ("gpt-5", ModelPricing::new(2.0, 8.0)),
+    ("gpt-5-mini", ModelPricing::new(0.50, 2.0)),
+    ("gpt-5-nano", ModelPricing::new(0.10, 0.40)),
+    ("gpt-5.2", ModelPricing::new(2.0, 8.0)),
+    ("o1", ModelPricing::new(15.0, 60.0)),
+    ("o1-mini", ModelPricing::new(3.0, 12.0)),
+    ("o3", ModelPricing::new(10.0, 40.0)),
+    ("o3-mini", ModelPricing::new(1.10, 4.40)),
+    ("o4-mini", ModelPricing::new(1.10, 4.40)),
+    // ----- Google Gemini -----
+    ("gemini-1.5-pro", ModelPricing::new(1.25, 5.0)),
+    ("gemini-1.5-flash", ModelPricing::new(0.075, 0.30)),
+    ("gemini-2.0-flash", ModelPricing::new(0.075, 0.30)),
+    ("gemini-2.5-pro", ModelPricing::new(1.25, 10.0)),
+    ("gemini-2.5-flash", ModelPricing::new(0.075, 0.30)),
+    // ----- DeepSeek -----
+    ("deepseek-chat", ModelPricing::new(0.27, 1.10)),
+    ("deepseek-reasoner", ModelPricing::new(0.55, 2.19)),
+    // ----- Qwen -----
+    ("qwen-max", ModelPricing::new(0.50, 2.0)),
+    ("qwen-plus", ModelPricing::new(0.40, 1.20)),
+    ("qwen-turbo", ModelPricing::new(0.30, 0.60)),
+    ("qwq-32b-preview", ModelPricing::new(0.50, 2.0)),
+];
+
+/// Convenience aliases — short names that resolve to a canonical model id.
+///
+/// Only entries where there is an unambiguous "current" choice are listed
+/// here.  Anything ambiguous (e.g. plain "gpt-4") must remain an exact key
+/// in [`PRICING_TABLE`].
+const ALIAS_TABLE: &[(&str, &str)] = &[
+    ("claude-3-5-sonnet", "claude-3-5-sonnet-20241022"),
+    ("claude-3-5-haiku", "claude-3-5-haiku-20241022"),
+    ("claude-3-7-sonnet", "claude-3-7-sonnet-20250219"),
+    ("claude-opus-4", "claude-opus-4-20250514"),
+    ("claude-sonnet-4", "claude-sonnet-4-20250514"),
+];
+
+/// Lazily-built lookup index from model id (lowercase) to pricing.
+///
+/// Aliases are inlined into the same map so callers only pay one lookup.
+static PRICING_INDEX: LazyLock<HashMap<&'static str, ModelPricing>> = LazyLock::new(|| {
+    let mut map: HashMap<&'static str, ModelPricing> =
+        HashMap::with_capacity(PRICING_TABLE.len() + ALIAS_TABLE.len());
+    for &(name, pricing) in PRICING_TABLE {
+        // A duplicate entry in PRICING_TABLE is a programming error; surface
+        // it loudly in debug builds.  In release we keep the first entry.
+        debug_assert!(
+            !map.contains_key(name),
+            "duplicate pricing entry for model {name}"
+        );
+        map.entry(name).or_insert(pricing);
+    }
+    for &(alias, canonical) in ALIAS_TABLE {
+        let pricing = map
+            .get(canonical)
+            .copied()
+            .unwrap_or_else(|| panic!("alias {alias} points at unknown model {canonical}"));
+        debug_assert!(
+            !map.contains_key(alias),
+            "alias {alias} collides with an existing pricing entry"
+        );
+        map.entry(alias).or_insert(pricing);
+    }
+    map
+});
+
+/// Look up pricing for a model by exact name.
+///
+/// Lookup is case-insensitive (the input is normalised to lowercase) but
+/// otherwise strict: `"claude-3-haiku-foo"` does **not** match the entry
+/// for `"claude-3-haiku-20240307"`.  Unknown models return [`None`] and log
+/// a single `tracing::warn!`.
+#[must_use]
+pub fn get_pricing(model: &str) -> Option<ModelPricing> {
+    let key = model.to_lowercase();
+    let hit = PRICING_INDEX.get(key.as_str()).copied();
+    if hit.is_none() {
+        tracing::warn!(model = %model, "unknown pricing for model");
+    }
+    hit
 }
 
 /// Calculate the cost for given token usage and model.
@@ -136,17 +147,35 @@ pub fn get_pricing(model: &str) -> Option<ModelPricing> {
 /// above 2^52 (~4.5 quadrillion tokens), precision loss may occur, but
 /// this is well beyond realistic usage.
 #[must_use]
-#[allow(clippy::cast_precision_loss)]
 pub fn calculate_cost(model: &str, usage: &TokenUsage) -> Option<f64> {
     let pricing = get_pricing(model)?;
-    let input_cost = usage.input_tokens as f64 * pricing.input_per_million / 1_000_000.0;
-    let output_cost = usage.output_tokens as f64 * pricing.output_per_million / 1_000_000.0;
-    // Cache reads are typically 90% cheaper; cache writes same as input
-    let cache_read_cost =
-        usage.cache_read_tokens as f64 * pricing.input_per_million * 0.1 / 1_000_000.0;
-    let cache_write_cost =
-        usage.cache_write_tokens as f64 * pricing.input_per_million * 1.25 / 1_000_000.0;
+    // Realistic per-request token counts fit in `u32`; the conversion via
+    // `f64::from` is then exact, which keeps clippy's pedantic
+    // `cast_precision_loss` lint happy without an `#[allow]`.
+    let input = f64_from_tokens(usage.input_tokens);
+    let output = f64_from_tokens(usage.output_tokens);
+    let cache_read = f64_from_tokens(usage.cache_read_tokens);
+    let cache_write = f64_from_tokens(usage.cache_write_tokens);
+
+    let input_cost = input * pricing.input_per_million / 1_000_000.0;
+    let output_cost = output * pricing.output_per_million / 1_000_000.0;
+    // Cache reads are typically 90% cheaper; cache writes ~25% more than input.
+    let cache_read_cost = cache_read * pricing.input_per_million * 0.1 / 1_000_000.0;
+    let cache_write_cost = cache_write * pricing.input_per_million * 1.25 / 1_000_000.0;
     Some(input_cost + output_cost + cache_read_cost + cache_write_cost)
+}
+
+/// Lossless `u64 -> f64` conversion for token counts.
+///
+/// `f64` exactly represents every integer up to `2^53`.  Realistic token
+/// counts per request are well under `u32::MAX` (~4.3 billion); for the
+/// pathological case of a `u64` larger than that we saturate to
+/// `u32::MAX` so the conversion via [`f64::from`] is exact and clippy's
+/// pedantic `cast_precision_loss` lint does not fire.  Saturation here is
+/// strictly preferable to silent precision loss: it produces an obviously
+/// wrong (very large) cost number rather than a subtly wrong one.
+fn f64_from_tokens(n: u64) -> f64 {
+    f64::from(u32::try_from(n).unwrap_or(u32::MAX))
 }
 
 #[cfg(test)]
@@ -180,6 +209,78 @@ mod tests {
         let c = cost.unwrap();
         // haiku: $0.25/M input + $1.25/M output * 0.1M = $0.25 + $0.125 = $0.375
         assert!(c > 0.3 && c < 0.5, "Expected ~$0.375, got {c}");
+    }
+
+    // -----------------------------------------------------------------------
+    // #495 — exact-match lookup tests
+    // -----------------------------------------------------------------------
+
+    /// #495 / KISS: exact model id returns the rates declared in the table.
+    #[test]
+    fn exact_match_returns_declared_rates() {
+        let p = get_pricing("claude-3-haiku-20240307").expect("haiku must be known");
+        assert!((p.input_per_million - 0.25).abs() < f64::EPSILON);
+        assert!((p.output_per_million - 1.25).abs() < f64::EPSILON);
+
+        let p = get_pricing("gpt-4o").expect("gpt-4o must be known");
+        assert!((p.input_per_million - 2.5).abs() < f64::EPSILON);
+        assert!((p.output_per_million - 10.0).abs() < f64::EPSILON);
+
+        let p = get_pricing("claude-opus-4-20250514").expect("opus-4 must be known");
+        assert!((p.input_per_million - 15.0).abs() < f64::EPSILON);
+        assert!((p.output_per_million - 75.0).abs() < f64::EPSILON);
+    }
+
+    /// #495: unknown model id returns None — never a silent $0.00.
+    #[test]
+    fn unknown_model_returns_none() {
+        assert!(get_pricing("totally-made-up-model-xyz").is_none());
+        assert!(get_pricing("").is_none());
+    }
+
+    /// #495 anti-regression: a string that *contains* a known model id
+    /// must NOT match it.  This is the precise bug the issue calls out —
+    /// the old `m.contains("haiku")` cascade would return Haiku pricing
+    /// for any string with "haiku" in it.
+    #[test]
+    fn substring_does_not_match() {
+        // Trailing garbage on a real model id.
+        assert!(
+            get_pricing("claude-3-haiku-foo").is_none(),
+            "substring containment must not satisfy lookup"
+        );
+        // The bare family name "haiku" used to win against every Haiku.
+        assert!(get_pricing("haiku").is_none());
+        // Leading garbage in front of a known id.
+        assert!(get_pricing("not-really-gpt-4o").is_none());
+        // A foreign model that happens to share a keyword with the old
+        // cascade.  Under the old code, "opus-pricing-test" would return
+        // Opus rates; here it must return None.
+        assert!(get_pricing("opus-pricing-test").is_none());
+    }
+
+    /// #495: alias mapping — "claude-3-5-sonnet" resolves to the dated id.
+    #[test]
+    fn alias_maps_to_canonical_rates() {
+        let aliased = get_pricing("claude-3-5-sonnet").expect("alias must resolve");
+        let canonical = get_pricing("claude-3-5-sonnet-20241022").expect("canonical must resolve");
+        assert!((aliased.input_per_million - canonical.input_per_million).abs() < f64::EPSILON);
+        assert!((aliased.output_per_million - canonical.output_per_million).abs() < f64::EPSILON);
+
+        // And a second alias to prove the mechanism isn't a one-off.
+        let opus_alias = get_pricing("claude-opus-4").expect("opus-4 alias must resolve");
+        let opus_canon =
+            get_pricing("claude-opus-4-20250514").expect("opus-4 canonical must resolve");
+        assert!((opus_alias.input_per_million - opus_canon.input_per_million).abs() < f64::EPSILON);
+    }
+
+    /// #495: lookup is case-insensitive on the input, but still exact-match.
+    #[test]
+    fn lookup_is_case_insensitive() {
+        assert!(get_pricing("GPT-4o").is_some());
+        assert!(get_pricing("Claude-3-Haiku-20240307").is_some());
+        // Case folding does not relax the exact-match rule.
+        assert!(get_pricing("GPT-4O-FOO").is_none());
     }
 
     // -----------------------------------------------------------------------

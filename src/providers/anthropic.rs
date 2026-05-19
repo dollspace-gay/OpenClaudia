@@ -6,6 +6,7 @@ use tracing::{debug, warn};
 
 use crate::config::ThinkingConfig;
 use crate::proxy::{ChatCompletionRequest, ChatMessage, MessageContent};
+use crate::session::TokenUsage;
 
 use super::{ApiKey, ProviderAdapter, ProviderError};
 
@@ -291,6 +292,52 @@ impl ProviderAdapter for AnthropicAdapter {
             ("anthropic-version".to_string(), "2023-06-01".to_string()),
             ("content-type".to_string(), "application/json".to_string()),
         ]
+    }
+
+    /// Anthropic native shape: `content` is an array of typed blocks;
+    /// the assistant text lives in the first `{"type": "text",
+    /// "text": "..."}` block. The default `OpenAI` extractor would
+    /// return `None` here because the response has no `choices` array.
+    /// See crosslink #479.
+    fn extract_response_text(&self, response: &Value) -> Option<String> {
+        response
+            .get("content")
+            .and_then(|c| c.as_array())
+            .and_then(|arr| {
+                arr.iter()
+                    .find(|item| item.get("type").and_then(|t| t.as_str()) == Some("text"))
+            })
+            .and_then(|item| item.get("text"))
+            .and_then(|t| t.as_str())
+            .map(std::string::ToString::to_string)
+    }
+
+    /// Anthropic native usage envelope: `input_tokens` /
+    /// `output_tokens` / `cache_read_input_tokens` /
+    /// `cache_creation_input_tokens`. The trait default already handles
+    /// these fields, but overriding here makes the intent explicit and
+    /// future-proofs against the default drifting toward `OpenAI`-only
+    /// keys.
+    fn extract_token_usage(&self, response: &Value) -> Option<TokenUsage> {
+        let usage = response.get("usage")?;
+        Some(TokenUsage {
+            input_tokens: usage
+                .get("input_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            output_tokens: usage
+                .get("output_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            cache_read_tokens: usage
+                .get("cache_read_input_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            cache_write_tokens: usage
+                .get("cache_creation_input_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        })
     }
 }
 

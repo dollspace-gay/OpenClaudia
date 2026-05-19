@@ -280,6 +280,7 @@ async fn verify_findings(
     // Route through the builder's provider, not the adversary's
     let (response_text, tokens) = send_to_builder_for_verification(
         ctx.client,
+        ctx.config,
         ctx.app_config,
         &request,
         ctx.builder_provider,

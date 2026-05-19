@@ -1,13 +1,13 @@
 //! Response parsing utilities for VDD adversary output.
 //!
-//! Handles extraction of JSON from various response formats (raw JSON,
-//! markdown code blocks, natural language), severity parsing, and
-//! token usage extraction from provider responses.
-
-use serde_json::Value;
-use tracing::debug;
-
-use crate::session::TokenUsage;
+//! Handles extraction of JSON from the adversary text (raw JSON, markdown
+//! code blocks, natural-language assessments) and severity parsing.
+//!
+//! Response-text and token-usage extraction used to live here as free
+//! functions but duplicated logic already owned by the
+//! [`crate::providers::ProviderAdapter`] trait — see crosslink #479. The
+//! free functions are gone; call `adapter.extract_response_text(..)` /
+//! `adapter.extract_token_usage(..)` instead.
 
 use super::review::AdversaryResponse;
 
@@ -129,111 +129,10 @@ pub(crate) fn parse_severity(s: &str) -> super::finding::Severity {
     }
 }
 
-// ==========================================================================
-// Response Text Extraction
-// ==========================================================================
-
-/// Extract the text content from a chat completion response.
-/// Supports `OpenAI`, Anthropic, and Google/Gemini formats.
-pub(crate) fn extract_response_text(response: &Value) -> String {
-    // OpenAI format: choices[0].message.content
-    if let Some(content) = response
-        .get("choices")
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-    {
-        return content.to_string();
-    }
-
-    // Anthropic format: content[0].text
-    if let Some(content) = response
-        .get("content")
-        .and_then(|c| c.as_array())
-        .and_then(|arr| {
-            arr.iter()
-                .find(|item| item.get("type").and_then(|t| t.as_str()) == Some("text"))
-        })
-        .and_then(|item| item.get("text"))
-        .and_then(|t| t.as_str())
-    {
-        return content.to_string();
-    }
-
-    // Google/Gemini format: candidates[0].content.parts[0].text
-    if let Some(content) = response
-        .get("candidates")
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("content"))
-        .and_then(|c| c.get("parts"))
-        .and_then(|p| p.get(0))
-        .and_then(|p| p.get("text"))
-        .and_then(|t| t.as_str())
-    {
-        return content.to_string();
-    }
-
-    // Log what we actually received for debugging
-    debug!(
-        "VDD: Unknown response format, dumping structure: {:?}",
-        response.as_object().map(|o| o.keys().collect::<Vec<_>>())
-    );
-
-    String::new()
-}
-
-// ==========================================================================
-// Token Usage Extraction
-// ==========================================================================
-
-/// Extract token usage from a provider response.
-pub(crate) fn extract_token_usage(response: &Value) -> TokenUsage {
-    // OpenAI/Anthropic format: usage.prompt_tokens / usage.completion_tokens
-    if let Some(usage) = response.get("usage") {
-        return TokenUsage {
-            input_tokens: usage
-                .get("prompt_tokens")
-                .or_else(|| usage.get("input_tokens"))
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0),
-            output_tokens: usage
-                .get("completion_tokens")
-                .or_else(|| usage.get("output_tokens"))
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0),
-            cache_read_tokens: usage
-                .get("cache_read_input_tokens")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0),
-            cache_write_tokens: usage
-                .get("cache_creation_input_tokens")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0),
-        };
-    }
-
-    // Google/Gemini format: usageMetadata.promptTokenCount / candidatesTokenCount
-    if let Some(usage) = response.get("usageMetadata") {
-        return TokenUsage {
-            input_tokens: usage
-                .get("promptTokenCount")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0),
-            output_tokens: usage
-                .get("candidatesTokenCount")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0),
-            cache_read_tokens: usage
-                .get("cachedContentTokenCount")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0),
-            cache_write_tokens: 0,
-        };
-    }
-
-    TokenUsage::default()
-}
+// Response-text and token-usage extraction moved to the
+// `ProviderAdapter` trait — see crosslink #479. The free functions that
+// used to live here duplicated logic owned by the provider adapters and
+// silently returned defaults for any shape they did not hardcode.
 
 // ==========================================================================
 // Tests
@@ -242,6 +141,7 @@ pub(crate) fn extract_token_usage(response: &Value) -> TokenUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     // --- Regression tests for crosslink #337 (UTF-8 safety) ---
     #[test]
@@ -334,91 +234,7 @@ mod tests {
         assert_eq!(parsed["assessment"], "FINDINGS_PRESENT");
     }
 
-    #[test]
-    fn test_extract_response_text_openai_format() {
-        let response = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": "Hello from the model"
-                }
-            }]
-        });
-        assert_eq!(extract_response_text(&response), "Hello from the model");
-    }
-
-    #[test]
-    fn test_extract_response_text_anthropic_format() {
-        let response = serde_json::json!({
-            "content": [{
-                "type": "text",
-                "text": "Hello from Anthropic"
-            }]
-        });
-        assert_eq!(extract_response_text(&response), "Hello from Anthropic");
-    }
-
-    #[test]
-    fn test_extract_response_text_empty() {
-        let response = serde_json::json!({});
-        assert_eq!(extract_response_text(&response), "");
-    }
-
-    #[test]
-    fn test_extract_response_text_google_format() {
-        let response = serde_json::json!({
-            "candidates": [{
-                "content": {
-                    "parts": [{
-                        "text": "Hello from Gemini"
-                    }]
-                }
-            }]
-        });
-        assert_eq!(extract_response_text(&response), "Hello from Gemini");
-    }
-
-    #[test]
-    fn test_extract_token_usage_google_format() {
-        let response = serde_json::json!({
-            "usageMetadata": {
-                "promptTokenCount": 150,
-                "candidatesTokenCount": 80,
-                "cachedContentTokenCount": 25
-            }
-        });
-        let usage = extract_token_usage(&response);
-        assert_eq!(usage.input_tokens, 150);
-        assert_eq!(usage.output_tokens, 80);
-        assert_eq!(usage.cache_read_tokens, 25);
-    }
-
-    #[test]
-    fn test_extract_token_usage_openai() {
-        let response = serde_json::json!({
-            "usage": {
-                "prompt_tokens": 100,
-                "completion_tokens": 50
-            }
-        });
-        let usage = extract_token_usage(&response);
-        assert_eq!(usage.input_tokens, 100);
-        assert_eq!(usage.output_tokens, 50);
-    }
-
-    #[test]
-    fn test_extract_token_usage_anthropic() {
-        let response = serde_json::json!({
-            "usage": {
-                "input_tokens": 200,
-                "output_tokens": 75,
-                "cache_read_input_tokens": 50,
-                "cache_creation_input_tokens": 10
-            }
-        });
-        let usage = extract_token_usage(&response);
-        assert_eq!(usage.input_tokens, 200);
-        assert_eq!(usage.output_tokens, 75);
-        assert_eq!(usage.cache_read_tokens, 50);
-        assert_eq!(usage.cache_write_tokens, 10);
-    }
+    // Response-text and token-usage tests moved with the functions —
+    // see `src/providers/{mod,anthropic,google,ollama,openai}.rs`
+    // (crosslink #479).
 }

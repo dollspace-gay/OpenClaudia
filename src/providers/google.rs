@@ -6,6 +6,7 @@ use tracing::debug;
 
 use crate::config::ThinkingConfig;
 use crate::proxy::{ChatCompletionRequest, ChatMessage, MessageContent};
+use crate::session::TokenUsage;
 
 use super::{ProviderAdapter, ProviderError};
 
@@ -267,5 +268,51 @@ impl ProviderAdapter for GoogleAdapter {
             ("x-goog-api-key".to_string(), api_key.as_str().to_string()),
             ("content-type".to_string(), "application/json".to_string()),
         ]
+    }
+
+    /// Gemini native shape: `candidates[0].content.parts[].text`. Text
+    /// parts are concatenated so the result matches what
+    /// [`Self::transform_response`] would surface to the proxy hot
+    /// path. See crosslink #479.
+    fn extract_response_text(&self, response: &Value) -> Option<String> {
+        let parts = response
+            .get("candidates")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("content"))
+            .and_then(|c| c.get("parts"))
+            .and_then(|p| p.as_array())?;
+        let joined: String = parts
+            .iter()
+            .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+            .collect();
+        if joined.is_empty() {
+            None
+        } else {
+            Some(joined)
+        }
+    }
+
+    /// Gemini `usageMetadata` envelope: `promptTokenCount`,
+    /// `candidatesTokenCount`, `cachedContentTokenCount` (mapped to
+    /// `cache_read_tokens`). Gemini exposes no cache-write counter, so
+    /// that field is reported as zero rather than fabricated.
+    /// See crosslink #479.
+    fn extract_token_usage(&self, response: &Value) -> Option<TokenUsage> {
+        let usage = response.get("usageMetadata")?;
+        Some(TokenUsage {
+            input_tokens: usage
+                .get("promptTokenCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            output_tokens: usage
+                .get("candidatesTokenCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            cache_read_tokens: usage
+                .get("cachedContentTokenCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            cache_write_tokens: 0,
+        })
     }
 }

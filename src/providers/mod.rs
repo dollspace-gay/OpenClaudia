@@ -28,6 +28,7 @@ use thiserror::Error;
 
 use crate::config::ThinkingConfig;
 use crate::proxy::ChatCompletionRequest;
+use crate::session::TokenUsage;
 
 // Re-export all adapter types and public functions
 pub use anthropic::{
@@ -120,6 +121,73 @@ pub trait ProviderAdapter: Send + Sync {
     /// Get the models endpoint path (for providers that support it)
     fn models_endpoint(&self) -> &'static str {
         "/v1/models"
+    }
+
+    /// Extract the assistant text content from a *raw* provider response.
+    ///
+    /// This is the inverse of [`Self::transform_request`]: it consumes the
+    /// upstream provider's native shape and returns the plain-text body
+    /// of the assistant turn (no tool calls, no function payloads —
+    /// just the text the user would see).
+    ///
+    /// Default implementation reads the `OpenAI` Chat Completions shape
+    /// (`choices[0].message.content`). Providers with a different native
+    /// response shape (Anthropic content blocks, Gemini `candidates`,
+    /// Ollama `message.content`) override this with their own extractor.
+    ///
+    /// Returns `None` when no text content can be located — callers must
+    /// treat that as "empty response" rather than fabricating a sentinel.
+    ///
+    /// See crosslink #479 — VDD previously rolled its own multi-shape
+    /// extractor in `src/vdd/parsing.rs`, which silently returned an
+    /// empty string for any provider it did not recognise (`DeepSeek`,
+    /// `Qwen`, Z.AI). Routing through the adapter restores parity with
+    /// the main proxy hot path.
+    fn extract_response_text(&self, response: &Value) -> Option<String> {
+        response
+            .get("choices")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("message"))
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .map(std::string::ToString::to_string)
+    }
+
+    /// Extract token usage from a *raw* provider response.
+    ///
+    /// Default implementation reads the `OpenAI`/`Anthropic` shared
+    /// `usage` object (`prompt_tokens`/`completion_tokens`, with
+    /// fallback to `input_tokens`/`output_tokens` for Anthropic).
+    /// Providers that use a different envelope (notably Gemini's
+    /// `usageMetadata`) override this.
+    ///
+    /// Returns `None` when no usage data is present. Callers that need
+    /// `TokenUsage::default()` semantics should call `.unwrap_or_default()`
+    /// at the call site so the absence is visible in code review.
+    ///
+    /// See crosslink #479.
+    fn extract_token_usage(&self, response: &Value) -> Option<TokenUsage> {
+        let usage = response.get("usage")?;
+        Some(TokenUsage {
+            input_tokens: usage
+                .get("prompt_tokens")
+                .or_else(|| usage.get("input_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            output_tokens: usage
+                .get("completion_tokens")
+                .or_else(|| usage.get("output_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            cache_read_tokens: usage
+                .get("cache_read_input_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            cache_write_tokens: usage
+                .get("cache_creation_input_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        })
     }
 }
 
@@ -709,5 +777,174 @@ mod tests {
         assert_eq!(content[0]["type"], "tool_result");
         // is_error should not be present for successful results
         assert!(content[0].get("is_error").is_none());
+    }
+
+    // ── Crosslink #479: ProviderAdapter response-text / token-usage ─────────
+    //
+    // These methods replaced the free functions in `src/vdd/parsing.rs` that
+    // hardcoded OpenAI/Anthropic/Gemini response shapes and silently returned
+    // empty defaults for any other provider. The tests below pin the new
+    // contract: each adapter understands its OWN native response shape, and
+    // unsupported providers fall back to the trait default (OpenAI shape).
+
+    #[test]
+    fn anthropic_extract_response_text_reads_native_content_blocks() {
+        let adapter = AnthropicAdapter::new();
+        let response = json!({
+            "content": [
+                {"type": "text", "text": "hello from Claude"},
+                {"type": "tool_use", "id": "tu_1", "name": "x", "input": {}}
+            ]
+        });
+        assert_eq!(
+            adapter.extract_response_text(&response),
+            Some("hello from Claude".to_string())
+        );
+    }
+
+    #[test]
+    fn anthropic_extract_token_usage_reads_native_envelope_with_cache() {
+        let adapter = AnthropicAdapter::new();
+        let response = json!({
+            "usage": {
+                "input_tokens": 123,
+                "output_tokens": 45,
+                "cache_read_input_tokens": 17,
+                "cache_creation_input_tokens": 8
+            }
+        });
+        let usage = adapter
+            .extract_token_usage(&response)
+            .expect("usage present");
+        assert_eq!(usage.input_tokens, 123);
+        assert_eq!(usage.output_tokens, 45);
+        assert_eq!(usage.cache_read_tokens, 17);
+        assert_eq!(usage.cache_write_tokens, 8);
+    }
+
+    #[test]
+    fn google_extract_response_text_concatenates_parts() {
+        let adapter = GoogleAdapter::new();
+        let response = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"text": "hello "},
+                        {"text": "from Gemini"}
+                    ]
+                }
+            }]
+        });
+        assert_eq!(
+            adapter.extract_response_text(&response),
+            Some("hello from Gemini".to_string())
+        );
+    }
+
+    #[test]
+    fn google_extract_token_usage_reads_usage_metadata() {
+        let adapter = GoogleAdapter::new();
+        let response = json!({
+            "usageMetadata": {
+                "promptTokenCount": 200,
+                "candidatesTokenCount": 90,
+                "cachedContentTokenCount": 30
+            }
+        });
+        let usage = adapter
+            .extract_token_usage(&response)
+            .expect("usage present");
+        assert_eq!(usage.input_tokens, 200);
+        assert_eq!(usage.output_tokens, 90);
+        assert_eq!(usage.cache_read_tokens, 30);
+        assert_eq!(usage.cache_write_tokens, 0);
+    }
+
+    #[test]
+    fn ollama_extract_response_text_reads_message_content() {
+        let adapter = OllamaAdapter::new();
+        let response = json!({
+            "model": "llama3",
+            "message": {"role": "assistant", "content": "hi from Ollama"},
+            "done": true
+        });
+        assert_eq!(
+            adapter.extract_response_text(&response),
+            Some("hi from Ollama".to_string())
+        );
+    }
+
+    #[test]
+    fn ollama_extract_token_usage_reads_top_level_counters() {
+        let adapter = OllamaAdapter::new();
+        let response = json!({
+            "prompt_eval_count": 22,
+            "eval_count": 11
+        });
+        let usage = adapter
+            .extract_token_usage(&response)
+            .expect("usage present");
+        assert_eq!(usage.input_tokens, 22);
+        assert_eq!(usage.output_tokens, 11);
+        // Ollama has no cache layer
+        assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.cache_write_tokens, 0);
+    }
+
+    /// The default trait impl reads the `OpenAI` Chat Completions shape.
+    /// `DeepSeek`/`Qwen`/Z.AI all share that shape so they now succeed
+    /// where the old hand-rolled extractor would also have succeeded — but
+    /// any *future* OpenAI-compatible provider added to `get_adapter` will
+    /// keep working without VDD-specific patches.
+    #[test]
+    fn deepseek_extract_response_text_via_default_openai_shape() {
+        let adapter = DeepSeekAdapter::new();
+        let response = json!({
+            "choices": [{"message": {"content": "deepseek reply"}}]
+        });
+        assert_eq!(
+            adapter.extract_response_text(&response),
+            Some("deepseek reply".to_string())
+        );
+    }
+
+    #[test]
+    fn qwen_extract_token_usage_via_default_openai_shape() {
+        let adapter = QwenAdapter::new();
+        let response = json!({
+            "usage": {"prompt_tokens": 7, "completion_tokens": 3}
+        });
+        let usage = adapter
+            .extract_token_usage(&response)
+            .expect("usage present");
+        assert_eq!(usage.input_tokens, 7);
+        assert_eq!(usage.output_tokens, 3);
+    }
+
+    /// A response with NO recognisable usage envelope must return `None`,
+    /// not silently fabricate a zero-token record. Forces callers to make
+    /// a conscious choice (e.g. `.unwrap_or_default()`).
+    #[test]
+    fn extract_token_usage_returns_none_for_unknown_shape() {
+        let adapter = GoogleAdapter::new();
+        let response = json!({"unrelated": "payload"});
+        assert!(adapter.extract_token_usage(&response).is_none());
+
+        let adapter = OllamaAdapter::new();
+        let response = json!({"message": {"content": "x"}}); // no counters
+        assert!(adapter.extract_token_usage(&response).is_none());
+    }
+
+    /// A response with NO recognisable text content must return `None` —
+    /// callers see the absence rather than an empty string sentinel.
+    #[test]
+    fn extract_response_text_returns_none_for_unknown_shape() {
+        let adapter = AnthropicAdapter::new();
+        let response = json!({"id": "msg_1", "model": "x"});
+        assert!(adapter.extract_response_text(&response).is_none());
+
+        let adapter = OllamaAdapter::new();
+        let response = json!({"model": "llama3"});
+        assert!(adapter.extract_response_text(&response).is_none());
     }
 }
