@@ -1,0 +1,10 @@
+{
+  "uuid": "9a1946df-89e1-4396-b8cf-b244ba735e56",
+  "issue_uuid": "5c4a255d-52f8-4fe9-91e1-fc69e9f9c356",
+  "author": "lOrm",
+  "content": "Fixed in src/tools/file/read.rs. Added MAX_FILE_SIZE_BYTES=10MiB. Pre-flight fs::metadata() rejects oversize files; Unix FileTypeExt blocks char/block devices, FIFOs, sockets. All reads wrapped in Read::take(MAX_FILE_SIZE_BYTES) for defense-in-depth against len()==0 special files. Same guards on read_image_file and read_notebook_file. 7 regression tests added (all pass): read_text_oversize_file_is_rejected_with_actionable_error, read_text_small_file_reads_cleanly, read_text_empty_file_is_ok, read_image_oversize_file_is_rejected, read_image_small_file_reads_cleanly, read_text_char_device_is_rejected.",
+  "created_at": "2026-05-19T10:36:16.909498714Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAxERVtNxBYqz5ukk/CFQrazw0HT9SobRC/c0rnuuAJNR/uN/NKCKzid4cwupUT9k4LyDvDMz4mqRP24CeoeErAQ=="
+}
