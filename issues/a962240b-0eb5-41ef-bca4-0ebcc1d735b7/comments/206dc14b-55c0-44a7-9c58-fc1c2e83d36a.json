@@ -1,0 +1,10 @@
+{
+  "uuid": "206dc14b-55c0-44a7-9c58-fc1c2e83d36a",
+  "issue_uuid": "a962240b-0eb5-41ef-bca4-0ebcc1d735b7",
+  "author": "lOrm",
+  "content": "Fixed: GIT_BIN: LazyLock<Result<PathBuf, String>> in src/plugins/git.rs caches which::which(\"git\") at first use. All three Command::new(\"git\") sites (git_clone L63, resolve_head_sha L93, git_pull L119) now invoke Command::new(git_bin()?). Added 3 regression tests: (1) git_bin_is_absolute_path — invariant that the cached binary is an absolute path; (2) git_clone_uses_resolved_absolute_bin — forensic shim test: prepends a sentinel-touching git to PATH after GIT_BIN resolution and asserts the shim sentinel is never written, proving the dispatch went through the cached absolute path; (3) git_bin_surfaces_missing_binary — failure-surface contract that Err lookup yields PluginError::IoError. Tests 1412 -> 1415, cargo clippy --lib --all-targets -- -D warnings exits 0, cargo fmt clean. No #[allow], no #[ignore], no clippy.toml. which = \"8\" added to Cargo.toml (already a transitive dep via headless_chrome).",
+  "created_at": "2026-05-19T20:56:16.277846483Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAVCOmo6hyEv9crzOx0r3Goxp3xakvNbd8BThMnwDCFFog2+mmymftbVWqWCPmrm5jYCRNS4+9Ldx05bw1iR0hDw=="
+}
