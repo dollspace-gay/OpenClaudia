@@ -56,6 +56,13 @@ chrono = { version = "0.4", features = ["serde"] }
 # Filesystem
 dirs = "6"
 
+# Absolute-path resolution for trusted binaries (e.g. the `git` plugin
+# helper). Resolves once at first use via PATH lookup and caches the
+# canonical PathBuf so subsequent Command::new invocations cannot be
+# redirected by a later, attacker-controlled PATH mutation. Closes the
+# PATH-injection escalation in `src/plugins/git.rs` (crosslink #679).
+which = "8"
+
 # Regex for hook matchers
 regex = "1"
 

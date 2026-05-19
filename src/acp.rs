@@ -1794,8 +1794,8 @@ fn build_search_argv(
                 .and_then(|v| v.as_str())
                 .unwrap_or(".")
                 .to_string();
-            let program = resolve_program("rg")
-                .ok_or_else(|| "Could not locate `rg` on PATH".to_string())?;
+            let program =
+                resolve_program("rg").ok_or_else(|| "Could not locate `rg` on PATH".to_string())?;
 
             let mut argv: Vec<String> = vec!["--no-heading".to_string()];
             if let Some(ft) = tool_args.get("type").and_then(|v| v.as_str()) {
@@ -2232,7 +2232,12 @@ mod search_security_tests {
     /// even when the attacker controls the pattern.
     #[test]
     fn grep_flag_injection_blocked_by_double_dash_terminator() {
-        let attacker_patterns = ["--help", "-files-with-matches", "-A1000000", "--pre=/bin/sh"];
+        let attacker_patterns = [
+            "--help",
+            "-files-with-matches",
+            "-A1000000",
+            "--pre=/bin/sh",
+        ];
         for pat in attacker_patterns {
             let tool_args = args_from(&[("pattern", pat), ("path", ".")]);
             let Ok((_, argv)) = build_search_argv("grep", &tool_args) else {

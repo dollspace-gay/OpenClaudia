@@ -59,6 +59,388 @@ fn find_cell_by_id(cells: &[Value], cell_id: &str) -> Option<usize> {
     })
 }
 
+/// Tool-result tuple used end-to-end: `(message, is_error)`. Helpers return
+/// `Result<T, ToolFailure>` so the entry point can `?`-bubble errors and keep
+/// its body linear (validate → resolve → dispatch → persist).
+type ToolFailure = (String, bool);
+
+/// Parsed-and-validated arguments. Owning `String`s avoids tying the lifetime
+/// of the helper chain to the borrowed `HashMap` arg map.
+struct ParsedArgs {
+    raw_path: String,
+    cell_id: Option<String>,
+    cell_number: Option<usize>,
+    new_source: String,
+    cell_type: Option<String>,
+    edit_mode: String,
+}
+
+/// Path/preflight context: paths and open handle shared across read+write.
+struct NotebookHandle {
+    /// Canonicalized path, used in user-facing error messages and guardrails.
+    canonical_path: String,
+    /// Single FD opened with `O_NOFOLLOW` against the leaf-preserving path
+    /// — used for both the initial read and the truncating write back.
+    /// Closes the TOCTOU window from crosslink #417.
+    file: std::fs::File,
+}
+
+/// Result of resolving `cell_id` / `cell_number` against the parsed cells.
+struct Locator {
+    /// `Some(idx)` when a locator was supplied and (for `cell_id`) found.
+    /// `None` only when neither locator was supplied — handled per-mode.
+    index: Option<usize>,
+    /// Human-readable description used in out-of-bounds error messages
+    /// (`"id 'abc'"` vs `"number 3"` vs `"<unspecified>"`).
+    target_desc: String,
+}
+
+/// What happened during the dispatch step, threaded into the summary line.
+struct EditOutcome {
+    /// Index that should appear in `Replaced/Inserted/Deleted cell <N>`.
+    /// `None` only for "insert at the head with no locator" which falls
+    /// back to `target_desc`.
+    summary_index: Option<usize>,
+}
+
+/// Step 1 of the entry point: extract & validate every argument. No I/O,
+/// no path resolution — just argument shape and the `edit_mode` enum check.
+fn parse_args(args: &HashMap<String, Value>) -> Result<ParsedArgs, ToolFailure> {
+    let raw_path = args
+        .get("notebook_path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ("Missing 'notebook_path' argument".to_string(), true))?
+        .to_string();
+
+    let new_source = args
+        .get("new_source")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ("Missing 'new_source' argument".to_string(), true))?
+        .to_string();
+
+    let edit_mode = args
+        .get("edit_mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("replace")
+        .to_string();
+
+    if !["replace", "insert", "delete"].contains(&edit_mode.as_str()) {
+        return Err((
+            format!("Invalid edit_mode '{edit_mode}'. Must be 'replace', 'insert', or 'delete'."),
+            true,
+        ));
+    }
+
+    let cell_id = args
+        .get("cell_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let cell_number = args
+        .get("cell_number")
+        .and_then(serde_json::Value::as_u64)
+        .map(|n| usize::try_from(n).unwrap_or(usize::MAX));
+    let cell_type = args
+        .get("cell_type")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    Ok(ParsedArgs {
+        raw_path,
+        cell_id,
+        cell_number,
+        new_source,
+        cell_type,
+        edit_mode,
+    })
+}
+
+/// Step 2: resolve the path, enforce read-before-edit, canonicalize for the
+/// blast-radius check, then open ONCE with `O_NOFOLLOW`. Returns the open
+/// handle plus the canonicalized path for downstream messages.
+fn preflight_and_open(raw_path: &str) -> Result<NotebookHandle, ToolFailure> {
+    let resolved = resolve_path(raw_path).map_err(|e| (e, true))?;
+    // Leaf-preserving path for the O_NOFOLLOW open. See crosslink #417.
+    let open_path = resolve_open_path(raw_path).map_err(|e| (e, true))?;
+
+    if !READ_TRACKER.has_been_read(&resolved) {
+        return Err((
+            format!(
+                "You must read '{}' before editing it. Use read_file first to see the actual contents.",
+                resolved.display()
+            ),
+            true,
+        ));
+    }
+
+    let canonical_path = std::fs::canonicalize(&resolved)
+        .map(|c| c.to_string_lossy().to_string())
+        .map_err(|_| {
+            (
+                format!("Cannot resolve notebook path '{}'", resolved.display()),
+                true,
+            )
+        })?;
+
+    crate::guardrails::check_file_access(&canonical_path).map_err(|msg| (msg, true))?;
+
+    // Open ONCE with O_NOFOLLOW against the LEAF-PRESERVING path. All
+    // subsequent reads/writes use this FD — closing the TOCTOU window
+    // described in crosslink #417 (dup #428).
+    let file = open_notebook_nofollow(&open_path).map_err(|e| {
+        (
+            format!("Failed to open notebook '{canonical_path}': {e}"),
+            true,
+        )
+    })?;
+
+    Ok(NotebookHandle {
+        canonical_path,
+        file,
+    })
+}
+
+/// Step 3: read the open handle and parse JSON. Returns the parsed notebook
+/// plus the raw text so `record_file_modification` can count old lines.
+fn read_and_parse(handle: &mut NotebookHandle) -> Result<(Value, String), ToolFailure> {
+    let mut content = String::new();
+    handle.file.read_to_string(&mut content).map_err(|e| {
+        (
+            format!("Failed to read notebook '{}': {e}", handle.canonical_path),
+            true,
+        )
+    })?;
+
+    let notebook: Value = serde_json::from_str(&content).map_err(|e| {
+        (
+            format!(
+                "Failed to parse notebook '{}' as JSON: {e}",
+                handle.canonical_path
+            ),
+            true,
+        )
+    })?;
+
+    Ok((notebook, content))
+}
+
+/// Step 4: resolve `cell_id` / `cell_number` against the cells array. When
+/// `cell_id` is present it wins (stable id beats positional). Unknown ids
+/// are a hard error; absent locators yield `index = None` for the modes
+/// that allow it (`insert`).
+fn resolve_locator(parsed: &ParsedArgs, cells: &[Value]) -> Result<Locator, ToolFailure> {
+    let index = if let Some(id) = parsed.cell_id.as_deref() {
+        Some(
+            find_cell_by_id(cells, id)
+                .ok_or_else(|| (format!("No cell with id '{id}' found in notebook."), true))?,
+        )
+    } else {
+        parsed.cell_number
+    };
+
+    let target_desc = parsed.cell_id.as_deref().map_or_else(
+        || {
+            parsed
+                .cell_number
+                .map_or_else(|| "<unspecified>".to_string(), |n| format!("number {n}"))
+        },
+        |id| format!("id '{id}'"),
+    );
+
+    Ok(Locator { index, target_desc })
+}
+
+/// Replace-mode dispatch. `cell_id` or `cell_number` is required; index
+/// must be in range (`index == len` is rejected, NOT silently promoted to
+/// insert — see test `notebook_replace_out_of_bounds_returns_error_not_insert`).
+fn apply_replace(
+    cells: &mut [Value],
+    locator: &Locator,
+    parsed: &ParsedArgs,
+) -> Result<EditOutcome, ToolFailure> {
+    let index = locator.index.ok_or_else(|| {
+        (
+            "replace requires either 'cell_id' or 'cell_number'.".to_string(),
+            true,
+        )
+    })?;
+    if index >= cells.len() {
+        return Err((
+            format!(
+                "Cell {} is out of bounds. Notebook has {} cells (valid range: 0-{}).",
+                locator.target_desc,
+                cells.len(),
+                cells.len().saturating_sub(1)
+            ),
+            true,
+        ));
+    }
+    cells[index]["source"] = source_to_line_array(&parsed.new_source);
+    if let Some(ct) = parsed.cell_type.as_deref() {
+        cells[index]["cell_type"] = json!(ct);
+    }
+    Ok(EditOutcome {
+        summary_index: Some(index),
+    })
+}
+
+/// Insert-mode dispatch. `cell_type` is required. `cell_id` semantics
+/// diverge from replace/delete: "insert AFTER the cell with this id".
+/// Legacy `cell_number` still means "at this exact position". Omitting
+/// both inserts at the head.
+fn apply_insert(
+    cells: &mut Vec<Value>,
+    locator: &Locator,
+    parsed: &ParsedArgs,
+) -> Result<EditOutcome, ToolFailure> {
+    let ct = parsed.cell_type.as_deref().ok_or_else(|| {
+        (
+            "cell_type is required when inserting a new cell. Use 'code' or 'markdown'."
+                .to_string(),
+            true,
+        )
+    })?;
+
+    let insert_at = match (parsed.cell_id.as_deref(), parsed.cell_number) {
+        (Some(_), _) => locator.index.map_or(0, |i| i + 1),
+        (None, Some(n)) => n,
+        (None, None) => 0,
+    };
+
+    if insert_at > cells.len() {
+        return Err((
+            format!(
+                "Cell {} is out of bounds for insertion. Notebook has {} cells (valid range: 0-{}).",
+                locator.target_desc,
+                cells.len(),
+                cells.len()
+            ),
+            true,
+        ));
+    }
+
+    let mut new_cell = json!({
+        "cell_type": ct,
+        "metadata": {},
+        "source": source_to_line_array(&parsed.new_source)
+    });
+    if ct == "code" {
+        new_cell["outputs"] = json!([]);
+        new_cell["execution_count"] = Value::Null;
+    }
+    cells.insert(insert_at, new_cell);
+    Ok(EditOutcome {
+        summary_index: Some(insert_at),
+    })
+}
+
+/// Delete-mode dispatch. Same locator + bounds rules as replace.
+fn apply_delete(cells: &mut Vec<Value>, locator: &Locator) -> Result<EditOutcome, ToolFailure> {
+    let index = locator.index.ok_or_else(|| {
+        (
+            "delete requires either 'cell_id' or 'cell_number'.".to_string(),
+            true,
+        )
+    })?;
+    if index >= cells.len() {
+        return Err((
+            format!(
+                "Cell {} is out of bounds. Notebook has {} cells (valid range: 0-{}).",
+                locator.target_desc,
+                cells.len(),
+                cells.len().saturating_sub(1)
+            ),
+            true,
+        ));
+    }
+    cells.remove(index);
+    Ok(EditOutcome {
+        summary_index: Some(index),
+    })
+}
+
+/// Step 5: dispatch on `edit_mode`. `parse_args` already validated the
+/// string is one of the three known modes, so the wildcard is unreachable.
+fn dispatch_edit(
+    cells: &mut Vec<Value>,
+    locator: &Locator,
+    parsed: &ParsedArgs,
+) -> Result<EditOutcome, ToolFailure> {
+    match parsed.edit_mode.as_str() {
+        "replace" => apply_replace(cells, locator, parsed),
+        "insert" => apply_insert(cells, locator, parsed),
+        "delete" => apply_delete(cells, locator),
+        _ => unreachable!("edit_mode validated in parse_args"),
+    }
+}
+
+/// Step 6: write the mutated notebook back through the SAME FD (rewind +
+/// truncate + write) and update guardrail diff counters. See #417 for
+/// why we don't reopen by path here.
+fn write_notebook(
+    handle: &mut NotebookHandle,
+    notebook: &Value,
+    original_content: &str,
+) -> Result<(), ToolFailure> {
+    let pretty = serde_json::to_string_pretty(notebook)
+        .map_err(|e| (format!("Failed to serialize notebook: {e}"), true))?;
+
+    let old_lines = u32::try_from(original_content.lines().count()).unwrap_or(u32::MAX);
+    let new_lines = u32::try_from(pretty.lines().count()).unwrap_or(u32::MAX);
+
+    handle
+        .file
+        .seek(SeekFrom::Start(0))
+        .and_then(|_| handle.file.set_len(0))
+        .and_then(|()| handle.file.write_all(pretty.as_bytes()))
+        .map_err(|e| {
+            (
+                format!("Failed to write notebook '{}': {e}", handle.canonical_path),
+                true,
+            )
+        })?;
+
+    crate::guardrails::record_file_modification(&handle.canonical_path, new_lines, old_lines);
+    Ok(())
+}
+
+/// Step 7: format the success summary. The summary index falls back to
+/// the locator's target description for the (rare) head-insert case where
+/// the caller supplied no locator.
+fn format_success(
+    handle: &NotebookHandle,
+    notebook: &Value,
+    locator: &Locator,
+    outcome: &EditOutcome,
+    parsed: &ParsedArgs,
+) -> String {
+    let where_str = outcome
+        .summary_index
+        .map_or_else(|| locator.target_desc.clone(), |idx| format!("{idx}"));
+    let action = match parsed.edit_mode.as_str() {
+        "replace" => format!("Replaced cell {where_str} contents"),
+        "insert" => format!(
+            "Inserted new {} cell at position {}",
+            parsed.cell_type.as_deref().unwrap_or("unknown"),
+            where_str
+        ),
+        "delete" => format!("Deleted cell {where_str}"),
+        _ => unreachable!("edit_mode validated in parse_args"),
+    };
+    let mut result = format!(
+        "Successfully edited '{}'. {}. Notebook now has {} cells.",
+        handle.canonical_path,
+        action,
+        notebook
+            .get("cells")
+            .and_then(|c| c.as_array())
+            .map_or(0, std::vec::Vec::len)
+    );
+    if let Some(warning) = crate::guardrails::check_diff_thresholds() {
+        let _ = write!(result, "\n\nWarning: {}", warning.message);
+    }
+    result
+}
+
 /// Edit a Jupyter notebook cell.
 ///
 /// Accepts either `cell_id` (Claude Code-compatible — matches the `id`
@@ -67,277 +449,41 @@ fn find_cell_by_id(cells: &[Value], cell_id: &str) -> Option<usize> {
 /// least one of the two must be present for `replace` and `delete`.
 /// For `insert`, `cell_id` means "insert AFTER the cell with this id";
 /// omitting both inserts at position 0.
-#[allow(clippy::too_many_lines)]
+///
+/// Body is the linear pipeline: validate → preflight → read → resolve
+/// → dispatch → persist → summarize. Each step is a private helper above.
+/// Refactored from a 200+-line god function per crosslink #681.
 pub fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
-    let Some(raw_path) = args.get("notebook_path").and_then(|v| v.as_str()) else {
-        return ("Missing 'notebook_path' argument".to_string(), true);
-    };
-
-    let resolved = match resolve_path(raw_path) {
+    let parsed = match parse_args(args) {
         Ok(p) => p,
-        Err(e) => return (e, true),
+        Err(e) => return e,
     };
-
-    // Leaf-preserving path for the O_NOFOLLOW open. See crosslink #417.
-    let open_path = match resolve_open_path(raw_path) {
-        Ok(p) => p,
-        Err(e) => return (e, true),
+    let mut handle = match preflight_and_open(&parsed.raw_path) {
+        Ok(h) => h,
+        Err(e) => return e,
     };
-
-    let cell_id_arg = args
-        .get("cell_id")
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
-    let cell_number_arg = args
-        .get("cell_number")
-        .and_then(serde_json::Value::as_u64)
-        .map(|n| usize::try_from(n).unwrap_or(usize::MAX));
-
-    let Some(new_source) = args.get("new_source").and_then(|v| v.as_str()) else {
-        return ("Missing 'new_source' argument".to_string(), true);
+    let (mut notebook, original_content) = match read_and_parse(&mut handle) {
+        Ok(t) => t,
+        Err(e) => return e,
     };
-
-    let cell_type = args.get("cell_type").and_then(|v| v.as_str());
-    let edit_mode = args
-        .get("edit_mode")
-        .and_then(|v| v.as_str())
-        .unwrap_or("replace");
-
-    // Validate edit_mode
-    if !["replace", "insert", "delete"].contains(&edit_mode) {
-        return (
-            format!("Invalid edit_mode '{edit_mode}'. Must be 'replace', 'insert', or 'delete'."),
-            true,
-        );
-    }
-
-    // Enforce read-before-edit
-    if !READ_TRACKER.has_been_read(&resolved) {
-        return (
-            format!(
-                "You must read '{}' before editing it. Use read_file first to see the actual contents.",
-                resolved.display()
-            ),
-            true,
-        );
-    }
-
-    // Blast radius check
-    // Resolve symlinks to prevent path traversal
-    let notebook_path = match std::fs::canonicalize(&resolved) {
-        Ok(canon) => canon.to_string_lossy().to_string(),
-        Err(_) => {
-            return (
-                format!("Cannot resolve notebook path '{}'", resolved.display()),
-                true,
-            );
-        }
-    };
-    let notebook_path = notebook_path.as_str();
-
-    if let Err(msg) = crate::guardrails::check_file_access(notebook_path) {
-        return (msg, true);
-    }
-
-    // Open ONCE with O_NOFOLLOW against the LEAF-PRESERVING path. All
-    // subsequent reads/writes use this FD — closing the TOCTOU window
-    // described in crosslink #417 (dup #428).
-    let mut file = match open_notebook_nofollow(&open_path) {
-        Ok(f) => f,
-        Err(e) => {
-            return (
-                format!("Failed to open notebook '{notebook_path}': {e}"),
-                true,
-            );
-        }
-    };
-
-    // Read through the open handle.
-    let mut content = String::new();
-    if let Err(e) = file.read_to_string(&mut content) {
-        return (
-            format!("Failed to read notebook '{notebook_path}': {e}"),
-            true,
-        );
-    }
-
-    let mut notebook: Value = match serde_json::from_str(&content) {
-        Ok(v) => v,
-        Err(e) => {
-            return (
-                format!("Failed to parse notebook '{notebook_path}' as JSON: {e}"),
-                true,
-            )
-        }
-    };
-
     let Some(cells) = notebook.get_mut("cells").and_then(|c| c.as_array_mut()) else {
         return ("Notebook has no 'cells' array.".to_string(), true);
     };
-
-    // Resolve the target index from whichever of cell_id / cell_number
-    // the caller supplied. `cell_id` wins when both are present — it's
-    // the stable identifier, `cell_number` shifts whenever a cell gets
-    // inserted above it.
-    let resolved_index: Option<usize> = if let Some(id) = cell_id_arg.as_deref() {
-        match find_cell_by_id(cells, id) {
-            Some(idx) => Some(idx),
-            None => {
-                return (format!("No cell with id '{id}' found in notebook."), true);
-            }
-        }
-    } else {
-        cell_number_arg
+    let locator = match resolve_locator(&parsed, cells) {
+        Ok(l) => l,
+        Err(e) => return e,
     };
-    // Display text for error messages — "id 'abc'" when id was provided,
-    // "number N" otherwise.
-    let target_desc = cell_id_arg.as_deref().map_or_else(
-        || cell_number_arg.map_or_else(|| "<unspecified>".to_string(), |n| format!("number {n}")),
-        |id| format!("id '{id}'"),
-    );
-
-    // Index used when we print "Replaced cell ..." / "Deleted cell ..."
-    // in the summary. Filled in per-branch; stays None for the "insert
-    // at the beginning" case where no prior cell_id was passed.
-    let mut summary_index: Option<usize> = resolved_index;
-
-    match edit_mode {
-        "replace" => {
-            let Some(index) = resolved_index else {
-                return (
-                    "replace requires either 'cell_id' or 'cell_number'.".to_string(),
-                    true,
-                );
-            };
-            if index >= cells.len() {
-                return (
-                    format!(
-                        "Cell {target_desc} is out of bounds. Notebook has {} cells (valid range: 0-{}).",
-                        cells.len(),
-                        cells.len().saturating_sub(1)
-                    ),
-                    true,
-                );
-            }
-            cells[index]["source"] = source_to_line_array(new_source);
-            if let Some(ct) = cell_type {
-                cells[index]["cell_type"] = json!(ct);
-            }
-        }
-        "insert" => {
-            let Some(ct) = cell_type else {
-                return (
-                    "cell_type is required when inserting a new cell. Use 'code' or 'markdown'."
-                        .to_string(),
-                    true,
-                );
-            };
-
-            // Semantics diverge from replace/delete here: Claude Code's
-            // cell_id means "insert AFTER this cell", so the insertion
-            // position is index+1. Legacy cell_number still means "at
-            // this position". Omitting both inserts at the beginning.
-            let insert_at = match (cell_id_arg.as_deref(), cell_number_arg) {
-                (Some(_), _) => resolved_index.map_or(0, |i| i + 1),
-                (None, Some(n)) => n,
-                (None, None) => 0,
-            };
-
-            if insert_at > cells.len() {
-                return (
-                    format!(
-                        "Cell {target_desc} is out of bounds for insertion. Notebook has {} cells (valid range: 0-{}).",
-                        cells.len(),
-                        cells.len()
-                    ),
-                    true,
-                );
-            }
-
-            let mut new_cell = json!({
-                "cell_type": ct,
-                "metadata": {},
-                "source": source_to_line_array(new_source)
-            });
-            if ct == "code" {
-                new_cell["outputs"] = json!([]);
-                new_cell["execution_count"] = Value::Null;
-            }
-            cells.insert(insert_at, new_cell);
-            summary_index = Some(insert_at);
-        }
-        "delete" => {
-            let Some(index) = resolved_index else {
-                return (
-                    "delete requires either 'cell_id' or 'cell_number'.".to_string(),
-                    true,
-                );
-            };
-            if index >= cells.len() {
-                return (
-                    format!(
-                        "Cell {target_desc} is out of bounds. Notebook has {} cells (valid range: 0-{}).",
-                        cells.len(),
-                        cells.len().saturating_sub(1)
-                    ),
-                    true,
-                );
-            }
-            cells.remove(index);
-        }
-        _ => unreachable!(),
+    let outcome = match dispatch_edit(cells, &locator, &parsed) {
+        Ok(o) => o,
+        Err(e) => return e,
+    };
+    if let Err(e) = write_notebook(&mut handle, &notebook, &original_content) {
+        return e;
     }
-
-    // Write back THROUGH THE SAME FD: rewind, truncate, write. See #417.
-    let old_lines = u32::try_from(content.lines().count()).unwrap_or(u32::MAX);
-    match serde_json::to_string_pretty(&notebook) {
-        Ok(pretty) => {
-            let new_lines = u32::try_from(pretty.lines().count()).unwrap_or(u32::MAX);
-            let write_result = file
-                .seek(SeekFrom::Start(0))
-                .and_then(|_| file.set_len(0).map(|()| 0u64))
-                .and_then(|_| file.write_all(pretty.as_bytes()).map(|()| 0u64));
-            match write_result {
-                Ok(_) => {
-                    crate::guardrails::record_file_modification(
-                        notebook_path,
-                        new_lines,
-                        old_lines,
-                    );
-                    let where_str =
-                        summary_index.map_or_else(|| target_desc.clone(), |idx| format!("{idx}"));
-                    let action = match edit_mode {
-                        "replace" => format!("Replaced cell {where_str} contents"),
-                        "insert" => format!(
-                            "Inserted new {} cell at position {}",
-                            cell_type.unwrap_or("unknown"),
-                            where_str
-                        ),
-                        "delete" => format!("Deleted cell {where_str}"),
-                        _ => unreachable!(),
-                    };
-                    let mut result = format!(
-                        "Successfully edited '{}'. {}. Notebook now has {} cells.",
-                        notebook_path,
-                        action,
-                        notebook
-                            .get("cells")
-                            .and_then(|c| c.as_array())
-                            .map_or(0, std::vec::Vec::len)
-                    );
-                    if let Some(warning) = crate::guardrails::check_diff_thresholds() {
-                        let _ = write!(result, "\n\nWarning: {}", warning.message);
-                    }
-                    (result, false)
-                }
-                Err(e) => (
-                    format!("Failed to write notebook '{notebook_path}': {e}"),
-                    true,
-                ),
-            }
-        }
-        Err(e) => (format!("Failed to serialize notebook: {e}"), true),
-    }
+    (
+        format_success(&handle, &notebook, &locator, &outcome, &parsed),
+        false,
+    )
 }
 
 #[cfg(test)]

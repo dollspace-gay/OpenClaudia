@@ -36,16 +36,81 @@ fn rewrite_in_place(file: &mut std::fs::File, new_content: &str) -> std::io::Res
     file.write_all(new_content.as_bytes())
 }
 
-/// Edit a file by replacing text
+/// Canonicalise the user-supplied edit path. Mirrors the old inline logic in
+/// [`execute_edit_file`]; extracted to keep that function under the clippy
+/// `too_many_lines` budget after the crosslink #687 branch was added.
+///
+/// Returns the canonical path string, falling back to the canonical parent +
+/// original leaf when the file does not yet exist.
+fn canonicalise_edit_path(path: &str) -> Result<String, String> {
+    let p = resolve_path(path)?;
+    let canonical = match std::fs::canonicalize(&p) {
+        Ok(c) => c,
+        Err(_) => match p.parent() {
+            Some(parent) => match std::fs::canonicalize(parent) {
+                Ok(canon_parent) => canon_parent.join(p.file_name().unwrap_or_default()),
+                Err(_) => {
+                    return Err(format!(
+                        "Cannot resolve path '{path}': parent directory does not exist"
+                    ));
+                }
+            },
+            None => return Err(format!("Invalid path: '{path}'")),
+        },
+    };
+    Ok(canonical.to_string_lossy().to_string())
+}
+
+/// Build the human-readable success message + DIFF marker block.
+///
+/// Extracted from [`execute_edit_file`] so the parent function stays under
+/// the clippy `too_many_lines` threshold once the crosslink #687
+/// `replace_all` branch is added.
+fn format_edit_success(
+    path: &str,
+    old_string: &str,
+    new_string: &str,
+    count: usize,
+    replace_all: bool,
+) -> String {
+    let diff_json = serde_json::json!({
+        "path": path,
+        "old": old_string,
+        "new": new_string,
+    });
+    let mut out = if replace_all && count > 1 {
+        format!(
+            "Successfully edited '{}'. Replaced {} occurrences ({} chars each with {} chars).\n@@DIFF_START@@\n{}\n@@DIFF_END@@",
+            path,
+            count,
+            old_string.len(),
+            new_string.len(),
+            diff_json,
+        )
+    } else {
+        format!(
+            "Successfully edited '{}'. Replaced {} chars with {} chars.\n@@DIFF_START@@\n{}\n@@DIFF_END@@",
+            path,
+            old_string.len(),
+            new_string.len(),
+            diff_json,
+        )
+    };
+    if let Some(warning) = crate::guardrails::check_diff_thresholds() {
+        let _ = write!(out, "\n\nWarning: {}", warning.message);
+    }
+    out
+}
+
+/// Edit a file by replacing text.
+///
+/// Honours the optional `replace_all: bool` argument (crosslink #687):
+/// when `true` every occurrence of `old_string` is replaced; when `false`
+/// or absent, multi-occurrence inputs are rejected so callers must provide
+/// a uniquely-matching `old_string`.
 pub fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
     let Some(user_path) = args.get("path").and_then(|v| v.as_str()) else {
         return ("Missing 'path' argument".to_string(), true);
-    };
-    let path = user_path;
-
-    let p = match resolve_path(path) {
-        Ok(p) => p,
-        Err(e) => return (e, true),
     };
 
     // Path passed to `open(2)`: canonical parent + original leaf so that
@@ -56,28 +121,10 @@ pub fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
     };
 
     // Resolve symlinks to prevent symlink-based path traversal.
-    let canonical = match std::fs::canonicalize(&p) {
-        Ok(canon) => canon,
-        Err(_) => {
-            // File doesn't exist -- try to resolve the parent directory
-            if let Some(parent) = p.parent() {
-                match std::fs::canonicalize(parent) {
-                    Ok(canon_parent) => canon_parent.join(p.file_name().unwrap_or_default()),
-                    Err(_) => {
-                        return (
-                            format!(
-                                "Cannot resolve path '{path}': parent directory does not exist"
-                            ),
-                            true,
-                        );
-                    }
-                }
-            } else {
-                return (format!("Invalid path: '{path}'"), true);
-            }
-        }
+    let path = match canonicalise_edit_path(user_path) {
+        Ok(p) => p,
+        Err(e) => return (e, true),
     };
-    let path = canonical.to_string_lossy().to_string();
     let path = path.as_str();
 
     // ENFORCE: Must read file before editing
@@ -104,6 +151,14 @@ pub fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
         return ("Missing 'new_string' argument".to_string(), true);
     };
 
+    // crosslink #687: honour the `replace_all` flag. When `true`, all
+    // occurrences are replaced; when `false` (or absent) the existing
+    // single-occurrence-with-multi-rejection behaviour is preserved.
+    let replace_all = args
+        .get("replace_all")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+
     // Open ONCE with O_NOFOLLOW against the LEAF-PRESERVING path; all
     // I/O goes through this FD. See crosslink #417 (dup #428).
     let mut file = match open_for_edit_nofollow(&open_path) {
@@ -126,37 +181,35 @@ pub fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
     }
 
     let count = content.matches(old_string).count();
-    if count > 1 {
-        return (format!("Found {count} occurrences of the text. Please provide a more specific old_string that matches uniquely."), true);
+    if count > 1 && !replace_all {
+        return (
+            format!(
+                "Found {count} occurrences of the text. Please provide a more specific old_string that matches uniquely, or set replace_all: true to replace every occurrence."
+            ),
+            true,
+        );
     }
 
-    let lines_removed = u32::try_from(old_string.lines().count()).unwrap_or(u32::MAX);
-    let lines_added = u32::try_from(new_string.lines().count()).unwrap_or(u32::MAX);
+    let lines_removed = u32::try_from(old_string.lines().count())
+        .unwrap_or(u32::MAX)
+        .saturating_mul(u32::try_from(count).unwrap_or(u32::MAX));
+    let lines_added = u32::try_from(new_string.lines().count())
+        .unwrap_or(u32::MAX)
+        .saturating_mul(u32::try_from(count).unwrap_or(u32::MAX));
 
-    let new_content = content.replacen(old_string, new_string, 1);
+    let new_content = if replace_all {
+        content.replace(old_string, new_string)
+    } else {
+        content.replacen(old_string, new_string, 1)
+    };
 
     match rewrite_in_place(&mut file, &new_content) {
         Ok(()) => {
-            // Record diff stats
             crate::guardrails::record_file_modification(path, lines_added, lines_removed);
-
-            // Build diff data for color rendering in the CLI
-            let diff_json = serde_json::json!({
-                "path": path,
-                "old": old_string,
-                "new": new_string,
-            });
-            let mut result = format!(
-                "Successfully edited '{}'. Replaced {} chars with {} chars.\n@@DIFF_START@@\n{}\n@@DIFF_END@@",
-                path,
-                old_string.len(),
-                new_string.len(),
-                diff_json,
-            );
-            if let Some(warning) = crate::guardrails::check_diff_thresholds() {
-                let _ = write!(result, "\n\nWarning: {}", warning.message);
-            }
-            (result, false)
+            (
+                format_edit_success(path, old_string, new_string, count, replace_all),
+                false,
+            )
         }
         Err(e) => (format!("Failed to write file '{path}': {e}"), true),
     }
@@ -296,26 +349,64 @@ mod tests {
     }
 
     #[test]
-    fn edit_replace_all_true_with_multi_occurrence_currently_errors() {
-        // Behavior 5 (GAP #569): OC rejects multi-occurrence even when
-        // replace_all=true is passed. CC would replace all N occurrences.
-        // Pinned as current (broken) OC behavior; tracked in gap issue #569.
-        let (_f, path) = tmp_readable("x y x\n");
+    fn fix687_replace_all_true_replaces_every_occurrence() {
+        // crosslink #687: replace_all=true must replace every occurrence
+        // instead of returning the "be more specific" error.
+        let (_f, path) = tmp_readable("x y x z x\n");
         let mut args = make_args(&path, "x", "Z");
         args.insert("replace_all".to_string(), serde_json::json!(true));
         let (msg, is_err) = super::execute_edit_file(&args);
-        // OC: still errors — replace_all flag is silently ignored for N>1
         assert!(
-            is_err,
-            "OC rejects replace_all multi-occurrence (gap #569): {msg}"
+            !is_err,
+            "replace_all=true must succeed on multi-occurrence: {msg}"
+        );
+        let after = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(after, "Z y Z z Z\n", "all occurrences replaced");
+        assert!(
+            msg.contains("3 occurrences"),
+            "success message must report the count: {msg}"
         );
     }
 
     #[test]
-    fn edit_replace_all_true_single_occurrence_succeeds_flag_ignored() {
-        // Behavior 5 edge: replace_all=true with exactly 1 occurrence → OC succeeds
-        // because count=1 takes the single-replace path; the flag is silently ignored.
-        // Pinned as current OC behavior.
+    fn fix687_replace_all_false_preserves_existing_multi_occurrence_error() {
+        // crosslink #687 regression guard: replace_all=false (the default) MUST
+        // keep returning the single-occurrence rejection on N>1 hits.
+        let (_f, path) = tmp_readable("dog cat dog\n");
+        let mut args = make_args(&path, "dog", "bird");
+        args.insert("replace_all".to_string(), serde_json::json!(false));
+        let (msg, is_err) = super::execute_edit_file(&args);
+        assert!(
+            is_err,
+            "replace_all=false on multi-occurrence must still error: {msg}"
+        );
+        assert!(
+            msg.contains("Found 2 occurrences"),
+            "error must still mention occurrence count: {msg}"
+        );
+        assert!(
+            msg.contains("replace_all"),
+            "remediation hint must mention replace_all: {msg}"
+        );
+        let after = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(after, "dog cat dog\n");
+    }
+
+    #[test]
+    fn fix687_absent_replace_all_defaults_to_false() {
+        // crosslink #687: when replace_all is absent, behaviour matches replace_all=false.
+        let (_f, path) = tmp_readable("dup dup dup\n");
+        let args = make_args(&path, "dup", "X");
+        let (msg, is_err) = super::execute_edit_file(&args);
+        assert!(is_err, "default (absent flag) must reject multi: {msg}");
+        let after = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(after, "dup dup dup\n", "file unmodified");
+    }
+
+    #[test]
+    fn fix687_replace_all_true_single_occurrence_still_succeeds() {
+        // crosslink #687: replace_all=true with exactly 1 occurrence still works
+        // (the count==1 path uses replacen, which is equivalent here).
         let (_f, path) = tmp_readable("only once\n");
         let mut args = make_args(&path, "only once", "exactly once");
         args.insert("replace_all".to_string(), serde_json::json!(true));
