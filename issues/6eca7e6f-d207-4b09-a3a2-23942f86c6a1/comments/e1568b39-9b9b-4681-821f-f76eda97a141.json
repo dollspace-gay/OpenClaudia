@@ -1,0 +1,10 @@
+{
+  "uuid": "e1568b39-9b9b-4681-821f-f76eda97a141",
+  "issue_uuid": "6eca7e6f-d207-4b09-a3a2-23942f86c6a1",
+  "author": "lOrm",
+  "content": "Phase 1 (signed-manifest scheme, #249 mandated point 2 / #521) implemented.\n\nFiles changed:\n- Cargo.toml: added ed25519-dalek = \"2\" (prod) + rand_core = { version = \"0.6\", features = [\"getrandom\"] } (dev)\n- src/plugins/validate.rs: PluginSignature newtype (64-byte ed25519 sig), PublicKey newtype (32-byte verifying key), SignatureError enum (MissingSignature, UnknownSigner, SignatureMismatch, InvalidLength, InvalidEncoding, MalformedKey), verify_signature(manifest_bytes, sig, trusted_keys) -> Result<(), SignatureError>, Serialize/Deserialize for PluginSignature as base64 string\n- src/plugins/manifest.rs: added signature: Option<PluginSignature> field to PluginManifest\n- src/plugins/policy.rs: added PolicyAction enum with RequireSignature { trusted_keys: Vec<PublicKey> } variant; added actions: Vec<PolicyAction> field to PluginPolicy\n- src/plugins/mod.rs: added PluginError::UnsignedPlugin, UnknownSigner, SignatureMismatch variants; re-exported PublicKey and SignatureError\n- src/plugins/manager.rs: added enforce_signature_policy() helper and install_from_marketplace_with_policy() method\n\nTests: 1176 passed (baseline 1150, +26). 28 validate tests all green. No #[allow], no stubs, no #[ignore]. Clippy clean on all plugin files.\n\nPoints 3 (origin allowlist) and 4 (interactive first-install prompt) remain open.",
+  "created_at": "2026-05-19T00:12:00.490079724Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAqlkDUoMeM0J4XoUNpCJuDNMb5MXUSmoNsOA7P+xCcClEn689P4w+CwCcIxPSik98fJ4tLvEVlnnoeQFAfx95Dg=="
+}
