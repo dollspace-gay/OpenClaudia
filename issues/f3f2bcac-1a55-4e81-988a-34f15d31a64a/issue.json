@@ -3,9 +3,10 @@
   "display_id": 783,
   "title": "handle_slash_command is a 90-arm dispatch with cyclomatic complexity well above 15",
   "description": "## Severity\nMajor\n## Dimension\ncomplexity\n## Location\nsrc/cli/repl/slash.rs:714-807\n## Violation\nA single 94-line match arm dispatches ~40+ literal command strings (plus aliases). Estimating V(G) = E − N + 2P from the arms alone (each arm + inner alias OR-chain + the colon-plugin fallback): >40 decision points, so V(G) ≫ 15 — far over the rejection threshold. The function also mixes responsibilities: argument parsing, side-effecting handlers, default-result production, and an unknown-command fallback that itself contains a nested colon-split parser. Quoted lines:\n\n    pub fn handle_slash_command(\n        input: &str,\n        messages: &mut Vec<serde_json::Value>,\n        provider: &str,\n        current_model: &str,\n    ) -> Option<SlashCommandResult> {\n        ...\n        match cmd.as_str() {\n            \"help\" | \"?\" => { slash_help(); Some(SlashCommandResult::Handled) }\n            \"new\" | \"clear\" => { messages.clear(); ... }\n            \"sessions\" | \"list\" => Some(slash_sessions()),\n            ...\n            _ => {\n                if cmd.contains(':') {\n                    let colon_parts: Vec<&str> = cmd.splitn(2, ':').collect();\n                    ...\n\nAdding a new command means editing this central switch — OCP violation. Every test of one branch drags in the whole table.\n## Mandated refactor\nReplace the match with a dispatch registry: `static COMMANDS: &[(&[&str], fn(&str, &mut Vec<Value>, ...) -> SlashCommandResult)]` (or a Vec<Box<dyn SlashCommand>> trait-object registry). Each command is its own struct implementing `name() -> &'static [&'static str]` and `handle(args, ctx) -> SlashCommandResult`. The unknown-command fallback becomes a final entry. Move plugin-colon parsing into its own resolver consulted only after the registry misses. This drops V(G) of the dispatcher to the count of registry-construction lines (mostly straight-line code) and lets each command be unit-tested in isolation.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:57:38.957270992Z",
-  "updated_at": "2026-05-18T21:57:38.957270992Z"
+  "updated_at": "2026-05-19T23:18:34.414715572Z",
+  "closed_at": "2026-05-19T23:18:34.414715572Z"
 }
