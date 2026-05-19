@@ -3,11 +3,12 @@
   "display_id": 701,
   "title": "MCP HttpTransport drops response id mismatch detection",
   "description": "## Severity\nMajor\n## Dimension\nerror-handling\n## Location\nsrc/mcp.rs:298-338 (HttpTransport::request)\n## Violation\n`StdioTransport::request` validates that `response.id == id` (line 243-248) to detect protocol desync. The HTTP transport allocates and increments `request_id` (line 299) and embeds it in the JSON-RPC request — but never compares it against `response.id`. A buggy or hostile MCP HTTP server can return a response correlated to a different request and the client will silently accept it, returning the wrong tool's result to the caller.\n\n```rust\nlet response: JsonRpcResponse = response\n    .json()\n    .await\n    .map_err(|e| McpError::Protocol(format!(\"Failed to parse response: {e}\")))?;\n\nif let Some(error) = response.error {\n    return Err(McpError::Protocol(format!(\n        \"RPC error {}: {}\",\n        error.code, error.message\n    )));\n}\n\nOk(response.result.unwrap_or(Value::Null))\n```\n\nThe `id` field on `JsonRpcResponse` is parsed and discarded.\n## Mandated refactor\nAfter deserializing the response in `HttpTransport::request`, add the same id-mismatch guard as `StdioTransport`. Better, extract the request/response correlation into a shared helper to enforce DRY across transports.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:49:09.121085780Z",
-  "updated_at": "2026-05-18T21:49:17.852633553Z",
+  "updated_at": "2026-05-19T21:27:15.800818598Z",
+  "closed_at": "2026-05-19T21:27:15.800818598Z",
   "labels": [
     "qa-review",
     "error-handling"
