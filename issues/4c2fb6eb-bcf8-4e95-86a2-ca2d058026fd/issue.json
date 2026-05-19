@@ -3,11 +3,12 @@
   "display_id": 745,
   "title": "fetch_url response body is not size-capped",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/web.rs:262-300 (fetch_url)\n## Violation\nAfter validating the URL, the response body is consumed via `response.text().await` (line 285) with no maximum size. A malicious or compromised Jina-proxied target can stream gigabytes, exhausting memory before the post-fetch truncate-to-50000 (`src/tools/web.rs:47`) ever runs. The truncate logic in the tool layer is not a defense — it executes on an already fully-materialized `String`.\n\n```rust\nlet content = response\n    .text()\n    .await\n    .map_err(|e| format!(\"Failed to read response: {e}\"))?;\n```\n\nSame exposure in `fetch_with_browser` via headless Chrome `get_content()`.\n## Mandated refactor\nStream the body with `response.bytes_stream()` and accumulate into a capped buffer (e.g. 4 MiB), returning an error when the cap is exceeded. Alternatively check `response.content_length()` upfront and refuse early. For the headless-browser path, set a navigation-level body limit or kill the tab when content_size > cap.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:53:43.863251333Z",
-  "updated_at": "2026-05-18T21:53:47.018056635Z",
+  "updated_at": "2026-05-19T22:46:39.690500398Z",
+  "closed_at": "2026-05-19T22:46:39.690500398Z",
   "labels": [
     "qa-review",
     "security"
