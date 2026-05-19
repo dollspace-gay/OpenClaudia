@@ -3,11 +3,12 @@
   "display_id": 697,
   "title": "Unwrap on regex compile and capture groups in expand_file_refs risks runtime panic",
   "description": "## Severity\nMajor\n## Dimension\nerror-handling\n## Location\nsrc/tui/app.rs:134, 142-143\n## Violation\nThree unconditional `unwrap()` calls in a hot user-input path. The TUI is a long-running interactive process — a panic here tears down the alt-screen with raw mode enabled and leaves the user's terminal in a broken state.\n\n```rust\nlet re = regex::Regex::new(r#\"@\"([^\"]+)\"|@(\\S+)\"#).unwrap();\n...\nlet full_match = cap.get(0).unwrap().as_str();\nlet raw_path = cap.get(1).or_else(|| cap.get(2)).unwrap().as_str();\n```\n\n`cap.get(1).or_else(|| cap.get(2))` is also load-bearing — if the regex is ever changed to introduce additional groups, the unwrap may fire on a `None`. The regex itself is recompiled on every call (regex compilation is expensive — ~100us-1ms per call).\n\n## Mandated refactor\n1. Lift the regex to a `once_cell::sync::Lazy<Regex>` / `std::sync::LazyLock` constant so it compiles exactly once and any compile error surfaces at first use (which can be tested in unit tests).\n2. Replace `unwrap()` on capture groups with explicit handling: skip the iteration with `continue` if the expected group is absent. The first call (`cap.get(0)`) is safe per regex contract but should still use `expect(\"regex Match must have group 0\")` to document the invariant rather than swallow the diagnostic.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:49:06.460003772Z",
-  "updated_at": "2026-05-18T21:49:09.767119005Z",
+  "updated_at": "2026-05-19T21:19:29.503288446Z",
+  "closed_at": "2026-05-19T21:19:29.503288446Z",
   "labels": [
     "qa-review",
     "error-handling"
