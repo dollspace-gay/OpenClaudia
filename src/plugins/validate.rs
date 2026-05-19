@@ -391,7 +391,7 @@ mod tests {
     // Signature verification tests (crosslink #249 / #521)
     // -----------------------------------------------------------------------
 
-    /// Generate a fresh ed25519 keypair and return (signing_key, verifying_key raw bytes).
+    /// Generate a fresh ed25519 keypair and return (`signing_key`, `verifying_key` raw bytes).
     fn gen_keypair() -> (ed25519_dalek::SigningKey, PublicKey) {
         use ed25519_dalek::SigningKey;
         use rand_core::{OsRng, RngCore};
@@ -525,7 +525,11 @@ mod tests {
     #[test]
     fn public_key_from_hex_round_trip() {
         let raw = [0xef_u8; 32];
-        let encoded: String = raw.iter().map(|b| format!("{b:02x}")).collect();
+        let mut encoded = String::with_capacity(raw.len() * 2);
+        for b in raw {
+            use std::fmt::Write as _;
+            let _ = write!(encoded, "{b:02x}");
+        }
         let pk = PublicKey::from_hex(&encoded).unwrap();
         assert_eq!(pk.0, raw);
     }

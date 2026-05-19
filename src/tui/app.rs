@@ -1220,78 +1220,164 @@ impl App {
         });
     }
 
-    /// Handle diagnostic/info slash commands. Returns true if handled.
-    fn handle_diagnostic_slash(&mut self, text: &str) -> bool {
-        if text == "/cost" {
-            let tokens = self.chat_session.estimate_tokens();
-            let tokens_f64 = f64::from(u32::try_from(tokens).unwrap_or(u32::MAX));
-            let cost = match self.model.as_str() {
-                m if m.contains("opus") => tokens_f64.mul_add(0.000_015, tokens_f64 * 0.000_075),
-                m if m.contains("sonnet") => tokens_f64.mul_add(0.000_003, tokens_f64 * 0.000_015),
-                m if m.contains("haiku") => {
-                    tokens_f64.mul_add(0.000_000_25, tokens_f64 * 0.000_001_25)
+    /// Handle the `/cost` slash command.
+    fn handle_slash_cost(&mut self) {
+        let tokens = self.chat_session.estimate_tokens();
+        let tokens_f64 = f64::from(u32::try_from(tokens).unwrap_or(u32::MAX));
+        let cost = match self.model.as_str() {
+            m if m.contains("opus") => tokens_f64.mul_add(0.000_015, tokens_f64 * 0.000_075),
+            m if m.contains("sonnet") => tokens_f64.mul_add(0.000_003, tokens_f64 * 0.000_015),
+            m if m.contains("haiku") => tokens_f64.mul_add(0.000_000_25, tokens_f64 * 0.000_001_25),
+            _ => 0.0,
+        };
+        self.messages.add(DisplayMessage {
+            role: "system".to_string(),
+            content: format!("Session cost estimate:\n  ~{tokens} tokens\n  ~${cost:.4}"),
+            tool_name: None,
+            is_error: false,
+            is_thinking: false,
+        });
+    }
+
+    /// Handle the `/files [dir]` slash command.
+    fn handle_slash_files(&mut self, text: &str) {
+        let dir = text.strip_prefix("/files").unwrap_or("").trim();
+        let dir = if dir.is_empty() { "." } else { dir };
+        match std::fs::read_dir(dir) {
+            Ok(entries) => {
+                let mut items: Vec<String> = entries
+                    .flatten()
+                    .map(|e| {
+                        let name = e.file_name().to_string_lossy().to_string();
+                        let suffix = if e.file_type().is_ok_and(|t| t.is_dir()) {
+                            "/"
+                        } else {
+                            ""
+                        };
+                        format!("  {name}{suffix}")
+                    })
+                    .collect();
+                items.sort();
+                self.messages.add(DisplayMessage {
+                    role: "system".to_string(),
+                    content: format!("Files in {dir}:\n{}", items.join("\n")),
+                    tool_name: None,
+                    is_error: false,
+                    is_thinking: false,
+                });
+            }
+            Err(e) => self.messages.add(DisplayMessage {
+                role: "system".to_string(),
+                content: format!("Failed to list {dir}: {e}"),
+                tool_name: None,
+                is_error: true,
+                is_thinking: false,
+            }),
+        }
+    }
+
+    /// Handle the `/diff` slash command (shows `git diff --stat`).
+    fn handle_slash_diff(&mut self) {
+        let content = match std::process::Command::new("git")
+            .args(["diff", "--stat"])
+            .output()
+        {
+            Ok(out) => {
+                let s = String::from_utf8_lossy(&out.stdout);
+                if s.is_empty() {
+                    "No uncommitted changes.".to_string()
+                } else {
+                    format!("Uncommitted changes:\n{s}")
                 }
-                _ => 0.0,
-            };
+            }
+            Err(e) => format!("Failed to run git diff: {e}"),
+        };
+        self.messages.add(DisplayMessage {
+            role: "system".to_string(),
+            content,
+            tool_name: None,
+            is_error: false,
+            is_thinking: false,
+        });
+    }
+
+    /// Handle the `/doctor` slash command (environment diagnostics).
+    fn handle_slash_doctor(&mut self) {
+        let checks = [
+            match crate::config::load_config() {
+                Ok(_) => "✓ Config: loaded".to_string(),
+                Err(e) => format!("✗ Config: {e}"),
+            },
+            format!("✓ Provider: {}", self.provider),
+            format!("✓ Model: {}", self.model),
+            format!("✓ Endpoint: {}", self.endpoint),
+            format!("✓ Skills: {} loaded", crate::skills::load_skills().len()),
+            if self.memory_db.is_some() {
+                "✓ Memory DB: connected".to_string()
+            } else {
+                "✗ Memory DB: not available".to_string()
+            },
+        ];
+        self.messages.add(DisplayMessage {
+            role: "system".to_string(),
+            content: format!("Diagnostics:\n{}", checks.join("\n")),
+            tool_name: None,
+            is_error: false,
+            is_thinking: false,
+        });
+    }
+
+    /// Handle the `/review` slash command (shows truncated `git diff HEAD`).
+    fn handle_slash_review(&mut self) {
+        let content = match std::process::Command::new("git")
+            .args(["diff", "HEAD"])
+            .output()
+        {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                if stdout.is_empty() {
+                    "No changes to review.".to_string()
+                } else {
+                    let lines: Vec<&str> = stdout.lines().take(100).collect();
+                    if stdout.lines().count() > 100 {
+                        format!(
+                            "{}\n... (truncated, {} total lines)",
+                            lines.join("\n"),
+                            stdout.lines().count()
+                        )
+                    } else {
+                        lines.join("\n")
+                    }
+                }
+            }
+            Err(e) => format!("Failed to run git diff: {e}"),
+        };
+        self.messages.add(DisplayMessage {
+            role: "system".to_string(),
+            content,
+            tool_name: None,
+            is_error: false,
+            is_thinking: false,
+        });
+    }
+
+    /// Handle the `/init` slash command (create config if absent).
+    fn handle_slash_init(&mut self) {
+        if crate::config::config_file_exists() {
             self.messages.add(DisplayMessage {
                 role: "system".to_string(),
-                content: format!("Session cost estimate:\n  ~{tokens} tokens\n  ~${cost:.4}"),
+                content: "Config already exists. Use /doctor to check it.".to_string(),
                 tool_name: None,
                 is_error: false,
                 is_thinking: false,
             });
-            return true;
-        }
-        if text == "/files" || text.starts_with("/files ") {
-            let dir = text.strip_prefix("/files").unwrap_or("").trim();
-            let dir = if dir.is_empty() { "." } else { dir };
-            match std::fs::read_dir(dir) {
-                Ok(entries) => {
-                    let mut items: Vec<String> = entries
-                        .flatten()
-                        .map(|e| {
-                            let name = e.file_name().to_string_lossy().to_string();
-                            let suffix = if e.file_type().is_ok_and(|t| t.is_dir()) {
-                                "/"
-                            } else {
-                                ""
-                            };
-                            format!("  {name}{suffix}")
-                        })
-                        .collect();
-                    items.sort();
-                    self.messages.add(DisplayMessage {
-                        role: "system".to_string(),
-                        content: format!("Files in {dir}:\n{}", items.join("\n")),
-                        tool_name: None,
-                        is_error: false,
-                        is_thinking: false,
-                    });
-                }
-                Err(e) => self.messages.add(DisplayMessage {
-                    role: "system".to_string(),
-                    content: format!("Failed to list {dir}: {e}"),
-                    tool_name: None,
-                    is_error: true,
-                    is_thinking: false,
-                }),
-            }
-            return true;
-        }
-        if text == "/diff" {
-            let content = match std::process::Command::new("git")
-                .args(["diff", "--stat"])
+        } else {
+            let content = match std::process::Command::new("openclaudia")
+                .arg("init")
                 .output()
             {
-                Ok(out) => {
-                    let s = String::from_utf8_lossy(&out.stdout);
-                    if s.is_empty() {
-                        "No uncommitted changes.".to_string()
-                    } else {
-                        format!("Uncommitted changes:\n{s}")
-                    }
-                }
-                Err(e) => format!("Failed to run git diff: {e}"),
+                Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
+                Err(e) => format!("Init failed: {e}"),
             };
             self.messages.add(DisplayMessage {
                 role: "system".to_string(),
@@ -1300,97 +1386,48 @@ impl App {
                 is_error: false,
                 is_thinking: false,
             });
+        }
+    }
+
+    /// Handle diagnostic/info slash commands. Returns true if handled.
+    fn handle_diagnostic_slash(&mut self, text: &str) -> bool {
+        if text == "/cost" {
+            self.handle_slash_cost();
+            return true;
+        }
+        if text == "/files" || text.starts_with("/files ") {
+            self.handle_slash_files(text);
+            return true;
+        }
+        if text == "/diff" {
+            self.handle_slash_diff();
             return true;
         }
         if text == "/context" {
             let msg_count = self.session_messages.len();
             let tokens = self.chat_session.estimate_tokens();
-            self.messages.add(DisplayMessage { role: "system".to_string(), content: format!("Context usage:\n  Messages: {msg_count}\n  Est. tokens: ~{tokens}\n  Model: {}\n  Provider: {}", self.model, self.provider), tool_name: None, is_error: false, is_thinking: false });
+            self.messages.add(DisplayMessage {
+                role: "system".to_string(),
+                content: format!(
+                    "Context usage:\n  Messages: {msg_count}\n  Est. tokens: ~{tokens}\n  Model: {}\n  Provider: {}",
+                    self.model, self.provider
+                ),
+                tool_name: None,
+                is_error: false,
+                is_thinking: false,
+            });
             return true;
         }
         if text == "/doctor" {
-            let checks = [
-                match crate::config::load_config() {
-                    Ok(_) => "✓ Config: loaded".to_string(),
-                    Err(e) => format!("✗ Config: {e}"),
-                },
-                format!("✓ Provider: {}", self.provider),
-                format!("✓ Model: {}", self.model),
-                format!("✓ Endpoint: {}", self.endpoint),
-                format!("✓ Skills: {} loaded", crate::skills::load_skills().len()),
-                if self.memory_db.is_some() {
-                    "✓ Memory DB: connected".to_string()
-                } else {
-                    "✗ Memory DB: not available".to_string()
-                },
-            ];
-            self.messages.add(DisplayMessage {
-                role: "system".to_string(),
-                content: format!("Diagnostics:\n{}", checks.join("\n")),
-                tool_name: None,
-                is_error: false,
-                is_thinking: false,
-            });
+            self.handle_slash_doctor();
             return true;
         }
         if text == "/review" || text.starts_with("/review ") {
-            let content = match std::process::Command::new("git")
-                .args(["diff", "HEAD"])
-                .output()
-            {
-                Ok(out) => {
-                    let stdout = String::from_utf8_lossy(&out.stdout);
-                    if stdout.is_empty() {
-                        "No changes to review.".to_string()
-                    } else {
-                        let lines: Vec<&str> = stdout.lines().take(100).collect();
-                        if stdout.lines().count() > 100 {
-                            format!(
-                                "{}\n... (truncated, {} total lines)",
-                                lines.join("\n"),
-                                stdout.lines().count()
-                            )
-                        } else {
-                            lines.join("\n")
-                        }
-                    }
-                }
-                Err(e) => format!("Failed to run git diff: {e}"),
-            };
-            self.messages.add(DisplayMessage {
-                role: "system".to_string(),
-                content,
-                tool_name: None,
-                is_error: false,
-                is_thinking: false,
-            });
+            self.handle_slash_review();
             return true;
         }
         if text == "/init" {
-            if crate::config::config_file_exists() {
-                self.messages.add(DisplayMessage {
-                    role: "system".to_string(),
-                    content: "Config already exists. Use /doctor to check it.".to_string(),
-                    tool_name: None,
-                    is_error: false,
-                    is_thinking: false,
-                });
-            } else {
-                let content = match std::process::Command::new("openclaudia")
-                    .arg("init")
-                    .output()
-                {
-                    Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
-                    Err(e) => format!("Init failed: {e}"),
-                };
-                self.messages.add(DisplayMessage {
-                    role: "system".to_string(),
-                    content,
-                    tool_name: None,
-                    is_error: false,
-                    is_thinking: false,
-                });
-            }
+            self.handle_slash_init();
             return true;
         }
         false
@@ -1790,10 +1827,132 @@ struct ApiTurnParams {
     tx: std::sync::mpsc::Sender<super::events::AppEvent>,
 }
 
+/// Shared context threaded through the agentic follow-up loop.
+struct AgenticCtx<'a> {
+    client: &'a reqwest::Client,
+    endpoint: &'a str,
+    headers: &'a [(String, String)],
+    provider: &'a str,
+    model: &'a str,
+    effort_level: &'a str,
+    claude_code_token: Option<&'a str>,
+    prompt_blocks: Option<&'a crate::prompt::SystemPromptBlocks>,
+    memory_db: Option<std::sync::Arc<crate::memory::MemoryDb>>,
+    permission_mgr: Option<std::sync::Arc<crate::permissions::PermissionManager>>,
+    hook_engine: Option<std::sync::Arc<crate::hooks::HookEngine>>,
+    session_id: &'a str,
+    tx: &'a std::sync::mpsc::Sender<super::events::AppEvent>,
+}
+
+/// Run the pre-turn `UserPromptSubmit` hook. Returns `false` and sends an
+/// `ApiError` event if the hook denies the request; injects any system
+/// messages from hook outputs and returns `true` on success.
+async fn run_preturn_hooks(
+    engine: &crate::hooks::HookEngine,
+    session_messages: &mut Vec<serde_json::Value>,
+    tx: &std::sync::mpsc::Sender<super::events::AppEvent>,
+) -> bool {
+    let user_prompt = session_messages
+        .last()
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
+    let hook_input = crate::hooks::HookInput::new(crate::hooks::HookEvent::UserPromptSubmit)
+        .with_prompt(&user_prompt);
+    let hook_result = engine
+        .run(crate::hooks::HookEvent::UserPromptSubmit, &hook_input)
+        .await;
+    if !hook_result.allowed {
+        let reason = hook_result.errors.first().map_or_else(
+            || "Hook blocked the request".to_string(),
+            std::string::ToString::to_string,
+        );
+        let _ = tx.send(super::events::AppEvent::ApiError(format!(
+            "Blocked by hook: {reason}"
+        )));
+        return false;
+    }
+    for output in &hook_result.outputs {
+        if let Some(ref sys_msg) = output.system_message {
+            session_messages.push(serde_json::json!({ "role": "system", "content": sys_msg }));
+        }
+    }
+    true
+}
+
+/// Drive the agentic follow-up loop until the model stops requesting tools
+/// or `MAX_ITER` iterations are exhausted.
+async fn run_agentic_loop(ctx: &AgenticCtx<'_>, session_messages: &mut Vec<serde_json::Value>) {
+    const MAX_ITER: u32 = 25;
+    let mut iteration = 0u32;
+    loop {
+        iteration += 1;
+        tracing::debug!(iteration, "Agentic loop iteration");
+        if iteration > MAX_ITER {
+            let _ = ctx.tx.send(super::events::AppEvent::ApiError(
+                "Reached maximum tool iterations (25)".to_string(),
+            ));
+            break;
+        }
+        let body = crate::pipeline::build_request(
+            ctx.provider,
+            ctx.model,
+            session_messages,
+            ctx.effort_level,
+            ctx.claude_code_token,
+            ctx.prompt_blocks,
+        );
+        match crate::pipeline::run_turn(crate::pipeline::RunTurnParams {
+            client: ctx.client,
+            endpoint: ctx.endpoint,
+            headers: ctx.headers,
+            request_body: &body,
+            provider: ctx.provider,
+            memory_db: ctx.memory_db.clone(),
+            permission_mgr: ctx.permission_mgr.clone(),
+            hook_engine: ctx.hook_engine.clone(),
+            session_id: Some(ctx.session_id.to_string()),
+            tx: ctx.tx.clone(),
+        })
+        .await
+        {
+            Ok(followup) => {
+                tracing::debug!(
+                    content_len = followup.content.len(),
+                    tool_calls = followup.tool_calls.len(),
+                    needs_followup = followup.needs_followup,
+                    "Follow-up result"
+                );
+                if followup.needs_followup {
+                    let asst = crate::pipeline::build_assistant_message_with_tools(
+                        &followup.content,
+                        &followup.tool_calls,
+                        ctx.provider,
+                    );
+                    session_messages.push(asst);
+                    session_messages.extend(followup.tool_results.iter().cloned());
+                } else {
+                    if !followup.content.is_empty() {
+                        session_messages.push(
+                            serde_json::json!({ "role": "assistant", "content": followup.content }),
+                        );
+                    }
+                    break;
+                }
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Agentic follow-up failed");
+                let _ = ctx.tx.send(super::events::AppEvent::ApiError(e));
+                break;
+            }
+        }
+    }
+}
+
 /// Run a complete API turn: pre-turn hooks, first `run_turn`, and an agentic
 /// follow-up loop when tool calls are present.
 async fn run_api_turn_async(p: ApiTurnParams) {
-    const MAX_ITER: u32 = 25;
     let ApiTurnParams {
         mut session_messages,
         client,
@@ -1811,31 +1970,8 @@ async fn run_api_turn_async(p: ApiTurnParams) {
         tx,
     } = p;
     if let Some(ref engine) = hook_engine {
-        let user_prompt = session_messages
-            .last()
-            .and_then(|m| m.get("content"))
-            .and_then(|c| c.as_str())
-            .unwrap_or("")
-            .to_string();
-        let hook_input = crate::hooks::HookInput::new(crate::hooks::HookEvent::UserPromptSubmit)
-            .with_prompt(&user_prompt);
-        let hook_result = engine
-            .run(crate::hooks::HookEvent::UserPromptSubmit, &hook_input)
-            .await;
-        if !hook_result.allowed {
-            let reason = hook_result.errors.first().map_or_else(
-                || "Hook blocked the request".to_string(),
-                std::string::ToString::to_string,
-            );
-            let _ = tx.send(super::events::AppEvent::ApiError(format!(
-                "Blocked by hook: {reason}"
-            )));
+        if !run_preturn_hooks(engine, &mut session_messages, &tx).await {
             return;
-        }
-        for output in &hook_result.outputs {
-            if let Some(ref sys_msg) = output.system_message {
-                session_messages.push(serde_json::json!({ "role": "system", "content": sys_msg }));
-            }
         }
     }
     let request_body = crate::pipeline::build_request(
@@ -1880,67 +2016,22 @@ async fn run_api_turn_async(p: ApiTurnParams) {
                     result_count = turn_result.tool_results.len(),
                     "Starting agentic follow-up loop"
                 );
-                let mut iteration = 0u32;
-                loop {
-                    iteration += 1;
-                    tracing::debug!(iteration, "Agentic loop iteration");
-                    if iteration > MAX_ITER {
-                        let _ = tx.send(super::events::AppEvent::ApiError(
-                            "Reached maximum tool iterations (25)".to_string(),
-                        ));
-                        break;
-                    }
-                    let body = crate::pipeline::build_request(
-                        &provider,
-                        &model,
-                        &session_messages,
-                        &effort_level,
-                        claude_code_token.as_deref(),
-                        prompt_blocks.as_ref(),
-                    );
-                    match crate::pipeline::run_turn(crate::pipeline::RunTurnParams {
-                        client: &client,
-                        endpoint: &endpoint,
-                        headers: &headers,
-                        request_body: &body,
-                        provider: &provider,
-                        memory_db: memory_db.clone(),
-                        permission_mgr: permission_mgr.clone(),
-                        hook_engine: hook_engine.clone(),
-                        session_id: Some(session_id.clone()),
-                        tx: tx.clone(),
-                    })
-                    .await
-                    {
-                        Ok(followup) => {
-                            tracing::debug!(
-                                content_len = followup.content.len(),
-                                tool_calls = followup.tool_calls.len(),
-                                needs_followup = followup.needs_followup,
-                                "Follow-up result"
-                            );
-                            if followup.needs_followup {
-                                let asst = crate::pipeline::build_assistant_message_with_tools(
-                                    &followup.content,
-                                    &followup.tool_calls,
-                                    &provider,
-                                );
-                                session_messages.push(asst);
-                                session_messages.extend(followup.tool_results.iter().cloned());
-                            } else {
-                                if !followup.content.is_empty() {
-                                    session_messages.push(serde_json::json!({ "role": "assistant", "content": followup.content }));
-                                }
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!(error = %e, "Agentic follow-up failed");
-                            let _ = tx.send(super::events::AppEvent::ApiError(e));
-                            break;
-                        }
-                    }
-                }
+                let ctx = AgenticCtx {
+                    client: &client,
+                    endpoint: &endpoint,
+                    headers: &headers,
+                    provider: &provider,
+                    model: &model,
+                    effort_level: &effort_level,
+                    claude_code_token: claude_code_token.as_deref(),
+                    prompt_blocks: prompt_blocks.as_ref(),
+                    memory_db: memory_db.clone(),
+                    permission_mgr: permission_mgr.clone(),
+                    hook_engine: hook_engine.clone(),
+                    session_id: &session_id,
+                    tx: &tx,
+                };
+                run_agentic_loop(&ctx, &mut session_messages).await;
                 let _ = tx.send(super::events::AppEvent::SyncMessages(session_messages));
                 let _ = tx.send(super::events::AppEvent::ResponseDone);
             } else if !turn_result.content.is_empty() {

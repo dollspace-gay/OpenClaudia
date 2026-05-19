@@ -137,60 +137,95 @@ impl MessageList {
         self.scroll_offset = 0;
     }
 
+    /// Append styled lines for the welcome banner system message.
+    fn append_welcome_lines<'a>(out: &mut Vec<Line<'a>>, content: &'a str) {
+        for line in content.lines() {
+            let styled = if line.starts_with("OpenClaudia v") {
+                Line::from(vec![
+                    Span::styled(
+                        "OpenClaudia",
+                        Style::default()
+                            .fg(Color::Rgb(147, 112, 219))
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        &line["OpenClaudia".len()..],
+                        Style::default().fg(Color::Rgb(218, 165, 32)),
+                    ),
+                ])
+            } else if line.starts_with("Provider:") {
+                Line::from(Span::styled(
+                    line,
+                    Style::default().fg(Color::Rgb(147, 112, 219)),
+                ))
+            } else if line.starts_with("Model:") {
+                Line::from(Span::styled(
+                    line,
+                    Style::default().fg(Color::Rgb(218, 165, 32)),
+                ))
+            } else if line.starts_with("Welcome") {
+                Line::from(Span::styled(
+                    line,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ))
+            } else {
+                Line::from(Span::styled(line, Style::default().fg(Color::DarkGray)))
+            };
+            out.push(styled);
+        }
+    }
+
+    /// Append rendered lines for a system-role message to `out`.
+    fn append_system_lines<'a>(out: &mut Vec<Line<'a>>, msg: &'a DisplayMessage) {
+        if msg.content.contains("OpenClaudia v") {
+            Self::append_welcome_lines(out, &msg.content);
+        } else {
+            for line in msg.content.lines() {
+                out.push(Line::from(Span::styled(
+                    format!("  {line}"),
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::ITALIC),
+                )));
+            }
+        }
+        out.push(Line::from(""));
+    }
+
+    /// Append rendered lines for a tool-result message to `out`.
+    fn append_tool_lines<'a>(out: &mut Vec<Line<'a>>, msg: &'a DisplayMessage) {
+        let tool_name = msg.tool_name.as_deref().unwrap_or("tool");
+        if msg.is_error {
+            out.push(Line::from(Span::styled(
+                format!("  \u{2717} {tool_name}"),
+                Style::default().fg(Color::Red),
+            )));
+        } else {
+            out.push(Line::from(Span::styled(
+                format!("  \u{2713} {tool_name}"),
+                Style::default().fg(Color::Green),
+            )));
+        }
+        let preview = if msg.content.len() > 200 {
+            format!("{}...", crate::tools::safe_truncate(&msg.content, 197))
+        } else {
+            msg.content.clone()
+        };
+        for line in preview.lines().take(5) {
+            out.push(Line::from(Span::styled(
+                format!("    {line}"),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        out.push(Line::from(""));
+    }
+
     /// Append rendered lines for a single message to `out`.
     fn append_message_lines<'a>(out: &mut Vec<Line<'a>>, msg: &'a DisplayMessage) {
         match msg.role.as_str() {
-            "system" => {
-                let is_welcome = msg.content.contains("OpenClaudia v");
-                if is_welcome {
-                    for line in msg.content.lines() {
-                        let styled = if line.starts_with("OpenClaudia v") {
-                            Line::from(vec![
-                                Span::styled(
-                                    "OpenClaudia",
-                                    Style::default()
-                                        .fg(Color::Rgb(147, 112, 219))
-                                        .add_modifier(Modifier::BOLD),
-                                ),
-                                Span::styled(
-                                    &line["OpenClaudia".len()..],
-                                    Style::default().fg(Color::Rgb(218, 165, 32)),
-                                ),
-                            ])
-                        } else if line.starts_with("Provider:") {
-                            Line::from(Span::styled(
-                                line,
-                                Style::default().fg(Color::Rgb(147, 112, 219)),
-                            ))
-                        } else if line.starts_with("Model:") {
-                            Line::from(Span::styled(
-                                line,
-                                Style::default().fg(Color::Rgb(218, 165, 32)),
-                            ))
-                        } else if line.starts_with("Welcome") {
-                            Line::from(Span::styled(
-                                line,
-                                Style::default()
-                                    .fg(Color::White)
-                                    .add_modifier(Modifier::BOLD),
-                            ))
-                        } else {
-                            Line::from(Span::styled(line, Style::default().fg(Color::DarkGray)))
-                        };
-                        out.push(styled);
-                    }
-                } else {
-                    for line in msg.content.lines() {
-                        out.push(Line::from(Span::styled(
-                            format!("  {line}"),
-                            Style::default()
-                                .fg(Color::DarkGray)
-                                .add_modifier(Modifier::ITALIC),
-                        )));
-                    }
-                }
-                out.push(Line::from(""));
-            }
+            "system" => Self::append_system_lines(out, msg),
             "user" => {
                 out.push(Line::from(Span::styled(
                     "\u{203A} user",
@@ -231,32 +266,7 @@ impl MessageList {
                 )));
                 out.push(Line::from(""));
             }
-            "tool" => {
-                let tool_name = msg.tool_name.as_deref().unwrap_or("tool");
-                if msg.is_error {
-                    out.push(Line::from(Span::styled(
-                        format!("  \u{2717} {tool_name}"),
-                        Style::default().fg(Color::Red),
-                    )));
-                } else {
-                    out.push(Line::from(Span::styled(
-                        format!("  \u{2713} {tool_name}"),
-                        Style::default().fg(Color::Green),
-                    )));
-                }
-                let preview = if msg.content.len() > 200 {
-                    format!("{}...", crate::tools::safe_truncate(&msg.content, 197))
-                } else {
-                    msg.content.clone()
-                };
-                for line in preview.lines().take(5) {
-                    out.push(Line::from(Span::styled(
-                        format!("    {line}"),
-                        Style::default().fg(Color::DarkGray),
-                    )));
-                }
-                out.push(Line::from(""));
-            }
+            "tool" => Self::append_tool_lines(out, msg),
             _ => {
                 for line in msg.content.lines() {
                     out.push(Line::from(Span::styled(

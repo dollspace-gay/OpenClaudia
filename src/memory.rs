@@ -1887,7 +1887,7 @@ mod tests {
             AutoLearnTable::FileRelationships,
         ] {
             let result = db.prune_auto_learn_table(table, 100);
-            assert!(result.is_ok(), "prune on empty {:?} must succeed", table);
+            assert!(result.is_ok(), "prune on empty {table:?} must succeed");
         }
     }
 }

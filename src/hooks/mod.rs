@@ -1596,8 +1596,8 @@ mod tests {
     // HookPolicy / allowlist / secure-spawn tests  (crosslink #254 / #684)
     // ========================================================================
 
-    /// Helper: build a minimal HooksConfig with a single post_tool_use
-    /// Command hook wired to the given command string + shell flag.
+    /// Helper: build a minimal `HooksConfig` with a single `post_tool_use`
+    /// `Command` hook wired to the given command string + shell flag.
     fn make_command_config(command: &str, shell: bool, policy: Option<HookPolicy>) -> HooksConfig {
         HooksConfig {
             policy,
@@ -1630,7 +1630,7 @@ mod tests {
     }
 
     /// Allowlist with no matching entry denies the command and surfaces a
-    /// `HookError::Denied` (not a generic CommandFailed).
+    /// `HookError::Denied` (not a generic `CommandFailed`).
     #[tokio::test]
     async fn allowlist_denies_unlisted_binary() {
         use std::collections::HashSet;

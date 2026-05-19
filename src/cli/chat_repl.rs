@@ -1,0 +1,3026 @@
+//! Interactive chat REPL — decomposed `cmd_chat` god-function.
+//!
+//! Crosslink #262 split the original 2.4k-line `cmd_chat` into a
+//! [`ChatRepl`] struct that owns all loop state, plus a handful of
+//! bounded methods that each fit under the `clippy::too_many_lines`
+//! threshold. Behaviour is preserved bit-for-bit: every branch, every
+//! `println!`, every `continue`/`break` from the original inline body
+//! has been moved verbatim into a method here.
+//!
+//! All `crate::*` references resolve back to private helpers in
+//! `src/main.rs` (auth resolution, prompt building, audit logging, etc.)
+//! — Rust visibility rules let descendant modules of the crate root see
+//! private items at the root, so no signatures had to change.
+//!
+//! Module overview:
+//! - [`ChatRepl::new`] — setup, mirrors the original 130-line prelude.
+//! - [`ChatRepl::run`] — outer readline loop.
+//! - [`ChatRepl::process_line`] — one-iteration orchestrator.
+//! - [`ChatRepl::dispatch_slash`] — every `/command` branch.
+//! - [`ChatRepl::send_and_process_turn`] — request build, response dispatch.
+//! - `process_google_*` / `process_streaming_*` — provider-specific paths.
+
+use crate::cli::display::tool_result::display_tool_result;
+use crate::cli::repl::input::expand_file_references;
+use crate::cli::repl::keybindings::{display_keybindings, execute_key_action, key_event_to_string};
+use crate::cli::repl::permissions::execute_shell_command_with_permission;
+use crate::cli::repl::plan_mode::{check_plan_mode_restriction, process_tool_result_marker};
+use crate::cli::repl::session_io::{
+    compact_chat_session, estimate_session_tokens, export_chat_session,
+    save_session_to_short_term_memory,
+};
+use crate::cli::repl::slash::{
+    handle_activity_command, handle_memory_command, handle_plugin_action, handle_slash_command,
+    SlashCommandResult,
+};
+use crate::cli::repl::vim::{self, VimState};
+use crate::cli::repl::{load_chat_session, save_chat_session, ChatSession};
+use crate::{
+    build_chat_endpoint_and_headers, build_chat_request_body, build_hook_engine, chdir_to_git_root,
+    check_tool_permission_interactive, finalize_chat, init_memory_with_banner,
+    init_permission_manager, init_plugin_manager, init_rustyline_with_history,
+    init_vdd_engine_if_enabled, maybe_auto_compact, maybe_resume_session,
+    parse_initial_behavior_mode, read_multiline_continuation, render_welcome_or_fallback,
+    resolve_chat_auth, resolve_model_name, run_vdd_review, ChatAuth, ToolPermissionResult,
+};
+
+use openclaudia::providers::{convert_messages_to_anthropic, convert_tools_to_anthropic};
+use openclaudia::tools::safe_truncate;
+use openclaudia::{
+    config, guardrails, memory, permissions::PermissionManager, plugins, prompt, proxy, session,
+    tool_intercept, tools, tui, vdd,
+};
+use rustyline::error::ReadlineError;
+
+/// Arguments accepted by [`ChatRepl::new`] — kept as a struct so the
+/// public `cmd_chat` signature stays a thin wrapper.
+pub struct ChatReplArgs {
+    pub model_override: Option<String>,
+    pub resume: bool,
+    pub session_id: Option<String>,
+    pub coordinator: bool,
+    pub dangerously_skip_permissions: bool,
+    pub mode_arg: Option<String>,
+}
+
+/// All mutable state for one chat session, plus the configuration the
+/// loop needs to reach providers and external services.
+pub struct ChatRepl {
+    // ── Configuration captured during setup ──
+    config: config::AppConfig,
+    coordinator: bool,
+    dangerously_skip_permissions: bool,
+    ext_regex: regex::Regex,
+    adapter: Box<dyn openclaudia::providers::ProviderAdapter>,
+    client: reqwest::Client,
+    hook_engine: openclaudia::hooks::HookEngine,
+    rules_engine: openclaudia::rules::RulesEngine,
+    api_key: Option<openclaudia::providers::ApiKey>,
+    claude_code_token: Option<String>,
+    permission_mgr: PermissionManager,
+    vdd_engine: Option<vdd::VddEngine>,
+    history_path: std::path::PathBuf,
+    // ── Per-session mutable state ──
+    model: String,
+    rl: rustyline::DefaultEditor,
+    chat_session: ChatSession,
+    active_theme: tui::Theme,
+    vim_enabled: bool,
+    vim_state: VimState,
+    effort_level: String,
+    audit_logger: openclaudia::session::AuditLogger,
+    memory_db: Option<memory::MemoryDb>,
+    // `auto_learner` borrows `memory_db` so it can't live on the same
+    // struct (self-referential). It is constructed once in `run` and
+    // threaded into any method that needs it via `&mut Option<_>`.
+    permissions: std::collections::HashSet<String>,
+    always_allowed_tools: std::collections::HashSet<String>,
+    plugin_manager: plugins::PluginManager,
+}
+
+/// Slash-command dispatch outcome — tells `process_line` whether to
+/// short-circuit the iteration, exit, fall through to model send, or
+/// note that the editor already pushed the user message.
+enum SlashOutcome {
+    Continue,
+    Break,
+    EditorMessageAdded,
+    FallThrough,
+}
+
+/// Per-turn transport bundle — the URL + headers needed to POST to
+/// the active provider. Grouped so tool-loop methods stay under the
+/// `clippy::too_many_arguments` threshold without losing call-site
+/// readability.
+#[derive(Clone, Copy)]
+struct TurnTransport<'a> {
+    endpoint: &'a str,
+    headers: &'a [(String, String)],
+}
+
+/// Mutable state threaded through the Gemini agentic tool loop.
+/// Bundling these together keeps `run_gemini_tool_loop` under clippy's
+/// `too_many_arguments` threshold without resorting to a suppression.
+struct GeminiLoopState {
+    full_content: String,
+    tool_calls: Vec<tools::ToolCall>,
+    contents: Vec<serde_json::Value>,
+}
+
+/// Mutable borrows threaded through SSE frame routing during initial
+/// streaming. Bundled into one context so `route_sse_frame` and
+/// `drain_sse_buffer` stay under clippy's argument-count ceiling.
+struct SseFrameCtx<'a> {
+    full_content: &'a mut String,
+    md_renderer: &'a mut tui::StreamingMarkdownRenderer,
+    tool_accumulator: &'a mut tools::ToolCallAccumulator,
+    anthropic_accumulator: &'a mut tools::AnthropicToolAccumulator,
+    stream_usage: &'a mut openclaudia::session::TokenUsage,
+    in_thinking_block: &'a mut bool,
+    thinking_start_time: &'a mut Option<std::time::Instant>,
+}
+
+/// Spinner template — uses indicatif placeholder syntax, not `format!`.
+const SPINNER_TMPL: &str = "{spinner:.cyan} {msg}";
+
+impl ChatRepl {
+    /// Resolve config + auth + provider + session and return a fully
+    /// initialized REPL. `Ok(None)` means setup printed a user-facing
+    /// error and the caller should exit cleanly (matches the original
+    /// `return Ok(())` branches of `cmd_chat`).
+    pub async fn new(args: ChatReplArgs) -> anyhow::Result<Option<Self>> {
+        use openclaudia::providers::get_adapter;
+        use openclaudia::rules::RulesEngine;
+
+        chdir_to_git_root();
+        let ext_regex = regex::Regex::new(r"[\w/\\.-]+\.([a-zA-Z0-9]{1,10})\b").unwrap();
+
+        let config = match config::load_config() {
+            Ok(c) => c,
+            Err(e) => {
+                if config::config_file_exists() {
+                    eprintln!("Failed to parse configuration: {e}");
+                    eprintln!("Check your .openclaudia/config.yaml for syntax errors.");
+                } else {
+                    eprintln!("No configuration found. Run 'openclaudia init' first.");
+                }
+                return Ok(None);
+            }
+        };
+
+        let mut config = config;
+        if let Some(ref m) = args.model_override {
+            let detected = openclaudia::proxy::determine_provider(m, &config);
+            if detected != config.proxy.target {
+                eprintln!(
+                    "[debug] Model '{}' detected as provider '{}' (overriding target '{}')",
+                    m, detected, config.proxy.target
+                );
+                config.proxy.target = detected;
+            }
+        }
+
+        let initial_behavior_mode = match parse_initial_behavior_mode(args.mode_arg.as_deref()) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("{e}");
+                return Ok(None);
+            }
+        };
+
+        guardrails::configure(&config.guardrails);
+
+        let Some(provider) = config.active_provider() else {
+            eprintln!(
+                "No provider configured for target '{}'",
+                config.proxy.target
+            );
+            return Ok(None);
+        };
+
+        let Some(ChatAuth {
+            api_key,
+            claude_code_token,
+        }) = resolve_chat_auth(&config.proxy.target, provider).await?
+        else {
+            return Ok(None);
+        };
+
+        let model = resolve_model_name(
+            args.model_override,
+            provider.model.clone(),
+            &config.proxy.target,
+        );
+        let adapter = get_adapter(&config.proxy.target);
+        let client = reqwest::Client::new();
+        let hook_engine = build_hook_engine(&config);
+        let rules_engine = RulesEngine::new(".openclaudia/rules");
+        let plugin_manager = init_plugin_manager();
+        let (rl, history_path) = init_rustyline_with_history()?;
+
+        render_welcome_or_fallback(&config.proxy.target, &model);
+        let _ = tui::setup_pinned_bar();
+
+        let mut chat_session =
+            ChatSession::new(&model, &config.proxy.target, initial_behavior_mode);
+        maybe_resume_session(&mut chat_session, args.resume, args.session_id.as_deref());
+
+        let audit_logger = openclaudia::session::AuditLogger::new(&chat_session.id);
+        let memory_db: Option<memory::MemoryDb> = init_memory_with_banner();
+        let permission_mgr = init_permission_manager(&config);
+        let vdd_engine: Option<vdd::VddEngine> = init_vdd_engine_if_enabled(&config);
+
+        Ok(Some(Self {
+            config,
+            coordinator: args.coordinator,
+            dangerously_skip_permissions: args.dangerously_skip_permissions,
+            ext_regex,
+            adapter,
+            client,
+            hook_engine,
+            rules_engine,
+            api_key,
+            claude_code_token,
+            permission_mgr,
+            vdd_engine,
+            history_path,
+            model,
+            rl,
+            chat_session,
+            active_theme: tui::Theme::load(),
+            vim_enabled: false,
+            vim_state: VimState::new(),
+            effort_level: "medium".to_string(),
+            audit_logger,
+            memory_db,
+            permissions: std::collections::HashSet::new(),
+            always_allowed_tools: std::collections::HashSet::new(),
+            plugin_manager,
+        }))
+    }
+
+    /// Drive the readline loop until the user exits. `auto_learner`
+    /// is owned by `run` (it borrows `self.memory_db` only) and
+    /// threaded into the few methods that need it via parameter; this
+    /// side-steps the self-referential-struct problem without adding
+    /// `unsafe` or changing the upstream `AutoLearner` lifetime.
+    pub async fn run(mut self) -> anyhow::Result<()> {
+        // Split the borrow: take memory_db out so the learner can
+        // hold a stable borrow, then pass `memory_db.as_ref()` to
+        // every site that used to call `memory_db`.
+        let memory_db = self.memory_db.take();
+        let mut auto_learner: Option<openclaudia::auto_learn::AutoLearner<'_>> = memory_db
+            .as_ref()
+            .map(openclaudia::auto_learn::AutoLearner::new);
+
+        loop {
+            let prompt = self.build_prompt_string();
+            let readline = self.rl.readline(&prompt);
+            match readline {
+                Ok(line) => {
+                    if self
+                        .process_line(line, memory_db.as_ref(), &mut auto_learner)
+                        .await?
+                        == Some(true)
+                    {
+                        break;
+                    }
+                }
+                Err(ReadlineError::Interrupted) => {
+                    println!("\n\x1b[90mInterrupted - saving session...\x1b[0m");
+                    break;
+                }
+                Err(ReadlineError::Eof) => break,
+                Err(err) => {
+                    eprintln!("Error: {err:?}");
+                    break;
+                }
+            }
+        }
+        finalize_chat(
+            &mut auto_learner,
+            &self.chat_session,
+            memory_db.as_ref(),
+            &mut self.rl,
+            &self.history_path,
+        );
+        // Drop the learner before memory_db.
+        drop(auto_learner);
+        drop(memory_db);
+        println!("\nGoodbye!");
+        Ok(())
+    }
+
+    /// Build the readline prompt string and render the status/bottom bars.
+    fn build_prompt_string(&self) -> String {
+        let behavior_name = self.chat_session.behavior_mode.display_name();
+        let mode_str = format!(
+            "{} ({})",
+            self.chat_session.mode.display().to_lowercase(),
+            behavior_name,
+        );
+        let _ = tui::render_input_prompt(&mode_str);
+        let _ = tui::render_bottom_bar(&self.effort_level, &mode_str);
+
+        if self.vim_enabled {
+            let pending = self.vim_state.pending_display();
+            let status = vim::status_description(&self.vim_state);
+            let _ = self.vim_state.yank_buffer.len();
+            let _ = self.vim_state.last_find.is_some();
+            let _ = vim::describe_action(&vim::VimAction::None);
+            if self.vim_state.is_pending() {
+                format!("{status} {pending} \u{203A} ")
+            } else {
+                format!("{status} \u{203A} ")
+            }
+        } else {
+            "\u{203A} ".to_string()
+        }
+    }
+
+    /// Process one line of user input. Returns `Some(true)` to break,
+    /// `Some(false)` to continue without sending a turn, `None` after a
+    /// full turn (autosave + auto-compact already handled).
+    async fn process_line(
+        &mut self,
+        line: String,
+        memory_db: Option<&memory::MemoryDb>,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) -> anyhow::Result<Option<bool>> {
+        let mut input = line.trim().to_string();
+        let mut editor_message_added = false;
+
+        if self.vim_enabled {
+            let _ = self.vim_state.process_key("Escape");
+            let _ = self.vim_state.process_key("i");
+        }
+        if input.is_empty() {
+            return Ok(Some(false));
+        }
+        read_multiline_continuation(&mut input, &mut self.rl);
+        let _ = self.rl.add_history_entry(&input);
+        let mut input = input.clone();
+
+        match self.dispatch_slash(&mut input, memory_db) {
+            SlashOutcome::Continue => return Ok(Some(false)),
+            SlashOutcome::Break => return Ok(Some(true)),
+            SlashOutcome::EditorMessageAdded => editor_message_added = true,
+            SlashOutcome::FallThrough => {}
+        }
+
+        if let Some(cmd) = input.strip_prefix('!') {
+            if cmd.is_empty() {
+                println!("Usage: !<command> (e.g., !ls -la)\n");
+                return Ok(Some(false));
+            }
+            execute_shell_command_with_permission(cmd, &mut self.permissions);
+            return Ok(Some(false));
+        }
+        if input.starts_with('#') {
+            self.save_note_message(&input);
+            return Ok(Some(false));
+        }
+
+        if !editor_message_added && !self.prepare_user_message(&input, auto_learner).await {
+            return Ok(Some(false));
+        }
+
+        self.inject_rules_from_extensions();
+        let prompt_blocks = self.build_prompt_blocks_for_turn(memory_db);
+        self.install_system_prompt(&prompt_blocks);
+
+        let request_body = build_chat_request_body(
+            &self.config.proxy.target,
+            &self.chat_session.messages,
+            &self.model,
+            &prompt_blocks,
+            &self.effort_level,
+            self.claude_code_token.as_deref(),
+        );
+        let provider = self
+            .config
+            .active_provider()
+            .expect("provider validated during new()");
+        let (endpoint, headers) = build_chat_endpoint_and_headers(
+            &self.config.proxy.target,
+            &self.model,
+            provider,
+            self.adapter.as_ref(),
+            self.api_key.as_ref(),
+            self.claude_code_token.as_deref(),
+        );
+
+        let transport = TurnTransport {
+            endpoint: &endpoint,
+            headers: &headers,
+        };
+        let exit = self
+            .send_and_process_turn(
+                transport,
+                request_body,
+                &prompt_blocks,
+                memory_db,
+                auto_learner,
+            )
+            .await;
+
+        save_session_to_short_term_memory(&self.chat_session, memory_db);
+        maybe_auto_compact(&mut self.chat_session, &self.model);
+        Ok(if exit { Some(true) } else { None })
+    }
+
+    /// Save a `#`-prefixed comment as a note message (not sent to AI).
+    fn save_note_message(&mut self, input: &str) {
+        let note = input.trim_start_matches('#').trim();
+        if note.is_empty() {
+            return;
+        }
+        self.chat_session.messages.push(serde_json::json!({
+            "role": "system",
+            "content": format!("[Note: {}]", note),
+            "metadata": { "type": "note" }
+        }));
+        self.chat_session.touch();
+        if let Err(e) = save_chat_session(&self.chat_session) {
+            tracing::warn!("Failed to save session: {}", e);
+        }
+        println!("Note saved.\n");
+    }
+
+    /// Dispatch a slash-prefixed input to the slash handler and act on
+    /// the result. Mutates `input` when a skill rewrites it. Returns
+    /// the [`SlashOutcome`] for `process_line`.
+    fn dispatch_slash(
+        &mut self,
+        input: &mut String,
+        memory_db: Option<&memory::MemoryDb>,
+    ) -> SlashOutcome {
+        let Some(result) = handle_slash_command(
+            input,
+            &mut self.chat_session.messages,
+            &self.config.proxy.target,
+            &self.model,
+        ) else {
+            return SlashOutcome::FallThrough;
+        };
+        match result {
+            SlashCommandResult::Exit => {
+                save_session_to_short_term_memory(&self.chat_session, memory_db);
+                SlashOutcome::Break
+            }
+            SlashCommandResult::Clear => {
+                save_session_to_short_term_memory(&self.chat_session, memory_db);
+                let prev_mode = self.chat_session.behavior_mode.clone();
+                self.chat_session =
+                    ChatSession::new(&self.model, &self.config.proxy.target, prev_mode);
+                SlashOutcome::Continue
+            }
+            SlashCommandResult::LoadSession(sid) => {
+                if let Some(loaded) = load_chat_session(&sid) {
+                    self.chat_session = loaded;
+                    println!(
+                        "Loaded {} messages from previous session.\n",
+                        self.chat_session.messages.len()
+                    );
+                }
+                SlashOutcome::Continue
+            }
+            SlashCommandResult::Export => {
+                export_chat_session(&self.chat_session);
+                SlashOutcome::Continue
+            }
+            SlashCommandResult::Compact => {
+                let (before, after) = compact_chat_session(&mut self.chat_session);
+                if before != after {
+                    println!("\nCompacted: ~{before} tokens -> ~{after} tokens\n");
+                    if let Err(e) = save_chat_session(&self.chat_session) {
+                        tracing::warn!("Failed to save compacted session: {}", e);
+                    }
+                }
+                SlashOutcome::Continue
+            }
+            other => self.dispatch_slash_rest(input, other, memory_db),
+        }
+    }
+
+    /// Tail of [`Self::dispatch_slash`] — kept separate so neither
+    /// branch trips the `clippy::too_many_lines` limit.
+    fn dispatch_slash_rest(
+        &mut self,
+        input: &mut String,
+        result: SlashCommandResult,
+        memory_db: Option<&memory::MemoryDb>,
+    ) -> SlashOutcome {
+        match result {
+            SlashCommandResult::EditorInput(editor_content) => {
+                self.handle_editor_input(editor_content)
+            }
+            SlashCommandResult::Undo => {
+                self.handle_history_action(true);
+                SlashOutcome::Continue
+            }
+            SlashCommandResult::Redo => {
+                self.handle_history_action(false);
+                SlashOutcome::Continue
+            }
+            SlashCommandResult::Rename(new_title) => {
+                self.handle_rename(&new_title);
+                SlashOutcome::Continue
+            }
+            SlashCommandResult::AddWorkingDir(path) => {
+                self.handle_add_working_dir(&path);
+                SlashOutcome::Continue
+            }
+            SlashCommandResult::SideQuestion(question) => {
+                let saved = self.chat_session.messages.clone();
+                self.chat_session.messages =
+                    vec![serde_json::json!({"role":"user","content":question})];
+                eprintln!("\x1b[90m[/btw aside — main flow will be restored]\x1b[0m");
+                self.chat_session.messages.extend(saved);
+                SlashOutcome::FallThrough
+            }
+            SlashCommandResult::Skill(skill_prompt) => {
+                eprintln!("\x1b[36m⚡ Running skill...\x1b[0m");
+                *input = skill_prompt;
+                SlashOutcome::FallThrough
+            }
+            other => self.dispatch_slash_simple(other, memory_db),
+        }
+    }
+
+    /// Handle the simple state-mutation slash results that share a
+    /// `Continue` outcome (toggles, single setters, info displays).
+    fn dispatch_slash_simple(
+        &mut self,
+        result: SlashCommandResult,
+        memory_db: Option<&memory::MemoryDb>,
+    ) -> SlashOutcome {
+        match result {
+            SlashCommandResult::SwitchModel(new_model) => {
+                self.model = new_model;
+                self.chat_session.model.clone_from(&self.model);
+            }
+            SlashCommandResult::Status => self.print_status(),
+            SlashCommandResult::ToggleMode => {
+                self.chat_session.mode = self.chat_session.mode.toggle();
+                println!(
+                    "\nSwitched to {} mode: {}\n",
+                    self.chat_session.mode.display(),
+                    self.chat_session.mode.description()
+                );
+            }
+            SlashCommandResult::Keybindings => display_keybindings(&self.config.keybindings),
+            SlashCommandResult::Memory(args) => handle_memory_command(&args, memory_db),
+            SlashCommandResult::Activity(args) => {
+                handle_activity_command(&args, &self.chat_session.id, memory_db);
+            }
+            SlashCommandResult::Plugin(action) => {
+                handle_plugin_action(action, &mut self.plugin_manager);
+            }
+            SlashCommandResult::ThemeChanged(name) => {
+                if let Some(theme) = tui::Theme::from_name(&name) {
+                    self.active_theme = theme;
+                }
+            }
+            SlashCommandResult::ToggleVim => self.toggle_vim(),
+            SlashCommandResult::SetEffort(level) => self.effort_level = level,
+            SlashCommandResult::CycleEffort => self.cycle_effort(),
+            SlashCommandResult::SetBehaviorMode(new_mode) => {
+                self.chat_session.behavior_mode = new_mode;
+            }
+            // BranchSession plus the five already-handled-in-head variants
+            // (Exit/Clear/LoadSession/Export/Compact) plus the catch-all
+            // Handled all map to `Continue`.
+            _ => {}
+        }
+        SlashOutcome::Continue
+    }
+
+    /// Push an `EditorInput` payload (possibly with `@file` references) as
+    /// a fresh user message and reset undo state.
+    fn handle_editor_input(&mut self, editor_content: String) -> SlashOutcome {
+        let expanded = if editor_content.contains('@') {
+            expand_file_references(&editor_content)
+        } else {
+            editor_content
+        };
+        self.chat_session.messages.push(serde_json::json!({
+            "role": "user",
+            "content": expanded
+        }));
+        self.chat_session.update_title();
+        self.chat_session.touch();
+        self.chat_session.clear_undo_stack();
+        SlashOutcome::EditorMessageAdded
+    }
+
+    /// Apply an Undo (`is_undo = true`) or Redo (`is_undo = false`) on the
+    /// chat session and persist on success.
+    fn handle_history_action(&mut self, is_undo: bool) {
+        let (applied, verb, after_word) = if is_undo {
+            (self.chat_session.undo(), "Undone", "remaining")
+        } else {
+            (self.chat_session.redo(), "Redone", "now")
+        };
+        if applied {
+            println!(
+                "\n{} last exchange. {} messages {}.\n",
+                verb,
+                self.chat_session.messages.len(),
+                after_word
+            );
+            if let Err(e) = save_chat_session(&self.chat_session) {
+                tracing::warn!("Failed to save session: {}", e);
+            }
+        } else {
+            println!("\nNothing to {}.\n", if is_undo { "undo" } else { "redo" });
+        }
+    }
+
+    /// Rename the active session and persist the change.
+    fn handle_rename(&mut self, new_title: &str) {
+        self.chat_session.title.clear();
+        self.chat_session.title.push_str(new_title);
+        self.chat_session.touch();
+        if let Err(e) = save_chat_session(&self.chat_session) {
+            tracing::warn!("Failed to save session: {}", e);
+        }
+        println!("\nSession renamed to: {new_title}\n");
+    }
+
+    /// Add a directory to the session's working-dir scope and persist.
+    fn handle_add_working_dir(&mut self, path: &std::path::Path) {
+        if !self.chat_session.add_working_dir(path.to_path_buf()) {
+            println!("\n(Directory already in scope: {})\n", path.display());
+        } else if let Err(e) = save_chat_session(&self.chat_session) {
+            tracing::warn!("Failed to save session after add-dir: {}", e);
+        }
+    }
+
+    fn print_status(&self) {
+        let tokens = estimate_session_tokens(&self.chat_session);
+        let msg_count = self.chat_session.messages.len();
+        let duration = chrono::Utc::now().signed_duration_since(self.chat_session.created_at);
+        let mins = duration.num_minutes();
+        println!("\n=== Session Status ===");
+        println!(
+            "  Session ID: {}...",
+            safe_truncate(&self.chat_session.id, 8)
+        );
+        println!("  Title:      {}", self.chat_session.title);
+        println!("  Provider:   {}", self.chat_session.provider);
+        println!("  Model:      {}", self.chat_session.model);
+        println!(
+            "  Behavior:   {}",
+            self.chat_session.behavior_mode.description()
+        );
+        println!(
+            "  Mode:       {} ({})",
+            self.chat_session.mode.display(),
+            self.chat_session.mode.description()
+        );
+        println!("  Messages:   {msg_count}");
+        println!("  Est tokens: ~{tokens}");
+        if let Some(pricing) = session::get_pricing(&self.chat_session.model) {
+            let est_input = tokens as u64;
+            let usage = openclaudia::session::TokenUsage {
+                input_tokens: est_input,
+                output_tokens: est_input / 4,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+            };
+            if let Some(cost) = session::calculate_cost(&self.chat_session.model, &usage) {
+                println!("  Est cost:   ${cost:.4}");
+            }
+            println!(
+                "  Pricing:    ${}/M in, ${}/M out",
+                pricing.input_per_million, pricing.output_per_million
+            );
+        }
+        println!("  Duration:   {mins} min");
+        println!(
+            "  Created:    {}",
+            self.chat_session.created_at.format("%Y-%m-%d %H:%M UTC")
+        );
+        println!("  Theme:      {}", self.active_theme.name);
+        println!();
+    }
+
+    fn toggle_vim(&mut self) {
+        use rustyline::{Config, DefaultEditor, EditMode, Editor};
+        self.vim_enabled = !self.vim_enabled;
+        let edit_mode = if self.vim_enabled {
+            EditMode::Vi
+        } else {
+            EditMode::Emacs
+        };
+        self.rl = Editor::with_config(Config::builder().edit_mode(edit_mode).build())
+            .unwrap_or_else(|_| {
+                DefaultEditor::new().expect("Failed to initialize terminal editor")
+            });
+        let _ = self.rl.load_history(&self.history_path);
+        if self.vim_enabled {
+            self.vim_state = VimState::new();
+            eprintln!("Vim mode enabled (rustyline Vi mode)");
+        } else {
+            eprintln!("Vim mode disabled (Emacs mode)");
+        }
+    }
+
+    fn cycle_effort(&mut self) {
+        self.effort_level = match self.effort_level.as_str() {
+            "low" => "medium".to_string(),
+            "medium" => "high".to_string(),
+            _ => "low".to_string(),
+        };
+        let label = match self.effort_level.as_str() {
+            "low" => "\x1b[33mlow\x1b[0m (faster, less thorough)",
+            "high" => "\x1b[32mhigh\x1b[0m (thorough, slower)",
+            _ => "\x1b[36mmedium\x1b[0m (balanced)",
+        };
+        println!("\n\u{2713} Effort set to {label}\n");
+    }
+
+    /// Push the user message (with `@file` expansion) and run
+    /// `UserPromptSubmit` hooks. Returns `false` if a hook blocked the
+    /// turn (caller should `continue` the outer loop).
+    async fn prepare_user_message(
+        &mut self,
+        input: &str,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) -> bool {
+        use openclaudia::hooks::{HookEvent, HookInput};
+
+        let expanded_input = if input.contains('@') {
+            expand_file_references(input)
+        } else {
+            input.to_string()
+        };
+
+        self.chat_session.messages.push(serde_json::json!({
+            "role": "user",
+            "content": expanded_input.clone()
+        }));
+        self.chat_session.update_title();
+        self.chat_session.touch();
+        self.chat_session.clear_undo_stack();
+
+        if let Some(ref mut learner) = auto_learner {
+            let prev_assistant = self
+                .chat_session
+                .messages
+                .iter()
+                .rev()
+                .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
+                .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                .map(std::string::ToString::to_string);
+            learner.on_user_message(&expanded_input, prev_assistant.as_deref());
+        }
+
+        let hook_input = HookInput::new(HookEvent::UserPromptSubmit).with_prompt(&expanded_input);
+        let hook_result = self
+            .hook_engine
+            .run(HookEvent::UserPromptSubmit, &hook_input)
+            .await;
+
+        if !hook_result.allowed {
+            let reason = hook_result
+                .outputs
+                .first()
+                .and_then(|o| o.reason.clone())
+                .unwrap_or_else(|| "Request blocked by hook".to_string());
+            eprintln!("\nBlocked: {reason}\n");
+            let _ = save_chat_session(&self.chat_session);
+            self.chat_session.messages.pop();
+            return false;
+        }
+
+        for output in &hook_result.outputs {
+            if let Some(sys_msg) = &output.system_message {
+                self.chat_session.messages.insert(
+                    0,
+                    serde_json::json!({
+                        "role": "system",
+                        "content": sys_msg
+                    }),
+                );
+            }
+            if let Some(ctx) = &output.additional_context {
+                self.chat_session.messages.push(serde_json::json!({
+                    "role": "system",
+                    "content": format!("<system-reminder>\n{}\n</system-reminder>", ctx)
+                }));
+            }
+        }
+        true
+    }
+
+    /// Extract file extensions from recent messages and inject combined
+    /// rules content (once per session) at the head of `messages`.
+    fn inject_rules_from_extensions(&mut self) {
+        let extensions: Vec<String> = self
+            .chat_session
+            .messages
+            .iter()
+            .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
+            .flat_map(|text| {
+                self.ext_regex
+                    .captures_iter(text)
+                    .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_lowercase()))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        if extensions.is_empty() {
+            return;
+        }
+        let rules_content = self.rules_engine.get_combined_rules(
+            &extensions
+                .iter()
+                .map(std::string::String::as_str)
+                .collect::<Vec<_>>(),
+        );
+        if !rules_content.is_empty()
+            && !self.chat_session.messages.iter().any(|m| {
+                m.get("content")
+                    .and_then(|c| c.as_str())
+                    .is_some_and(|s| s.contains("## Rules"))
+            })
+        {
+            self.chat_session.messages.insert(
+                0,
+                serde_json::json!({
+                    "role": "system",
+                    "content": rules_content
+                }),
+            );
+        }
+    }
+
+    /// Build Claudia's split system-prompt blocks for this turn
+    /// (coordinator + file-knowledge injections live here).
+    fn build_prompt_blocks_for_turn(
+        &self,
+        memory_db: Option<&memory::MemoryDb>,
+    ) -> prompt::SystemPromptBlocks {
+        let hook_instructions: Option<String> = self
+            .chat_session
+            .messages
+            .iter()
+            .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+            .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
+            .filter(|c| !c.contains("Persona: Claudia"))
+            .map(std::string::ToString::to_string)
+            .reduce(|acc, s| format!("{acc}\n\n{s}"));
+
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let mut prompt_blocks = prompt::build_system_prompt_blocks(
+            &self.chat_session.behavior_mode,
+            hook_instructions.as_deref(),
+            None,
+            memory_db,
+            Some(&cwd),
+        );
+
+        if self.coordinator {
+            prompt_blocks.stable_prefix = format!(
+                "{}\n\n{}",
+                openclaudia::subagent::AgentType::Coordinator.system_prompt(),
+                prompt_blocks.stable_prefix
+            );
+        }
+
+        if let Some(db) = memory_db {
+            let mut injected_files: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for msg in self.chat_session.messages.iter().rev().take(10) {
+                if let Some(role) = msg.get("role").and_then(|r| r.as_str()) {
+                    if role == "tool" || role == "assistant" {
+                        if let Some(tool_calls) = msg.get("tool_calls").and_then(|t| t.as_array()) {
+                            for tc in tool_calls {
+                                let name = tc
+                                    .get("function")
+                                    .and_then(|f| f.get("name"))
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("");
+                                if matches!(name, "read_file" | "edit_file" | "write_file") {
+                                    if let Some(args_str) = tc
+                                        .get("function")
+                                        .and_then(|f| f.get("arguments"))
+                                        .and_then(|a| a.as_str())
+                                    {
+                                        if let Ok(args) =
+                                            serde_json::from_str::<serde_json::Value>(args_str)
+                                        {
+                                            if let Some(path) = args
+                                                .get("path")
+                                                .or_else(|| args.get("file_path"))
+                                                .and_then(|p| p.as_str())
+                                            {
+                                                injected_files.insert(path.to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let mut file_knowledge_parts = Vec::new();
+            for file_path in injected_files.iter().take(3) {
+                if let Ok(knowledge) = db.format_file_knowledge(file_path) {
+                    if !knowledge.is_empty() {
+                        file_knowledge_parts.push(knowledge);
+                    }
+                }
+            }
+            if !file_knowledge_parts.is_empty() {
+                if !prompt_blocks.dynamic_suffix.is_empty() {
+                    prompt_blocks.dynamic_suffix.push_str("\n\n");
+                }
+                prompt_blocks.dynamic_suffix.push_str("## File Knowledge\n");
+                prompt_blocks
+                    .dynamic_suffix
+                    .push_str(&file_knowledge_parts.join("\n"));
+            }
+        }
+        prompt_blocks
+    }
+
+    /// Replace (or insert) the combined Claudia system prompt at the
+    /// front of `messages` so non-Anthropic providers see it directly.
+    fn install_system_prompt(&mut self, prompt_blocks: &prompt::SystemPromptBlocks) {
+        let combined = prompt_blocks.to_combined();
+        if let Some(pos) = self.chat_session.messages.iter().position(|m| {
+            m.get("content")
+                .and_then(|c| c.as_str())
+                .is_some_and(|s| s.contains("Persona: Claudia"))
+        }) {
+            self.chat_session.messages[pos] = serde_json::json!({
+                "role": "system",
+                "content": combined
+            });
+        } else {
+            self.chat_session.messages.insert(
+                0,
+                serde_json::json!({
+                    "role": "system",
+                    "content": combined
+                }),
+            );
+        }
+    }
+
+    /// Send the initial turn request and dispatch the response to the
+    /// provider-specific handler. Returns `true` when streaming
+    /// keybindings asked the REPL to exit.
+    async fn send_and_process_turn(
+        &mut self,
+        transport: TurnTransport<'_>,
+        request_body: serde_json::Value,
+        prompt_blocks: &prompt::SystemPromptBlocks,
+        memory_db: Option<&memory::MemoryDb>,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) -> bool {
+        use indicatif::{ProgressBar, ProgressStyle};
+        let spinner = ProgressBar::new_spinner();
+        spinner.set_style(
+            ProgressStyle::default_spinner()
+                .template(SPINNER_TMPL)
+                .unwrap_or_else(|_| ProgressStyle::default_spinner()),
+        );
+        spinner.set_message("Connecting...");
+        spinner.enable_steady_tick(std::time::Duration::from_millis(80));
+
+        let mut req = self.client.post(transport.endpoint).json(&request_body);
+        for (key, value) in transport.headers {
+            req = req.header(key, value);
+        }
+
+        match req.send().await {
+            Ok(response) => {
+                spinner.finish_and_clear();
+                if !response.status().is_success() {
+                    self.handle_failed_response(response).await;
+                    return false;
+                }
+                if self.config.proxy.target == "google" {
+                    self.process_google_response(
+                        response,
+                        &request_body,
+                        transport,
+                        memory_db,
+                        auto_learner,
+                    )
+                    .await;
+                    false
+                } else {
+                    self.process_streaming_response(
+                        response,
+                        transport,
+                        prompt_blocks,
+                        memory_db,
+                        auto_learner,
+                    )
+                    .await
+                }
+            }
+            Err(e) => {
+                spinner.finish_and_clear();
+                eprintln!("\nRequest failed: {e}\n");
+                let _ = save_chat_session(&self.chat_session);
+                self.chat_session.messages.pop();
+                false
+            }
+        }
+    }
+
+    /// Read body of a non-2xx response, print user-friendly error, and
+    /// roll back the failed user message.
+    async fn handle_failed_response(&mut self, response: reqwest::Response) {
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let body = response.text().await.unwrap_or_default();
+        if content_type.contains("text/html") {
+            eprintln!("\nError {status}: (HTML response — check your provider configuration)\n");
+        } else {
+            eprintln!("\nError {status}: {body}\n");
+        }
+        let _ = save_chat_session(&self.chat_session);
+        self.chat_session.messages.pop();
+    }
+
+    /// Google Gemini path: non-streaming JSON response + native
+    /// `functionCall` / `functionResponse` tool loop.
+    async fn process_google_response(
+        &mut self,
+        response: reqwest::Response,
+        request_body: &serde_json::Value,
+        transport: TurnTransport<'_>,
+        memory_db: Option<&memory::MemoryDb>,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) {
+        println!();
+        let body = response.text().await.unwrap_or_default();
+        let Some(gemini_json) = self.parse_gemini_initial_body(&body) else {
+            return;
+        };
+
+        let (full_content, tool_calls) = Self::emit_gemini_initial_text_and_calls(&gemini_json);
+        let (input_tokens, output_tokens) = gemini_extract_usage_tokens(&gemini_json);
+
+        self.audit_logger.log(
+            "model_response",
+            &serde_json::json!({
+                "model": &self.model,
+                "content_length": full_content.len(),
+                "tool_calls": tool_calls.len(),
+                "cancelled": false,
+            }),
+        );
+
+        let contents: Vec<serde_json::Value> = serde_json::from_value(
+            request_body
+                .get("contents")
+                .cloned()
+                .unwrap_or(serde_json::json!([])),
+        )
+        .unwrap_or_default();
+
+        let mut state = GeminiLoopState {
+            full_content,
+            tool_calls,
+            contents,
+        };
+        self.run_gemini_tool_loop(&mut state, request_body, transport, memory_db, auto_learner)
+            .await;
+
+        self.finalize_gemini_response(&state.full_content, input_tokens, output_tokens)
+            .await;
+    }
+
+    /// Parse the Gemini HTTP body to JSON, or print an error, pop the
+    /// pending user message and return `None` on failure.
+    fn parse_gemini_initial_body(&mut self, body: &str) -> Option<serde_json::Value> {
+        match serde_json::from_str::<serde_json::Value>(body) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                eprintln!("\nFailed to parse Gemini response: {e}");
+                eprintln!("Raw body: {}", &body[..body.len().min(500)]);
+                let _ = save_chat_session(&self.chat_session);
+                self.chat_session.messages.pop();
+                None
+            }
+        }
+    }
+
+    /// Print the initial Gemini text (if any) and return the assembled
+    /// `(full_content, tool_calls)` pair for the tool loop.
+    fn emit_gemini_initial_text_and_calls(
+        gemini_json: &serde_json::Value,
+    ) -> (String, Vec<tools::ToolCall>) {
+        use std::io::Write;
+        let mut full_content = String::new();
+        let text = gemini_extract_text(gemini_json);
+        if !text.is_empty() {
+            print!("{text}");
+            std::io::stdout().flush().ok();
+            full_content.push_str(&text);
+        }
+        let tool_calls = gemini_extract_tool_calls(gemini_json);
+        (full_content, tool_calls)
+    }
+
+    /// Drive the Gemini agentic tool loop until no tool calls remain or
+    /// the `max_turns` ceiling is reached. Mutates `state` in place.
+    async fn run_gemini_tool_loop(
+        &mut self,
+        state: &mut GeminiLoopState,
+        request_body: &serde_json::Value,
+        transport: TurnTransport<'_>,
+        memory_db: Option<&memory::MemoryDb>,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) {
+        use std::io::Write;
+        let max_iterations = self.config.session.max_turns;
+        let mut iteration: u32 = 0;
+        while !state.tool_calls.is_empty() && (max_iterations == 0 || iteration < max_iterations) {
+            iteration += 1;
+            guardrails::reset_turn();
+            self.gemini_record_model_turn(
+                &state.full_content,
+                &state.tool_calls,
+                &mut state.contents,
+            );
+            let function_responses =
+                self.gemini_execute_tools(&state.tool_calls, memory_db, auto_learner);
+            state.contents.push(serde_json::json!({
+                "role": "user",
+                "parts": function_responses
+            }));
+            println!(
+                "\n\x1b[90m(Sending {} tool result{} to Gemini...)\x1b[0m",
+                state.tool_calls.len(),
+                if state.tool_calls.len() == 1 { "" } else { "s" }
+            );
+            match self
+                .gemini_send_followup(&state.contents, request_body, transport)
+                .await
+            {
+                Some((next_text, next_calls)) => {
+                    if !next_text.is_empty() {
+                        println!();
+                        print!("{next_text}");
+                        std::io::stdout().flush().ok();
+                    }
+                    state.full_content = next_text;
+                    state.tool_calls = next_calls;
+                }
+                None => break,
+            }
+        }
+    }
+
+    /// Persist the final Gemini message, run VDD review, draw the status
+    /// bar, and emit the trailing newline.
+    async fn finalize_gemini_response(
+        &mut self,
+        full_content: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) {
+        if !full_content.trim().is_empty() {
+            self.chat_session.messages.push(serde_json::json!({
+                "role": "assistant",
+                "content": full_content.trim()
+            }));
+            self.chat_session.touch();
+            if let Err(e) = save_chat_session(&self.chat_session) {
+                tracing::warn!("Failed to save session: {}", e);
+            }
+        }
+
+        if let Some(ref engine) = self.vdd_engine {
+            run_vdd_review(
+                engine,
+                full_content,
+                &mut self.chat_session.messages,
+                &self.config.proxy.target,
+                self.api_key.as_ref(),
+            )
+            .await;
+        }
+
+        let tokens = estimate_session_tokens(&self.chat_session) + full_content.len() / 4;
+        let cost = session::calculate_cost(
+            &self.model,
+            &openclaudia::session::TokenUsage {
+                input_tokens: input_tokens.max(tokens as u64),
+                output_tokens: output_tokens.max(full_content.len() as u64 / 4),
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+            },
+        );
+        let duration = chrono::Utc::now().signed_duration_since(self.chat_session.created_at);
+        let dur_str = format!("{}m", duration.num_minutes());
+        tui::draw_status_bar(
+            &self.model,
+            tokens,
+            cost,
+            self.chat_session.mode.display(),
+            &dur_str,
+        );
+        println!();
+    }
+
+    /// Record the model's tool-call turn into both `gemini_contents`
+    /// (native format) and `chat_session.messages` (`OpenAI` format).
+    fn gemini_record_model_turn(
+        &mut self,
+        full_content: &str,
+        gemini_tool_calls: &[tools::ToolCall],
+        gemini_contents: &mut Vec<serde_json::Value>,
+    ) {
+        let model_parts: Vec<serde_json::Value> = {
+            let mut parts = Vec::new();
+            if !full_content.is_empty() {
+                parts.push(serde_json::json!({"text": full_content}));
+            }
+            for tc in gemini_tool_calls {
+                let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                    .unwrap_or_else(|_| serde_json::json!({}));
+                parts.push(serde_json::json!({
+                    "functionCall": {
+                        "name": tc.function.name,
+                        "args": args
+                    }
+                }));
+            }
+            parts
+        };
+        gemini_contents.push(serde_json::json!({
+            "role": "model",
+            "parts": model_parts
+        }));
+
+        let tool_calls_json: Vec<serde_json::Value> = gemini_tool_calls
+            .iter()
+            .map(|tc| {
+                serde_json::json!({
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments
+                    }
+                })
+            })
+            .collect();
+        self.chat_session.messages.push(serde_json::json!({
+            "role": "assistant",
+            "content": serde_json::Value::String(full_content.to_string()),
+            "tool_calls": tool_calls_json
+        }));
+    }
+
+    /// Execute each tool call from a Gemini turn and produce the
+    /// `functionResponse` parts to send back.
+    fn gemini_execute_tools(
+        &mut self,
+        gemini_tool_calls: &[tools::ToolCall],
+        memory_db: Option<&memory::MemoryDb>,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) -> Vec<serde_json::Value> {
+        let mut function_responses: Vec<serde_json::Value> = Vec::new();
+        for tool_call in gemini_tool_calls {
+            if let Some(blocked) = self.gemini_plan_mode_response(tool_call) {
+                function_responses.push(blocked);
+                continue;
+            }
+            if !self.gemini_check_permission(tool_call) {
+                continue;
+            }
+            let result = self.gemini_run_single_tool(tool_call, memory_db, auto_learner);
+            function_responses.push(self.gemini_record_tool_outcome(tool_call, &result));
+        }
+        function_responses
+    }
+
+    /// If the tool is blocked by plan mode, push an error tool message
+    /// into the session and return the matching `functionResponse`. None
+    /// means the tool may proceed.
+    fn gemini_plan_mode_response(
+        &mut self,
+        tool_call: &tools::ToolCall,
+    ) -> Option<serde_json::Value> {
+        let block_msg = check_plan_mode_restriction(
+            &self.chat_session,
+            &tool_call.function.name,
+            &tool_call.function.arguments,
+        )?;
+        println!(
+            "\n\x1b[33m⚠ Blocked in plan mode: {}\x1b[0m",
+            tool_call.function.name
+        );
+        self.chat_session.messages.push(serde_json::json!({
+            "role": "tool",
+            "tool_call_id": tool_call.id,
+            "content": format!("[ERROR] {}", block_msg),
+            "is_error": true
+        }));
+        Some(serde_json::json!({
+            "functionResponse": {
+                "name": tool_call.function.name,
+                "response": {"error": block_msg}
+            }
+        }))
+    }
+
+    /// Run the interactive permission check for a Gemini tool call.
+    /// Returns `true` if the caller should proceed with execution.
+    fn gemini_check_permission(&mut self, tool_call: &tools::ToolCall) -> bool {
+        let tool_args_val = parse_tool_args(&tool_call.function);
+        matches!(
+            check_tool_permission_interactive(
+                &tool_call.function.name,
+                &tool_args_val,
+                self.dangerously_skip_permissions,
+                &mut self.always_allowed_tools,
+            ),
+            ToolPermissionResult::Allowed
+        )
+    }
+
+    /// Dispatch the tool, observe it for auto-learning, and return the
+    /// raw `ToolResult` for downstream recording.
+    fn gemini_run_single_tool(
+        &mut self,
+        tool_call: &tools::ToolCall,
+        memory_db: Option<&memory::MemoryDb>,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) -> tools::ToolResult {
+        println!("\n\x1b[36m⚡ Running {}...\x1b[0m", tool_call.function.name);
+        self.audit_logger.log(
+            "tool_call",
+            &serde_json::json!({
+                "name": &tool_call.function.name,
+                "arguments": &tool_call.function.arguments,
+                "id": &tool_call.id,
+            }),
+        );
+
+        let _session_guard = tools::SessionIdGuard::set(&self.chat_session.id);
+        let result = memory_db.map_or_else(
+            || tools::execute_tool_with_memory(tool_call, None, Some(&self.permission_mgr)),
+            |db| tools::execute_tool_with_memory(tool_call, Some(db), Some(&self.permission_mgr)),
+        );
+        Self::auto_learn_observe(auto_learner, tool_call, &result);
+        result
+    }
+
+    /// Render the tool result, push it onto the session as a `tool`
+    /// message, and return the `functionResponse` value for Gemini.
+    fn gemini_record_tool_outcome(
+        &mut self,
+        tool_call: &tools::ToolCall,
+        result: &tools::ToolResult,
+    ) -> serde_json::Value {
+        let (final_content, was_marker) = process_tool_result_marker(
+            &mut self.chat_session,
+            &tool_call.function.name,
+            &result.content,
+        );
+        let final_is_error = if was_marker { false } else { result.is_error };
+        display_tool_result(&tool_call.function.name, &final_content, final_is_error);
+
+        let response_content = if final_is_error {
+            serde_json::json!({"error": final_content})
+        } else {
+            serde_json::json!({"result": final_content})
+        };
+        let response = serde_json::json!({
+            "functionResponse": {
+                "name": tool_call.function.name,
+                "response": response_content
+            }
+        });
+
+        let result_content = if final_is_error {
+            format!("[ERROR] {final_content}")
+        } else {
+            final_content
+        };
+        self.chat_session.messages.push(serde_json::json!({
+            "role": "tool",
+            "tool_call_id": result.tool_call_id,
+            "content": result_content,
+            "is_error": final_is_error
+        }));
+        response
+    }
+
+    /// Send the next Gemini turn with tool results. Returns the new
+    /// (text, `tool_calls`) on success, `None` on transport / parse error.
+    async fn gemini_send_followup(
+        &self,
+        gemini_contents: &[serde_json::Value],
+        request_body: &serde_json::Value,
+        transport: TurnTransport<'_>,
+    ) -> Option<(String, Vec<tools::ToolCall>)> {
+        let openai_tools = tools::get_all_tool_definitions(true);
+        let tools_vec = openai_tools.as_array().cloned().unwrap_or_default();
+        let functions: Vec<serde_json::Value> = tools_vec
+            .iter()
+            .filter_map(|tool| {
+                let func = tool.get("function")?;
+                let description = func
+                    .get("description")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!(""));
+                let parameters = func
+                    .get("parameters")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({}));
+                Some(serde_json::json!({
+                    "name": func.get("name")?,
+                    "description": description,
+                    "parameters": parameters
+                }))
+            })
+            .collect();
+
+        let mut followup_req = serde_json::json!({
+            "contents": gemini_contents,
+            "generationConfig": {"maxOutputTokens": 4096},
+            "tools": [{"functionDeclarations": functions}]
+        });
+        if let Some(sys) = request_body.get("systemInstruction") {
+            followup_req["systemInstruction"] = sys.clone();
+        }
+
+        let mut req = self.client.post(transport.endpoint).json(&followup_req);
+        for (key, value) in transport.headers {
+            req = req.header(key, value);
+        }
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                let resp_body = resp.text().await.unwrap_or_default();
+                let Ok(resp_json) = serde_json::from_str::<serde_json::Value>(&resp_body) else {
+                    eprintln!("\nFailed to parse Gemini follow-up response");
+                    return None;
+                };
+                let text = gemini_extract_text(&resp_json);
+                let calls = gemini_extract_tool_calls(&resp_json);
+                Some((text, calls))
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let err_body = resp.text().await.unwrap_or_default();
+                eprintln!("\nGemini follow-up failed: {status} {err_body}");
+                None
+            }
+            Err(e) => {
+                eprintln!("\nGemini follow-up error: {e}");
+                None
+            }
+        }
+    }
+
+    /// Anthropic / `OpenAI` SSE streaming path. Returns `true` when a
+    /// keybinding pressed during streaming asked the REPL to exit.
+    async fn process_streaming_response(
+        &mut self,
+        response: reqwest::Response,
+        transport: TurnTransport<'_>,
+        prompt_blocks: &prompt::SystemPromptBlocks,
+        memory_db: Option<&memory::MemoryDb>,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) -> bool {
+        println!();
+        let mut tool_accumulator = tools::ToolCallAccumulator::new();
+        let mut anthropic_accumulator = tools::AnthropicToolAccumulator::new();
+        let mut stream_usage = openclaudia::session::TokenUsage::default();
+
+        self.audit_logger.log(
+            "model_request",
+            &serde_json::json!({
+                "model": &self.model,
+                "provider": &self.config.proxy.target,
+            }),
+        );
+
+        let stream_result = self
+            .consume_initial_stream(
+                response,
+                &mut tool_accumulator,
+                &mut anthropic_accumulator,
+                &mut stream_usage,
+            )
+            .await;
+
+        let mut full_content = stream_result.full_content;
+        let cancelled = stream_result.cancelled;
+        let pending_action = stream_result.pending_action;
+        println!();
+
+        self.log_streaming_completion(&full_content, cancelled, &stream_usage);
+        self.draw_stream_status_bar(&full_content, &stream_usage);
+
+        if cancelled && !full_content.is_empty() {
+            full_content.push_str("\n\n[Response interrupted by user]");
+        }
+
+        if self.config.proxy.target == "anthropic" && !cancelled {
+            self.dispatch_anthropic_tool_path(
+                &mut anthropic_accumulator,
+                full_content,
+                transport,
+                prompt_blocks,
+                memory_db,
+                auto_learner,
+            )
+            .await;
+            return false;
+        }
+
+        self.run_openai_tool_loop(
+            &mut tool_accumulator,
+            full_content,
+            cancelled,
+            transport,
+            memory_db,
+            auto_learner,
+        )
+        .await;
+
+        self.handle_pending_action(pending_action)
+    }
+
+    /// Emit the `model_response` audit event for the initial stream.
+    fn log_streaming_completion(
+        &mut self,
+        full_content: &str,
+        cancelled: bool,
+        stream_usage: &openclaudia::session::TokenUsage,
+    ) {
+        self.audit_logger.log(
+            "model_response",
+            &serde_json::json!({
+                "model": &self.model,
+                "content_length": full_content.len(),
+                "cancelled": cancelled,
+                "stream_usage": {
+                    "input_tokens": stream_usage.input_tokens,
+                    "output_tokens": stream_usage.output_tokens,
+                },
+            }),
+        );
+    }
+
+    /// Compute cost + tokens for the initial stream and render the
+    /// status bar.
+    fn draw_stream_status_bar(
+        &self,
+        full_content: &str,
+        stream_usage: &openclaudia::session::TokenUsage,
+    ) {
+        let tokens = estimate_session_tokens(&self.chat_session) + full_content.len() / 4;
+        let cost = session::calculate_cost(
+            &self.model,
+            &openclaudia::session::TokenUsage {
+                input_tokens: tokens as u64,
+                output_tokens: stream_usage
+                    .output_tokens
+                    .max(full_content.len() as u64 / 4),
+                cache_read_tokens: stream_usage.cache_read_tokens,
+                cache_write_tokens: stream_usage.cache_write_tokens,
+            },
+        );
+        let duration = chrono::Utc::now().signed_duration_since(self.chat_session.created_at);
+        let dur_str = format!("{}m", duration.num_minutes());
+        tui::draw_status_bar(
+            &self.model,
+            tokens,
+            cost,
+            self.chat_session.mode.display(),
+            &dur_str,
+        );
+    }
+
+    /// Pick between the structured Anthropic `tool_use` loop and the
+    /// XML-intercept fallback, then run VDD review and emit the trailing
+    /// newline. Returns nothing — callers always continue the REPL.
+    async fn dispatch_anthropic_tool_path(
+        &mut self,
+        anthropic_accumulator: &mut tools::AnthropicToolAccumulator,
+        full_content: String,
+        transport: TurnTransport<'_>,
+        prompt_blocks: &prompt::SystemPromptBlocks,
+        memory_db: Option<&memory::MemoryDb>,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) {
+        let handled_structured = anthropic_accumulator.has_tool_use();
+        let final_content = if handled_structured {
+            self.run_anthropic_structured_tool_loop(
+                anthropic_accumulator,
+                full_content,
+                transport,
+                prompt_blocks,
+                memory_db,
+                auto_learner,
+            )
+            .await
+        } else {
+            self.run_xml_intercept_tool_loop(full_content, transport, prompt_blocks, memory_db)
+                .await
+        };
+        if let Some(ref engine) = self.vdd_engine {
+            run_vdd_review(
+                engine,
+                &final_content,
+                &mut self.chat_session.messages,
+                &self.config.proxy.target,
+                self.api_key.as_ref(),
+            )
+            .await;
+        }
+        println!();
+    }
+
+    /// Consume the initial SSE stream, push deltas into the markdown
+    /// renderer + accumulators, and return the assembled state.
+    async fn consume_initial_stream(
+        &self,
+        response: reqwest::Response,
+        tool_accumulator: &mut tools::ToolCallAccumulator,
+        anthropic_accumulator: &mut tools::AnthropicToolAccumulator,
+        stream_usage: &mut openclaudia::session::TokenUsage,
+    ) -> InitialStreamResult {
+        use futures::StreamExt;
+
+        let mut full_content = String::new();
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+        let mut cancelled = false;
+        let mut pending_action: Option<SlashCommandResult> = None;
+
+        let mut in_thinking_block = false;
+        let mut thinking_start_time: Option<std::time::Instant> = None;
+        let mut md_state = tui::StreamingMarkdownRenderer::new().into_state();
+        let mut last_data_time = std::time::Instant::now();
+        let stream_timeout = std::time::Duration::from_secs(proxy::SSE_STREAM_TIMEOUT_SECS);
+
+        while let Some(chunk_result) = stream.next().await {
+            let mut md_renderer = tui::StreamingMarkdownRenderer::from_state(md_state);
+            if last_data_time.elapsed() > stream_timeout {
+                Self::handle_stream_timeout(&mut full_content);
+                md_state = md_renderer.into_state();
+                break;
+            }
+            if self.poll_stream_keybinding(&mut cancelled, &mut pending_action) {
+                md_state = md_renderer.into_state();
+                break;
+            }
+            match chunk_result {
+                Ok(chunk) => {
+                    last_data_time = std::time::Instant::now();
+                    buffer.push_str(&String::from_utf8_lossy(&chunk));
+                    let mut ctx = SseFrameCtx {
+                        full_content: &mut full_content,
+                        md_renderer: &mut md_renderer,
+                        tool_accumulator,
+                        anthropic_accumulator,
+                        stream_usage,
+                        in_thinking_block: &mut in_thinking_block,
+                        thinking_start_time: &mut thinking_start_time,
+                    };
+                    Self::drain_sse_buffer(&mut buffer, &mut ctx);
+                }
+                Err(e) => {
+                    eprintln!("\nStream error: {e}");
+                    md_state = md_renderer.into_state();
+                    break;
+                }
+            }
+            md_state = md_renderer.into_state();
+        }
+        {
+            let mut md_renderer = tui::StreamingMarkdownRenderer::from_state(md_state);
+            md_renderer.flush();
+        }
+        InitialStreamResult {
+            full_content,
+            cancelled,
+            pending_action,
+        }
+    }
+
+    /// Print the timeout banner and append a truncation marker to any
+    /// partial content already streamed.
+    fn handle_stream_timeout(full_content: &mut String) {
+        eprintln!(
+            "\nStream timeout: no data received for {}s",
+            proxy::SSE_STREAM_TIMEOUT_SECS
+        );
+        if !full_content.is_empty() {
+            tracing::warn!(
+                content_len = full_content.len(),
+                "Stream timed out with partial content; preserving {} bytes",
+                full_content.len()
+            );
+            full_content.push_str("\n\n[Response truncated: stream timeout]");
+        }
+    }
+
+    /// Non-blocking keybinding poll during streaming. Sets `cancelled`
+    /// and returns `true` when the user pressed the Cancel binding;
+    /// captures any other deferrable action into `pending_action`.
+    fn poll_stream_keybinding(
+        &self,
+        cancelled: &mut bool,
+        pending_action: &mut Option<SlashCommandResult>,
+    ) -> bool {
+        use crossterm::event::{self, Event, KeyEventKind};
+        use std::io::Write;
+
+        if !event::poll(std::time::Duration::from_millis(1)).unwrap_or(false) {
+            return false;
+        }
+        let Ok(Event::Key(key_event)) = event::read() else {
+            return false;
+        };
+        if key_event.kind != KeyEventKind::Press {
+            return false;
+        }
+        let Some(key_str) = key_event_to_string(&key_event, false) else {
+            return false;
+        };
+        if !self.config.keybindings.is_bound(&key_str) {
+            return false;
+        }
+        let action = self.config.keybindings.get_action_or_default(&key_str);
+        if action == config::KeyAction::Cancel {
+            *cancelled = true;
+            print!(" (cancelled)");
+            std::io::stdout().flush().ok();
+            return true;
+        }
+        if let Some(result) = execute_key_action(&action) {
+            *pending_action = Some(result);
+        }
+        false
+    }
+
+    /// Drain newline-delimited SSE frames out of `buffer`, routing each
+    /// frame's content into `ctx`.
+    fn drain_sse_buffer(buffer: &mut String, ctx: &mut SseFrameCtx<'_>) {
+        while let Some(line_end) = buffer.find('\n') {
+            let line = buffer[..line_end].trim().to_string();
+            *buffer = buffer[line_end + 1..].to_string();
+            if line.is_empty() || line.starts_with(':') {
+                continue;
+            }
+            let Some(data) = line.strip_prefix("data: ") else {
+                continue;
+            };
+            if data == "[DONE]" {
+                break;
+            }
+            let Ok(json) = serde_json::from_str::<serde_json::Value>(data) else {
+                continue;
+            };
+            Self::route_sse_frame(&json, ctx);
+        }
+    }
+
+    /// Route a single decoded SSE frame: usage extraction, thinking
+    /// pass-through, then text/tool delta dispatch.
+    fn route_sse_frame(json: &serde_json::Value, ctx: &mut SseFrameCtx<'_>) {
+        if let Some(usage) = proxy::extract_usage_from_sse_event(json) {
+            ctx.stream_usage.accumulate(&usage);
+        }
+        if process_thinking_event(json, ctx.in_thinking_block, ctx.thinking_start_time) {
+            return;
+        }
+        if let Some(text) = ctx.anthropic_accumulator.process_event(json) {
+            ctx.md_renderer.push(&text);
+            ctx.full_content.push_str(&text);
+        } else if let Some(delta) = json
+            .get("choices")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("delta"))
+        {
+            if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
+                ctx.md_renderer.push(content);
+                ctx.full_content.push_str(content);
+            }
+            ctx.tool_accumulator.process_delta(delta);
+        }
+    }
+
+    /// Anthropic structured `tool_use` loop — execute tools and follow-up.
+    async fn run_anthropic_structured_tool_loop(
+        &mut self,
+        anthropic_accumulator: &mut tools::AnthropicToolAccumulator,
+        mut full_content: String,
+        transport: TurnTransport<'_>,
+        prompt_blocks: &prompt::SystemPromptBlocks,
+        memory_db: Option<&memory::MemoryDb>,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) -> String {
+        let max_proxy_iterations = self.config.session.max_turns;
+        let mut proxy_iteration: u32 = 0;
+        let mut executed_tool_sigs: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        loop {
+            if !anthropic_accumulator.has_tool_use() {
+                break;
+            }
+            if max_proxy_iterations > 0 && proxy_iteration >= max_proxy_iterations {
+                eprintln!(
+                    "\n\x1b[33m⚠ Reached max_turns limit ({max_proxy_iterations} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m"
+                );
+                break;
+            }
+            proxy_iteration += 1;
+            guardrails::reset_turn();
+
+            let Some(tool_calls) =
+                self.collect_anthropic_iteration(&*anthropic_accumulator, &mut executed_tool_sigs)
+            else {
+                break;
+            };
+
+            self.dispatch_anthropic_tool_batch(
+                &tool_calls,
+                anthropic_accumulator,
+                memory_db,
+                auto_learner,
+            );
+
+            let followup_req = self.build_anthropic_followup(prompt_blocks);
+            full_content = String::new();
+            if !self
+                .send_anthropic_followup(
+                    followup_req,
+                    transport,
+                    anthropic_accumulator,
+                    &mut full_content,
+                )
+                .await
+            {
+                break;
+            }
+        }
+
+        if !full_content.trim().is_empty() {
+            self.chat_session.messages.push(serde_json::json!({
+                "role": "assistant",
+                "content": full_content.trim()
+            }));
+        }
+        full_content
+    }
+
+    /// Finalize tool calls + assistant message for one Anthropic loop
+    /// iteration. Returns `None` when the loop should stop because every
+    /// tool was already executed (duplicate detection).
+    fn collect_anthropic_iteration(
+        &mut self,
+        anthropic_accumulator: &tools::AnthropicToolAccumulator,
+        executed_tool_sigs: &mut std::collections::HashSet<String>,
+    ) -> Option<Vec<tools::ToolCall>> {
+        let text = anthropic_accumulator.get_text();
+        let tool_calls = anthropic_accumulator.finalize_tool_calls();
+        let tool_calls_json = anthropic_accumulator.to_openai_tool_calls_json();
+
+        if !tool_calls.is_empty() && all_signatures_seen(&tool_calls, executed_tool_sigs) {
+            eprintln!("\n\x1b[33m⚠ Detected duplicate tool calls - breaking agentic loop\x1b[0m");
+            return None;
+        }
+        for tc in &tool_calls {
+            executed_tool_sigs.insert(tool_call_signature(tc));
+        }
+
+        self.chat_session.messages.push(serde_json::json!({
+            "role": "assistant",
+            "content": serde_json::Value::String(text),
+            "tool_calls": tool_calls_json
+        }));
+        Some(tool_calls)
+    }
+
+    /// Execute every tool from one Anthropic iteration, run quality
+    /// gates, clear the accumulator, and print the "sending N results"
+    /// banner before the follow-up request.
+    fn dispatch_anthropic_tool_batch(
+        &mut self,
+        tool_calls: &[tools::ToolCall],
+        anthropic_accumulator: &mut tools::AnthropicToolAccumulator,
+        memory_db: Option<&memory::MemoryDb>,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) {
+        for tool_call in tool_calls {
+            self.execute_anthropic_tool(tool_call, memory_db, auto_learner);
+        }
+        self.run_quality_gates_and_inject();
+        anthropic_accumulator.clear();
+
+        println!(
+            "\n\x1b[90m(Sending {} tool result{} to Claude...)\x1b[0m",
+            tool_calls.len(),
+            if tool_calls.len() == 1 { "" } else { "s" }
+        );
+    }
+
+    /// Execute a single tool call from the Anthropic structured path,
+    /// updating chat history with the result.
+    fn execute_anthropic_tool(
+        &mut self,
+        tool_call: &tools::ToolCall,
+        memory_db: Option<&memory::MemoryDb>,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) {
+        if self.push_plan_mode_block_if_any(tool_call) {
+            return;
+        }
+        if !self.push_permission_or_proceed(tool_call) {
+            return;
+        }
+        let result = self.run_tool_with_audit(tool_call, memory_db, auto_learner);
+
+        let (final_content, was_marker) = process_tool_result_marker(
+            &mut self.chat_session,
+            &tool_call.function.name,
+            &result.content,
+        );
+        let final_is_error = if was_marker { false } else { result.is_error };
+
+        self.audit_logger.log(
+            "tool_result",
+            &serde_json::json!({
+                "name": &tool_call.function.name,
+                "id": &tool_call.id,
+                "is_error": final_is_error,
+                "content_length": final_content.len(),
+            }),
+        );
+        display_tool_result(&tool_call.function.name, &final_content, final_is_error);
+        self.push_tool_result_message(&result.tool_call_id, &final_content, final_is_error);
+    }
+
+    /// If `tool_call` is blocked by plan mode, push the error tool
+    /// message and return `true` (caller should bail out).
+    fn push_plan_mode_block_if_any(&mut self, tool_call: &tools::ToolCall) -> bool {
+        let Some(block_msg) = check_plan_mode_restriction(
+            &self.chat_session,
+            &tool_call.function.name,
+            &tool_call.function.arguments,
+        ) else {
+            return false;
+        };
+        println!(
+            "\n\x1b[33m⚠ Blocked in plan mode: {}\x1b[0m",
+            tool_call.function.name
+        );
+        self.chat_session.messages.push(serde_json::json!({
+            "role": "tool",
+            "tool_call_id": tool_call.id,
+            "content": format!("[ERROR] {}", block_msg),
+            "is_error": true
+        }));
+        true
+    }
+
+    /// Run the interactive permission check. On `Denied` push the error
+    /// tool message and return `false`. On `Allowed` return `true`.
+    fn push_permission_or_proceed(&mut self, tool_call: &tools::ToolCall) -> bool {
+        let tool_args_val = parse_tool_args(&tool_call.function);
+        match check_tool_permission_interactive(
+            &tool_call.function.name,
+            &tool_args_val,
+            self.dangerously_skip_permissions,
+            &mut self.always_allowed_tools,
+        ) {
+            ToolPermissionResult::Denied(msg) => {
+                self.chat_session.messages.push(serde_json::json!({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": format!("[ERROR] {}", msg),
+                    "is_error": true
+                }));
+                false
+            }
+            ToolPermissionResult::Allowed => true,
+        }
+    }
+
+    /// Emit the running banner + `tool_call` audit event, dispatch via
+    /// `execute_tool_with_memory`, and observe the result for the
+    /// auto-learner. Shared by both the Anthropic and `OpenAI` paths.
+    fn run_tool_with_audit(
+        &mut self,
+        tool_call: &tools::ToolCall,
+        memory_db: Option<&memory::MemoryDb>,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) -> tools::ToolResult {
+        println!("\n\x1b[36m⚡ Running {}...\x1b[0m", tool_call.function.name);
+        self.audit_logger.log(
+            "tool_call",
+            &serde_json::json!({
+                "name": &tool_call.function.name,
+                "arguments": &tool_call.function.arguments,
+                "id": &tool_call.id,
+            }),
+        );
+        let _session_guard = tools::SessionIdGuard::set(&self.chat_session.id);
+        let result = memory_db.map_or_else(
+            || tools::execute_tool_with_memory(tool_call, None, Some(&self.permission_mgr)),
+            |db| tools::execute_tool_with_memory(tool_call, Some(db), Some(&self.permission_mgr)),
+        );
+        Self::auto_learn_observe(auto_learner, tool_call, &result);
+        result
+    }
+
+    /// Push a `tool`-role message with the final content, prefixing
+    /// `[ERROR]` on failure.
+    fn push_tool_result_message(
+        &mut self,
+        tool_call_id: &str,
+        final_content: &str,
+        final_is_error: bool,
+    ) {
+        let result_content = if final_is_error {
+            format!("[ERROR] {final_content}")
+        } else {
+            final_content.to_string()
+        };
+        self.chat_session.messages.push(serde_json::json!({
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": result_content,
+            "is_error": final_is_error
+        }));
+    }
+
+    /// Build the next Anthropic follow-up request body reusing the
+    /// cached prompt blocks.
+    fn build_anthropic_followup(
+        &self,
+        prompt_blocks: &prompt::SystemPromptBlocks,
+    ) -> serde_json::Value {
+        let anthropic_messages = convert_messages_to_anthropic(&self.chat_session.messages);
+        let openai_tools = tools::get_all_tool_definitions(true);
+        let anthropic_tools =
+            convert_tools_to_anthropic(openai_tools.as_array().unwrap_or(&vec![]));
+
+        let mut followup_req = serde_json::json!({
+            "model": self.model,
+            "messages": anthropic_messages,
+            "max_tokens": openclaudia::DEFAULT_MAX_TOKENS,
+            "stream": true,
+            "tools": anthropic_tools
+        });
+        followup_req["system"] = openclaudia::providers::build_system_blocks(prompt_blocks);
+        if self.claude_code_token.is_some() {
+            openclaudia::claude_credentials::inject_system_prompt(&mut followup_req);
+        }
+        followup_req
+    }
+
+    /// Send the Anthropic follow-up and stream its content into
+    /// `anthropic_accumulator` + `full_content`. Returns `false` on
+    /// transport/HTTP error (caller should break the loop).
+    async fn send_anthropic_followup(
+        &self,
+        followup_req: serde_json::Value,
+        transport: TurnTransport<'_>,
+        anthropic_accumulator: &mut tools::AnthropicToolAccumulator,
+        full_content: &mut String,
+    ) -> bool {
+        use futures::StreamExt;
+        use std::io::Write;
+
+        let mut req = self.client.post(transport.endpoint).json(&followup_req);
+        for (key, value) in transport.headers {
+            req = req.header(key, value);
+        }
+        match req.send().await {
+            Ok(response) if response.status().is_success() => {
+                let mut stream = response.bytes_stream();
+                let mut buffer = String::new();
+                println!();
+                while let Some(chunk_result) = stream.next().await {
+                    match chunk_result {
+                        Ok(chunk) => {
+                            buffer.push_str(&String::from_utf8_lossy(&chunk));
+                            while let Some(line_end) = buffer.find('\n') {
+                                let line = buffer[..line_end].trim().to_string();
+                                buffer = buffer[line_end + 1..].to_string();
+                                if line.is_empty() || line.starts_with(':') {
+                                    continue;
+                                }
+                                if let Some(data) = line.strip_prefix("data: ") {
+                                    if data == "[DONE]" {
+                                        break;
+                                    }
+                                    if let Ok(json) =
+                                        serde_json::from_str::<serde_json::Value>(data)
+                                    {
+                                        if let Some(text) =
+                                            anthropic_accumulator.process_event(&json)
+                                        {
+                                            print!("{text}");
+                                            std::io::stdout().flush().ok();
+                                            full_content.push_str(&text);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("\nStream error: {e}");
+                            break;
+                        }
+                    }
+                }
+                true
+            }
+            Ok(response) => {
+                eprintln!("\nFollow-up request failed: {}", response.status());
+                false
+            }
+            Err(e) => {
+                eprintln!("\nFollow-up request error: {e}");
+                false
+            }
+        }
+    }
+
+    /// Text-based XML tool interception fallback for Anthropic.
+    async fn run_xml_intercept_tool_loop(
+        &mut self,
+        mut full_content: String,
+        transport: TurnTransport<'_>,
+        prompt_blocks: &prompt::SystemPromptBlocks,
+        memory_db: Option<&memory::MemoryDb>,
+    ) -> String {
+        let mut tool_interceptor = tool_intercept::ToolInterceptor::new();
+        tool_interceptor.push(&full_content);
+
+        let max_proxy_iterations = self.config.session.max_turns;
+        let mut proxy_iteration: u32 = 0;
+        let mut executed_tool_signatures: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        while tool_interceptor.has_complete_block()
+            && (max_proxy_iterations == 0 || proxy_iteration < max_proxy_iterations)
+        {
+            proxy_iteration += 1;
+            let (all_tools, text_parts) = tool_interceptor.extract_all_tool_calls();
+            if all_tools.is_empty() {
+                break;
+            }
+
+            if Self::xml_loop_should_break_on_duplicates(
+                &all_tools,
+                &mut executed_tool_signatures,
+                proxy_iteration,
+            ) {
+                break;
+            }
+
+            self.push_xml_assistant_text(&text_parts);
+            let surviving_tools = self.filter_xml_plan_blocked_tools(all_tools);
+            self.send_xml_tool_results(&surviving_tools, memory_db);
+
+            let followup_req = self.build_xml_followup_request(prompt_blocks);
+            let next = self.send_xml_followup_stream(followup_req, transport).await;
+            match next {
+                Some(content) => {
+                    tool_interceptor.clear();
+                    tool_interceptor.push(&content);
+                    full_content = content;
+                }
+                None => break,
+            }
+        }
+
+        if max_proxy_iterations > 0
+            && proxy_iteration >= max_proxy_iterations
+            && tool_interceptor.has_complete_block()
+        {
+            eprintln!(
+                "\n\x1b[33m⚠ Reached max_turns limit ({max_proxy_iterations} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m"
+            );
+        }
+        if !full_content.trim().is_empty() && !tool_interceptor.has_pending_tool_calls() {
+            self.chat_session.messages.push(serde_json::json!({
+                "role": "assistant",
+                "content": full_content.trim()
+            }));
+        }
+        full_content
+    }
+
+    /// Insert each tool's signature; return `true` when every signature
+    /// was already present AND this isn't the first iteration (so the
+    /// loop should break on duplicates).
+    fn xml_loop_should_break_on_duplicates(
+        all_tools: &[tool_intercept::InterceptedToolCall],
+        executed_tool_signatures: &mut std::collections::HashSet<String>,
+        proxy_iteration: u32,
+    ) -> bool {
+        let mut all_duplicates = true;
+        for tool in all_tools {
+            let params_str: String = tool
+                .parameters
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sig = format!("{}:{}", tool.name, params_str);
+            if executed_tool_signatures.insert(sig) {
+                all_duplicates = false;
+            }
+        }
+        if all_duplicates && proxy_iteration > 1 {
+            eprintln!("\n\x1b[33m⚠ Detected duplicate tool calls - breaking loop\x1b[0m");
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Push any pre-tool prose extracted by the interceptor as a single
+    /// assistant message (skip if empty).
+    fn push_xml_assistant_text(&mut self, text_parts: &[String]) {
+        let combined_text = text_parts.join("\n\n");
+        if !combined_text.is_empty() {
+            self.chat_session.messages.push(serde_json::json!({
+                "role": "assistant",
+                "content": combined_text
+            }));
+        }
+    }
+
+    /// Strip out tools blocked by plan mode (and push the user-visible
+    /// error message for each), returning the survivors.
+    fn filter_xml_plan_blocked_tools(
+        &mut self,
+        all_tools: Vec<tool_intercept::InterceptedToolCall>,
+    ) -> Vec<tool_intercept::InterceptedToolCall> {
+        all_tools
+            .into_iter()
+            .filter(|tool| {
+                let args_json = serde_json::to_string(
+                    &tool
+                        .parameters
+                        .iter()
+                        .collect::<std::collections::HashMap<_, _>>(),
+                )
+                .unwrap_or_default();
+                if let Some(block_msg) =
+                    check_plan_mode_restriction(&self.chat_session, &tool.name, &args_json)
+                {
+                    println!("\n\x1b[33m⚠ Blocked in plan mode: {}\x1b[0m", tool.name);
+                    self.chat_session.messages.push(serde_json::json!({
+                        "role": "user",
+                        "content": format!("[ERROR] {}", block_msg)
+                    }));
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect()
+    }
+
+    /// Execute the surviving XML tools, append the formatted XML
+    /// results as a user message, and print the "sending N results"
+    /// banner.
+    fn send_xml_tool_results(
+        &mut self,
+        all_tools: &[tool_intercept::InterceptedToolCall],
+        memory_db: Option<&memory::MemoryDb>,
+    ) {
+        let results = tool_intercept::execute_intercepted_tools(
+            all_tools,
+            memory_db,
+            Some(&self.permission_mgr),
+        );
+        let results_xml = tool_intercept::format_execution_results_xml(&results);
+        self.chat_session.messages.push(serde_json::json!({
+            "role": "user",
+            "content": results_xml
+        }));
+        println!(
+            "\n\x1b[90m(Sending {} tool result{} to Claude...)\x1b[0m",
+            results.len(),
+            if results.len() == 1 { "" } else { "s" }
+        );
+    }
+
+    fn build_xml_followup_request(
+        &self,
+        prompt_blocks: &prompt::SystemPromptBlocks,
+    ) -> serde_json::Value {
+        let anthropic_messages = convert_messages_to_anthropic(&self.chat_session.messages);
+        let mut followup_req = serde_json::json!({
+            "model": self.model,
+            "messages": anthropic_messages,
+            "max_tokens": openclaudia::DEFAULT_MAX_TOKENS,
+            "stream": true
+        });
+        followup_req["system"] = openclaudia::providers::build_system_blocks(prompt_blocks);
+        if self.claude_code_token.is_some() {
+            openclaudia::claude_credentials::inject_system_prompt(&mut followup_req);
+        }
+        followup_req
+    }
+
+    async fn send_xml_followup_stream(
+        &self,
+        followup_req: serde_json::Value,
+        transport: TurnTransport<'_>,
+    ) -> Option<String> {
+        use futures::StreamExt;
+        use std::io::Write;
+
+        let mut req = self.client.post(transport.endpoint).json(&followup_req);
+        for (key, value) in transport.headers {
+            req = req.header(key, value);
+        }
+        match req.send().await {
+            Ok(response) if response.status().is_success() => {
+                let mut stream = response.bytes_stream();
+                let mut buffer = String::new();
+                let mut followup_content = String::new();
+                while let Some(chunk_result) = stream.next().await {
+                    match chunk_result {
+                        Ok(chunk) => {
+                            buffer.push_str(&String::from_utf8_lossy(&chunk));
+                            while let Some(line_end) = buffer.find('\n') {
+                                let line = buffer[..line_end].trim().to_string();
+                                buffer = buffer[line_end + 1..].to_string();
+                                if line.is_empty() || line.starts_with(':') {
+                                    continue;
+                                }
+                                if let Some(data) = line.strip_prefix("data: ") {
+                                    if data == "[DONE]" {
+                                        break;
+                                    }
+                                    if let Ok(json) =
+                                        serde_json::from_str::<serde_json::Value>(data)
+                                    {
+                                        if json.get("type").and_then(|t| t.as_str())
+                                            == Some("content_block_delta")
+                                        {
+                                            if let Some(text) = json
+                                                .get("delta")
+                                                .and_then(|d| d.get("text"))
+                                                .and_then(|t| t.as_str())
+                                            {
+                                                print!("{text}");
+                                                std::io::stdout().flush().ok();
+                                                followup_content.push_str(text);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("\nStream error: {e}");
+                            break;
+                        }
+                    }
+                }
+                Some(followup_content)
+            }
+            Ok(response) => {
+                eprintln!("\nFollow-up request failed: {}", response.status());
+                None
+            }
+            Err(e) => {
+                eprintln!("\nFollow-up request error: {e}");
+                None
+            }
+        }
+    }
+
+    /// OpenAI-compatible agentic loop. Save the final response state to
+    /// the session at the end.
+    async fn run_openai_tool_loop(
+        &mut self,
+        tool_accumulator: &mut tools::ToolCallAccumulator,
+        full_content: String,
+        cancelled: bool,
+        transport: TurnTransport<'_>,
+        memory_db: Option<&memory::MemoryDb>,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) {
+        let max_iterations = self.config.session.max_turns;
+        let mut iteration: u32 = 0;
+        let mut current_content = full_content;
+        let mut executed_tool_sigs: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        while tool_accumulator.has_tool_calls()
+            && !cancelled
+            && (max_iterations == 0 || iteration < max_iterations)
+        {
+            iteration += 1;
+            guardrails::reset_turn();
+            let tool_calls = tool_accumulator.finalize();
+
+            if iteration > 1
+                && !tool_calls.is_empty()
+                && all_signatures_seen(&tool_calls, &executed_tool_sigs)
+            {
+                eprintln!(
+                    "\n\x1b[33m⚠ Detected duplicate tool calls - breaking agentic loop\x1b[0m"
+                );
+                break;
+            }
+            for tc in &tool_calls {
+                executed_tool_sigs.insert(tool_call_signature(tc));
+            }
+
+            self.record_openai_assistant_turn(&tool_calls, &current_content);
+            self.dispatch_openai_tool_batch(&tool_calls, tool_accumulator, memory_db, auto_learner);
+
+            println!("\n\x1b[90mContinuing with tool results...\x1b[0m\n");
+            let request_body = self.build_openai_followup_request();
+            current_content = String::new();
+            self.stream_openai_followup(
+                request_body,
+                transport,
+                tool_accumulator,
+                &mut current_content,
+            )
+            .await;
+        }
+
+        if max_iterations > 0 && iteration >= max_iterations && tool_accumulator.has_tool_calls() {
+            eprintln!(
+                "\n\x1b[33m⚠ Reached max_turns limit ({max_iterations} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m"
+            );
+        }
+
+        self.persist_openai_loop_state(&current_content, tool_accumulator, iteration);
+        self.run_openai_vdd_review(&current_content, cancelled)
+            .await;
+    }
+
+    /// Append the assistant message that initiated this `OpenAI` tool
+    /// batch, encoding tool calls into the standard `OpenAI` shape.
+    fn record_openai_assistant_turn(
+        &mut self,
+        tool_calls: &[tools::ToolCall],
+        current_content: &str,
+    ) {
+        let tool_calls_json: Vec<serde_json::Value> = tool_calls
+            .iter()
+            .map(|tc| {
+                serde_json::json!({
+                    "id": tc.id,
+                    "type": tc.call_type,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments
+                    }
+                })
+            })
+            .collect();
+        self.chat_session.messages.push(serde_json::json!({
+            "role": "assistant",
+            "content": serde_json::Value::String(current_content.to_string()),
+            "tool_calls": tool_calls_json
+        }));
+    }
+
+    /// Execute every tool from one `OpenAI` iteration, run quality
+    /// gates, and clear the accumulator for the next pass.
+    fn dispatch_openai_tool_batch(
+        &mut self,
+        tool_calls: &[tools::ToolCall],
+        tool_accumulator: &mut tools::ToolCallAccumulator,
+        memory_db: Option<&memory::MemoryDb>,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) {
+        for tool_call in tool_calls {
+            self.execute_openai_tool(tool_call, memory_db, auto_learner);
+        }
+        self.run_quality_gates_and_inject();
+        tool_accumulator.clear();
+    }
+
+    /// Persist the final session state from the `OpenAI` loop, mirroring
+    /// the original three-way conditional (terminal content / iterated /
+    /// no progress).
+    fn persist_openai_loop_state(
+        &mut self,
+        current_content: &str,
+        tool_accumulator: &tools::ToolCallAccumulator,
+        iteration: u32,
+    ) {
+        if !current_content.is_empty() && !tool_accumulator.has_tool_calls() {
+            self.chat_session.messages.push(serde_json::json!({
+                "role": "assistant",
+                "content": current_content
+            }));
+            self.chat_session.touch();
+            if let Err(e) = save_chat_session(&self.chat_session) {
+                tracing::warn!("Failed to save session: {}", e);
+            }
+        } else if iteration > 0 {
+            self.chat_session.touch();
+            if let Err(e) = save_chat_session(&self.chat_session) {
+                tracing::warn!("Failed to save session: {}", e);
+            }
+        } else if current_content.is_empty() && !tool_accumulator.has_tool_calls() {
+            let _ = save_chat_session(&self.chat_session);
+            self.chat_session.messages.pop();
+        }
+    }
+
+    /// Run VDD review on the final `OpenAI` loop content when applicable.
+    async fn run_openai_vdd_review(&mut self, current_content: &str, cancelled: bool) {
+        if cancelled {
+            return;
+        }
+        let Some(ref engine) = self.vdd_engine else {
+            return;
+        };
+        if current_content.trim().is_empty() {
+            return;
+        }
+        run_vdd_review(
+            engine,
+            current_content,
+            &mut self.chat_session.messages,
+            &self.config.proxy.target,
+            self.api_key.as_ref(),
+        )
+        .await;
+    }
+
+    /// Build the OpenAI-compatible follow-up request body (handles both
+    /// the Anthropic direct branch and the generic `OpenAI` shape).
+    fn build_openai_followup_request(&self) -> serde_json::Value {
+        if self.config.proxy.target == "anthropic" {
+            let system_msg = self
+                .chat_session
+                .messages
+                .iter()
+                .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+                .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                .map(String::from);
+            let anthropic_messages = convert_messages_to_anthropic(&self.chat_session.messages);
+            let openai_tools = tools::get_all_tool_definitions(true);
+            let anthropic_tools =
+                convert_tools_to_anthropic(openai_tools.as_array().unwrap_or(&vec![]));
+            let mut req = serde_json::json!({
+                "model": self.model,
+                "messages": anthropic_messages,
+                "max_tokens": openclaudia::DEFAULT_MAX_TOKENS,
+                "stream": true,
+                "tools": anthropic_tools
+            });
+            if let Some(sys) = system_msg {
+                req["system"] = serde_json::json!([{
+                    "type": "text",
+                    "text": sys,
+                    "cache_control": {"type": "ephemeral"}
+                }]);
+            }
+            req
+        } else {
+            serde_json::json!({
+                "model": self.model,
+                "messages": self.chat_session.messages,
+                "max_tokens": openclaudia::DEFAULT_MAX_TOKENS,
+                "stream": true,
+                "tools": tools::get_all_tool_definitions(true)
+            })
+        }
+    }
+
+    /// Stream an OpenAI-style follow-up into `current_content` and feed
+    /// tool deltas into `tool_accumulator` for the next loop iteration.
+    async fn stream_openai_followup(
+        &self,
+        request_body: serde_json::Value,
+        transport: TurnTransport<'_>,
+        tool_accumulator: &mut tools::ToolCallAccumulator,
+        current_content: &mut String,
+    ) {
+        use futures::StreamExt;
+        use std::io::Write;
+
+        let mut req = self.client.post(transport.endpoint).json(&request_body);
+        for (key, value) in transport.headers {
+            req = req.header(key, value);
+        }
+        let Ok(response) = req.send().await else {
+            return;
+        };
+        if !response.status().is_success() {
+            return;
+        }
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+        while let Some(chunk_result) = stream.next().await {
+            if let Ok(chunk) = chunk_result {
+                buffer.push_str(&String::from_utf8_lossy(&chunk));
+                while let Some(line_end) = buffer.find('\n') {
+                    let line = buffer[..line_end].trim().to_string();
+                    buffer = buffer[line_end + 1..].to_string();
+                    if line.is_empty() || line.starts_with(':') {
+                        continue;
+                    }
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if data == "[DONE]" {
+                            break;
+                        }
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                            if json.get("type").and_then(|t| t.as_str())
+                                == Some("content_block_delta")
+                            {
+                                if let Some(text) = json
+                                    .get("delta")
+                                    .and_then(|d| d.get("text"))
+                                    .and_then(|t| t.as_str())
+                                {
+                                    print!("{text}");
+                                    std::io::stdout().flush().ok();
+                                    current_content.push_str(text);
+                                }
+                            } else if let Some(delta) = json
+                                .get("choices")
+                                .and_then(|c| c.get(0))
+                                .and_then(|c| c.get("delta"))
+                            {
+                                if let Some(content) = delta.get("content").and_then(|c| c.as_str())
+                                {
+                                    print!("{content}");
+                                    std::io::stdout().flush().ok();
+                                    current_content.push_str(content);
+                                }
+                                tool_accumulator.process_delta(delta);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        println!();
+    }
+
+    /// Execute a single tool call from the OpenAI-style loop (matches
+    /// the original inline path including activity logging).
+    fn execute_openai_tool(
+        &mut self,
+        tool_call: &tools::ToolCall,
+        memory_db: Option<&memory::MemoryDb>,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) {
+        if self.push_plan_mode_block_if_any(tool_call) {
+            return;
+        }
+        if !self.push_permission_or_proceed(tool_call) {
+            return;
+        }
+        let result = self.run_openai_tool_unaudited(tool_call, memory_db, auto_learner);
+
+        let (final_content, was_marker) = process_tool_result_marker(
+            &mut self.chat_session,
+            &tool_call.function.name,
+            &result.content,
+        );
+        let final_is_error = if was_marker { false } else { result.is_error };
+
+        Self::log_openai_activity(memory_db, &self.chat_session.id, tool_call, final_is_error);
+        display_tool_result(&tool_call.function.name, &final_content, final_is_error);
+        self.push_tool_result_message(&result.tool_call_id, &final_content, final_is_error);
+    }
+
+    /// `OpenAI`-loop variant of `run_tool_with_audit` — same dispatch and
+    /// auto-learner observation, but no audit logger calls (the `OpenAI`
+    /// loop emits its own audit shape upstream).
+    fn run_openai_tool_unaudited(
+        &self,
+        tool_call: &tools::ToolCall,
+        memory_db: Option<&memory::MemoryDb>,
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+    ) -> tools::ToolResult {
+        println!("\n\x1b[36m⚡ Running {}...\x1b[0m", tool_call.function.name);
+        let _session_guard = tools::SessionIdGuard::set(&self.chat_session.id);
+        let result = memory_db.map_or_else(
+            || tools::execute_tool_with_memory(tool_call, None, Some(&self.permission_mgr)),
+            |db| tools::execute_tool_with_memory(tool_call, Some(db), Some(&self.permission_mgr)),
+        );
+        Self::auto_learn_observe(auto_learner, tool_call, &result);
+        result
+    }
+
+    /// Persist a memory-DB activity row for one `OpenAI` tool execution.
+    /// No-op when no memory DB is configured.
+    fn log_openai_activity(
+        memory_db: Option<&memory::MemoryDb>,
+        session_id: &str,
+        tool_call: &tools::ToolCall,
+        final_is_error: bool,
+    ) {
+        let Some(db) = memory_db else { return };
+        let activity_type = openai_activity_type(tool_call);
+        let target = serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments)
+            .map_or_else(
+                |_| tool_call.function.name.clone(),
+                |args| {
+                    args.get("path")
+                        .or_else(|| args.get("file_path"))
+                        .or_else(|| args.get("command"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&tool_call.function.name)
+                        .to_string()
+                },
+            );
+        let _ = db.log_activity(
+            session_id,
+            activity_type,
+            &target,
+            if final_is_error { Some("error") } else { None },
+        );
+    }
+
+    /// Run quality gates after a tool batch and inject any failures
+    /// back into the session as system messages.
+    fn run_quality_gates_and_inject(&mut self) {
+        let qg_results = guardrails::run_quality_gates();
+        for qg in &qg_results {
+            if qg.passed {
+                tracing::debug!(name = %qg.name, "Quality gate passed");
+                continue;
+            }
+            let severity = if qg.required { "FAILED" } else { "warning" };
+            eprintln!(
+                "\x1b[33m⚠ Quality gate '{}' {} (exit {})\x1b[0m",
+                qg.name, severity, qg.exit_code
+            );
+            if !qg.stderr.is_empty() {
+                let preview: String = qg.stderr.lines().take(3).collect::<Vec<_>>().join("\n");
+                eprintln!("  {preview}");
+            }
+            self.chat_session.messages.push(serde_json::json!({
+                "role": "system",
+                "content": format!(
+                    "[Quality Gate '{}' {}] exit code {}\nstdout: {}\nstderr: {}",
+                    qg.name, severity, qg.exit_code,
+                    if qg.stdout.len() > 500 { safe_truncate(&qg.stdout, 500) } else { &qg.stdout },
+                    if qg.stderr.len() > 500 { safe_truncate(&qg.stderr, 500) } else { &qg.stderr }
+                )
+            }));
+        }
+    }
+
+    fn auto_learn_observe(
+        auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
+        tool_call: &tools::ToolCall,
+        result: &tools::ToolResult,
+    ) {
+        if let Some(ref mut learner) = auto_learner {
+            let args: serde_json::Value =
+                serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+            if result.is_error {
+                learner.on_tool_failure(&tool_call.function.name, &args, &result.content);
+            } else {
+                learner.on_tool_success(&tool_call.function.name, &args, &result.content);
+            }
+        }
+    }
+
+    /// Apply a keybinding-triggered action that was deferred during
+    /// streaming. Returns `true` when Exit was queued.
+    fn handle_pending_action(&mut self, action: Option<SlashCommandResult>) -> bool {
+        let Some(action_result) = action else {
+            return false;
+        };
+        match action_result {
+            SlashCommandResult::Exit => {
+                if let Err(e) = self.rl.save_history(&self.history_path) {
+                    tracing::warn!("Failed to save history: {}", e);
+                }
+                println!("\nGoodbye!");
+                true
+            }
+            SlashCommandResult::ToggleMode => {
+                self.chat_session.mode = self.chat_session.mode.toggle();
+                println!(
+                    "\nSwitched to {} mode: {}\n",
+                    self.chat_session.mode.display(),
+                    self.chat_session.mode.description()
+                );
+                false
+            }
+            SlashCommandResult::Status => {
+                let tokens = estimate_session_tokens(&self.chat_session);
+                let duration =
+                    chrono::Utc::now().signed_duration_since(self.chat_session.created_at);
+                println!(
+                    "\n[{}] {} | ~{} tokens | {} min\n",
+                    self.chat_session.mode.display(),
+                    self.chat_session.model,
+                    tokens,
+                    duration.num_minutes()
+                );
+                false
+            }
+            SlashCommandResult::Export => {
+                export_chat_session(&self.chat_session);
+                false
+            }
+            _ => false,
+        }
+    }
+}
+
+/// State returned from the initial-stream consumer for the calling
+/// streaming path to act on (cancel flag, deferred keybinding, etc.).
+struct InitialStreamResult {
+    full_content: String,
+    cancelled: bool,
+    pending_action: Option<SlashCommandResult>,
+}
+
+// ── Free helpers (no `self`) used by ChatRepl methods ──
+
+fn parse_tool_args(func: &tools::FunctionCall) -> serde_json::Value {
+    serde_json::from_str(&func.arguments).unwrap_or_else(|e| {
+        tracing::warn!("Malformed tool arguments for '{}': {}", func.name, e);
+        serde_json::Value::Object(serde_json::Map::default())
+    })
+}
+
+fn tool_call_signature(tc: &tools::ToolCall) -> String {
+    format!("{}:{}", tc.function.name, tc.function.arguments)
+}
+
+fn all_signatures_seen(
+    tool_calls: &[tools::ToolCall],
+    executed: &std::collections::HashSet<String>,
+) -> bool {
+    tool_calls
+        .iter()
+        .all(|tc| executed.contains(&tool_call_signature(tc)))
+}
+
+fn process_thinking_event(
+    json: &serde_json::Value,
+    in_thinking_block: &mut bool,
+    thinking_start_time: &mut Option<std::time::Instant>,
+) -> bool {
+    let Some(event_type) = json.get("type").and_then(|t| t.as_str()) else {
+        return false;
+    };
+    if event_type == "content_block_start" {
+        if let Some(block_type) = json
+            .get("content_block")
+            .and_then(|b| b.get("type"))
+            .and_then(|t| t.as_str())
+        {
+            if block_type == "thinking" {
+                *in_thinking_block = true;
+                *thinking_start_time = Some(std::time::Instant::now());
+                tui::print_thinking_start();
+                return true;
+            }
+        }
+    }
+    if event_type == "content_block_stop" && *in_thinking_block {
+        let elapsed = thinking_start_time.map_or(0.0, |t| t.elapsed().as_secs_f64());
+        tui::print_thinking_end(elapsed);
+        *in_thinking_block = false;
+        *thinking_start_time = None;
+        return true;
+    }
+    if event_type == "content_block_delta" && *in_thinking_block {
+        if let Some(text) = json
+            .get("delta")
+            .and_then(|d| d.get("thinking"))
+            .and_then(|t| t.as_str())
+        {
+            tui::print_thinking_chunk(text);
+        } else if let Some(text) = json
+            .get("delta")
+            .and_then(|d| d.get("text"))
+            .and_then(|t| t.as_str())
+        {
+            tui::print_thinking_chunk(text);
+        }
+        return true;
+    }
+    false
+}
+
+fn gemini_extract_text(json: &serde_json::Value) -> String {
+    json.get("candidates")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("content"))
+        .and_then(|c| c.get("parts"))
+        .and_then(|p| p.as_array())
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default()
+}
+
+fn gemini_extract_tool_calls(json: &serde_json::Value) -> Vec<tools::ToolCall> {
+    json.get("candidates")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("content"))
+        .and_then(|c| c.get("parts"))
+        .and_then(|p| p.as_array())
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|p| {
+                    let fc = p.get("functionCall")?;
+                    let name = fc.get("name")?.as_str()?.to_string();
+                    let args = fc.get("args").map_or_else(
+                        || "{}".to_string(),
+                        |a| serde_json::to_string(a).unwrap_or_default(),
+                    );
+                    Some(tools::ToolCall {
+                        id: format!("call_{}", uuid::Uuid::new_v4()),
+                        call_type: "function".to_string(),
+                        function: tools::FunctionCall {
+                            name,
+                            arguments: args,
+                        },
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Pull `(promptTokenCount, candidatesTokenCount)` out of a Gemini
+/// response's `usageMetadata` block. Missing fields default to zero.
+fn gemini_extract_usage_tokens(json: &serde_json::Value) -> (u64, u64) {
+    let usage = json.get("usageMetadata");
+    let input = usage
+        .and_then(|u| u.get("promptTokenCount"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let output = usage
+        .and_then(|u| u.get("candidatesTokenCount"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    (input, output)
+}
+
+fn openai_activity_type(tool_call: &tools::ToolCall) -> &'static str {
+    match tool_call.function.name.as_str() {
+        "read_file" => "file_read",
+        "write_file" => "file_write",
+        "edit_file" => "file_edit",
+        "bash" => "bash_command",
+        "chainlink" => serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments)
+            .map_or("chainlink", |args| {
+                args.get("command")
+                    .and_then(|v| v.as_str())
+                    .map_or("chainlink", |cmd| {
+                        if cmd.starts_with("create") {
+                            "issue_created"
+                        } else if cmd.starts_with("close") {
+                            "issue_closed"
+                        } else if cmd.starts_with("comment") {
+                            "issue_comment"
+                        } else {
+                            "chainlink"
+                        }
+                    })
+            }),
+        // SAFETY: tool-call names are static-ish strings; we don't get to choose them
+        // from this caller's perspective, so we degrade to a constant rather than leak
+        // an unbounded set of static strings into the activity log.
+        _ => "tool",
+    }
+}
