@@ -7,8 +7,9 @@
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-19T00:12:27.751063246Z",
-  "updated_at": "2026-05-19T00:12:29.095868563Z",
+  "updated_at": "2026-05-19T00:12:30.417415489Z",
   "labels": [
-    "plugins"
+    "plugins",
+    "security"
   ]
 }
