@@ -3,11 +3,12 @@
   "display_id": 801,
   "title": "OAuthStore::persist_to_disk tmp file leaks readable tokens between write and chmod",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/oauth.rs:528-575 (persist_to_disk)\n## Violation\n```rust\nlet tmp_path = path.with_extension(\"tmp\");\nif let Err(e) = fs::write(&tmp_path, &json) { ... }\nif let Err(e) = fs::rename(&tmp_path, path) { ... }\n...\n#[cfg(unix)]\n{\n    use std::os::unix::fs::PermissionsExt;\n    if let Ok(metadata) = fs::metadata(path) {\n        let mut perms = metadata.permissions();\n        perms.set_mode(0o600);\n        ...\n    }\n}\n```\n\n`fs::write` creates `<path>.tmp` with the process umask — typically `0o644` for users with default `umask 022`, or `0o664` for `umask 002`. The OAuth refresh+access tokens land on disk world-readable for the brief window between `fs::write` and `fs::rename`, and then for a second window between `rename` and the chmod-to-0600 call. Concurrent `cat` or `inotify`-watching processes on the same host can race the read.\n\nThe rename also preserves the tmp file's permissions on the destination, NOT the original file's permissions — so on a system where the destination was previously 0600, the rename CLOBBERS the secure mode and replaces it with 0644 until the explicit chmod runs.\n\nAdditionally `fs::write(&tmp_path, ...)` will TRUNCATE an existing `.tmp` file with no exclusive-create check; a malicious local user can pre-create the tmp file as a symlink to `/etc/shadow` or any other path and the rename target leaks. (The destination `path` itself has a symlink-defense in `load_from_disk`, but the `.tmp` step has none.)\n## Mandated refactor\nUse `OpenOptions::new().create_new(true).write(true).mode(0o600).open(tmp)` (requires `std::os::unix::fs::OpenOptionsExt`) to atomically create the tmp file with exclusive mode and final permissions in a single syscall. Reject `.tmp` if it already exists. Add a `fs::remove_file(&tmp_path)` guard on every error path so a half-written tmp doesn't survive across runs. On non-Unix, document the absence of secure permissions and refuse to persist credentials at all.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:00:49.768897296Z",
-  "updated_at": "2026-05-18T22:00:52.873103047Z",
+  "updated_at": "2026-05-19T23:42:40.936279633Z",
+  "closed_at": "2026-05-19T23:42:40.936279633Z",
   "labels": [
     "qa-review",
     "security"
