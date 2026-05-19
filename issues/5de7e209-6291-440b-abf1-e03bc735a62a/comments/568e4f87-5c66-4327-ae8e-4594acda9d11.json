@@ -1,0 +1,10 @@
+{
+  "uuid": "568e4f87-5c66-4327-ae8e-4594acda9d11",
+  "issue_uuid": "5de7e209-6291-440b-abf1-e03bc735a62a",
+  "author": "lOrm",
+  "content": "Fix landed: src/tools/bash/policy.rs apply_env_scrub flipped from env_remove-by-denylist to env_clear+env-by-allowlist. ENV_ALLOWLIST_EXACT enumerates ~50 safe POSIX/toolchain vars (PATH, HOME, USER, SHELL, TMPDIR, LANG, TERM, CARGO_HOME, RUSTUP_HOME, RUST_LOG, NODE_ENV, PYTHONPATH, JAVA_HOME, GOPATH, etc.); ENV_ALLOWLIST_PREFIXES covers LC_*, XDG_*, SSH_*, DBUS_*. New helper is_env_allowed(key) gates by allowlist AND is_sensitive_env (belt-and-braces). hooks/mod.rs is_sensitive_env usage is a separate codepath out of scope. Forensic evidence: 19/19 policy tests pass (14 baseline + 5 new); 33/33 bash integration tests pass with b4c updated; cargo clippy --all-targets --all-features exit 0. No #[allow], no clippy.toml, no #[ignore].",
+  "created_at": "2026-05-19T22:54:22.586257986Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABARsx8bObNddfg7zHo3bpSi0AeBmCk32CVAKmAFGcMrwNu11nYCBud8w1/nsg/5/o8jPE0kr52Ek3OCgRreGC1CA=="
+}
