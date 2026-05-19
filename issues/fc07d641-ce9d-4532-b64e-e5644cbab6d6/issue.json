@@ -3,11 +3,12 @@
   "display_id": 689,
   "title": "git_clone / git_pull / git rev-parse may execute via PATH-injected git binary",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/plugins/git.rs:26-46, src/plugins/git.rs:55-71, src/plugins/git.rs:80-93\n## Violation\nAll three subprocess invocations construct the git command with a bare program name. \\\"std::process::Command::new(\\\"git\\\")\\\" resolves \\\"git\\\" by walking the runtime PATH, so any directory writeable by an attacker that ends up earlier on PATH (e.g. a poisoned workspace, manipulated user shell, CI runner with misordered PATH) lets a malicious binary masquerade as git and run with the user's privileges during plugin install/update. Quoted lines:\n\n    let mut cmd = std::process::Command::new(\\\"git\\\");\n    cmd.arg(\\\"clone\\\").arg(\\\"--depth\\\").arg(\\\"1\\\");\n    ...\n    let output = std::process::Command::new(\\\"git\\\")\n        .arg(\\\"rev-parse\\\").arg(\\\"HEAD\\\")\n    ...\n    let output = std::process::Command::new(\\\"git\\\")\n        .arg(\\\"pull\\\")\n\nPlugin install is an untrusted-code path, so PATH-injection escalation is a Major-severity supply-chain hole.\n## Mandated refactor\nResolve git's absolute path once at process start using which::which (or equivalent) and cache the result in a module-level OnceLock; pass that PathBuf to Command::new throughout git.rs. Refuse install when the canonical git binary is not under a system-trusted prefix (e.g. /usr/bin) and a managed PluginPolicy is active.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:47:28.084434595Z",
-  "updated_at": "2026-05-18T21:49:33.511598534Z",
+  "updated_at": "2026-05-19T20:40:39.591924502Z",
+  "closed_at": "2026-05-19T20:40:39.591924502Z",
   "labels": [
     "qa-review"
   ]
