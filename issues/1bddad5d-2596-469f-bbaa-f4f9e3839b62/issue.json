@@ -3,11 +3,12 @@
   "display_id": 788,
   "title": "Gemini SAFETY finish reason swallowed in pipeline handle_google_response",
   "description": "## Severity\nMajor\n## Dimension\nerror-handling\n## Location\nsrc/pipeline.rs:396-504\n## Violation\nhandle_google_response checks for top-level 'error' field but does not check candidate.finishReason. Gemini returns finishReason=SAFETY or RECITATION on filtered output with an empty or partial candidates array. The function returns Ok with empty text — the TUI sees no completion, no error, and the user has no idea why the model 'said nothing'. Compare to GoogleAdapter::transform_response which maps SAFETY → 'content_filter'. Pipeline silently truncates.\n## Mandated refactor\nAfter extracting text/tool_calls, inspect candidates[0].finishReason. If MAX_TOKENS, SAFETY, RECITATION, or BLOCKLIST, append a structured warning to text or return Err with a specific FilteredResponse variant. Send AppEvent::ApiError so the user sees a clear failure mode.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:58:01.892500763Z",
-  "updated_at": "2026-05-18T21:59:05.470536275Z",
+  "updated_at": "2026-05-19T23:50:32.798974588Z",
+  "closed_at": "2026-05-19T23:50:32.798974588Z",
   "labels": [
     "qa-review",
     "error-handling"
