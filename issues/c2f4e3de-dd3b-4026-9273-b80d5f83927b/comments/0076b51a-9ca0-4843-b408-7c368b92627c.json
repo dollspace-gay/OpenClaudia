@@ -1,0 +1,10 @@
+{
+  "uuid": "0076b51a-9ca0-4843-b408-7c368b92627c",
+  "issue_uuid": "c2f4e3de-dd3b-4026-9273-b80d5f83927b",
+  "author": "lOrm",
+  "content": "Replaced twin booleans is_error/is_thinking + stringly-typed role on DisplayMessage with MessageKind enum (User, Assistant, Thinking, SystemInfo, SystemError, ToolStart{name}, ToolOk{name}, ToolErr{name}). Also introduced Role, Mode, EffortLevel enums across messages.rs and app.rs. 47 call sites migrated, 0 old patterns remain, 28 new tests added. Build clean, clippy clean, 1204/1204 tests pass.",
+  "created_at": "2026-05-19T10:59:19.876304360Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAxu5AycSwK+f3qKW3hA+RKv3NxcYeAmu2SP54Pk5DX3U7lfKDfYqy8LHPqLNPFnIBEW8iO9sbV1qYz5duRv5nBQ=="
+}
