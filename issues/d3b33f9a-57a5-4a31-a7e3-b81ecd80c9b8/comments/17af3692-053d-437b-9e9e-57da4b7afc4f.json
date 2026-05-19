@@ -1,0 +1,10 @@
+{
+  "uuid": "17af3692-053d-437b-9e9e-57da4b7afc4f",
+  "issue_uuid": "d3b33f9a-57a5-4a31-a7e3-b81ecd80c9b8",
+  "author": "lOrm",
+  "content": "Fixed: McpServer::new now wraps the initialize handshake (initialize + tools/list) in tokio::time::timeout with a 30s default deadline. McpError::Timeout converted to a struct variant { phase: &'static str } so the timeout source ('initialize', 'tools/list', 'tools/call', 'http-request') is explicit. New public McpServerConfig (distinct from plugins::manifest::McpServerConfig which describes on-disk launch params) carries initialize_timeout_secs; 0 disables the deadline for callers that supply their own outer cancellation scope. McpServer::new uses default config; McpServer::new_with_config takes explicit config. 4 new tests via in-memory FakeTransport: timeout fires on stalled server (Timeout { phase: 'initialize' } in <5s vs 60s stall, 1s deadline), normal handshake succeeds, timeout is configurable (default=30s + 1s override honoured at runtime), zero disables deadline. All 1402 lib tests pass, cargo clippy --lib --tests -D warnings exits 0, no #[allow], no #[ignore], no clippy.toml changes.",
+  "created_at": "2026-05-19T19:46:15.565638290Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABARjKQaPhq2H9V6akEGEdAsI0G16Or/gzQmTuw2Cfi9uDXszR4BVb2XT2zvpH2iOHU05OMG7EjT1+pwegh6pBkAA=="
+}
