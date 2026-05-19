@@ -3,9 +3,10 @@
   "display_id": 760,
   "title": "handle_google_response duplicates GoogleAdapter transform_response logic",
   "description": "## Severity\nMajor\n## Dimension\ndry\n## Location\nsrc/pipeline.rs:396-504 vs src/providers/google.rs:164-258\n## Violation\nhandle_google_response reimplements Gemini response parsing already present in GoogleAdapter::transform_response. The candidates/content/parts traversal, functionCall mapping, and usageMetadata extraction are duplicated.\n## Mandated refactor\nPipeline should call GoogleAdapter::new().transform_response then convert tool_calls into ToolCall once.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:54:59.750411209Z",
-  "updated_at": "2026-05-18T21:54:59.750411209Z"
+  "updated_at": "2026-05-19T22:18:52.430174566Z",
+  "closed_at": "2026-05-19T22:18:52.430174566Z"
 }
