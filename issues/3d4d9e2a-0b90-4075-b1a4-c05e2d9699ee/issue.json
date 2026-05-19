@@ -3,11 +3,12 @@
   "display_id": 716,
   "title": "Notebook re-canonicalizes path after read-tracker check (TOCTOU window)",
   "description": "## Severity\nMajor\n\n## Dimension\nSecurity and Access / Concurrency\n\n## Location\nsrc/tools/file/notebook.rs:54-108 (`execute_notebook_edit`)\n\n## Violation\nThe function does three filesystem resolutions and a read-tracker lookup in this order:\n\n```rust\nlet resolved = match resolve_path(raw_path) { ... };       // line 54  - canonicalize #1\n...\nif !READ_TRACKER.has_been_read(&resolved) { ... }          // line 87  - check on `resolved`\n...\nlet notebook_path = match std::fs::canonicalize(&resolved) // line 99  - canonicalize #2\n    { Ok(canon) => canon.to_string_lossy().to_string(), ... };\n...\nif let Err(msg) = crate::guardrails::check_file_access(notebook_path) { ... }\nlet content = match fs::read_to_string(notebook_path) { ... };  // line 115\n```\n\nBetween the read-tracker check on `resolved` (which is already a canonical PathBuf from `resolve_path`) and the second `canonicalize` on the same path, an attacker (or a sibling tool) can swap a symlink in the parent directory. The second canonicalize may then resolve to a different file than the one whose readability was attested. The read-tracker guard is bypassable.\n\nWorse, `resolve_path` already canonicalizes (mod.rs:144-164). The second canonicalize is redundant — it exists only because the function was written without trusting its own helper. Use the already-canonical PathBuf throughout.\n\n## Mandated refactor\nRemove lines 99-108. After `let resolved = match resolve_path(raw_path) { ... }`, use `resolved.as_path()` everywhere. Pass `resolved.to_string_lossy().as_ref()` to `check_file_access` and `fs::read_to_string`. Single canonicalization eliminates the TOCTOU window and the duplicated work.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:49:53.376618087Z",
-  "updated_at": "2026-05-18T21:51:03.725510574Z",
+  "updated_at": "2026-05-19T21:19:36.698699521Z",
+  "closed_at": "2026-05-19T21:19:36.698699521Z",
   "labels": [
     "qa-review",
     "security"
