@@ -3,9 +3,10 @@
   "display_id": 719,
   "title": "subagent: block_in_place + Handle::block_on inside sync tool dispatch can deadlock",
   "description": "## Severity\nMajor\n## Dimension\nconcurrency\n## Location\nsrc/subagent.rs:1340-1350 (execute_task_tool sync branch)\n## Violation\n```rust\nlet result = match Handle::try_current() {\n    Ok(handle) => tokio::task::block_in_place(|| {\n        handle.block_on(run_subagent(&config, app_config, &client))\n    }),\n    Err(_) => match tokio::runtime::Runtime::new() {\n        Ok(rt) => rt.block_on(run_subagent(&config, app_config, &client)),\n```\n\n`tokio::task::block_in_place` PANICS under `current_thread` runtimes (commonly used by CLI/test harnesses). `Handle::block_on` from within a runtime worker is itself a known deadlock anti-pattern when the inner future yields back to the same single-threaded executor. The fallback `Runtime::new()` spawns a fresh runtime per tool call: leaks threads, can starve the outer I/O reactor, and bypasses cancellation.\n## Mandated refactor\nMake `execute_task_tool` async (return a future) and let the tool dispatcher await it. The sync wrapper should live at the CLI boundary only. Remove the `Runtime::new()` fallback — fail fast with a typed error when no runtime is in scope.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:50:47.979300606Z",
-  "updated_at": "2026-05-18T21:50:47.979300606Z"
+  "updated_at": "2026-05-19T22:09:25.045835709Z",
+  "closed_at": "2026-05-19T22:09:25.045835709Z"
 }
