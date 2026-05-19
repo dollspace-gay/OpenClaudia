@@ -1,0 +1,10 @@
+{
+  "uuid": "3bb02853-6eaf-445c-ac3e-888cd61bf7c2",
+  "issue_uuid": "4daca27e-b7c9-4006-bdc9-1d6da2bd142e",
+  "author": "lOrm",
+  "content": "Fixed: walk_dir bounded by MAX_WALK_DEPTH=100, uses symlink_metadata (does not follow symlinks), and a canonical-path visited HashSet breaks residual cycles. 5 forensic tests added in src/tools/file_index.rs (depth-cap, symlink loop, normal walk, symlink-to-outside-root, intra-tree file symlink). All 10 file_index tests pass. cargo clippy on file_index.rs clean. No #[allow], no clippy.toml, no #[ignore] added by this fix.",
+  "created_at": "2026-05-19T16:16:24.022409707Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABACxwJc6ozZkR5tERRW2soBbukGZgfGQyhp9iycc+2HwQeqsGZStAOzHJ/aBIPPZiCrWMbd0gfcip/CylKA803Bw=="
+}
