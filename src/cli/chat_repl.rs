@@ -37,11 +37,12 @@ use crate::cli::repl::vim::{self, VimState};
 use crate::cli::repl::{load_chat_session, save_chat_session, ChatSession};
 use crate::{
     build_chat_endpoint_and_headers, build_chat_request_body, build_hook_engine, chdir_to_git_root,
-    check_tool_permission_interactive, finalize_chat, init_memory_with_banner,
-    init_permission_manager, init_plugin_manager, init_rustyline_with_history,
-    init_vdd_engine_if_enabled, maybe_auto_compact, maybe_resume_session,
-    parse_initial_behavior_mode, read_multiline_continuation, render_welcome_or_fallback,
-    resolve_chat_auth, resolve_model_name, run_vdd_review, ChatAuth, ToolPermissionResult,
+    check_tool_permission_interactive, check_tool_unrestricted, finalize_chat,
+    init_memory_with_banner, init_permission_manager, init_plugin_manager,
+    init_rustyline_with_history, init_vdd_engine_if_enabled, maybe_auto_compact,
+    maybe_resume_session, parse_initial_behavior_mode, read_multiline_continuation,
+    render_welcome_or_fallback, resolve_chat_auth, resolve_model_name, run_vdd_review, ChatAuth,
+    ToolPermissionResult,
 };
 
 use openclaudia::providers::{convert_messages_to_anthropic, convert_tools_to_anthropic};
@@ -1350,15 +1351,16 @@ impl ChatRepl {
     /// Returns `true` if the caller should proceed with execution.
     fn gemini_check_permission(&mut self, tool_call: &tools::ToolCall) -> bool {
         let tool_args_val = parse_tool_args(&tool_call.function);
-        matches!(
+        let result = if self.dangerously_skip_permissions {
+            check_tool_unrestricted(&tool_call.function.name, &tool_args_val)
+        } else {
             check_tool_permission_interactive(
                 &tool_call.function.name,
                 &tool_args_val,
-                self.dangerously_skip_permissions,
                 &mut self.always_allowed_tools,
-            ),
-            ToolPermissionResult::Allowed
-        )
+            )
+        };
+        matches!(result, ToolPermissionResult::Allowed)
     }
 
     /// Dispatch the tool, observe it for auto-learning, and return the
@@ -2007,12 +2009,16 @@ impl ChatRepl {
     /// tool message and return `false`. On `Allowed` return `true`.
     fn push_permission_or_proceed(&mut self, tool_call: &tools::ToolCall) -> bool {
         let tool_args_val = parse_tool_args(&tool_call.function);
-        match check_tool_permission_interactive(
-            &tool_call.function.name,
-            &tool_args_val,
-            self.dangerously_skip_permissions,
-            &mut self.always_allowed_tools,
-        ) {
+        let result = if self.dangerously_skip_permissions {
+            check_tool_unrestricted(&tool_call.function.name, &tool_args_val)
+        } else {
+            check_tool_permission_interactive(
+                &tool_call.function.name,
+                &tool_args_val,
+                &mut self.always_allowed_tools,
+            )
+        };
+        match result {
             ToolPermissionResult::Denied(msg) => {
                 self.chat_session.messages.push(serde_json::json!({
                     "role": "tool",

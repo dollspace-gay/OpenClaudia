@@ -35,8 +35,8 @@ pub use manifest::{
     PluginManifest, SkillsSpec,
 };
 pub use marketplace::{
-    MarketplaceManifest, MarketplaceMetadata, MarketplacePlugin, MarketplaceSource, PluginSource,
-    PluginSourceDef,
+    GitHubSource, MarketplaceManifest, MarketplaceMetadata, MarketplacePlugin, MarketplaceSource,
+    NpmSource, PipSource, PluginSource, PluginSourceDef, UrlSource,
 };
 pub use validate::{
     derive_dir_name_from_url, validate_plugin_dir_name, validate_source_url, PublicKey,

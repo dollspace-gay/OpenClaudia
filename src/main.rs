@@ -363,23 +363,13 @@ enum ToolPermissionResult {
     Denied(String),
 }
 
-/// Check whether a tool call requires interactive permission and prompt the user if so.
+/// Returns `true` for tools that require an explicit permission decision before execution.
 ///
-/// Read-only / informational tools execute without prompting. Write/destructive tools
-/// (bash, `write_file`, `edit_file`, etc.) prompt the user unless:
-/// - `skip_permissions` is true (--dangerously-skip-permissions flag)
-/// - The tool has been marked "always allow" for this session
-///
-/// Returns `Allowed` to proceed, or `Denied(message)` to send back to the model.
-fn check_tool_permission_interactive(
-    tool_name: &str,
-    tool_args: &serde_json::Value,
-    skip_permissions: bool,
-    always_allowed: &mut std::collections::HashSet<String>,
-) -> ToolPermissionResult {
-    use std::io::Write as _;
-    // Tools that never need permission (read-only / informational)
-    let needs_permission = !matches!(
+/// Read-only / informational tools (e.g. `read_file`, `grep`, `web_fetch`) return `false`
+/// and are always executed without prompting. Write / destructive tools (`bash`,
+/// `write_file`, `edit_file`) return `true`.
+fn tool_needs_permission(tool_name: &str) -> bool {
+    !matches!(
         tool_name,
         "read_file"
             | "list_files"
@@ -397,19 +387,12 @@ fn check_tool_permission_interactive(
             | "lsp"
             | "memory_search"
             | "core_memory_get"
-    );
+    )
+}
 
-    if !needs_permission || skip_permissions {
-        return ToolPermissionResult::Allowed;
-    }
-
-    // Check session-level "always allow" cache
-    if always_allowed.contains(tool_name) {
-        return ToolPermissionResult::Allowed;
-    }
-
-    // Build a human-readable description of what the tool wants to do
-    let description = match tool_name {
+/// Build a human-readable description of a tool call for the permission prompt.
+fn tool_call_description(tool_name: &str, tool_args: &serde_json::Value) -> String {
+    match tool_name {
         "bash" => {
             let cmd = tool_args
                 .get("command")
@@ -434,7 +417,41 @@ fn check_tool_permission_interactive(
             format!("Edit file: {path}")
         }
         _ => format!("Execute: {tool_name}"),
-    };
+    }
+}
+
+/// Check whether a tool call requires interactive permission and prompt the user if so.
+///
+/// Read-only / informational tools execute without prompting. Write/destructive tools
+/// (`bash`, `write_file`, `edit_file`, etc.) prompt the user unless the tool has been
+/// marked "always allow" for this session via a previous `a` response.
+///
+/// Use [`check_tool_unrestricted`] instead when running in headless/non-interactive mode
+/// where all tool calls must be auto-approved (e.g. `--dangerously-skip-permissions`).
+///
+/// # Fix #284
+///
+/// This function replaces the old `check_tool_permission_interactive(skip_permissions: bool, …)`
+/// boolean-flag anti-pattern. The two distinct behaviors are now two distinct functions.
+///
+/// Returns `Allowed` to proceed, or `Denied(message)` to send back to the model.
+fn check_tool_permission_interactive(
+    tool_name: &str,
+    tool_args: &serde_json::Value,
+    always_allowed: &mut std::collections::HashSet<String>,
+) -> ToolPermissionResult {
+    use std::io::Write as _;
+
+    if !tool_needs_permission(tool_name) {
+        return ToolPermissionResult::Allowed;
+    }
+
+    // Check session-level "always allow" cache
+    if always_allowed.contains(tool_name) {
+        return ToolPermissionResult::Allowed;
+    }
+
+    let description = tool_call_description(tool_name, tool_args);
 
     eprint!("\x1b[33m⚠ {description}\x1b[0m [y/n/a(lways)] ");
     std::io::stderr().flush().ok();
@@ -461,6 +478,29 @@ fn check_tool_permission_interactive(
             "Permission denied by user for tool '{tool_name}'"
         )),
     }
+}
+
+/// Bypass permission checks and auto-approve all tool calls.
+///
+/// This is the explicit bypass path used when `--dangerously-skip-permissions` is set.
+/// Unlike [`check_tool_permission_interactive`], this function never prompts the user and
+/// always returns `Allowed`.
+///
+/// # Fix #284
+///
+/// Replaces the old `skip_permissions: bool` boolean-flag parameter on
+/// `check_tool_permission_interactive`. The caller's intent is now expressed by calling
+/// this function, not by passing a bool.
+///
+/// # Safety
+///
+/// Calling this function grants unrestricted tool execution. Only call it when the
+/// user has explicitly opted in via `--dangerously-skip-permissions`.
+const fn check_tool_unrestricted(
+    _tool_name: &str,
+    _tool_args: &serde_json::Value,
+) -> ToolPermissionResult {
+    ToolPermissionResult::Allowed
 }
 
 /// Interactive chat mode (default command)

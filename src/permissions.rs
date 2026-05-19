@@ -473,11 +473,85 @@ mod tests {
         (mgr, dir)
     }
 
+    /// Fix #282: a manager built with `enabled = false` still auto-allows, but that is no
+    /// longer the default posture. The default (`PermissionsConfig::default()`) now produces
+    /// `enabled = true`, so a fresh install is deny-by-default.
     #[test]
     fn test_disabled_always_allows() {
+        // `enabled = false` is an explicit opt-out — still short-circuits to Allowed.
         let (mgr, _dir) = make_manager(false, vec![]);
         let result = mgr.check("bash", &json!({"command": "rm -rf /"}));
         assert_eq!(result, CheckResult::Allowed);
+    }
+
+    /// Fix #282: the DEFAULT `PermissionsConfig` now has `enabled = true` (deny-by-default).
+    /// A manager built from `PermissionsConfig::default()` must prompt for destructive calls.
+    #[test]
+    fn test_default_config_is_deny_by_default() {
+        use crate::config::PermissionsConfig;
+        let cfg = PermissionsConfig::default();
+        assert!(
+            cfg.enabled,
+            "#282: default PermissionsConfig must have enabled=true"
+        );
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let persist_path = dir.path().join("permissions.json");
+        let mgr = PermissionManager::new(persist_path, cfg.enabled, cfg.default_allow);
+        // A fresh default config must NOT auto-allow rm -rf /
+        let result = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        assert!(
+            matches!(result, CheckResult::NeedsPrompt { .. }),
+            "#282: default config must produce NeedsPrompt for destructive bash, got: {result:?}"
+        );
+    }
+
+    /// Fix #282: serde round-trip — YAML without `permissions.enabled` must default to `true`.
+    #[test]
+    fn test_permissions_config_serde_default_is_true() {
+        use crate::config::PermissionsConfig;
+        // Simulate loading config.yaml with no `enabled` key present
+        let cfg: PermissionsConfig = serde_yaml::from_str("{}").unwrap();
+        assert!(
+            cfg.enabled,
+            "#282: deserializing PermissionsConfig from empty YAML must yield enabled=true"
+        );
+    }
+
+    /// Fix #282: serde opt-out — `enabled: false` in YAML still works.
+    #[test]
+    fn test_permissions_config_serde_explicit_false() {
+        use crate::config::PermissionsConfig;
+        let cfg: PermissionsConfig = serde_yaml::from_str("enabled: false").unwrap();
+        assert!(
+            !cfg.enabled,
+            "#282: explicit enabled=false in YAML must be respected"
+        );
+        // An explicitly-disabled manager must short-circuit to Allowed
+        let dir = tempfile::TempDir::new().unwrap();
+        let persist_path = dir.path().join("permissions.json");
+        let mgr = PermissionManager::new(persist_path, cfg.enabled, cfg.default_allow);
+        let result = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        assert_eq!(
+            result,
+            CheckResult::Allowed,
+            "#282: explicit enabled=false must still short-circuit to Allowed"
+        );
+    }
+
+    /// Fix #282: a manager built from the default config denies `write_file`.
+    #[test]
+    fn test_default_config_denies_write_file() {
+        use crate::config::PermissionsConfig;
+        let cfg = PermissionsConfig::default();
+        let dir = tempfile::TempDir::new().unwrap();
+        let persist_path = dir.path().join("permissions.json");
+        let mgr = PermissionManager::new(persist_path, cfg.enabled, cfg.default_allow);
+        let result = mgr.check("write_file", &json!({"path": "/etc/passwd"}));
+        assert!(
+            matches!(result, CheckResult::NeedsPrompt { .. }),
+            "#282: default config must produce NeedsPrompt for write_file, got: {result:?}"
+        );
     }
 
     #[test]
@@ -992,32 +1066,61 @@ mod phase2_spec_pins {
         );
     }
 
-    // ── B7 · enabled=false (default) is allow-all; enabled=true + empty → deny ─
+    // ── B7 · Default config is deny-by-default (Fix #282 + #581) ───────────
+    //
+    // Pre-fix: PermissionsConfig::default() had enabled=false → allow-all.
+    // Post-fix (#282): default is enabled=true → deny-by-default (CC parity).
+    // The `disabled()` helper still constructs an explicit enabled=false manager
+    // for tests that need to verify that path still short-circuits.
 
-    /// B7-deny-1 (SECURITY: #581): default `PermissionsConfig` has enabled=false,
-    /// so a manager built from defaults allows all tool calls including rm -rf /.
+    /// B7-deny-1 (FIX #282 / SECURITY: #581): `PermissionsConfig::default()` now has
+    /// `enabled=true`, so a fresh install is deny-by-default, matching CC.
+    /// The old allow-all posture required explicitly constructing with `enabled=false`.
     #[test]
-    fn b7_disabled_allows_all_including_destructive() {
+    fn b7_default_config_is_deny_by_default_not_allow_all() {
+        use crate::config::PermissionsConfig;
+        let cfg = PermissionsConfig::default();
+        // Post-fix: default must be enabled=true (deny-by-default).
+        assert!(
+            cfg.enabled,
+            "FIX #282/#581: PermissionsConfig::default() must have enabled=true"
+        );
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("perms.json");
+        let mgr = PermissionManager::new(path, cfg.enabled, cfg.default_allow);
+        let r = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        assert!(
+            matches!(r, CheckResult::NeedsPrompt { .. }),
+            "FIX #282/#581: default config must deny (NeedsPrompt) rm -rf /, got {r:?}"
+        );
+    }
+
+    /// B7-deny-2 (FIX #282): default config denies writes to safety-sensitive paths.
+    #[test]
+    fn b7_default_config_denies_git_config_edit() {
+        use crate::config::PermissionsConfig;
+        let cfg = PermissionsConfig::default();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("perms.json");
+        let mgr = PermissionManager::new(path, cfg.enabled, cfg.default_allow);
+        let r = mgr.check("edit_file", &json!({"path": ".git/config"}));
+        assert!(
+            matches!(r, CheckResult::NeedsPrompt { .. }),
+            "FIX #282: default config must deny (NeedsPrompt) .git/config edits, got {r:?}"
+        );
+    }
+
+    /// B7-explicit-disabled: explicit `enabled=false` still short-circuits to Allowed
+    /// (the old default behaviour, now only reachable by opting out explicitly).
+    #[test]
+    fn b7_explicit_disabled_allows_all() {
         let mgr = disabled();
-        // SECURITY: #581 — CC's permission pipeline always runs; OC defaults to off.
         let r = mgr.check("bash", &json!({"command": "rm -rf /"}));
         assert_eq!(
             r,
             CheckResult::Allowed,
-            "B7 SECURITY #581: enabled=false (the default) must allow rm -rf / (documents gap)"
-        );
-    }
-
-    /// B7-deny-2 (SECURITY: #581): enabled=false allows writes to safety-sensitive paths.
-    #[test]
-    fn b7_disabled_allows_git_config_edit() {
-        let mgr = disabled();
-        // SECURITY: #581
-        let r = mgr.check("edit_file", &json!({"path": ".git/config"}));
-        assert_eq!(
-            r,
-            CheckResult::Allowed,
-            "B7 SECURITY #581: enabled=false allows .git/config edits (documents gap)"
+            "B7: explicit enabled=false must still short-circuit to Allowed"
         );
     }
 

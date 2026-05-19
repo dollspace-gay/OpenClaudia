@@ -8,7 +8,8 @@ use tracing::{debug, info, warn};
 use super::git::{copy_dir_recursive_within, git_clone, git_pull};
 use super::install::{InstallScope, InstalledPlugins, PluginInstallEntry};
 use super::marketplace::{
-    MarketplaceManifest, MarketplacePlugin, MarketplaceSource, PluginSource, PluginSourceDef,
+    GitHubSource, MarketplaceManifest, MarketplacePlugin, MarketplaceSource, PluginSource,
+    PluginSourceDef, UrlSource,
 };
 use super::policy::{self, PluginPolicy, PolicyAction, PolicyRejection};
 use super::validate::{verify_signature, SignatureError};
@@ -767,7 +768,7 @@ impl PluginManager {
                 // install record pins exactly what was materialized —
                 // crosslink #249 mandated refactor point 1.
                 let commit_sha = match def {
-                    PluginSourceDef::Url { url, git_ref } => {
+                    PluginSourceDef::Url(UrlSource { url, git_ref }) => {
                         // No-silent-HEAD rule (#249 mandated point 5): a
                         // `PluginSourceDef::Url` without an explicit
                         // `git_ref` would silently track upstream HEAD,
@@ -785,7 +786,7 @@ impl PluginManager {
                             .map_err(|e| PluginError::IoError(e.to_string()))?;
                         git_clone(url, &dest, git_ref.as_deref())?
                     }
-                    PluginSourceDef::GitHub { repo, git_ref } => {
+                    PluginSourceDef::GitHub(GitHubSource { repo, git_ref }) => {
                         let resolved_url = format!("https://github.com/{repo}.git");
                         fs::create_dir_all(&plugins_dir)
                             .map_err(|e| PluginError::IoError(e.to_string()))?;

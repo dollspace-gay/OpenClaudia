@@ -2,9 +2,25 @@
 //!
 //! Contains all types related to `.claude-plugin/plugin.json` parsing,
 //! including commands, hooks, MCP servers, agents, and skills specs.
+//!
+//! # Deserialization safety
+//!
+//! Several fields in plugin manifests accept multiple YAML/JSON shapes (string
+//! path, inline object, array, …).  These are modelled with
+//! `#[serde(untagged)]` enums.  To prevent serde's "first variant that parses"
+//! behaviour from silently swallowing mis-shaped input we apply two mitigations:
+//!
+//! * `#[serde(deny_unknown_fields)]` on every struct that appears as an untagged
+//!   variant — unknown keys cause an explicit error instead of being silently
+//!   dropped.
+//! * A custom [`Deserialize`] for [`CommandsSpec`] that validates the `Map`
+//!   variant: every entry in the map must supply at least one of `source` or
+//!   `content`, so an empty `CommandMetadata` (all `None`) is rejected.  This
+//!   prevents a stray YAML object like `{source: "./cmds"}` (intended as a path
+//!   string) from silently becoming `Map{"source" → CommandMetadata{…all None}}`.
 
 use crate::plugins::validate::PluginSignature;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
@@ -24,8 +40,16 @@ pub struct PluginAuthor {
     pub url: Option<String>,
 }
 
-/// Command metadata in the manifest (object form)
+/// Command metadata in the manifest (object form).
+///
+/// `deny_unknown_fields` is required so that a stray YAML object like
+/// `{source: "./cmds"}` — which the author intended as the string form of
+/// `CommandsSpec::Path` — cannot silently deserialize as a one-entry
+/// `CommandsSpec::Map` whose `CommandMetadata` value absorbs `source` as an
+/// optional field.  With `deny_unknown_fields` any key not listed here becomes
+/// a hard error, making the bug surface at parse time instead of at install time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommandMetadata {
     /// Path to command markdown file, relative to plugin root
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -37,21 +61,52 @@ pub struct CommandMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Hint for command arguments (e.g., "[file]")
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "argumentHint")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "argumentHint"
+    )]
     pub argument_hint: Option<String>,
     /// Default model for this command
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     /// Tools allowed when command runs
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "allowedTools")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "allowedTools"
+    )]
     pub allowed_tools: Option<Vec<String>>,
 }
 
-/// Commands field in manifest - can be a path string, array of paths, or object map
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
+impl CommandMetadata {
+    /// Returns `true` when the entry carries at least one content pointer.
+    ///
+    /// Used by the custom [`CommandsSpec`] deserializer to reject all-`None`
+    /// entries that result from a mis-shaped YAML object being silently coerced
+    /// into a map variant.
+    #[must_use]
+    pub const fn has_content(&self) -> bool {
+        self.source.is_some() || self.content.is_some()
+    }
+}
+
+/// Commands field in manifest — can be a path string, array of paths, or object map.
+///
+/// # Deserialization order and safety
+///
+/// Variants are tried in declaration order by serde's untagged machinery.  The
+/// ordering is safe because the three shapes are structurally disjoint:
+///
+/// 1. `Path(String)` — YAML scalar.  Cannot be confused with an array or object.
+/// 2. `Paths(Vec<String>)` — YAML sequence of scalars.  Cannot be confused with
+///    an object.
+/// 3. `Map(HashMap<…>)` — YAML mapping.  Tried last.
+///
+/// The custom [`Deserialize`] impl below adds an extra check on the `Map`
+/// variant: every entry must have at least one of `source` or `content`.  An
+/// all-`None` entry indicates that the object was never meant to be a map.
+#[derive(Debug, Clone, Serialize)]
 pub enum CommandsSpec {
     /// Single path to command file or directory
     Path(String),
@@ -61,7 +116,68 @@ pub enum CommandsSpec {
     Map(HashMap<String, CommandMetadata>),
 }
 
-/// Hooks field in manifest - can be a path string, inline object, or array
+impl<'de> Deserialize<'de> for CommandsSpec {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+        use serde_json::Value;
+
+        let raw = Value::deserialize(deserializer)?;
+        match raw {
+            Value::String(s) => Ok(Self::Path(s)),
+            Value::Array(arr) => {
+                let mut paths = Vec::with_capacity(arr.len());
+                for v in arr {
+                    match v {
+                        Value::String(s) => paths.push(s),
+                        other => {
+                            return Err(D::Error::custom(format!(
+                                "commands array must contain strings, got: {other}"
+                            )));
+                        }
+                    }
+                }
+                Ok(Self::Paths(paths))
+            }
+            Value::Object(obj) => {
+                let mut map = HashMap::with_capacity(obj.len());
+                for (key, val) in obj {
+                    let meta: CommandMetadata = serde_json::from_value(val).map_err(|e| {
+                        D::Error::custom(format!(
+                            "commands map entry '{key}' is not valid CommandMetadata: {e}"
+                        ))
+                    })?;
+                    if !meta.has_content() {
+                        return Err(D::Error::custom(format!(
+                            "commands map entry '{key}' must specify at least one of \
+                             'source' or 'content'; \
+                             did you mean `commands: \"<path>\"` instead of an object?"
+                        )));
+                    }
+                    map.insert(key, meta);
+                }
+                Ok(Self::Map(map))
+            }
+            other => Err(D::Error::custom(format!(
+                "commands must be a string, array of strings, or object map; got: {other}"
+            ))),
+        }
+    }
+}
+
+/// Hooks field in manifest — can be a path string, inline object, or array.
+///
+/// # Disambiguation
+///
+/// serde's `untagged` tries variants in declaration order.  The ordering below
+/// is safe because the three shapes are structurally disjoint:
+///
+/// * `Path` — YAML scalar (string).
+/// * `Inline` — YAML mapping.  Safe because [`HooksDefinition`] carries
+///   `deny_unknown_fields`, so any key that is not one of the seven known hook
+///   event names causes a hard error.  In particular, `{"path": "./hooks.json"}`
+///   will **not** silently become an empty `Inline` — the unknown key `path` is
+///   rejected.
+/// * `Array` — YAML sequence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum HooksSpec {
@@ -73,7 +189,11 @@ pub enum HooksSpec {
     Array(Vec<HooksSpecEntry>),
 }
 
-/// Single entry in a hooks array
+/// Single entry in a hooks array.
+///
+/// Same disambiguation guarantees as [`HooksSpec`]: `deny_unknown_fields` on
+/// [`HooksDefinition`] prevents a stray `{"path": "…"}` entry from being
+/// silently accepted as an empty inline definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum HooksSpecEntry {
@@ -83,9 +203,20 @@ pub enum HooksSpecEntry {
     Inline(HooksDefinition),
 }
 
-/// Hooks definition matching Claude Code's hooks format
+/// Hooks definition matching Claude Code's hooks format.
+///
+/// `deny_unknown_fields` is the load-bearing safety mechanism here: it ensures
+/// that any YAML object whose keys do not match the known hook event names
+/// (`PreToolUse`, `PostToolUse`, `Notification`, `Stop`, `UserPromptSubmit`,
+/// `SessionStart`, `description`) is rejected at parse time.  Without it, serde
+/// produces an all-empty `HooksDefinition` for arbitrary objects — silently
+/// discarding the user's configuration.  In particular, `{"path":
+/// "./hooks.json"}` would parse as `Inline(HooksDefinition{all empty})` and
+/// silently ignore the file reference entirely.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct HooksDefinition {
+    /// Optional human-readable description of this hooks block
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Pre-tool-use hooks
@@ -260,4 +391,190 @@ pub struct PluginManifest {
     /// `Deserialize` impls on `PluginSignature` itself.
     #[serde(default, rename = "signature", skip_serializing_if = "Option::is_none")]
     pub signature: Option<PluginSignature>,
+}
+
+// ---------------------------------------------------------------------------
+// Tests — deserialization correctness and forensic regression cases
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- CommandsSpec ---
+
+    /// String scalar → Path variant (backwards-compat, basic case).
+    #[test]
+    fn commands_spec_string_parses_as_path() {
+        let spec: CommandsSpec = serde_json::from_str(r#""./commands""#).unwrap();
+        assert!(matches!(spec, CommandsSpec::Path(ref p) if p == "./commands"));
+    }
+
+    /// Array of strings → Paths variant.
+    #[test]
+    fn commands_spec_array_parses_as_paths() {
+        let spec: CommandsSpec = serde_json::from_str(r#"["./cmd1.md", "./cmd2.md"]"#).unwrap();
+        assert!(matches!(spec, CommandsSpec::Paths(ref v) if v.len() == 2));
+    }
+
+    /// Well-formed map with a `source` field → Map variant, content preserved.
+    #[test]
+    fn commands_spec_map_with_source_parses_correctly() {
+        let spec: CommandsSpec =
+            serde_json::from_str(r#"{"deploy": {"source": "./deploy.md"}}"#).unwrap();
+        match spec {
+            CommandsSpec::Map(ref m) => {
+                let meta = m.get("deploy").expect("entry must exist");
+                assert_eq!(meta.source.as_deref(), Some("./deploy.md"));
+            }
+            other => panic!("expected Map, got {other:?}"),
+        }
+    }
+
+    /// Forensic case A — `CommandsSpec` all-None map entry is rejected.
+    ///
+    /// Before this fix: `{"deploy": {}}` silently deserialized as
+    /// `Map{"deploy" => CommandMetadata{all None}}` because `CommandMetadata`
+    /// had no required fields.  Now the custom deserializer rejects it.
+    #[test]
+    fn commands_spec_all_none_map_entry_is_rejected() {
+        let err = serde_json::from_str::<CommandsSpec>(r#"{"deploy": {}}"#).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("must specify at least one of"),
+            "error must name the constraint; got: {msg}"
+        );
+    }
+
+    /// Unknown key inside a `CommandMetadata` object is rejected.
+    #[test]
+    fn commands_spec_map_entry_unknown_field_is_rejected() {
+        let err = serde_json::from_str::<CommandsSpec>(
+            r#"{"deploy": {"source": "./d.md", "typo_field": true}}"#,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("deploy"),
+            "error must identify the bad entry; got: {err}"
+        );
+    }
+
+    /// An array containing a non-string value is rejected.
+    #[test]
+    fn commands_spec_array_with_non_string_is_rejected() {
+        let err = serde_json::from_str::<CommandsSpec>(r#"["./cmd.md", 42]"#).unwrap_err();
+        assert!(
+            err.to_string().contains("must contain strings"),
+            "got: {err}"
+        );
+    }
+
+    // --- HooksSpec / HooksDefinition ---
+
+    /// String → Path variant.
+    #[test]
+    fn hooks_spec_string_parses_as_path() {
+        let spec: HooksSpec = serde_json::from_str(r#""./hooks/hooks.json""#).unwrap();
+        assert!(matches!(spec, HooksSpec::Path(ref p) if p == "./hooks/hooks.json"));
+    }
+
+    /// Inline object with known hook keys → Inline(HooksDefinition).
+    #[test]
+    fn hooks_spec_inline_known_keys_parses_correctly() {
+        let json = r#"{"PreToolUse": [{"type": "command", "command": "echo pre"}]}"#;
+        let spec: HooksSpec = serde_json::from_str(json).unwrap();
+        match spec {
+            HooksSpec::Inline(ref def) => {
+                assert_eq!(def.pre_tool_use.len(), 1);
+                assert_eq!(def.pre_tool_use[0].hook_type, "command");
+            }
+            other => panic!("expected Inline, got {other:?}"),
+        }
+    }
+
+    /// Forensic case B — `{"path": "./hooks.json"}` must NOT parse as an empty Inline.
+    ///
+    /// Before this fix: `HooksDefinition` had no required fields, so any object
+    /// silently became `Inline(HooksDefinition{all empty})`.  The user's file
+    /// path was completely ignored.  Now `deny_unknown_fields` on
+    /// `HooksDefinition` rejects the unknown key `path`.
+    #[test]
+    fn hooks_spec_unknown_key_object_is_rejected() {
+        let result = serde_json::from_str::<HooksSpec>(r#"{"path": "./hooks.json"}"#);
+        assert!(
+            result.is_err(),
+            "expected parse error for unknown field, but got: {result:?}"
+        );
+    }
+
+    /// Array of hooks entries (mix of path and inline) parses correctly.
+    #[test]
+    fn hooks_spec_array_parses_correctly() {
+        let json = r#"[
+            "./hooks/a.json",
+            {"PreToolUse": [{"type": "command", "command": "lint"}]}
+        ]"#;
+        let spec: HooksSpec = serde_json::from_str(json).unwrap();
+        match spec {
+            HooksSpec::Array(ref entries) => {
+                assert_eq!(entries.len(), 2);
+                assert!(matches!(entries[0], HooksSpecEntry::Path(_)));
+                assert!(matches!(entries[1], HooksSpecEntry::Inline(_)));
+            }
+            other => panic!("expected Array, got {other:?}"),
+        }
+    }
+
+    /// `HooksSpecEntry` array with an unknown-field object is rejected.
+    #[test]
+    fn hooks_spec_entry_unknown_field_rejected() {
+        let result = serde_json::from_str::<HooksSpec>(r#"[{"not_a_hook_key": true}]"#);
+        assert!(
+            result.is_err(),
+            "expected parse error for unknown field in array entry; got: {result:?}"
+        );
+    }
+
+    // --- PluginManifest round-trip (backwards-compat) ---
+
+    /// All three `CommandsSpec` shapes survive a full parse — existing config
+    /// files continue to work.
+    #[test]
+    fn plugin_manifest_commands_backwards_compat_roundtrip() {
+        // String form
+        let m: PluginManifest =
+            serde_json::from_str(r#"{"name":"p","commands":"./commands"}"#).unwrap();
+        assert!(matches!(m.commands, Some(CommandsSpec::Path(_))));
+
+        // Array form
+        let m: PluginManifest =
+            serde_json::from_str(r#"{"name":"p","commands":["./a.md","./b.md"]}"#).unwrap();
+        assert!(matches!(m.commands, Some(CommandsSpec::Paths(_))));
+
+        // Map form
+        let m: PluginManifest =
+            serde_json::from_str(r#"{"name":"p","commands":{"build":{"source":"./build.md"}}}"#)
+                .unwrap();
+        assert!(matches!(m.commands, Some(CommandsSpec::Map(_))));
+    }
+
+    /// A manifest with an inline hooks block with valid hook keys parses correctly.
+    #[test]
+    fn plugin_manifest_hooks_inline_backwards_compat() {
+        let json = r#"{
+            "name": "my-plugin",
+            "hooks": {
+                "PreToolUse": [{"type": "command", "command": "lint"}],
+                "Stop": [{"type": "command", "command": "cleanup"}]
+            }
+        }"#;
+        let m: PluginManifest = serde_json::from_str(json).unwrap();
+        match m.hooks {
+            Some(HooksSpec::Inline(ref def)) => {
+                assert_eq!(def.pre_tool_use.len(), 1);
+                assert_eq!(def.stop.len(), 1);
+            }
+            other => panic!("expected Inline hooks, got {other:?}"),
+        }
+    }
 }
