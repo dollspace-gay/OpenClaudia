@@ -1,0 +1,10 @@
+{
+  "uuid": "5f83d56e-bddd-4970-9422-e52eb9f38f3a",
+  "issue_uuid": "32f6e63c-e512-41cf-9d39-9011e311f511",
+  "author": "lOrm",
+  "content": "Fixed both #741a (atomic save) and #741b (corrupt-load distinction).\n\n**#741a -- atomic save (src/migrations/ledger.rs)**:\n- save() writes to PID+nonce sibling temp file ('migrations.json.tmp.<pid>.<nonce>'), tightens perms to 0o600 on Unix, fsyncs, then atomic rename. Matches the pattern at src/plugins/install.rs and src/session/mod.rs (referenced #287).\n- Temp-file cleanup on every failure path so a crash mid-save never leaves a stray.\n- TMP_NONCE = AtomicU64 ensures concurrent savers from the same process never collide.\n\n**#741b -- load surfaces corruption (src/migrations/ledger.rs)**:\n- load() signature changed from '-> Self' to '-> anyhow::Result<Self>'.\n- Missing file => Ok(empty). First-run state, not an error.\n- File exists but unreadable/unparseable => Err with context naming the path. The corrupt file is preserved on disk for forensic inspection.\n- src/migrations/mod.rs::run_all preserves the framework contract (never panic, never return Err) by logging at warn! and falling back to empty -- the signal is no longer swallowed at the source.\n\n**Tests added (5 new in src/migrations/tests.rs)**:\n- fix741b_corrupt_ledger_surfaces_error_not_silent_empty\n- fix741b_missing_file_is_ok_empty_ledger\n- fix741a_save_load_round_trip_preserves_state\n- fix741a_concurrent_save_never_leaves_corrupt_file (8 threads x 25 writes)\n- fix741a_saved_ledger_has_0o600_permissions_on_unix\n\n**Verification**: cargo test --lib => 1484 passed/0 failed. cargo test --lib migrations:: => 11/11 pass. No #[allow], no #[ignore], no clippy.toml. Diff: ledger.rs +137 lines, mod.rs +18, tests.rs +108.",
+  "created_at": "2026-05-19T22:48:25.308629333Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAPrr3iCr7ipJvwP7WYvaeqOZvjboUHfFDILMmiGecFvTrzScrSPHPHfvrb3BW8Oy+p67jSW7zCGqxotb17/8HAw=="
+}
