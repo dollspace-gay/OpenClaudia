@@ -1,0 +1,10 @@
+{
+  "uuid": "e9634a70-68e3-40ff-af18-280ac924bb80",
+  "issue_uuid": "d0f06472-ce20-4d78-b948-4337a35925cc",
+  "author": "lOrm",
+  "content": "Duplicate of #417. Same dimension (Security and Access TOCTOU), same locations (src/tools/file/{write,edit,notebook}.rs), same violation text, same mandated refactor (open with O_NOFOLLOW, single FD). Resolved by the #417 patch.",
+  "created_at": "2026-05-19T16:32:59.708639252Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAO2cxbXc98OSgtfEF7zzWngOP2mVxbpmKwyOUIsNvNBhLDvdne0PbTlT1OoEEtBIkj4he59fcSDHCvUhUDWCbAQ=="
+}
