@@ -1,6 +1,6 @@
 {
   "uuid": "f0ea2e8a-0ec0-48a7-adaf-f8ba79a5dcdd",
-  "display_id": null,
+  "display_id": 995,
   "title": "VDD forward_request hardcodes google provider URL pattern violating OCP",
   "description": "## Severity\nMinor\n## Dimension\nsolid\n## Location\nsrc/vdd/mod.rs:1361-1366\n## Violation\nProvider-routing branch is hardcoded by string match.\n\n```rust\nlet url = if provider_name == \"google\" {\n    format!(\"{base_url}/v1beta/models/{model}:generateContent\")\n} else {\n    format!(\"{base_url}{endpoint}\")\n};\n```\n\nOCP violation — adding a new provider with non-standard URL conventions requires editing this function. The codebase already has a ProviderAdapter trait whose chat_endpoint(&model) is supposed to abstract this. The VDD module duplicates routing inconsistently.\n\n## Mandated refactor\nMove URL composition into ProviderAdapter trait via a full_chat_url(base_url, model) -> String method with a default impl. Override in the Google adapter.\n\n## Filed from QA review dispatch",
   "status": "closed",
