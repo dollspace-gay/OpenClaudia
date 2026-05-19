@@ -3,11 +3,12 @@
   "display_id": 681,
   "title": "execute_notebook_edit is a 200-line god function with cyclomatic complexity > 15",
   "description": "## Severity\nCritical\n\n## Dimension\nComplexity / SOLID-S (SRP) / Structural Modularity\n\n## Location\nsrc/tools/file/notebook.rs:48-298 (function `execute_notebook_edit`, ~250 lines, annotated with `#[allow(clippy::too_many_lines)]`)\n\n## Violation\nThe function carries an `#[allow(clippy::too_many_lines)]` to suppress the lint that should be failing it. Counting branches it contains: at least 18 distinct decision points (argument extraction guards x6, edit_mode validation, read-tracker check, canonicalize match, file read match, JSON parse match, cells lookup, resolved_index resolve, target_desc map, replace/insert/delete arms each with their own nested checks, write match, serialize match, warning check). Cyclomatic complexity ≥ 18 — over the V(G) > 15 hard reject threshold from §3.5.\n\nConcrete: lines 165-250 hold a single `match edit_mode { \"replace\" => {...} \"insert\" => {...} \"delete\" => {...} _ => unreachable!() }` where each arm is itself a multi-step procedure with its own out-of-bounds checks and side effects, then lines 252-297 do post-processing inside another nested `match` on serialize → write. This is the god-object anti-pattern at function granularity.\n\n## Mandated refactor\n1. Replace `#[allow(clippy::too_many_lines)]` with extraction; do not silence the lint.\n2. Extract three private functions: `apply_replace(cells, index, new_source, cell_type)`, `apply_insert(cells, insert_at, new_source, cell_type)`, `apply_delete(cells, index)`, each returning `Result<EditOutcome, ToolError>`.\n3. Extract `parse_locator(args, cells) -> Result<LocatorResolution, ToolError>` for the cell_id/cell_number resolution block (lines 143-163).\n4. Extract `persist_notebook(path, notebook, edit_mode, outcome) -> Result<String, ToolError>` for the write+summary block (252-297).\n5. The top-level `execute_notebook_edit` should then be linear: validate → resolve locator → dispatch → persist.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:46:55.439548477Z",
-  "updated_at": "2026-05-18T21:47:10.817020487Z",
+  "updated_at": "2026-05-19T20:53:44.055832442Z",
+  "closed_at": "2026-05-19T20:53:44.055832442Z",
   "labels": [
     "qa-review",
     "complexity"
