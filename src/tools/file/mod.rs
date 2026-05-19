@@ -186,6 +186,83 @@ fn resolve_path(path: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
+/// Build the path to pass to `open(2)` for a leaf-symlink-safe write.
+///
+/// `resolve_path` follows symlinks at the leaf as part of its jail check,
+/// which is right for read but wrong for the actual `open()` call on
+/// `write`/`edit`/`notebook_edit`: if an attacker swaps the leaf for a
+/// symlink between `resolve_path` and the open, an `O_NOFOLLOW` open
+/// against `resolve_path`'s result fails to notice — the leaf component
+/// has already been resolved away.
+///
+/// This helper returns `<canonical_parent>/<original_leaf>`. The parent is
+/// canonicalized (jail still enforced via intermediate symlink resolution),
+/// but the leaf is preserved verbatim — meaning `open()` with `O_NOFOLLOW`
+/// against this result fails with `ELOOP` if the leaf was swapped for a
+/// symlink. Used by crosslink #417 (dup #428).
+pub fn resolve_open_path(user_path: &str) -> Result<PathBuf, String> {
+    let p = Path::new(user_path);
+    let absolute = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| format!("Cannot resolve relative path (no working directory): {e}"))?
+            .join(p)
+    };
+    if absolute
+        .components()
+        .any(|c| c == std::path::Component::ParentDir)
+    {
+        return Err(format!("Path traversal not allowed: '{user_path}'"));
+    }
+    let parent = absolute
+        .parent()
+        .ok_or_else(|| format!("Invalid path (no parent): '{user_path}'"))?;
+    let leaf = absolute
+        .file_name()
+        .ok_or_else(|| format!("Invalid path (no leaf): '{user_path}'"))?;
+    let canonical_parent = if let Ok(c) = parent.canonicalize() {
+        c
+    } else {
+        let mut ancestor = parent;
+        let mut suffix_components: Vec<&std::ffi::OsStr> = Vec::new();
+        let canonical_ancestor = loop {
+            if let Ok(c) = ancestor.canonicalize() {
+                break c;
+            }
+            let name = ancestor.file_name().ok_or_else(|| {
+                format!("Cannot resolve any ancestor of '{user_path}' — reached filesystem root")
+            })?;
+            suffix_components.push(name);
+            ancestor = ancestor
+                .parent()
+                .ok_or_else(|| format!("Cannot resolve parent while walking up '{user_path}'"))?;
+        };
+        let mut built = canonical_ancestor;
+        for comp in suffix_components.iter().rev() {
+            built.push(comp);
+        }
+        built
+    };
+    let containment_probe = canonical_parent.join(leaf);
+    if strict_mode() {
+        let in_project = path_is_within(&containment_probe, &PROJECT_ROOT);
+        let in_temp = TEMP_ROOT
+            .as_ref()
+            .is_some_and(|t| path_is_within(&containment_probe, t));
+        if !in_project && !in_temp {
+            return Err(format!(
+                "Path '{user_path}' resolves to '{}' which is outside the project root ('{}') \
+                 and outside the process temp directory. Set \
+                 OPENCLAUDIA_ALLOW_OUT_OF_ROOT=1 to disable this jail (not recommended).",
+                containment_probe.display(),
+                PROJECT_ROOT.display(),
+            ));
+        }
+    }
+    Ok(canonical_parent.join(leaf))
+}
+
 /// Read a file's contents
 pub fn execute_read_file(
     args: &std::collections::HashMap<String, serde_json::Value>,

@@ -1,17 +1,56 @@
-use super::{resolve_path, READ_TRACKER};
+use super::{resolve_open_path, resolve_path, READ_TRACKER};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::fs;
+use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::Path;
+
+/// Open the file once for read+write with `O_NOFOLLOW` on the leaf so a
+/// symlink-swap between [`resolve_path`]'s canonicalize and this open call
+/// fails with `ELOOP` instead of silently writing through the attacker's
+/// symlink. See crosslink #417 (dup #428).
+#[cfg(unix)]
+fn open_for_edit_nofollow(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_for_edit_nofollow(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+}
+
+/// Truncate the open handle to zero and rewrite it with `new_content`.
+/// Keeps `execute_edit_file` under the clippy line budget while preserving
+/// the single-FD discipline that makes #417's `O_NOFOLLOW` open meaningful.
+fn rewrite_in_place(file: &mut std::fs::File, new_content: &str) -> std::io::Result<()> {
+    file.seek(SeekFrom::Start(0))?;
+    file.set_len(0)?;
+    file.write_all(new_content.as_bytes())
+}
 
 /// Edit a file by replacing text
 pub fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
-    let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
+    let Some(user_path) = args.get("path").and_then(|v| v.as_str()) else {
         return ("Missing 'path' argument".to_string(), true);
     };
+    let path = user_path;
 
     let p = match resolve_path(path) {
+        Ok(p) => p,
+        Err(e) => return (e, true),
+    };
+
+    // Path passed to `open(2)`: canonical parent + original leaf so that
+    // `O_NOFOLLOW` on the leaf can catch a symlink-swap. See crosslink #417.
+    let open_path = match resolve_open_path(user_path) {
         Ok(p) => p,
         Err(e) => return (e, true),
     };
@@ -65,13 +104,18 @@ pub fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
         return ("Missing 'new_string' argument".to_string(), true);
     };
 
-    // Read the file
-    let content = match fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) => return (format!("Failed to read file '{path}': {e}"), true),
+    // Open ONCE with O_NOFOLLOW against the LEAF-PRESERVING path; all
+    // I/O goes through this FD. See crosslink #417 (dup #428).
+    let mut file = match open_for_edit_nofollow(&open_path) {
+        Ok(f) => f,
+        Err(e) => return (format!("Failed to open file '{path}': {e}"), true),
     };
 
-    // Check if old_string exists
+    let mut content = String::new();
+    if let Err(e) = file.read_to_string(&mut content) {
+        return (format!("Failed to read file '{path}': {e}"), true);
+    }
+
     if !content.contains(old_string) {
         return (
             format!(
@@ -81,21 +125,17 @@ pub fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
         );
     }
 
-    // Count occurrences
     let count = content.matches(old_string).count();
     if count > 1 {
         return (format!("Found {count} occurrences of the text. Please provide a more specific old_string that matches uniquely."), true);
     }
 
-    // Track diff: lines removed vs added
     let lines_removed = u32::try_from(old_string.lines().count()).unwrap_or(u32::MAX);
     let lines_added = u32::try_from(new_string.lines().count()).unwrap_or(u32::MAX);
 
-    // Make the replacement
     let new_content = content.replacen(old_string, new_string, 1);
 
-    // Write back
-    match fs::write(path, &new_content) {
+    match rewrite_in_place(&mut file, &new_content) {
         Ok(()) => {
             // Record diff stats
             crate::guardrails::record_file_modification(path, lines_added, lines_removed);
@@ -314,5 +354,51 @@ mod tests {
         );
         // clean up
         let _ = std::fs::remove_file(&fresh_path);
+    }
+
+    // ===== crosslink #417: edit rejects symlink-swap on the leaf =====
+
+    #[cfg(unix)]
+    #[test]
+    fn fix417_edit_rejects_symlink_at_target() {
+        use tempfile::TempDir;
+        let dir = TempDir::new().expect("tempdir");
+        let target = dir.path().join("attacker_target.txt");
+        std::fs::write(&target, "PROTECTED\n").expect("setup target");
+        let leaf = dir.path().join("leaf.txt");
+        std::os::unix::fs::symlink(&target, &leaf).expect("symlink");
+        let leaf_canon = leaf.canonicalize().expect("canonicalize leaf");
+        READ_TRACKER.mark_read(&leaf_canon);
+        let args = make_args(&leaf.to_string_lossy(), "PROTECTED", "PWNED");
+        let (msg, is_err) = super::execute_edit_file(&args);
+        assert!(
+            is_err,
+            "edit through a symlink leaf must fail (O_NOFOLLOW): {msg}"
+        );
+        let target_contents = std::fs::read_to_string(&target).expect("read target");
+        assert_eq!(
+            target_contents, "PROTECTED\n",
+            "symlink target must not be overwritten"
+        );
+    }
+
+    #[test]
+    fn fix417_edit_legitimate_regular_file_still_works() {
+        let (_f, path) = tmp_readable("alpha beta gamma\n");
+        let args = make_args(&path, "beta", "BETA");
+        let (msg, is_err) = super::execute_edit_file(&args);
+        assert!(!is_err, "regular-file edit must succeed: {msg}");
+        let after = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(after, "alpha BETA gamma\n");
+    }
+
+    #[test]
+    fn fix417_edit_shrinking_replacement_truncates_correctly() {
+        let (_f, path) = tmp_readable("XXXXXXXXXX\n");
+        let args = make_args(&path, "XXXXXXXXXX", "Y");
+        let (msg, is_err) = super::execute_edit_file(&args);
+        assert!(!is_err, "shrinking edit must succeed: {msg}");
+        let after = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(after, "Y\n", "no stale tail bytes after shrinking write");
     }
 }

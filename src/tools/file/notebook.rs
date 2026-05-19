@@ -1,8 +1,30 @@
-use super::{resolve_path, READ_TRACKER};
+use super::{resolve_open_path, resolve_path, READ_TRACKER};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::fs;
+use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
+use std::path::Path;
+
+/// Open the notebook ONCE with `O_NOFOLLOW` on the leaf. All reads/writes go
+/// through this single file handle — closing the TOCTOU window between
+/// canonicalize and write described in crosslink #417 (dup #428).
+#[cfg(unix)]
+fn open_notebook_nofollow(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_notebook_nofollow(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+}
 
 /// Split source text into a JSON array of line strings for notebook cell source format.
 /// Each line except possibly the last ends with '\n'.
@@ -52,6 +74,12 @@ pub fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
     };
 
     let resolved = match resolve_path(raw_path) {
+        Ok(p) => p,
+        Err(e) => return (e, true),
+    };
+
+    // Leaf-preserving path for the O_NOFOLLOW open. See crosslink #417.
+    let open_path = match resolve_open_path(raw_path) {
         Ok(p) => p,
         Err(e) => return (e, true),
     };
@@ -111,16 +139,27 @@ pub fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
         return (msg, true);
     }
 
-    // Read and parse the notebook
-    let content = match fs::read_to_string(notebook_path) {
-        Ok(c) => c,
+    // Open ONCE with O_NOFOLLOW against the LEAF-PRESERVING path. All
+    // subsequent reads/writes use this FD — closing the TOCTOU window
+    // described in crosslink #417 (dup #428).
+    let mut file = match open_notebook_nofollow(&open_path) {
+        Ok(f) => f,
         Err(e) => {
             return (
-                format!("Failed to read notebook '{notebook_path}': {e}"),
+                format!("Failed to open notebook '{notebook_path}': {e}"),
                 true,
-            )
+            );
         }
     };
+
+    // Read through the open handle.
+    let mut content = String::new();
+    if let Err(e) = file.read_to_string(&mut content) {
+        return (
+            format!("Failed to read notebook '{notebook_path}': {e}"),
+            true,
+        );
+    }
 
     let mut notebook: Value = match serde_json::from_str(&content) {
         Ok(v) => v,
@@ -249,13 +288,17 @@ pub fn execute_notebook_edit(args: &HashMap<String, Value>) -> (String, bool) {
         _ => unreachable!(),
     }
 
-    // Write back with pretty formatting
+    // Write back THROUGH THE SAME FD: rewind, truncate, write. See #417.
     let old_lines = u32::try_from(content.lines().count()).unwrap_or(u32::MAX);
     match serde_json::to_string_pretty(&notebook) {
         Ok(pretty) => {
             let new_lines = u32::try_from(pretty.lines().count()).unwrap_or(u32::MAX);
-            match fs::write(notebook_path, &pretty) {
-                Ok(()) => {
+            let write_result = file
+                .seek(SeekFrom::Start(0))
+                .and_then(|_| file.set_len(0).map(|()| 0u64))
+                .and_then(|_| file.write_all(pretty.as_bytes()).map(|()| 0u64));
+            match write_result {
+                Ok(_) => {
                     crate::guardrails::record_file_modification(
                         notebook_path,
                         new_lines,
@@ -657,5 +700,64 @@ mod tests {
         let (msg, is_err) = execute_notebook_edit(&args);
         assert!(is_err, "invalid edit_mode must error: {msg}");
         assert!(msg.contains("Invalid edit_mode"), "message: {msg}");
+    }
+
+    // ===== crosslink #417: notebook_edit rejects symlink-swap on the leaf =====
+
+    #[cfg(unix)]
+    #[test]
+    fn fix417_notebook_rejects_symlink_at_target() {
+        use tempfile::TempDir;
+        let dir = TempDir::new().expect("tempdir");
+        let target = dir.path().join("attacker_target.ipynb");
+        let nb = make_notebook(&json!([
+            {"id": "guarded", "cell_type": "code", "source": "SAFE", "metadata": {}, "outputs": [], "execution_count": null}
+        ]));
+        std::fs::write(
+            &target,
+            serde_json::to_string_pretty(&nb).expect("serialize"),
+        )
+        .expect("setup target");
+        let leaf = dir.path().join("leaf.ipynb");
+        std::os::unix::fs::symlink(&target, &leaf).expect("symlink");
+        let leaf_canon = leaf.canonicalize().expect("canonicalize leaf");
+        READ_TRACKER.mark_read(&leaf_canon);
+        let args = args_replace_by_id(
+            &leaf.to_string_lossy(),
+            "guarded",
+            "ATTACKER_INJECTED_SOURCE",
+        );
+        let (msg, is_err) = execute_notebook_edit(&args);
+        assert!(
+            is_err,
+            "notebook_edit through a symlink leaf must fail (O_NOFOLLOW): {msg}"
+        );
+        let after = std::fs::read_to_string(&target).expect("read target");
+        assert!(
+            after.contains("SAFE"),
+            "symlink target must not be overwritten; got: {after}"
+        );
+        assert!(
+            !after.contains("ATTACKER_INJECTED_SOURCE"),
+            "injected source must not appear in target"
+        );
+    }
+
+    #[test]
+    fn fix417_notebook_legitimate_edit_still_works() {
+        let nb = make_notebook(&json!([
+            {"id": "a", "cell_type": "code", "source": "old", "metadata": {}, "outputs": [], "execution_count": null}
+        ]));
+        let (_f, path) = tmp_notebook(&nb);
+        let args = args_replace_by_id(&path, "a", "new");
+        let (msg, is_err) = execute_notebook_edit(&args);
+        assert!(!is_err, "regular notebook edit must succeed: {msg}");
+        let cells = read_cells(&path);
+        let src: String = match &cells[0]["source"] {
+            Value::Array(arr) => arr.iter().filter_map(|v| v.as_str()).collect(),
+            Value::String(s) => s.clone(),
+            _ => panic!(),
+        };
+        assert_eq!(src, "new");
     }
 }

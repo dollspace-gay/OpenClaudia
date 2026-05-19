@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::config::ThinkingConfig;
 use crate::proxy::{ChatCompletionRequest, ChatMessage, MessageContent};
@@ -49,30 +49,105 @@ impl AnthropicAdapter {
         convert_messages_to_anthropic(&as_values)
     }
 
-    /// Convert `OpenAI` tools to Anthropic format with optional prompt caching
-    /// If `cache_last` is true, adds `cache_control` to the last tool for prompt caching
-    pub(crate) fn convert_tools(tools: &[Value], cache_last: bool) -> Vec<Value> {
+    /// Convert `OpenAI` tools to Anthropic format with optional prompt caching.
+    ///
+    /// Surfaces malformed entries as `ProviderError::RequestFailed` rather than
+    /// silently filtering them out (crosslink #413). Each tool MUST contain a
+    /// `function` object with a non-empty string `name`; anything else is an
+    /// API contract violation that the caller needs to know about.
+    ///
+    /// If `cache_last` is true, the last entry gets a `cache_control` marker
+    /// for prompt caching.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::RequestFailed` if any tool is missing the
+    /// `function` object or `function.name` is missing/non-string/empty.
+    pub(crate) fn convert_tools_checked(
+        tools: &[Value],
+        cache_last: bool,
+    ) -> Result<Vec<Value>, ProviderError> {
         let len = tools.len();
-        tools
-            .iter()
-            .enumerate()
-            .filter_map(|(i, tool)| {
-                let func = tool.get("function")?;
-                let mut tool_def = json!({
-                    "name": func.get("name")?,
-                    "description": func.get("description").unwrap_or(&Value::String(String::new())),
-                    "input_schema": func.get("parameters").cloned().unwrap_or_else(|| Value::Object(serde_json::Map::default()))
-                });
+        let mut out = Vec::with_capacity(len);
+        for (i, tool) in tools.iter().enumerate() {
+            let func = tool.get("function").ok_or_else(|| {
+                ProviderError::RequestFailed(format!(
+                    "Tool at index {i} missing required 'function' object: {tool}"
+                ))
+            })?;
+            let name = func
+                .get("name")
+                .and_then(|n| n.as_str())
+                .filter(|n| !n.is_empty())
+                .ok_or_else(|| {
+                    ProviderError::RequestFailed(format!(
+                        "Tool at index {i} missing required 'function.name' string field: {tool}"
+                    ))
+                })?;
 
-                // Add cache_control to the last tool for prompt caching
-                // This caches all tools since cache applies to everything before the marker
-                if cache_last && i == len - 1 {
-                    tool_def["cache_control"] = json!({"type": "ephemeral"});
-                }
+            let mut tool_def = json!({
+                "name": name,
+                "description": func.get("description").cloned().unwrap_or_else(|| Value::String(String::new())),
+                "input_schema": func.get("parameters").cloned().unwrap_or_else(|| Value::Object(serde_json::Map::default()))
+            });
 
-                Some(tool_def)
-            })
-            .collect()
+            // Add cache_control to the last tool for prompt caching.
+            // This caches all tools since cache applies to everything before the marker.
+            if cache_last && i + 1 == len {
+                tool_def["cache_control"] = json!({"type": "ephemeral"});
+            }
+
+            out.push(tool_def);
+        }
+        Ok(out)
+    }
+
+    /// Backwards-compatible infallible wrapper around [`Self::convert_tools_checked`].
+    ///
+    /// Used by trusted internal call sites that build tool definitions from
+    /// [`crate::tools::get_all_tool_definitions`] (known well-formed). On the
+    /// off-chance an internal tool definition is malformed, the entry is
+    /// logged at `WARN` rather than silently dropped — so that a regression
+    /// in our own builder produces forensic evidence in the logs.
+    pub(crate) fn convert_tools(tools: &[Value], cache_last: bool) -> Vec<Value> {
+        match Self::convert_tools_checked(tools, cache_last) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "convert_tools encountered malformed tool definition from a trusted internal site (crosslink #413); falling back to best-effort filter"
+                );
+                // Best-effort: keep well-formed entries, surface dropped ones in logs.
+                let len = tools.len();
+                tools
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, tool)| {
+                        let func = tool.get("function").or_else(|| {
+                            warn!(index = i, tool = %tool, "dropping tool missing 'function' object (crosslink #413)");
+                            None
+                        })?;
+                        let name = func
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .filter(|n| !n.is_empty())
+                            .or_else(|| {
+                                warn!(index = i, tool = %tool, "dropping tool missing 'function.name' (crosslink #413)");
+                                None
+                            })?;
+                        let mut tool_def = json!({
+                            "name": name,
+                            "description": func.get("description").cloned().unwrap_or_else(|| Value::String(String::new())),
+                            "input_schema": func.get("parameters").cloned().unwrap_or_else(|| Value::Object(serde_json::Map::default()))
+                        });
+                        if cache_last && i + 1 == len {
+                            tool_def["cache_control"] = json!({"type": "ephemeral"});
+                        }
+                        Some(tool_def)
+                    })
+                    .collect()
+            }
+        }
     }
 }
 
@@ -106,9 +181,12 @@ impl ProviderAdapter for AnthropicAdapter {
             body["temperature"] = json!(temp);
         }
 
-        // Convert tools with cache_control on last tool for prompt caching
+        // Convert tools with cache_control on last tool for prompt caching.
+        // Use the *checked* variant: caller-supplied tools that fail validation
+        // must surface as ProviderError::RequestFailed rather than be silently
+        // dropped (crosslink #413).
         if let Some(tools) = &request.tools {
-            let converted = Self::convert_tools(tools, true);
+            let converted = Self::convert_tools_checked(tools, true)?;
             if !converted.is_empty() {
                 body["tools"] = json!(converted);
             }
@@ -149,88 +227,56 @@ impl ProviderAdapter for AnthropicAdapter {
     }
 
     fn transform_response(&self, response: Value, _stream: bool) -> Result<Value, ProviderError> {
-        // Convert Anthropic response to OpenAI format
-        let content = response
-            .get("content")
-            .and_then(|c| c.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|block| {
-                        if block.get("type")?.as_str()? == "text" {
-                            Some(block.get("text")?.as_str()?.to_string())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<String>()
-            })
-            .unwrap_or_default();
+        // Convert Anthropic response to OpenAI format.
+        //
+        // Crosslink #413: previously this function injected `"msg_unknown"`,
+        // `"unknown"`, and `0` sentinels for missing top-level fields, and
+        // used `filter_map` + `?` to silently drop malformed content blocks.
+        // Both behaviours masked upstream API contract violations. The
+        // refactor now refuses to manufacture data — every missing required
+        // field surfaces as `ProviderError::InvalidResponse` via the small
+        // helpers defined further down this module.
+        let id = require_nonempty_str(&response, "id")?.to_string();
+        let model = require_nonempty_str(&response, "model")?.to_string();
+        let stop_reason_str = require_str(&response, "stop_reason")?;
+        let finish_reason = map_stop_reason(stop_reason_str);
 
-        let tool_calls: Option<Vec<Value>> = response
+        let content_arr = response
             .get("content")
             .and_then(|c| c.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|block| {
-                        if block.get("type")?.as_str()? == "tool_use" {
-                            // Avoid double-serialization: if input is already a
-                            // string, use it directly; otherwise serialize the
-                            // JSON value to a string for the OpenAI format.
-                            let input = block.get("input")?;
-                            let arguments = if let Some(s) = input.as_str() {
-                                s.to_string()
-                            } else {
-                                serde_json::to_string(input).ok()?
-                            };
-                            Some(json!({
-                                "id": block.get("id")?,
-                                "type": "function",
-                                "function": {
-                                    "name": block.get("name")?,
-                                    "arguments": arguments
-                                }
-                            }))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-            })
-            .filter(|v: &Vec<Value>| !v.is_empty());
+            .ok_or_else(|| {
+                warn!(response = %response, "Anthropic response missing required 'content' array (crosslink #413)");
+                ProviderError::InvalidResponse(
+                    "Anthropic response missing required 'content' array".to_string(),
+                )
+            })?;
+
+        let (text_buf, tool_calls) = walk_content_blocks(content_arr)?;
 
         let mut message = json!({
             "role": "assistant",
-            "content": content
+            "content": text_buf
         });
-
-        if let Some(calls) = tool_calls {
-            message["tool_calls"] = json!(calls);
+        if !tool_calls.is_empty() {
+            message["tool_calls"] = json!(tool_calls);
         }
 
-        let default_id = json!("msg_unknown");
-        let default_model = json!("unknown");
-        let default_zero = json!(0);
+        let (prompt_tokens, completion_tokens) = extract_usage(&response);
+
         Ok(json!({
-            "id": response.get("id").unwrap_or(&default_id),
+            "id": id,
             "object": "chat.completion",
             "created": chrono::Utc::now().timestamp(),
-            "model": response.get("model").unwrap_or(&default_model),
+            "model": model,
             "choices": [{
                 "index": 0,
                 "message": message,
-                "finish_reason": match response.get("stop_reason").and_then(|s| s.as_str()) {
-                    Some("tool_use") => "tool_calls",
-                    Some("max_tokens") => "length",
-                    _ => "stop",
-                }
+                "finish_reason": finish_reason,
             }],
             "usage": {
-                "prompt_tokens": response.get("usage").and_then(|u| u.get("input_tokens")).unwrap_or(&default_zero),
-                "completion_tokens": response.get("usage").and_then(|u| u.get("output_tokens")).unwrap_or(&default_zero),
-                "total_tokens": response.get("usage").map_or(0, |u| {
-                    u.get("input_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0) +
-                    u.get("output_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0)
-                })
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
             }
         }))
     }
@@ -276,6 +322,159 @@ impl AnthropicAdapter {
             ("content-type".to_string(), "application/json".to_string()),
         ]
     }
+}
+
+// --- Crosslink #413 helpers --------------------------------------------------
+//
+// Extracted from `transform_response` so each shape-validation step is its own
+// named, testable unit instead of an opaque 150-line function. Every helper
+// here surfaces missing/malformed fields as `ProviderError::InvalidResponse`
+// and logs the offending payload at `WARN` for forensic traceability.
+
+/// Extract a string field that MUST be present (any string value).
+fn require_str<'a>(response: &'a Value, field: &str) -> Result<&'a str, ProviderError> {
+    response
+        .get(field)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            warn!(response = %response, field, "Anthropic response missing required field (crosslink #413)");
+            ProviderError::InvalidResponse(format!(
+                "Anthropic response missing required '{field}' field"
+            ))
+        })
+}
+
+/// Extract a string field that MUST be present AND non-empty.
+fn require_nonempty_str<'a>(response: &'a Value, field: &str) -> Result<&'a str, ProviderError> {
+    let s = require_str(response, field)?;
+    if s.is_empty() {
+        warn!(response = %response, field, "Anthropic response has empty required field (crosslink #413)");
+        return Err(ProviderError::InvalidResponse(format!(
+            "Anthropic response missing required '{field}' field"
+        )));
+    }
+    Ok(s)
+}
+
+/// Map Anthropic `stop_reason` to the `OpenAI` `finish_reason` vocabulary.
+fn map_stop_reason(stop_reason: &str) -> &'static str {
+    match stop_reason {
+        "tool_use" => "tool_calls",
+        "max_tokens" => "length",
+        "end_turn" | "stop_sequence" => "stop",
+        other => {
+            warn!(
+                stop_reason = other,
+                "Unknown Anthropic stop_reason; mapping to 'stop' (crosslink #413)"
+            );
+            "stop"
+        }
+    }
+}
+
+/// Walk an Anthropic `content` array, surfacing malformed blocks as errors.
+/// Returns `(concatenated_text, tool_call_array)`.
+fn walk_content_blocks(content_arr: &[Value]) -> Result<(String, Vec<Value>), ProviderError> {
+    let mut text_buf = String::new();
+    let mut tool_calls: Vec<Value> = Vec::new();
+    for (i, block) in content_arr.iter().enumerate() {
+        let block_type = block.get("type").and_then(|t| t.as_str()).ok_or_else(|| {
+            warn!(index = i, block = %block, "Anthropic content block missing 'type' (crosslink #413)");
+            ProviderError::InvalidResponse(format!(
+                "Anthropic content block at index {i} missing 'type' field: {block}"
+            ))
+        })?;
+
+        match block_type {
+            "text" => text_buf.push_str(extract_text_block(i, block)?),
+            "tool_use" => tool_calls.push(extract_tool_use_block(i, block)?),
+            // Other block types (e.g. `thinking`, `redacted_thinking`) are
+            // intentionally not surfaced into the OpenAI shape; this is a
+            // schema-level skip, not a defensive-programming swallow.
+            _ => debug!(
+                block_type = block_type,
+                "skipping Anthropic content block of unmapped type"
+            ),
+        }
+    }
+    Ok((text_buf, tool_calls))
+}
+
+/// Extract the string body of a `text` content block.
+fn extract_text_block(index: usize, block: &Value) -> Result<&str, ProviderError> {
+    block.get("text").and_then(|t| t.as_str()).ok_or_else(|| {
+        warn!(index, block = %block, "Anthropic text block missing string 'text' (crosslink #413)");
+        ProviderError::InvalidResponse(format!(
+            "Anthropic text block at index {index} missing string 'text' field: {block}"
+        ))
+    })
+}
+
+/// Extract an `OpenAI`-shaped `tool_call` object from a `tool_use` content block.
+fn extract_tool_use_block(index: usize, block: &Value) -> Result<Value, ProviderError> {
+    let tool_id = block.get("id").and_then(|v| v.as_str()).ok_or_else(|| {
+        warn!(index, block = %block, "Anthropic tool_use block missing 'id' (crosslink #413)");
+        ProviderError::InvalidResponse(format!(
+            "Anthropic tool_use block at index {index} missing string 'id': {block}"
+        ))
+    })?;
+    let tool_name = block.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+        warn!(index, block = %block, "Anthropic tool_use block missing 'name' (crosslink #413)");
+        ProviderError::InvalidResponse(format!(
+            "Anthropic tool_use block at index {index} missing string 'name': {block}"
+        ))
+    })?;
+    let input = block.get("input").ok_or_else(|| {
+        warn!(index, block = %block, "Anthropic tool_use block missing 'input' (crosslink #413)");
+        ProviderError::InvalidResponse(format!(
+            "Anthropic tool_use block at index {index} missing 'input' field: {block}"
+        ))
+    })?;
+
+    // Avoid double-serialization: if input is already a string, use it directly;
+    // otherwise serialize the JSON value to a string for the OpenAI format.
+    let arguments = if let Some(s) = input.as_str() {
+        s.to_string()
+    } else {
+        serde_json::to_string(input).map_err(|e| {
+            ProviderError::InvalidResponse(format!(
+                "Anthropic tool_use block at index {index} has unserializable 'input': {e}"
+            ))
+        })?
+    };
+
+    Ok(json!({
+        "id": tool_id,
+        "type": "function",
+        "function": {
+            "name": tool_name,
+            "arguments": arguments
+        }
+    }))
+}
+
+/// Pull `(input_tokens, output_tokens)` out of an optional `usage` object.
+/// When `usage` is absent (e.g. a partial streaming response), zeros are
+/// reported but a `DEBUG` log records the case — this is *not* the silent
+/// sentinel behaviour the bug report flagged.
+fn extract_usage(response: &Value) -> (u64, u64) {
+    response.get("usage").map_or_else(
+        || {
+            debug!("Anthropic response has no 'usage' object; reporting 0/0 token counts");
+            (0u64, 0u64)
+        },
+        |u| {
+            let p = u
+                .get("input_tokens")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let c = u
+                .get("output_tokens")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            (p, c)
+        },
+    )
 }
 
 /// Build an Anthropic `system` array from a [`SystemPromptBlocks`].
@@ -618,5 +817,212 @@ mod tests {
         assert!(beta.1.contains("oauth-2025-04-20"));
         assert!(beta.1.contains("interleaved-thinking-2025-05-14"));
         assert!(beta.1.contains("fine-grained-tool-streaming-2025-05-14"));
+    }
+
+    // --- Regression tests for crosslink #413 ---
+    //
+    // Before the fix, the Anthropic adapter silently swallowed malformed
+    // upstream / caller input via `filter_map(|x| x.as_str().map(...))`
+    // and substituted `"msg_unknown"` / `"unknown"` / `0` sentinels when
+    // top-level fields were missing. That made every contract violation
+    // by the Anthropic API (or by an upstream caller) invisible to tests
+    // and to downstream clients. The tests below pin the new behaviour:
+    // each malformed input must produce a typed error.
+
+    fn anth_request_with_tools(tools: Vec<Value>) -> ChatCompletionRequest {
+        ChatCompletionRequest {
+            model: "claude-opus-4-7".to_string(),
+            messages: vec![text_msg("user", "go")],
+            max_tokens: Some(64),
+            temperature: None,
+            tools: Some(tools),
+            stream: None,
+            tool_choice: None,
+            extra: std::collections::HashMap::new(),
+        }
+    }
+
+    /// A tool missing `function.name` MUST surface as
+    /// `ProviderError::RequestFailed` — never silently dropped from the
+    /// request body sent to Anthropic.
+    #[test]
+    fn transform_request_errors_on_tool_missing_function_name() {
+        let bad_tool = json!({
+            "type": "function",
+            "function": { "description": "no name here" }
+        });
+        let req = anth_request_with_tools(vec![bad_tool]);
+        let err = AnthropicAdapter::new()
+            .transform_request(&req)
+            .expect_err("malformed tool must surface (#413)");
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(
+                    msg.contains("function.name"),
+                    "error must name the missing field, got: {msg}"
+                );
+                assert!(
+                    msg.contains("index 0"),
+                    "error must locate the offending tool, got: {msg}"
+                );
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    /// A tool missing the `function` object entirely also surfaces — this
+    /// previously took the `filter_map`'s short-circuit `?` path silently.
+    /// The bad tool is the *second* of two; asserting on index 1 proves we
+    /// walk the array rather than rejecting any batch indiscriminately.
+    #[test]
+    fn transform_request_errors_on_tool_missing_function_object() {
+        let good_tool = json!({
+            "type": "function",
+            "function": {"name": "ok_tool", "parameters": {}}
+        });
+        let bad_tool = json!({"type": "function"});
+        let req = anth_request_with_tools(vec![good_tool, bad_tool]);
+        let err = AnthropicAdapter::new()
+            .transform_request(&req)
+            .expect_err("malformed tool must surface (#413)");
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(
+                    msg.contains("'function' object") && msg.contains("index 1"),
+                    "error must name field and index, got: {msg}"
+                );
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    /// An empty `function.name` (present but blank string) is just as
+    /// malformed as missing — Anthropic would 400 on this anyway and we
+    /// should not let it through with a default.
+    #[test]
+    fn transform_request_errors_on_tool_with_empty_function_name() {
+        let bad_tool = json!({
+            "type": "function",
+            "function": {"name": "", "parameters": {}}
+        });
+        let req = anth_request_with_tools(vec![bad_tool]);
+        let err = AnthropicAdapter::new()
+            .transform_request(&req)
+            .expect_err("empty function.name must surface (#413)");
+        assert!(matches!(err, ProviderError::RequestFailed(_)));
+    }
+
+    /// An empty `{}` upstream response — the exact case the issue's
+    /// Mandated Refactor item 4 asks us to pin — MUST return Err, not a
+    /// successful response laden with `"msg_unknown"` / `"unknown"`.
+    #[test]
+    fn transform_response_errors_on_empty_object_no_sentinels() {
+        let response = json!({});
+        let result = AnthropicAdapter::new().transform_response(response, false);
+        let err = result.expect_err("empty upstream response must be an error (#413)");
+        match err {
+            ProviderError::InvalidResponse(msg) => {
+                // The first missing required field is `id`; confirm we
+                // surface the *field name* not just a generic error.
+                assert!(
+                    msg.contains("'id'"),
+                    "error must name the missing field, got: {msg}"
+                );
+            }
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
+    }
+
+    /// A response missing only `model` (but with valid `id`, `stop_reason`,
+    /// `content`) must error with the specific missing-field name — proving
+    /// we don't fall back to the `"unknown"` sentinel that previously
+    /// masked the upstream defect.
+    #[test]
+    fn transform_response_errors_on_missing_model_no_sentinel() {
+        let response = json!({
+            "id": "msg_abc",
+            "content": [{"type": "text", "text": "hi"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        });
+        let err = AnthropicAdapter::new()
+            .transform_response(response, false)
+            .expect_err("missing 'model' must surface (#413)");
+        match err {
+            ProviderError::InvalidResponse(msg) => {
+                assert!(
+                    msg.contains("'model'"),
+                    "error must name the missing field, got: {msg}"
+                );
+                // And critically, no sentinel leaked into the error.
+                assert!(!msg.contains("unknown"), "must not fall back to 'unknown'");
+            }
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
+    }
+
+    /// A `tool_use` content block missing `id` or `name` previously got
+    /// silently `filter_map`'d out, leaving the assistant message with no
+    /// `tool_calls` — a state the downstream `OpenAI`-shape client treats as
+    /// "no tools were called", which is a security-relevant lie. Pin the
+    /// new behaviour: error, with the offending block index.
+    #[test]
+    fn transform_response_errors_on_tool_use_block_missing_name() {
+        let response = json!({
+            "id": "msg_xyz",
+            "model": "claude-opus-4-7",
+            "stop_reason": "tool_use",
+            "content": [
+                {"type": "text", "text": "calling..."},
+                {"type": "tool_use", "id": "tu_1", "input": {"x": 1}}
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        });
+        let err = AnthropicAdapter::new()
+            .transform_response(response, false)
+            .expect_err("malformed tool_use block must surface (#413)");
+        match err {
+            ProviderError::InvalidResponse(msg) => {
+                assert!(
+                    msg.contains("tool_use") && msg.contains("'name'") && msg.contains("index 1"),
+                    "error must name field and index, got: {msg}"
+                );
+            }
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
+    }
+
+    /// A well-formed response still round-trips cleanly — the strictness
+    /// must not break the happy path.
+    #[test]
+    fn transform_response_happy_path_still_works() {
+        let response = json!({
+            "id": "msg_happy",
+            "model": "claude-opus-4-7",
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": "ok"}],
+            "usage": {"input_tokens": 3, "output_tokens": 2}
+        });
+        let out = AnthropicAdapter::new()
+            .transform_response(response, false)
+            .expect("well-formed response transforms");
+        assert_eq!(out["id"], "msg_happy");
+        assert_eq!(out["model"], "claude-opus-4-7");
+        assert_eq!(out["choices"][0]["message"]["content"], "ok");
+        assert_eq!(out["choices"][0]["finish_reason"], "stop");
+        assert_eq!(out["usage"]["prompt_tokens"], 3);
+        assert_eq!(out["usage"]["completion_tokens"], 2);
+        assert_eq!(out["usage"]["total_tokens"], 5);
+    }
+
+    /// `convert_tools_checked` is the fallible primitive that powers the
+    /// strict request path; pin its error shape directly so future
+    /// refactors of `transform_request` cannot quietly skip validation.
+    #[test]
+    fn convert_tools_checked_errors_on_malformed_input() {
+        let tools = vec![json!({"type": "function", "function": {}})];
+        let err = AnthropicAdapter::convert_tools_checked(&tools, true)
+            .expect_err("missing function.name must surface (#413)");
+        assert!(matches!(err, ProviderError::RequestFailed(_)));
     }
 }

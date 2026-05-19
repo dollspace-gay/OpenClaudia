@@ -246,6 +246,18 @@ You break down complex tasks into smaller units of work and delegate them to spe
 
 // === Background Agent Management ===
 
+/// Retention TTL for finished background agents (1 hour).
+///
+/// Entries that have been finished for longer than this are evicted by
+/// [`BackgroundAgentManager::gc`] on the next manager touch. Exposed as a
+/// constant so tests can compare against it.
+///
+/// Fix for crosslink #422: without a sweep the `agents` map grew
+/// unboundedly — a session spawning ~10 agents/hour over 8 hours leaked
+/// ~80 finished `BackgroundAgent` Arcs, each carrying full output and
+/// task description.
+pub const FINISHED_AGENT_TTL_SECS: u64 = 60 * 60;
+
 /// State of a running or completed background agent
 #[derive(Debug)]
 pub struct BackgroundAgent {
@@ -263,6 +275,10 @@ pub struct BackgroundAgent {
     pub error: Mutex<Option<String>>,
     /// Number of turns executed
     pub turns: AtomicU64,
+    /// When the agent transitioned to `finished`. `None` while still running.
+    /// Used by [`BackgroundAgentManager::gc`] to evict entries past
+    /// [`FINISHED_AGENT_TTL_SECS`].
+    pub finished_at: Mutex<Option<Instant>>,
 }
 
 /// Manager for background agents
@@ -278,8 +294,15 @@ impl BackgroundAgentManager {
         }
     }
 
-    /// Register a new background agent
+    /// Register a new background agent.
+    ///
+    /// Also opportunistically sweeps expired finished agents
+    /// (see [`Self::gc`]) so the map cannot grow unbounded across a session.
     pub fn register(&self, agent_type: AgentType, task: &str) -> String {
+        // Sweep before insert so the cost of growth is amortized against
+        // the spawn that causes it (crosslink #422).
+        self.gc();
+
         let id = safe_truncate(&Uuid::new_v4().to_string(), 8).to_string();
         let agent = Arc::new(BackgroundAgent {
             id: id.clone(),
@@ -289,6 +312,7 @@ impl BackgroundAgentManager {
             result: Mutex::new(None),
             error: Mutex::new(None),
             turns: AtomicU64::new(0),
+            finished_at: Mutex::new(None),
         });
 
         if let Ok(mut agents) = self.agents.lock() {
@@ -309,6 +333,9 @@ impl BackgroundAgentManager {
             if let Ok(mut r) = agent.result.lock() {
                 *r = Some(result);
             }
+            if let Ok(mut t) = agent.finished_at.lock() {
+                *t = Some(Instant::now());
+            }
             agent.finished.store(true, Ordering::SeqCst);
         }
     }
@@ -318,6 +345,9 @@ impl BackgroundAgentManager {
         if let Some(agent) = self.get(id) {
             if let Ok(mut e) = agent.error.lock() {
                 *e = Some(error);
+            }
+            if let Ok(mut t) = agent.finished_at.lock() {
+                *t = Some(Instant::now());
             }
             agent.finished.store(true, Ordering::SeqCst);
         }
@@ -329,8 +359,12 @@ impl BackgroundAgentManager {
             .map_or(0, |agent| agent.turns.fetch_add(1, Ordering::SeqCst) + 1)
     }
 
-    /// List all agents
+    /// List all agents.
+    ///
+    /// Sweeps expired finished agents first (see [`Self::gc`]) so callers
+    /// — including the TUI agent list — never observe leaked stale entries.
     pub fn list(&self) -> Vec<(String, AgentType, String, bool)> {
+        self.gc();
         self.agents.lock().map_or_else(
             |_| Vec::new(),
             |agents| {
@@ -349,9 +383,53 @@ impl BackgroundAgentManager {
         )
     }
 
-    /// Remove a finished agent
+    /// Remove an agent unconditionally
     pub fn remove(&self, id: &str) -> Option<Arc<BackgroundAgent>> {
         self.agents.lock().ok()?.remove(id)
+    }
+
+    /// Garbage-collect finished agents older than [`FINISHED_AGENT_TTL_SECS`].
+    ///
+    /// Running agents (`finished == false`) are never removed regardless of
+    /// how long they have been registered — only completion age triggers
+    /// eviction. Returns the number of removed entries.
+    ///
+    /// Fix for crosslink #422 — replaces unbounded growth with a bounded
+    /// retention window. Safe to call from any context (poisoned lock is
+    /// treated as a no-op).
+    pub fn gc(&self) -> usize {
+        let now = Instant::now();
+        let Ok(mut agents) = self.agents.lock() else {
+            return 0;
+        };
+        let before = agents.len();
+        agents.retain(|_, agent| {
+            if !agent.finished.load(Ordering::SeqCst) {
+                return true;
+            }
+            // Finished: keep only if not yet past TTL. Missing/poisoned
+            // timestamp counts as "evict" so a half-initialized entry
+            // cannot pin memory forever.
+            agent
+                .finished_at
+                .lock()
+                .ok()
+                .and_then(|t| *t)
+                .is_some_and(|t| now.duration_since(t).as_secs() < FINISHED_AGENT_TTL_SECS)
+        });
+        before.saturating_sub(agents.len())
+    }
+
+    /// Public hook for shutdown paths (e.g. `tui.rs`) that want to drop
+    /// every finished agent up-front rather than wait for TTL expiry.
+    /// Returns the number of agents removed.
+    pub fn cleanup_finished(&self) -> usize {
+        let Ok(mut agents) = self.agents.lock() else {
+            return 0;
+        };
+        let before = agents.len();
+        agents.retain(|_, agent| !agent.finished.load(Ordering::SeqCst));
+        before.saturating_sub(agents.len())
     }
 }
 
@@ -1422,6 +1500,14 @@ pub fn execute_agent_output_tool<S: BuildHasher>(
         let result = agent.result.lock().ok().and_then(|r| r.clone());
         let error = agent.error.lock().ok().and_then(|e| e.clone());
 
+        // Crosslink #422: once a finished agent has had its output consumed
+        // by the caller, drop the map entry so the manager cannot leak
+        // finished `BackgroundAgent` Arcs across a long-running session.
+        // Drop the local `Arc` clone first so `remove` returns the last
+        // strong reference and the heap allocation can actually be freed.
+        drop(agent);
+        let _ = BACKGROUND_AGENTS.remove(agent_id);
+
         error.map_or_else(
             || {
                 result.map_or_else(
@@ -1773,5 +1859,133 @@ mod tests {
         let (msg, is_err) = execute_agent_output_tool(&args);
         assert!(is_err, "failed agent must return is_error=true");
         assert!(msg.contains("tool denied"), "must include error: {msg}");
+    }
+
+    // ── Crosslink #422: BACKGROUND_AGENTS unbounded-growth fix ──
+
+    /// Crosslink #422 — `gc()` evicts agents whose `finished_at` is past
+    /// the TTL. Backdating `finished_at` by `TTL + 1s` triggers eviction
+    /// without sleeping in the test.
+    #[test]
+    fn issue422_gc_removes_finished_agents_past_ttl() {
+        let mgr = BackgroundAgentManager::new();
+        let stale_id = mgr.register(AgentType::Explore, "stale finished task");
+        mgr.finish(&stale_id, "output".to_string());
+
+        // Backdate the completion timestamp past the TTL.
+        let stale = mgr.get(&stale_id).expect("registered");
+        let past = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(FINISHED_AGENT_TTL_SECS + 1))
+            .expect("clock supports subtraction by 1h+1s");
+        *stale.finished_at.lock().unwrap() = Some(past);
+        drop(stale);
+
+        let removed = mgr.gc();
+        assert_eq!(removed, 1, "exactly the stale finished agent must be GC'd");
+        assert!(
+            mgr.get(&stale_id).is_none(),
+            "stale finished agent must no longer be in the map"
+        );
+    }
+
+    /// Crosslink #422 — `gc()` must NOT remove agents that are still running,
+    /// nor finished agents whose retention window has not yet expired.
+    /// Guards against the obvious wrong-direction fix where the GC is too
+    /// aggressive and drops live work.
+    #[test]
+    fn issue422_gc_keeps_in_progress_and_recently_finished_agents() {
+        let mgr = BackgroundAgentManager::new();
+
+        let running_id = mgr.register(AgentType::Plan, "still running");
+        let recent_id = mgr.register(AgentType::Explore, "recently finished");
+        mgr.finish(&recent_id, "fresh output".to_string());
+
+        // Running agents have `finished_at = None`; the recent finish was
+        // a few microseconds ago — both must survive a GC pass.
+        let removed = mgr.gc();
+        assert_eq!(
+            removed, 0,
+            "neither the running nor the recently-finished agent should be evicted"
+        );
+        assert!(
+            mgr.get(&running_id).is_some(),
+            "in-progress agent must never be GC'd"
+        );
+        assert!(
+            mgr.get(&recent_id).is_some(),
+            "agent within TTL must not be GC'd"
+        );
+
+        // Sanity: the in-progress agent has no completion timestamp.
+        let running = mgr.get(&running_id).unwrap();
+        assert!(running.finished_at.lock().unwrap().is_none());
+    }
+
+    /// Crosslink #422 — `agent_output` must surface the result/error to the
+    /// caller *and then* drop the entry from the manager on the same call,
+    /// so a session that polls `agent_output` for every spawned worker
+    /// cannot accumulate finished `BackgroundAgent` Arcs.
+    /// Covers both the success and failure paths.
+    #[test]
+    fn issue422_agent_output_returns_result_then_removes_finished_entry() {
+        // Success path: result text is returned, then the entry vanishes.
+        let ok_id = BACKGROUND_AGENTS.register(AgentType::Explore, "consume-on-read ok");
+        BACKGROUND_AGENTS.finish(&ok_id, "the answer is 42".to_string());
+        assert!(
+            BACKGROUND_AGENTS.get(&ok_id).is_some(),
+            "agent must exist before retrieval"
+        );
+
+        let mut args: HashMap<String, Value> = HashMap::new();
+        args.insert("agent_id".to_string(), json!(ok_id));
+        let (msg, is_err) = execute_agent_output_tool(&args);
+        assert!(!is_err, "finished agent must not be an error: {msg}");
+        assert!(
+            msg.contains("the answer is 42"),
+            "result must be returned to caller BEFORE removal: {msg}"
+        );
+        assert!(
+            BACKGROUND_AGENTS.get(&ok_id).is_none(),
+            "finished agent must be removed from the manager after agent_output reads it"
+        );
+
+        // Failure path: error text is returned, then the entry vanishes.
+        let err_id = BACKGROUND_AGENTS.register(AgentType::Plan, "consume-on-read fail");
+        BACKGROUND_AGENTS.fail(&err_id, "synthetic failure".to_string());
+        let mut args2: HashMap<String, Value> = HashMap::new();
+        args2.insert("agent_id".to_string(), json!(err_id));
+        let (msg2, is_err2) = execute_agent_output_tool(&args2);
+        assert!(is_err2, "failed agent must return is_error=true");
+        assert!(
+            msg2.contains("synthetic failure"),
+            "error text must be returned BEFORE removal: {msg2}"
+        );
+        assert!(
+            BACKGROUND_AGENTS.get(&err_id).is_none(),
+            "failed agent must be removed from the manager after agent_output reads it"
+        );
+    }
+
+    /// Crosslink #422 — `cleanup_finished` is the explicit shutdown hook
+    /// for callers like `tui.rs`: it drops every finished agent but
+    /// preserves any still-running ones.
+    #[test]
+    fn issue422_cleanup_finished_drops_finished_keeps_running() {
+        let mgr = BackgroundAgentManager::new();
+        let done_a = mgr.register(AgentType::Explore, "done a");
+        let done_b = mgr.register(AgentType::Plan, "done b");
+        let live = mgr.register(AgentType::GeneralPurpose, "still working");
+
+        mgr.finish(&done_a, "ok".to_string());
+        mgr.fail(&done_b, "bad".to_string());
+
+        let removed = mgr.cleanup_finished();
+        assert_eq!(removed, 2, "both finished agents must be removed");
+        assert!(mgr.get(&done_a).is_none());
+        assert!(mgr.get(&done_b).is_none());
+        assert!(
+            mgr.get(&live).is_some(),
+            "running agent must survive cleanup_finished"
+        );
     }
 }
