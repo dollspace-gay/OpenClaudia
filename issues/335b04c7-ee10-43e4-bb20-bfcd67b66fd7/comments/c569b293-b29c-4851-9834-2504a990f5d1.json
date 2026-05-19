@@ -1,0 +1,10 @@
+{
+  "uuid": "c569b293-b29c-4851-9834-2504a990f5d1",
+  "issue_uuid": "335b04c7-ee10-43e4-bb20-bfcd67b66fd7",
+  "author": "lOrm",
+  "content": "Phase 1 done in this dispatch: READ_TRACKER refactored to session-keyed buckets, mirroring the per-thread SessionIdGuard pattern already in tools::todo (#518). file/mod.rs ReadFileTracker now holds Mutex<HashMap<String, Vec<PathBuf>>>; mark_read/has_been_read consult tools::todo::current_session_key() to pick the bucket. clear_all() wipes every bucket for resets; per-session clear() deferred to phase 2. 1357 lib tests + 139 integration tests = 1496 pass, zero regressions. 3 new tests pin isolation, round-trip, clear_all. cargo clippy zero diagnostics on the touched files. No #[allow], no clippy.toml, no #[ignore]. Phase 2 follow-up: thread ReadFileTracker / todo store / BACKGROUND_SHELLS / CHAINLINK_INSTALL_SHOWN through ToolContext so session state is owned rather than thread-local; add per-session clear() once SessionState::drop has a caller.",
+  "created_at": "2026-05-19T17:03:02.127996516Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAHkwMqpNHgVNI4UJwMgBRdtd4oKEno8tTQ7akUStwcDpQvnFE2f2/vfmpm0RBRcx5EyTeigJBpMcjYan+QE8VDw=="
+}
