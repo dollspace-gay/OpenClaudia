@@ -1,0 +1,10 @@
+{
+  "uuid": "07b0ff44-01a4-40dd-9f01-46646f764226",
+  "issue_uuid": "25098b1d-1641-4788-bdf1-ec9c2774a768",
+  "author": "lOrm",
+  "content": "Verified already fixed in commit e5526f1a (resolved 634 strict-clippy diagnostics including all 9 float_cmp sites). The 7 sites cited in this issue all use epsilon comparisons:\n\n- src/compaction.rs:1348,1727 -> (config.threshold - COMPACTION_THRESHOLD).abs() < f32::EPSILON\n- src/config/vdd.rs:284,287,329,332 -> (x - 0.3_f32).abs() < f32::EPSILON pattern\n- src/vdd/confabulation.rs:253,267,283,296,301,315,316 -> .abs() < f64::EPSILON / domain epsilon\n\nForensic evidence (no source changes needed in this pass):\n  grep -rn -E '== ?0\\.0|== ?1\\.0|f32 ==|f64 ==' src/   -> 0 hits\n  cargo test --lib                                       -> 1283 passed (>= baseline 1277)\n  cargo clippy --all-targets --all-features              -> exit 0\n  strict clippy (-D pedantic -D nursery -D cargo)        -> exit 0\n\nNo #[allow], no clippy.toml additions, no #[ignore].",
+  "created_at": "2026-05-19T15:17:05.078536750Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABABltMvA+X0LCprqhzKQP7WulkN3mhh5xTk7w6zo7Nus+D0Y/J/Vk34bHKnm8qb4Cs8KRv7CKY6C0VzqiMQSS4DA=="
+}
