@@ -1,0 +1,10 @@
+{
+  "uuid": "101da521-1f93-473f-ade6-68295932de42",
+  "issue_uuid": "a9100a36-06d8-467e-9ade-f3d1317e8f06",
+  "author": "lOrm",
+  "content": "Applied local-correctness fix (Category B) in commit ef7fd258. All four panic-class slice sites replaced with str::get(range) returning Option. 7 regression tests cover: leading 4-byte emoji, CJK prose, smart-quotes, emoji inside JSON body, raw-findings branch with emoji, empty input, adversarial unclosed fence. 1245 lib tests pass. cargo build passes. rustfmt clean. Clippy failure on dead-code in memory.rs::execute_raw is pre-existing, unrelated to this fix.",
+  "created_at": "2026-05-19T12:21:41.716927040Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA842qzCAtoLrKWWYJA+NavV46SNKUjg7i15Dw3rGYk3UydggVqkfOj7br14FvUpAxUWpdR9EdQwRPTVy3eXTeCA=="
+}
