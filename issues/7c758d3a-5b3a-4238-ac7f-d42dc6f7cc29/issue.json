@@ -3,11 +3,12 @@
   "display_id": 729,
   "title": "install_from_marketplace skips PluginPolicy entirely — only add_marketplace_*_with_policy variants enforce it",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/plugins/manager.rs:532-708, src/plugins/manager.rs:332-372\n## Violation\nThere are explicit `_with_policy` variants for adding marketplaces, but install_from_marketplace and install_from_git both run the actual plugin clone without ever consulting PluginPolicy::blocked_marketplaces or strict_known_marketplaces. Quoted lines:\n\n    pub fn install_from_marketplace(\n        &mut self,\n        plugin_name: &str,\n        marketplace_name: &str,\n    ) -> Result<String, PluginError> {\n        // Find the marketplace\n        let marketplaces = self.list_marketplaces();\n        ...\n        let commit_sha = match def {\n            PluginSourceDef::Url { url, git_ref } => {\n                ...\n                git_clone(url, &dest, git_ref.as_deref())?\n\nA managed environment that allowlists a single marketplace can still pull in *any* upstream URL named by that marketplace's manifest because the per-plugin source URL is never re-validated against the policy. policy.rs:30-90 explicitly distinguishes user vs managed scope, so this gap silently downgrades managed policies to advisory.\n## Mandated refactor\nIntroduce install_from_marketplace_with_policy and install_from_git_with_policy mirroring the add_marketplace_*_with_policy pattern. Inside the structured-source branch, build a MarketplaceSource (Git / GitHub / Url) from the resolved upstream URL and run policy::check_marketplace_allowed against it before git_clone fires. Make the non-policy installer #[deprecated] for tests-only use, or have it forward to the policy variant with the active managed policy fetched from settings.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:51:53.576055559Z",
-  "updated_at": "2026-05-18T21:53:07.253571439Z",
+  "updated_at": "2026-05-19T22:15:23.706203318Z",
+  "closed_at": "2026-05-19T22:15:23.706203318Z",
   "labels": [
     "qa-review",
     "security"
