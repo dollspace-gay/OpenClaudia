@@ -10,8 +10,26 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::time::Duration;
 use url::Url;
+
+/// Process-wide shared `reqwest::Client` (crosslink #368).
+///
+/// Building a fresh `Client` on every call defeats reqwest's internal
+/// connection pool and DNS cache, and — combined with a fresh tokio
+/// `Runtime::new()` — leaks tokio worker threads on every web tool call.
+/// One client, built once, reused everywhere. Tuned for the web-fetch
+/// hot path: 90s idle pool, 10s connect timeout, TCP keepalive. The
+/// per-request `timeout` overrides are still set at the call site.
+pub(crate) static SHARED_HTTP_CLIENT: LazyLock<Client> = LazyLock::new(|| {
+    Client::builder()
+        .pool_idle_timeout(Duration::from_secs(90))
+        .connect_timeout(Duration::from_secs(10))
+        .tcp_keepalive(Duration::from_mins(1))
+        .build()
+        .expect("shared reqwest client builds with default features")
+});
 
 /// Hostnames that always represent internal infrastructure, cloud metadata
 /// endpoints, or cluster control planes. Block by name even before DNS
@@ -303,21 +321,18 @@ pub struct SearchResult {
 ///
 /// # Errors
 ///
-/// Returns an error string if the URL is invalid, the HTTP client cannot be created,
-/// or the fetch fails.
+/// Returns an error string if the URL is invalid or the fetch fails.
 pub async fn fetch_url(url: &str) -> Result<FetchResult, String> {
     validate_url(url)?;
 
-    let client = Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
-
-    // Use Jina Reader to fetch and convert to markdown
+    // Use Jina Reader to fetch and convert to markdown.
+    // Reuses the process-wide `SHARED_HTTP_CLIENT` (crosslink #368) so the
+    // connection pool and DNS cache survive across calls.
     let jina_url = format!("{JINA_READER_URL}{url}");
 
-    let response = client
+    let response = SHARED_HTTP_CLIENT
         .get(&jina_url)
+        .timeout(Duration::from_secs(30))
         .header("Accept", "text/markdown")
         .send()
         .await
@@ -425,11 +440,6 @@ async fn search_tavily(
         include_answer: bool,
     }
 
-    let client = Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
-
     let request = TavilyRequest {
         api_key,
         query,
@@ -437,8 +447,10 @@ async fn search_tavily(
         include_answer: false,
     };
 
-    let response = client
+    // Shared client + per-request timeout (crosslink #368).
+    let response = SHARED_HTTP_CLIENT
         .post(TAVILY_API_URL)
+        .timeout(Duration::from_secs(15))
         .json(&request)
         .send()
         .await
@@ -472,13 +484,10 @@ async fn search_brave(
     api_key: &str,
     limit: usize,
 ) -> Result<Vec<SearchResult>, String> {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
-
-    let response = client
+    // Shared client + per-request timeout (crosslink #368).
+    let response = SHARED_HTTP_CLIENT
         .get(BRAVE_SEARCH_URL)
+        .timeout(Duration::from_secs(15))
         .header("X-Subscription-Token", api_key)
         .header("Accept", "application/json")
         .query(&[("q", query), ("count", &limit.to_string())])

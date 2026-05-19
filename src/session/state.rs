@@ -220,7 +220,19 @@ pub struct AllowedPrompt {
     pub prompt: String,
 }
 
-/// Tools that are allowed in plan mode (read-only + user interaction)
+/// Tools that are allowed in plan mode (read-only + user interaction).
+///
+/// Single source of truth for "known plan-mode-safe tools".
+///
+/// `is_tool_allowed_in_plan_mode` enforces hard default-deny: any tool name
+/// not in this list (and not the `write_file`-to-plan-file special case nor
+/// the plan-mode marker tools below) is **rejected** regardless of whether
+/// it is a built-in, MCP-registered, or plugin-contributed tool.
+///
+/// `enter_plan_mode` / `exit_plan_mode` are special and handled inline in
+/// [`is_tool_allowed_in_plan_mode`]; they are not in this list because they
+/// affect plan-mode state itself rather than executing under plan-mode
+/// restrictions.
 pub const PLAN_MODE_ALLOWED_TOOLS: &[&str] = &[
     "read_file",
     "list_files",
@@ -236,39 +248,127 @@ pub const PLAN_MODE_ALLOWED_TOOLS: &[&str] = &[
     "bash_output",
 ];
 
-/// Tools that are always blocked in plan mode (write/mutate operations)
-pub const PLAN_MODE_BLOCKED_TOOLS: &[&str] = &["bash", "edit_file", "kill_shell", "todo_write"];
-
-/// Check if a tool is allowed in plan mode.
+/// MCP tool name prefix.
 ///
-/// `write_file` is special: it is allowed **only** when its `path`
-/// argument resolves to the same canonical path as `plan_realpath`, the
-/// pre-pinned realpath produced by [`PlanModeState::enter`].
+/// MCP servers register tools as `mcp__<server>__<tool>` (see `src/mcp.rs`).
+/// MCP tools are hard-denied in plan mode by default -- their side-effects
+/// are opaque to the harness and cannot be statically classified as
+/// read-only.
+pub const MCP_TOOL_PREFIX: &str = "mcp__";
+
+/// Plugin tool name prefix.
+///
+/// Plugin-contributed tools follow `plugin__<plugin>__<tool>`. Hard-denied
+/// in plan mode by default for the same reason as MCP tools.
+pub const PLUGIN_TOOL_PREFIX: &str = "plugin__";
+
+/// Policy for plan-mode tool gating.
+///
+/// Default is *hard* default-deny: every tool not in
+/// [`PLAN_MODE_ALLOWED_TOOLS`] is refused, including any MCP or plugin
+/// tool that happens to be named like a built-in. Operators may opt into
+/// MCP/plugin tools in plan mode by setting `allow_mcp_tools` /
+/// `allow_plugin_tools` to `true`, but doing so still requires the tool
+/// name to appear in [`PLAN_MODE_ALLOWED_TOOLS`] -- the prefix flags only
+/// _lift the prefix-based hard refusal_, they do **not** bypass the
+/// allowlist (crosslink #341).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PlanModePolicy {
+    /// Permit `mcp__*` tools to be considered by the allowlist. Default `false`.
+    pub allow_mcp_tools: bool,
+    /// Permit `plugin__*` tools to be considered by the allowlist. Default `false`.
+    pub allow_plugin_tools: bool,
+}
+
+/// Check if a tool is allowed in plan mode (hard default-deny).
+///
+/// Thin wrapper over [`is_tool_allowed_in_plan_mode_with_policy`] using
+/// the default policy ([`PlanModePolicy::default`]), which denies all MCP
+/// and plugin tools. Existing callers keep their behaviour after the
+/// crosslink #341 refactor.
+///
+/// # Hard default-deny (crosslink #341)
+///
+/// The previous implementation used a "not in allowlist *and* not in
+/// blocklist → fall through" pattern that silently passed any name not in
+/// either list (e.g. newly registered MCP tools, plugin tools) to the
+/// `write_file` / `enter_plan_mode` / `exit_plan_mode` special cases and
+/// only then returned `false`. While the final return was `false`, the
+/// architecture invited bypass-by-shadowing and made it easy to add a new
+/// branch that fails open. The new implementation collapses the decision
+/// to a single explicit flow:
+///
+/// 1. `mcp__*` / `plugin__*` prefixes → hard-deny by default (configurable).
+/// 2. `enter_plan_mode` / `exit_plan_mode` → allow (plan-mode markers).
+/// 3. `write_file` → allow **only** if target canonicalizes to `plan_realpath`.
+/// 4. Name in [`PLAN_MODE_ALLOWED_TOOLS`] → allow.
+/// 5. Anything else → **deny**.
 ///
 /// # Security: TOCTOU-safe `write_file` gate (crosslink #334)
 ///
 /// `plan_realpath` is assumed to already be canonical and is **never**
 /// re-canonicalized here -- re-resolving would re-introduce the cwd-swap
-/// race the entry-time pin closes. The target is validated with the same
-/// FD-pinned pattern used at entry: `symlink_metadata` (reject symlinks)
-/// then `File::open` (pin the inode) then FD-based `File::metadata`
-/// (reject non-regular) then `canonicalize` (compare to `plan_realpath`).
-/// Any failure is a hard refusal -- the old string-comparison and
-/// `current_dir`-join fallbacks are removed.
+/// race the entry-time pin closes.
+///
+/// The target is validated with the same FD-pinned pattern used at entry:
+/// `symlink_metadata` (reject symlinks) then `File::open` (pin the inode)
+/// then FD-based `File::metadata` (reject non-regular) then `canonicalize`
+/// (compare to `plan_realpath`). Any failure is a hard refusal -- the old
+/// string-comparison and `current_dir`-join fallbacks are removed.
 #[must_use]
 pub fn is_tool_allowed_in_plan_mode(
     tool_name: &str,
     plan_realpath: &Path,
     args: &serde_json::Value,
 ) -> bool {
-    if PLAN_MODE_ALLOWED_TOOLS.contains(&tool_name) {
-        return true;
-    }
+    is_tool_allowed_in_plan_mode_with_policy(
+        tool_name,
+        plan_realpath,
+        args,
+        PlanModePolicy::default(),
+    )
+}
 
-    if PLAN_MODE_BLOCKED_TOOLS.contains(&tool_name) {
+/// Policy-aware plan-mode allow check.
+///
+/// See [`is_tool_allowed_in_plan_mode`] for the decision flow. This entry
+/// point exists so the harness can opt into MCP/plugin tools when an
+/// operator has explicitly configured `plan_mode.allow_mcp_tools = true`
+/// (or the plugin equivalent) in the project config. Even with those
+/// flags lifted, the tool name still has to appear in
+/// [`PLAN_MODE_ALLOWED_TOOLS`] -- there is no path to "fall through"
+/// into allowed.
+#[must_use]
+pub fn is_tool_allowed_in_plan_mode_with_policy(
+    tool_name: &str,
+    plan_realpath: &Path,
+    args: &serde_json::Value,
+    policy: PlanModePolicy,
+) -> bool {
+    // Step 1: Prefix-based hard refusal for opaque tool sources.
+    //
+    // MCP / plugin tools are denied by default. We refuse *before* the
+    // allowlist check because a malicious MCP server could otherwise
+    // register a tool whose suffix shadows an allow-listed built-in
+    // (e.g. `mcp__evil__read_file`). The prefix gate forces such tools
+    // to keep their `mcp__` / `plugin__` prefix in the dispatcher, so
+    // the refusal here applies before the name-based allowlist is even
+    // consulted.
+    if tool_name.starts_with(MCP_TOOL_PREFIX) && !policy.allow_mcp_tools {
+        return false;
+    }
+    if tool_name.starts_with(PLUGIN_TOOL_PREFIX) && !policy.allow_plugin_tools {
         return false;
     }
 
+    // Step 2: Plan-mode marker tools (always allowed -- they manage
+    // plan-mode state itself, not user-facing side effects).
+    if tool_name == "enter_plan_mode" || tool_name == "exit_plan_mode" {
+        return true;
+    }
+
+    // Step 3: write_file special case -- only allowed when targeting the
+    // pre-pinned plan file (TOCTOU-safe; see crosslink #334).
     if tool_name == "write_file" {
         let Some(path_str) = args.get("path").and_then(|v| v.as_str()) else {
             return false;
@@ -302,10 +402,14 @@ pub fn is_tool_allowed_in_plan_mode(
         return target_canonical == plan_realpath;
     }
 
-    if tool_name == "enter_plan_mode" || tool_name == "exit_plan_mode" {
+    // Step 4: Explicit allowlist.
+    if PLAN_MODE_ALLOWED_TOOLS.contains(&tool_name) {
         return true;
     }
 
+    // Step 5: Hard default-deny. Any tool name not handled above --
+    // unknown built-ins, typo'd names, late-registered MCP/plugin tools
+    // that somehow lost their prefix, etc. -- is refused.
     false
 }
 
@@ -459,7 +563,9 @@ mod plan_mode_tests {
         );
     }
 
-    /// Static allow- and block-lists preserved after the #334 refactor.
+    /// Static allow-list preserved, and explicit write/mutate tools refused
+    /// after the #334 / #341 refactor (block-list is now redundant; the
+    /// hard default-deny in [`is_tool_allowed_in_plan_mode`] subsumes it).
     #[test]
     fn allow_check_preserves_static_allow_and_block_lists() {
         let dir = TempDir::new().unwrap();
@@ -473,10 +579,13 @@ mod plan_mode_tests {
                 "{allowed} must remain in the allow-list after the #334 refactor"
             );
         }
-        for blocked in PLAN_MODE_BLOCKED_TOOLS {
+        // Previously-blocklisted write/mutate tools: each must be refused
+        // by the hard default-deny path now that PLAN_MODE_BLOCKED_TOOLS
+        // is gone (crosslink #341).
+        for blocked in &["bash", "edit_file", "kill_shell", "todo_write"] {
             assert!(
                 !is_tool_allowed_in_plan_mode(blocked, &state.plan_realpath, &no_args),
-                "{blocked} must remain in the block-list after the #334 refactor"
+                "{blocked} must be refused by hard default-deny after #341"
             );
         }
         assert!(is_tool_allowed_in_plan_mode(
@@ -494,5 +603,141 @@ mod plan_mode_tests {
             &state.plan_realpath,
             &no_args
         ));
+    }
+
+    // ─── Crosslink #341: Hard default-deny for unknown / MCP / plugin tools ──
+
+    /// #341 — every name in [`PLAN_MODE_ALLOWED_TOOLS`] is permitted under
+    /// the new explicit-allowlist gate. Positive control: if this fails,
+    /// the hard default-deny has collapsed onto legitimate known tools
+    /// and the harness is unusable in plan mode.
+    #[test]
+    fn known_tool_allowed_in_plan_mode_341() {
+        let dir = TempDir::new().unwrap();
+        let plan = dir.path().join("plan.md");
+        std::fs::write(&plan, "# plan\n").unwrap();
+        let state = PlanModeState::enter(plan).expect("enter must succeed");
+        let no_args = json!({});
+        assert!(
+            is_tool_allowed_in_plan_mode("read_file", &state.plan_realpath, &no_args),
+            "known allow-listed tool must be permitted (#341 positive control)"
+        );
+        assert!(
+            is_tool_allowed_in_plan_mode("grep", &state.plan_realpath, &no_args),
+            "known allow-listed tool must be permitted (#341 positive control)"
+        );
+    }
+
+    /// #341 — an unknown tool name (no MCP / plugin prefix, not in the
+    /// allowlist, not a plan-mode marker) is HARD-denied. Previously the
+    /// not-in-allowlist & not-in-blocklist case fell through to the
+    /// `write_file` / marker checks before returning false; the new
+    /// implementation rejects it via the explicit step 5 default-deny.
+    #[test]
+    fn unknown_tool_denied_by_hard_default_deny_341() {
+        let dir = TempDir::new().unwrap();
+        let plan = dir.path().join("plan.md");
+        std::fs::write(&plan, "# plan\n").unwrap();
+        let state = PlanModeState::enter(plan).expect("enter must succeed");
+        let no_args = json!({});
+        assert!(
+            !is_tool_allowed_in_plan_mode(
+                "totally_made_up_tool_341",
+                &state.plan_realpath,
+                &no_args
+            ),
+            "unknown tool must be refused by hard default-deny (#341)"
+        );
+        assert!(
+            !is_tool_allowed_in_plan_mode("memory_save", &state.plan_realpath, &no_args),
+            "newly added tool not yet in allowlist must be refused (#341)"
+        );
+    }
+
+    /// #341 — an MCP-registered tool (`mcp__*`) is HARD-denied by default
+    /// even when its suffix would have matched an allow-listed name. The
+    /// prefix gate fires before the allowlist is consulted, so a hostile
+    /// MCP server cannot register `mcp__evil__read_file` and ride the
+    /// allowlist match for `read_file`.
+    #[test]
+    fn mcp_prefixed_tool_denied_by_default_341() {
+        let dir = TempDir::new().unwrap();
+        let plan = dir.path().join("plan.md");
+        std::fs::write(&plan, "# plan\n").unwrap();
+        let state = PlanModeState::enter(plan).expect("enter must succeed");
+        let no_args = json!({});
+        assert!(
+            !is_tool_allowed_in_plan_mode(
+                "mcp__some_server__exec_shell",
+                &state.plan_realpath,
+                &no_args
+            ),
+            "MCP-prefixed tool must be denied by default in plan mode (#341)"
+        );
+        assert!(
+            !is_tool_allowed_in_plan_mode("mcp__evil__read_file", &state.plan_realpath, &no_args),
+            "MCP tool whose suffix matches an allow-listed name must \
+             STILL be denied -- the prefix gate fires first (#341)"
+        );
+        // Explicit policy opt-in still requires the bare name to be in
+        // the allowlist: arbitrary MCP names remain denied even with
+        // allow_mcp_tools = true.
+        let permissive = PlanModePolicy {
+            allow_mcp_tools: true,
+            allow_plugin_tools: false,
+        };
+        assert!(
+            !is_tool_allowed_in_plan_mode_with_policy(
+                "mcp__some_server__exec_shell",
+                &state.plan_realpath,
+                &no_args,
+                permissive,
+            ),
+            "even with allow_mcp_tools=true, an MCP tool not in the \
+             allowlist remains denied (#341 belt-and-braces)"
+        );
+    }
+
+    /// #341 — a plugin-contributed tool (`plugin__*`) is HARD-denied by
+    /// default. Same architecture as the MCP case: prefix gate first,
+    /// allowlist second, default-deny third.
+    #[test]
+    fn plugin_prefixed_tool_denied_by_default_341() {
+        let dir = TempDir::new().unwrap();
+        let plan = dir.path().join("plan.md");
+        std::fs::write(&plan, "# plan\n").unwrap();
+        let state = PlanModeState::enter(plan).expect("enter must succeed");
+        let no_args = json!({});
+        assert!(
+            !is_tool_allowed_in_plan_mode(
+                "plugin__my_plugin__do_thing",
+                &state.plan_realpath,
+                &no_args
+            ),
+            "plugin-prefixed tool must be denied by default in plan mode (#341)"
+        );
+        assert!(
+            !is_tool_allowed_in_plan_mode(
+                "plugin__evil__list_files",
+                &state.plan_realpath,
+                &no_args
+            ),
+            "plugin tool whose suffix matches an allow-listed name must \
+             STILL be denied (#341)"
+        );
+        let permissive = PlanModePolicy {
+            allow_mcp_tools: false,
+            allow_plugin_tools: true,
+        };
+        assert!(
+            !is_tool_allowed_in_plan_mode_with_policy(
+                "plugin__my_plugin__do_thing",
+                &state.plan_realpath,
+                &no_args,
+                permissive,
+            ),
+            "even with allow_plugin_tools=true, a plugin tool not in the \
+             allowlist remains denied (#341)"
+        );
     }
 }

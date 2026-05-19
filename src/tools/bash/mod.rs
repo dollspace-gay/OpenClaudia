@@ -30,7 +30,26 @@ struct BackgroundShell {
     exit_status: Arc<Mutex<Option<i32>>>,
     /// PID of the spawned process, used to send SIGTERM on kill
     pid: u32,
-    /// Whether output has been retrieved at least once after the process finished
+    /// Whether output has been drained at least once via `get_output`.
+    ///
+    /// # Fix for crosslink #351
+    ///
+    /// Set inside `get_output` on the actual drain operation, regardless of
+    /// whether the process has finished. The previous implementation only set
+    /// it when `is_finished` was observed true at poll time, which raced with
+    /// the wait-thread:
+    ///
+    /// - Drain BEFORE the wait-thread flips `finished=true`: flag was never
+    ///   set even though output was drained — GC permanently retained the
+    ///   slot.
+    /// - One-shot drain after finish: still set the flag (this path worked
+    ///   pre-fix and is preserved).
+    ///
+    /// Setting the flag on drain eliminates the happens-before requirement
+    /// between `finished` and `output_retrieved_after_finish`: the drain is
+    /// the only event that matters for GC. `AtomicBool` with `SeqCst`
+    /// synchronises observation between the polling thread and the GC sweep
+    /// in `spawn`.
     output_retrieved_after_finish: AtomicBool,
 }
 
@@ -208,16 +227,25 @@ impl BackgroundShellManager {
             output.push_str(&stderr_lines.join("\n"));
         }
 
+        // Crosslink #351 fix: mark the slot as drained on EVERY get_output
+        // call, regardless of whether `finished` has been set yet by the
+        // wait-thread. The previous code gated the store on
+        // `is_finished == true`, racing with the wait-thread: a caller that
+        // drained just before `finished` was set would never mark the slot
+        // as drained, leaving the GC sweep unable to reclaim it.
+        //
+        // Drain is the GC-relevant event: once a caller has had the chance
+        // to read the buffers, the slot is collectable as soon as the
+        // process is also finished. SeqCst on this store + matching loads
+        // in `spawn`'s GC sweep gives the happens-before edge that was
+        // missing before.
+        shell
+            .output_retrieved_after_finish
+            .store(true, Ordering::SeqCst);
+
         let is_finished = shell.finished.load(Ordering::SeqCst);
         let is_running = !is_finished;
         let exit_code = shell.exit_status.lock().ok().and_then(|es| *es);
-
-        // Mark that output has been retrieved after process finished (for GC eligibility)
-        if is_finished {
-            shell
-                .output_retrieved_after_finish
-                .store(true, Ordering::SeqCst);
-        }
 
         Ok((output, is_running, exit_code))
     }
@@ -737,5 +765,137 @@ mod tests {
             is_error,
             "b5_nonzero_exit: non-zero exit must set is_error=true"
         );
+    }
+
+    // ── Crosslink #351 — output-drain GC flag race ────────────────────────────
+    //
+    // Pre-fix, `output_retrieved_after_finish` was stored only when
+    // `get_output` observed `finished == true`. That gated the store on a
+    // racing atomic from the wait-thread:
+    //   (1) drain-before-finish: caller drains while process still runs; flag
+    //       never set even though output was retrieved → GC never collects.
+    //   (2) drain-after-finish with no later poll: caller drains right as the
+    //       wait-thread sets finished; flag set, fine.
+    //
+    // Post-fix: every `get_output` call marks the slot as drained.
+
+    /// Helper: read the GC flag directly from the manager's shell entry.
+    fn read_drained_flag(shell_id: &str) -> bool {
+        let shells = BACKGROUND_SHELLS
+            .shells
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        shells
+            .get(shell_id)
+            .is_some_and(|s| s.output_retrieved_after_finish.load(Ordering::SeqCst))
+    }
+
+    /// `#351-a`: drain-before-finish marks the GC flag.
+    ///
+    /// Spawn a long-running process, poll `get_output` while it is still alive
+    /// (`is_running=true`), and assert the flag flips. Pre-fix this would
+    /// stay false because the `if is_finished` gate skipped the store.
+    #[test]
+    #[cfg(unix)]
+    fn fix351_drain_before_finish_marks_retrieved() {
+        let id = BACKGROUND_SHELLS
+            .spawn("sleep 5")
+            .expect("fix351-a: spawn must succeed");
+
+        // Allow reader threads to start, but the process is still alive.
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        assert!(
+            !read_drained_flag(&id),
+            "fix351-a: flag must be false before any get_output call"
+        );
+
+        let (_, is_running, _) = BACKGROUND_SHELLS
+            .get_output(&id)
+            .expect("fix351-a: get_output must succeed");
+        assert!(
+            is_running,
+            "fix351-a: process must still be running for this test to \
+             exercise the race"
+        );
+
+        assert!(
+            read_drained_flag(&id),
+            "fix351-a: drain on a running shell must mark the GC flag \
+             (pre-fix this would be false because finished=false)"
+        );
+
+        // Clean up the long-running child.
+        let _ = BACKGROUND_SHELLS.kill(&id);
+    }
+
+    /// `#351-b`: drain-after-finish marks the GC flag.
+    ///
+    /// Backwards-compatibility check: the post-fix code must still set the
+    /// flag when the process has already finished by the time `get_output`
+    /// is called. This was the only path that worked pre-fix.
+    #[test]
+    #[cfg(unix)]
+    fn fix351_drain_after_finish_marks_retrieved() {
+        let id = BACKGROUND_SHELLS
+            .spawn("echo fix351_b_done")
+            .expect("fix351-b: spawn must succeed");
+
+        // Let the short-lived process finish and the wait-thread flip
+        // `finished`.
+        std::thread::sleep(std::time::Duration::from_millis(400));
+
+        let (_, is_running, _) = BACKGROUND_SHELLS
+            .get_output(&id)
+            .expect("fix351-b: get_output must succeed");
+        assert!(
+            !is_running,
+            "fix351-b: process must be finished by the time of the poll"
+        );
+
+        assert!(
+            read_drained_flag(&id),
+            "fix351-b: drain after finish must mark the GC flag"
+        );
+    }
+
+    /// `#351-c`: never-drained shells stay unretrieved.
+    ///
+    /// Spawn a shell, wait for it to finish, but never call `get_output`.
+    /// The flag must remain false so the GC sweep is forbidden from
+    /// reclaiming a slot whose output the caller has never had a chance to
+    /// read.
+    #[test]
+    #[cfg(unix)]
+    fn fix351_never_drained_stays_unretrieved() {
+        let id = BACKGROUND_SHELLS
+            .spawn("echo fix351_c_done")
+            .expect("fix351-c: spawn must succeed");
+
+        // Wait long enough for the wait-thread to set finished=true.
+        std::thread::sleep(std::time::Duration::from_millis(400));
+
+        // No `get_output` call on this id — only a list() check to ensure
+        // finished is observable without going through the drain path.
+        let listed = BACKGROUND_SHELLS.list();
+        let entry = listed
+            .iter()
+            .find(|(listed_id, _, _)| listed_id == &id)
+            .expect("fix351-c: shell must still be present (not yet GC'd)");
+        let is_running = entry.2;
+        assert!(
+            !is_running,
+            "fix351-c: process must be finished before flag assertion"
+        );
+
+        assert!(
+            !read_drained_flag(&id),
+            "fix351-c: a shell that has never been drained must NOT be \
+             marked retrieved, even when finished — GC must not collect it"
+        );
+
+        // Clean up: a single drain marks the flag and makes the slot
+        // eligible for the next GC sweep.
+        let _ = BACKGROUND_SHELLS.get_output(&id);
     }
 }

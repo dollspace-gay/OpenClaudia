@@ -6,6 +6,85 @@
 use crate::hooks::HookResult;
 use crate::proxy::{ChatCompletionRequest, ChatMessage, MessageContent};
 
+/// Forensic record of a hook-driven prompt rewrite.
+///
+/// Returned from [`ContextInjector::apply_prompt_modification`] so callers
+/// can audit, log, or persist what a hook changed. Carrying both the
+/// pre- and post-modification text means a downstream auditor never has
+/// to trust the hook engine to faithfully describe its own edit.
+///
+/// See crosslink #365.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptModification {
+    /// Zero-based index of the user message that was replaced.
+    pub message_index: usize,
+    /// Best-effort text rendering of the original user message before
+    /// the hook ran. For `MessageContent::Parts` messages, text parts
+    /// are joined and non-text parts are summarized as
+    /// `<non-text-part:KIND>` so this field is always a plain `String`.
+    pub before: String,
+    /// New text content the hook substituted in.
+    pub after: String,
+}
+
+/// Errors that can be raised when the context injector mutates a
+/// request on behalf of a hook.
+///
+/// See crosslink #365 — previously these conditions were silently
+/// swallowed, allowing a buggy hook configuration to drop user intent
+/// on the floor without surfacing any signal.
+#[derive(Debug, thiserror::Error)]
+pub enum ContextError {
+    /// A hook returned a `modified_prompt`, but the request contained
+    /// no `role == "user"` message to apply it to. The modification
+    /// was discarded; the caller must decide whether to surface this
+    /// as a hard error or a warning.
+    #[error("hook requested prompt modification but no user message exists to modify")]
+    NoUserMessage,
+}
+
+/// Truncation budget for `tracing::info!` audit lines. Long prompts
+/// (multi-KB pastes) would otherwise drown the log; the full content
+/// is still returned to the caller via [`PromptModification`].
+const AUDIT_TRUNCATE_BYTES: usize = 512;
+
+/// Render any [`MessageContent`] to a plain `String` for audit logging.
+///
+/// Non-text content parts are summarized as `<non-text-part:KIND>` so the
+/// returned string is always a `String` (never panics) and is safe to
+/// log even when the original message contained images or other rich
+/// parts.
+fn render_message_content(content: &MessageContent) -> String {
+    match content {
+        MessageContent::Text(text) => text.clone(),
+        MessageContent::Parts(parts) => parts
+            .iter()
+            .map(|p| {
+                if p.content_type == "text" {
+                    p.text.clone().unwrap_or_default()
+                } else {
+                    format!("<non-text-part:{}>", p.content_type)
+                }
+            })
+            .collect::<String>(),
+    }
+}
+
+/// Truncate `s` to at most `max_bytes` bytes on a UTF-8 boundary,
+/// appending a marker if any content was elided. Used for the
+/// `tracing::info!` audit line — never for the data returned to the
+/// caller, which retains the full original.
+fn truncate_for_log(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\u{2026}[truncated {} bytes]", &s[..end], s.len() - end)
+}
+
 /// Wraps content in a system-reminder tag.
 ///
 /// **Injection-resistant:** hook output and user-data are treated as
@@ -118,19 +197,64 @@ impl ContextInjector {
         }
     }
 
-    /// Apply prompt modification from hooks
+    /// Apply prompt modification from hooks, returning a forensic record
+    /// of what changed.
     ///
-    /// If a hook returned a modified prompt, this replaces the last user message.
+    /// If a hook returned a `modified_prompt`, the last user message is
+    /// replaced with that text and a [`PromptModification`] is returned
+    /// describing the before/after content. The substitution is also
+    /// emitted at `tracing::info!` (with truncation) so it is captured
+    /// in the audit log even when callers ignore the return value.
+    ///
+    /// # Returns
+    /// * `Ok(None)` — no hook requested a modification (the common case).
+    /// * `Ok(Some(record))` — a modification was applied; `record`
+    ///   carries the original message content and the new content so
+    ///   callers can persist, diff, or surface the change.
+    ///
+    /// # Errors
+    /// * [`ContextError::NoUserMessage`] — a hook requested a modification
+    ///   but the request contained no `role == "user"` message. The hook's
+    ///   change is **discarded** rather than silently dropped, so the
+    ///   caller can decide whether to fail closed or fail open.
+    ///
+    /// See crosslink #365: previously this method silently overwrote the
+    /// last user message and silently dropped the modification when no
+    /// user message existed — both with no log line and no return value.
     pub fn apply_prompt_modification(
         request: &mut ChatCompletionRequest,
         hook_result: &HookResult,
-    ) {
-        if let Some(modified_prompt) = hook_result.modified_prompt() {
-            // Find and update the last user message
-            if let Some(last_user) = request.messages.iter_mut().rev().find(|m| m.role == "user") {
-                last_user.content = MessageContent::Text(modified_prompt.to_string());
-            }
-        }
+    ) -> Result<Option<PromptModification>, ContextError> {
+        let Some(modified_prompt) = hook_result.modified_prompt() else {
+            return Ok(None);
+        };
+
+        let Some(last_user_idx) = request.messages.iter().rposition(|m| m.role == "user") else {
+            tracing::warn!(
+                target: "openclaudia::context::prompt_modification",
+                "hook requested prompt modification but no user message exists; modification discarded"
+            );
+            return Err(ContextError::NoUserMessage);
+        };
+
+        let before = render_message_content(&request.messages[last_user_idx].content);
+        let after = modified_prompt.to_string();
+
+        tracing::info!(
+            target: "openclaudia::context::prompt_modification",
+            message_index = last_user_idx,
+            before = %truncate_for_log(&before, AUDIT_TRUNCATE_BYTES),
+            after = %truncate_for_log(&after, AUDIT_TRUNCATE_BYTES),
+            "hook rewrote user prompt"
+        );
+
+        request.messages[last_user_idx].content = MessageContent::Text(after.clone());
+
+        Ok(Some(PromptModification {
+            message_index: last_user_idx,
+            before,
+            after,
+        }))
     }
 
     /// Inject a system message at the beginning of the conversation
@@ -299,7 +423,9 @@ mod tests {
             errors: vec![],
         };
 
-        ContextInjector::apply_prompt_modification(&mut request, &hook_result);
+        let record = ContextInjector::apply_prompt_modification(&mut request, &hook_result)
+            .expect("modification should succeed");
+        assert!(record.is_some(), "a modification was applied");
 
         let user_msg = &request.messages[1];
         if let MessageContent::Text(text) = &user_msg.content {
@@ -597,7 +723,12 @@ mod tests {
             errors: vec![],
         };
 
-        ContextInjector::apply_prompt_modification(&mut request, &hook_result);
+        let record = ContextInjector::apply_prompt_modification(&mut request, &hook_result)
+            .expect("modification should succeed")
+            .expect("record should be returned");
+        assert_eq!(record.message_index, 1);
+        assert_eq!(record.before, "Hello!");
+        assert_eq!(record.after, "Completely new prompt");
 
         let user_msg = &request.messages[1];
         if let MessageContent::Text(text) = &user_msg.content {
@@ -624,12 +755,175 @@ mod tests {
             panic!("Expected text content");
         };
 
-        ContextInjector::apply_prompt_modification(&mut request, &hook_result);
+        let record = ContextInjector::apply_prompt_modification(&mut request, &hook_result)
+            .expect("no-op should not error");
+        assert!(record.is_none(), "no record when no modification");
 
         // Content should be unchanged
         if let MessageContent::Text(text) = &request.messages[1].content {
             assert_eq!(text, &original_content);
         }
+    }
+
+    // --- Forensic-evidence regression tests for crosslink #365 ---
+
+    /// Demonstrates the forensic record contains BOTH the original
+    /// user content and the hook's replacement. Without this, an
+    /// auditor can never reconstruct what was overwritten.
+    #[test]
+    fn apply_prompt_modification_returns_forensic_record_with_before_and_after() {
+        let mut request = create_test_request();
+        // Sentinel original content the test fixture must preserve
+        // verbatim in the returned record.
+        let sentinel_original = "list the tables";
+        if let MessageContent::Text(t) = &mut request.messages[1].content {
+            *t = sentinel_original.to_string();
+        }
+
+        let malicious_replacement = "delete the database";
+        let hook_result = HookResult {
+            allowed: true,
+            outputs: vec![HookOutput {
+                prompt: Some(malicious_replacement.to_string()),
+                ..Default::default()
+            }],
+            errors: vec![],
+        };
+
+        let record = ContextInjector::apply_prompt_modification(&mut request, &hook_result)
+            .expect("expected Ok")
+            .expect("expected Some(record)");
+
+        // Forensic evidence: the ORIGINAL user intent is preserved in
+        // the returned record even though the message vector itself
+        // has been overwritten with the hook's substitution.
+        assert_eq!(record.before, sentinel_original);
+        assert_eq!(record.after, malicious_replacement);
+        assert_eq!(record.message_index, 1);
+
+        // The mutation actually happened in the vector...
+        if let MessageContent::Text(text) = &request.messages[1].content {
+            assert_eq!(text, malicious_replacement);
+        } else {
+            panic!("expected text");
+        }
+    }
+
+    /// When a hook requests a modification but there is no user message
+    /// to apply it to, the previous implementation silently dropped the
+    /// modification. The fixed implementation must surface this as a
+    /// distinct error so the caller can act on it.
+    #[test]
+    fn apply_prompt_modification_errors_when_no_user_message_exists() {
+        let mut request = ChatCompletionRequest {
+            model: "gpt-4".to_string(),
+            // Only a system message; no user message anywhere.
+            messages: vec![ChatMessage {
+                role: "system".to_string(),
+                content: MessageContent::Text("System only".to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            temperature: None,
+            max_tokens: None,
+            stream: None,
+            tools: None,
+            tool_choice: None,
+            extra: std::collections::HashMap::new(),
+        };
+        let original_messages = request.messages.clone();
+
+        let hook_result = HookResult {
+            allowed: true,
+            outputs: vec![HookOutput {
+                prompt: Some("should be discarded".to_string()),
+                ..Default::default()
+            }],
+            errors: vec![],
+        };
+
+        let err = ContextInjector::apply_prompt_modification(&mut request, &hook_result)
+            .expect_err("should error when no user message exists");
+        assert!(matches!(err, ContextError::NoUserMessage));
+
+        // The original messages must be unchanged — the hook's edit was
+        // discarded rather than silently applied to some other slot.
+        assert_eq!(request.messages.len(), original_messages.len());
+        if let MessageContent::Text(text) = &request.messages[0].content {
+            assert_eq!(text, "System only");
+        }
+    }
+
+    /// The forensic record's `before` field must faithfully reconstruct
+    /// the original `MessageContent`, including the case where the user
+    /// message used the `Parts` representation rather than `Text`.
+    #[test]
+    fn apply_prompt_modification_record_captures_parts_content_as_text() {
+        let mut request = ChatCompletionRequest {
+            model: "gpt-4".to_string(),
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: MessageContent::Parts(vec![
+                    crate::proxy::ContentPart {
+                        content_type: "text".to_string(),
+                        text: Some("part-one ".to_string()),
+                        image_url: None,
+                    },
+                    crate::proxy::ContentPart {
+                        content_type: "text".to_string(),
+                        text: Some("part-two".to_string()),
+                        image_url: None,
+                    },
+                ]),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            temperature: None,
+            max_tokens: None,
+            stream: None,
+            tools: None,
+            tool_choice: None,
+            extra: std::collections::HashMap::new(),
+        };
+
+        let hook_result = HookResult {
+            allowed: true,
+            outputs: vec![HookOutput {
+                prompt: Some("rewritten".to_string()),
+                ..Default::default()
+            }],
+            errors: vec![],
+        };
+
+        let record = ContextInjector::apply_prompt_modification(&mut request, &hook_result)
+            .expect("ok")
+            .expect("some");
+
+        // The flattened representation joins the two text parts so an
+        // auditor can read what the user actually said.
+        assert_eq!(record.before, "part-one part-two");
+        assert_eq!(record.after, "rewritten");
+
+        // After rewriting, the message is canonicalized to Text.
+        match &request.messages[0].content {
+            MessageContent::Text(t) => assert_eq!(t, "rewritten"),
+            MessageContent::Parts(_) => panic!("expected Text after rewrite"),
+        }
+    }
+
+    /// Long prompts should be truncated for the tracing audit line but
+    /// returned in full inside the `PromptModification` record.
+    #[test]
+    fn truncate_for_log_respects_boundary() {
+        let s = "a".repeat(AUDIT_TRUNCATE_BYTES + 100);
+        let t = truncate_for_log(&s, AUDIT_TRUNCATE_BYTES);
+        assert!(t.contains("[truncated"));
+        assert!(t.len() < s.len() + 64);
+        // Short strings are untouched.
+        let short = "hello";
+        assert_eq!(truncate_for_log(short, AUDIT_TRUNCATE_BYTES), short);
     }
 
     #[test]

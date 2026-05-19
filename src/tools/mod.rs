@@ -705,7 +705,7 @@ pub fn get_tool_definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "enter_worktree",
-                "description": "Create an isolated git worktree and switch into it. This creates a new branch based on the current HEAD and a separate working directory under .worktrees/ so the agent can make changes without affecting the main working tree.",
+                "description": "Create an isolated git worktree under .worktrees/<branch>/ based on the current HEAD. Returns the new worktree path. Does NOT change the process working directory — pass the returned path to subsequent bash/file calls (and to exit_worktree) to operate inside the worktree.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -722,16 +722,20 @@ pub fn get_tool_definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "exit_worktree",
-                "description": "Exit the current git worktree and return to the main working tree. Optionally commit and merge changes back, or discard them.",
+                "description": "Remove an isolated git worktree previously created by enter_worktree. Optionally commits and merges changes back, or discards them. Does NOT change the process working directory.",
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Absolute path to the worktree to exit (as returned by enter_worktree)."
+                        },
                         "apply_changes": {
                             "type": "boolean",
                             "description": "If true, commit any uncommitted changes and merge the worktree branch into the main branch. If false (default), discard the worktree."
                         }
                     },
-                    "required": []
+                    "required": ["path"]
                 }
             }
         },

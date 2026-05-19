@@ -15,8 +15,9 @@ mod task;
 pub use audit::AuditLogger;
 pub use pricing::{calculate_cost, get_pricing, ModelPricing};
 pub use state::{
-    get_session_context, is_tool_allowed_in_plan_mode, AllowedPrompt, PlanModeState, TokenUsage,
-    TurnMetrics, PLAN_MODE_ALLOWED_TOOLS, PLAN_MODE_BLOCKED_TOOLS,
+    get_session_context, is_tool_allowed_in_plan_mode, is_tool_allowed_in_plan_mode_with_policy,
+    AllowedPrompt, PlanModePolicy, PlanModeState, TokenUsage, TurnMetrics, MCP_TOOL_PREFIX,
+    PLAN_MODE_ALLOWED_TOOLS, PLUGIN_TOOL_PREFIX,
 };
 pub use task::{Task, TaskManager, TaskStatus, TaskUpdateParams, TaskUpdateStatus};
 

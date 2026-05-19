@@ -483,7 +483,29 @@ async fn prepare_request_context(
         return Err(ProxyError::HookBlocked(reason));
     }
 
-    ContextInjector::apply_prompt_modification(request, &hook_result);
+    match ContextInjector::apply_prompt_modification(request, &hook_result) {
+        Ok(Some(record)) => {
+            tracing::info!(
+                target: "openclaudia::proxy::prompt_modification",
+                message_index = record.message_index,
+                before_bytes = record.before.len(),
+                after_bytes = record.after.len(),
+                "user prompt rewritten by hook"
+            );
+        }
+        Ok(None) => {}
+        Err(err) => {
+            // A hook requested a prompt rewrite but no user message
+            // existed to receive it. Fail open (continue with the
+            // unmodified request) but log loudly so the operator can
+            // investigate the misconfiguration. See crosslink #365.
+            tracing::warn!(
+                target: "openclaudia::proxy::prompt_modification",
+                error = %err,
+                "hook prompt modification discarded"
+            );
+        }
+    }
     ContextInjector::inject(request, &hook_result);
 
     // Inject rules based on file extensions
