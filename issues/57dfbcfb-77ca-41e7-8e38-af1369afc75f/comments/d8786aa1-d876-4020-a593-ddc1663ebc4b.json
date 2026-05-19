@@ -1,0 +1,10 @@
+{
+  "uuid": "d8786aa1-d876-4020-a593-ddc1663ebc4b",
+  "issue_uuid": "57dfbcfb-77ca-41e7-8e38-af1369afc75f",
+  "author": "lOrm",
+  "content": "Fixed in src/tui/app.rs. Regex hoisted to FILE_REF_RE: LazyLock<regex::Regex> static — compiled once at first use, zero per-keystroke allocation. cap.get(0).unwrap() replaced with match+continue. cap.get(1).or(cap.get(2)).unwrap() replaced with match+continue. 6 regression tests added: expand_file_refs_no_at_sign_returns_input_unchanged, expand_file_refs_double_at_does_not_panic, expand_file_refs_unclosed_quote_does_not_panic, expand_file_refs_absolute_path_outside_cwd_is_blocked, expand_file_refs_nonexistent_file_is_graceful, expand_file_refs_many_at_signs_does_not_panic.",
+  "created_at": "2026-05-19T10:36:27.308330430Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABADJV+hKdezv5g0i7/nVimWGkgnqEsHB62KXFq8I85n8Eez95xlvzqjMknFcWPNrD0425i45o89M7pSwnQaorZAw=="
+}
