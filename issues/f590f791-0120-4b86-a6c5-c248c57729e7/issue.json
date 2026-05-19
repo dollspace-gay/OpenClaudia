@@ -3,11 +3,12 @@
   "display_id": 764,
   "title": "review_text and advisory_review duplicate single-pass adversary flow violating DRY",
   "description": "## Severity\nMajor\n## Dimension\ndry\n## Location\nsrc/vdd/mod.rs:209-281 (review_text) vs 348-398 (advisory_review)\n## Violation\nBoth methods implement the same six-step pipeline: short-circuit on disabled/short input, run static analysis, build adversary request, send, parse findings, triage, format injection. The only difference is review_text accepts user_task: &str directly while advisory_review extracts it via extract_user_task.\n\nBoth contain the same six lines:\n```rust\nlet static_results = self.run_static_analysis().await;\nlet adversary_request = self.build_adversary_request(builder_text, user_task, &static_results, 1);\nlet (adversary_text, tokens_used) = self.send_to_adversary(&adversary_request).await?;\nlet mut findings = self.parse_findings(&adversary_text, 1);\nself.triage_findings(&mut findings, &[], builder_text, builder_provider, builder_api_key).await;\nlet context_injection = format_findings_for_injection(&findings, &static_results);\n```\n\nDrift between them creates two divergent VDD behaviors.\n\n## Mandated refactor\nExtract the shared pipeline into one private method taking the resolved user_task. Both become thin adapters.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:55:14.959008498Z",
-  "updated_at": "2026-05-18T21:55:22.660897748Z",
+  "updated_at": "2026-05-19T22:18:53.951205302Z",
+  "closed_at": "2026-05-19T22:18:53.951205302Z",
   "labels": [
     "qa-review",
     "dry"
