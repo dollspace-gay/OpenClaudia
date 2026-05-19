@@ -3,11 +3,12 @@
   "display_id": 726,
   "title": "resolve_path is 60-line function with cyclomatic complexity > 15",
   "description": "## Severity\nMajor\n\n## Dimension\nComplexity / Cognitive Readability\n\n## Location\nsrc/tools/file/mod.rs:119-185 (`resolve_path` function)\n\n## Violation\nThis function combines: relative-to-absolute join with env lookup, `..` rejection, canonicalize-or-walk-up-ancestors with an unbounded `loop` (lines 145-158) and a manually built suffix vector, strict-mode env-var check, dual-jail (PROJECT_ROOT OR TEMP_ROOT) check, and error formatting. Each step has multiple branches → cyclomatic ≈ 18. The middle ancestor-walk is a mutable, fallible loop building a Vec inside a let-binding. Cognitive complexity is over the §3.5 threshold.\n\n## Mandated refactor\nExtract three private free-functions:\n1. `fn absolutize(p: &str) -> Result<PathBuf, String>` for steps 1+2.\n2. `fn canonicalize_or_walk_up(absolute: &Path) -> Result<PathBuf, String>` for the loop (testable in isolation against synthetic non-existent paths).\n3. `fn enforce_jail(canonical: &Path) -> Result<(), String>` for the dual-jail check.\n\n`resolve_path` becomes a linear three-step function under 15 lines.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:51:32.362053190Z",
-  "updated_at": "2026-05-18T21:51:40.983481909Z",
+  "updated_at": "2026-05-19T21:52:25.750289224Z",
+  "closed_at": "2026-05-19T21:52:25.750289224Z",
   "labels": [
     "qa-review"
   ]
