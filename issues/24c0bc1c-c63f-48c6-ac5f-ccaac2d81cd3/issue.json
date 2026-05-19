@@ -3,12 +3,13 @@
   "display_id": 629,
   "title": "McpManager must clear and reconnect after transport disconnect (no self-healing)",
   "description": "CC connectToServer (client.ts:1374-1401) registers an onclose handler that clears the memoize cache, so the next connectToServer call transparently reconnects. onerror bridges terminal errors to close when the SDK doesn't call onclose. OC McpManager (src/mcp.rs:598-829) holds HashMap<String, McpServer> with no onclose/onerror hooks. After a disconnect, the broken McpServer stays in the map; future call_tool invocations return McpError::Transport with no self-healing. Required: add disconnect detection (e.g. a connected flag or health-check wrapper), remove the dead entry from the map, and surface McpError::NotConnected so callers know to reconnect.",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:03:59.814526950Z",
-  "updated_at": "2026-05-18T16:04:02.843493446Z",
+  "updated_at": "2026-05-19T20:36:37.811718962Z",
+  "closed_at": "2026-05-19T20:36:37.811718962Z",
   "labels": [
     "feature",
     "cc-parity"
