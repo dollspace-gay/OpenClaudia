@@ -1,0 +1,10 @@
+{
+  "uuid": "1067e7dd-ea54-4bfb-9cc5-f35948955481",
+  "issue_uuid": "f3b25009-eac3-4e74-a9f0-6d85c92c24b2",
+  "author": "lOrm",
+  "content": "cmd_chat decomposed: ChatRepl struct + 30+ bounded methods in src/cli/chat_repl.rs. cmd_chat now 28 lines (was 2399). All clippy --all-targets --all-features errors cleared. 1176 lib tests + 69 bin tests pass. No #[allow], no clippy.toml, no #[ignore] added. main.rs shrank by 2862 lines; chat_repl.rs new at 2704.",
+  "created_at": "2026-05-19T00:57:59.728376125Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA9Y7EYw59FnE8Eqs/ju3V+ogVWKWw6knobwCohdQ0CN9/2ObH+hEqWq4QGf3KKXWJrvVEDMKUK7mxhQ1E9uhcCA=="
+}
