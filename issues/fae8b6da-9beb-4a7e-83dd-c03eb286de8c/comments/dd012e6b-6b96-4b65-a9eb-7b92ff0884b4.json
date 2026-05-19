@@ -1,0 +1,10 @@
+{
+  "uuid": "dd012e6b-6b96-4b65-a9eb-7b92ff0884b4",
+  "issue_uuid": "fae8b6da-9beb-4a7e-83dd-c03eb286de8c",
+  "author": "lOrm",
+  "content": "Fix landed on branch fix/694-acp-hooks (commits be85aed3..a2a4fd45 — squash on integration). ACP path now runs PreToolUse + PostToolUse hooks and consults rules engine in system prompt build. Tests: 4 new in acp::pre_tool_gate_tests; cargo clippy --lib --tests -- -D warnings exit 0; cargo test --lib (skip tools::worktree) 1416 passing. No #[allow], no clippy.toml, no #[ignore].",
+  "created_at": "2026-05-19T21:49:03.136527044Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAEJZQp3cKcJ5UQtFn93dj98XmnQT402RYA1VCkKpBAYCw5eF/uicEILnhfepZhzt7hoTvta+rzJ/yTq+D6enBCQ=="
+}
