@@ -3,9 +3,10 @@
   "display_id": 307,
   "title": "probe6",
   "description": "simple",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-04-18T00:31:54.824374950Z",
-  "updated_at": "2026-04-18T00:31:54.824374950Z"
+  "updated_at": "2026-05-19T12:19:20.458846466Z",
+  "closed_at": "2026-05-19T12:19:20.458846466Z"
 }
