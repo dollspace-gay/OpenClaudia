@@ -1,0 +1,10 @@
+{
+  "uuid": "efc2b31b-c64d-4139-8012-8a502e6eb2df",
+  "issue_uuid": "dc39e3ae-a8a0-40a8-8e3a-1b5d7bf88735",
+  "author": "lOrm",
+  "content": "Fixed in commit a13c4bed on branch fix-688-acp-rce-2513545. Replaced shell-string interpolation with argv-based tokio::process::Command::new(program).args(...). find/rg resolved to absolute paths via PATH walk. User pattern passed after -- argv terminator; type/glob args reject leading - to block flag injection. 4 new security tests in mod search_security_tests prove metacharacters become literal argv entries, rg is absolute-path-resolved, and -prefixed patterns land after the -- terminator. Tests: 4/4 PASS, cargo clippy -D warnings: exit 0, 1412 baseline + 4 = 1416 lib tests. No #[allow], no clippy.toml, no #[ignore].",
+  "created_at": "2026-05-19T21:08:22.947754264Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAd5iB4ALUqtyFKbB0gyyoSIlxYzHCy8klMn6PMAd1Bh7Zst5wJhwY/uL4B1jCFBBsWfv0iL28bAhCllNYdwc6DA=="
+}
