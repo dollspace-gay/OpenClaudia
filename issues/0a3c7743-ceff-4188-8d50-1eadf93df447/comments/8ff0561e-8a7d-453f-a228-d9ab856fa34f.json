@@ -1,0 +1,10 @@
+{
+  "uuid": "8ff0561e-8a7d-453f-a228-d9ab856fa34f",
+  "issue_uuid": "0a3c7743-ceff-4188-8d50-1eadf93df447",
+  "author": "lOrm",
+  "content": "Fixed via tri-state GuardrailsState (Disabled | Enabled(Box<engine>) | Poisoned). Security boundary check_file_access now returns Err(POISON_ERR) when the mutex is poisoned and Ok when disabled (no policy = nothing to enforce, the existing default semantics). configure() is sticky-poison: refuses to re-arm after a panic. lock_or_poison() transitions to Poisoned on PoisonError::into_inner(). Engine is Box-allocated to keep the enum variant size balanced. 5 new regression tests serialized on a per-test mutex: returns_err_when_poisoned, happy_path_with_enabled_engine, configure_refuses_when_poisoned, non_security_paths_safe_when_poisoned, configure_with_all_disabled_yields_disabled_state. Plus retained test_disabled_guardrails_allow_all. Full lib test suite: 1480 pass (up from 1466 baseline). No clippy regressions on guardrails.rs (single pre-existing dead_code error in permissions.rs is on HEAD, unrelated). No #[allow], no clippy.toml, no #[ignore]. Forensic note: another concurrent Claude agent in this workspace repeatedly stashed src/guardrails.rs as 'unrelated-guardrails-wip' between my Edit calls; the final state on disk has been re-applied via /tmp/apply_749_fix.py and verified by md5 immediately after testing.",
+  "created_at": "2026-05-19T22:54:11.040537206Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAxsGdRZDwX7irAh735t6M4hFF+4/y4sfqXqE8173mGCUJas3rods2cVl1PS13XcmaS/Ijx+bTLbirNhPGv6KuDQ=="
+}
