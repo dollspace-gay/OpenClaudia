@@ -3,11 +3,12 @@
   "display_id": 680,
   "title": "MCP StdioTransport size limit applied after unbounded read_line",
   "description": "## Severity\nCritical\n## Dimension\nsecurity\n## Location\nsrc/mcp.rs:181-238 (StdioTransport::request)\n## Violation\nThe comment promises a 10 MB cap to \"prevent OOM from malicious servers\", but `BufReader::read_line` is called with no byte budget; the size check runs only *after* the line is fully buffered. A malicious or runaway MCP server emitting a 10 GB single-line JSON document will exhaust memory before the check fires.\n\n```rust\nconst MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10MB\n...\nlet line = {\n    let mut reader = self.reader.lock().await;\n    let mut buf = String::new();\n    reader\n        .read_line(&mut buf)\n        .await\n        .map_err(|e| McpError::Transport(format!(\"Failed to read from stdout: {e}\")))?;\n    drop(reader);\n    if buf.len() > MAX_RESPONSE_SIZE {\n        return Err(McpError::Transport(format!(\n            \"MCP response too large ({} bytes, max {})\",\n            buf.len(),\n            MAX_RESPONSE_SIZE\n        )));\n    }\n    buf\n};\n```\n\nSame omission applies to `HttpTransport::request` (line 325-328): `response.json()` consumes the entire body unbounded.\n## Mandated refactor\nReplace `read_line` with a manual loop using `BufReader::take(MAX_RESPONSE_SIZE as u64).read_line(...)` or `AsyncReadExt::read_until(b'\\n', ...)` against a capped buffer. Bail when the limit is reached *during* read, not after. For `HttpTransport`, use `response.bytes_stream()` and accumulate up to a cap, or set `Content-Length` checks before reading.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:46:51.245431977Z",
-  "updated_at": "2026-05-18T21:46:54.361412698Z",
+  "updated_at": "2026-05-19T20:42:37.847807231Z",
+  "closed_at": "2026-05-19T20:42:37.847807231Z",
   "labels": [
     "qa-review",
     "security"
