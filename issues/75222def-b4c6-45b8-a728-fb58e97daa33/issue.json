@@ -3,12 +3,13 @@
   "display_id": 581,
   "title": "permissions.enabled opt-in means OC is allow-all by default — diverges from CC always-on model",
   "description": "## Summary\n\nOC's PermissionsConfig (src/config/permissions.rs:10) defaults enabled to false via #[serde(default)]. When enabled=false, PermissionManager::check() short-circuits to CheckResult::Allowed for every call (src/permissions.rs:132-134).\n\nCC has no equivalent gate — the permission pipeline always runs. A CC deployment always checks permissions. An OC deployment that omits permissions.enabled: true from config silently allows all tool calls, including rm -rf / and writes to .git/config.\n\n## Security relevance (high)\nThis is a default-open vs default-closed security posture difference. OC ships as default-open; CC ships as default-closed. A fresh OC deployment is functionally equivalent to CC's bypassPermissions mode, but without any audit trail or user awareness.\n\n## Behaviors to document/gate\n- Ensure the enabled=false default is explicit in documentation and CLI warnings\n- Consider whether enabled should default to true for production use\n- Add test asserting that enabled=false allows rm -rf / (to document the intentional default)\n- Add test asserting that enabled=true + empty default_allow denies rm -rf / (deny-by-default)\n\n## Parent issue\n#531\n\n## References\n- CC: utils/permissions/permissions.ts:1158-1319 (always-on pipeline)\n- OC: src/config/permissions.rs:10-11\n- OC: src/permissions.rs:132-134",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:53:07.180336712Z",
-  "updated_at": "2026-05-18T15:53:13.763886506Z",
+  "updated_at": "2026-05-19T19:22:29.845291538Z",
+  "closed_at": "2026-05-19T19:22:29.845291538Z",
   "labels": [
     "feature",
     "cc-parity"
