@@ -1,0 +1,10 @@
+{
+  "uuid": "d209cf6b-3e9a-415d-8566-85f7df1b1f75",
+  "issue_uuid": "483dac5a-c918-4b3a-b2ac-e55398a7647e",
+  "author": "lOrm",
+  "content": "Fixed: src/context.rs ContextInjector::inject now bails on hook_result.allowed=false BEFORE collecting system_messages() or constructing the envelope, with tracing::warn audit line. 4 forensic tests added (denied+IGNORE-PREV-INSTR payload byte-identical user msg; denied+no-payload no-op; denied+no-user-msg no fallback system append; allowed positive control). Lib tests: 1498 pass (baseline 1494; +4 new). cargo clippy --all-targets --all-features -D warnings exit 0. No #[allow], no clippy.toml, no #[ignore]. Commit d2ad96b5.",
+  "created_at": "2026-05-19T23:59:37.166834196Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAjZCvGdybxu3xLtN1MSNyszHqELXjHUEP8KSdB2gT8Xx+Xa364EWyW5HlTuHkSGd0FuJEEaimJzU69nmGVKbKAg=="
+}
