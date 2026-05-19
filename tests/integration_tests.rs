@@ -3087,12 +3087,12 @@ mod vdd_tests {
         // Iteration 1: adversary finds real issues (0% FP rate)
         tracker.record_iteration(3, 0);
         assert!(!tracker.should_terminate()); // below min_iterations
-        assert!(tracker.current_rate().abs() < f32::EPSILON);
+        assert!(tracker.current_rate().unwrap_or(0.0).abs() < f64::EPSILON);
 
         // Iteration 2: mixed results (50% FP)
         tracker.record_iteration(2, 2);
         assert!(!tracker.should_terminate()); // 50% < 75% threshold
-        assert!(tracker.latest_rate() > 0.0);
+        assert!(tracker.latest_rate().unwrap_or(0.0) > 0.0);
 
         // Iteration 3: mostly FPs (80% FP)
         tracker.record_iteration(1, 4);
@@ -3100,15 +3100,22 @@ mod vdd_tests {
     }
 
     #[test]
-    fn test_confabulation_tracker_immediate_convergence() {
+    fn test_confabulation_tracker_zero_findings_does_not_converge() {
+        // Regression: zero-findings iterations (clean passes) must NOT trigger
+        // confabulation termination — see issue #353 and the canonical unit
+        // test in src/vdd/confabulation.rs::test_confabulation_tracker_no_findings_does_not_terminate.
         let mut tracker = ConfabulationTracker::new(0.75, 2);
 
-        // Adversary finds nothing twice in a row
         tracker.record_iteration(0, 0);
         assert!(!tracker.should_terminate()); // below min_iterations
 
         tracker.record_iteration(0, 0);
-        assert!(tracker.should_terminate()); // 0 findings = converged
+        assert!(
+            !tracker.should_terminate(),
+            "zero-findings iterations must not be misread as 100% confabulation"
+        );
+        assert!(tracker.latest_rate().is_none());
+        assert!(tracker.current_rate().is_none());
     }
 
     #[test]
@@ -3121,7 +3128,7 @@ mod vdd_tests {
             assert!(!tracker.should_terminate());
         }
         // Never terminates because genuine findings keep appearing
-        assert!(tracker.current_rate().abs() < f32::EPSILON);
+        assert!(tracker.current_rate().unwrap_or(0.0).abs() < f64::EPSILON);
     }
 
     // ========================================================================

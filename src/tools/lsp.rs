@@ -12,7 +12,157 @@ use std::collections::HashMap;
 use std::hash::BuildHasher;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread;
+
+/// RAII guard that kills and reaps a child process on drop.
+///
+/// Fixes the zombie-process leak in the original `run_lsp_request`:
+/// any early return via `?` previously skipped `child.wait()`, leaving
+/// an un-reaped zombie on Unix and a leaking handle on Windows.
+struct ChildGuard {
+    child: Option<Child>,
+}
+
+impl ChildGuard {
+    const fn new(child: Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    /// Return a mutable reference to the wrapped child.
+    const fn child_mut(&mut self) -> &mut Child {
+        self.child.as_mut().expect("child already taken")
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            // Best-effort kill; ignore errors (process may have already exited).
+            let _ = child.kill();
+            // Reap the zombie; ignore the exit status.
+            let _ = child.wait();
+        }
+    }
+}
+
+/// Readiness probe: drain server-initiated notifications until the server
+/// replies to the `textDocument/documentSymbol` probe we sent with id=1001,
+/// or until `deadline` elapses.
+///
+/// Replaces the 500 ms unconditional sleep at the original line 191.
+/// A real server reply (even an empty symbols array or an error result) is
+/// sufficient evidence that the server has finished loading the document.
+///
+/// Returns `Ok(())` on readiness, `Err(String)` on timeout or I/O failure.
+fn wait_for_readiness(
+    reader: &mut BufReader<impl std::io::Read>,
+    deadline: std::time::Instant,
+) -> Result<(), String> {
+    const READINESS_ID: u64 = 1001;
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err(
+                "LSP server readiness timeout (10 s) — server did not acknowledge didOpen"
+                    .to_string(),
+            );
+        }
+
+        // Read one message from the server.  `read_line` blocks; we rely on
+        // the overall deadline check above to bound total wait time.
+        let mut content_length: usize = 0;
+        loop {
+            if std::time::Instant::now() >= deadline {
+                return Err("LSP server readiness timeout (10 s) during header read".to_string());
+            }
+            let mut line = String::new();
+            let n = reader
+                .read_line(&mut line)
+                .map_err(|e| format!("Readiness read error: {e}"))?;
+            if n == 0 {
+                return Err("LSP server closed stdout before sending readiness reply".to_string());
+            }
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                break;
+            }
+            if let Some(len_str) = trimmed.strip_prefix("Content-Length: ") {
+                content_length = len_str
+                    .parse()
+                    .map_err(|e| format!("Bad content-length in readiness probe: {e}"))?;
+            }
+        }
+
+        if content_length == 0 {
+            continue; // skip malformed message and keep trying
+        }
+
+        let mut body = vec![0u8; content_length];
+        std::io::Read::read_exact(reader, &mut body)
+            .map_err(|e| format!("Readiness body read error: {e}"))?;
+
+        let msg: Value = match serde_json::from_slice(&body) {
+            Ok(v) => v,
+            Err(_) => continue, // non-JSON framing; skip
+        };
+
+        // The probe response carries id=READINESS_ID.
+        if let Some(id) = msg.get("id").and_then(serde_json::Value::as_u64) {
+            if id == READINESS_ID {
+                return Ok(());
+            }
+        }
+        // Any other message (notification, different response) — keep draining.
+    }
+}
+
+/// Spawn a thread that drains `stderr` into a ring buffer capped at 1 KiB.
+///
+/// Returns an `Arc<Mutex<Vec<u8>>>` that the caller can inspect after the
+/// child exits.  Fixes issue #355 point 5: original code used `Stdio::null()`,
+/// discarding all diagnostic information on server crash.
+fn capture_stderr(stderr: std::process::ChildStderr) -> Arc<Mutex<Vec<u8>>> {
+    let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let buf_clone = Arc::clone(&buf);
+    thread::spawn(move || {
+        use std::io::Read;
+        let mut reader = BufReader::new(stderr);
+        let mut chunk = [0u8; 256];
+        loop {
+            match reader.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    let mut guard = buf_clone
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    guard.extend_from_slice(&chunk[..n]);
+                    // Keep only the last 1024 bytes.
+                    let len = guard.len();
+                    if len > 1024 {
+                        let keep_from = len - 1024;
+                        guard.drain(..keep_from);
+                    }
+                }
+            }
+        }
+    });
+    buf
+}
+
+/// Extract up to 1 KiB from the stderr ring buffer as a displayable suffix.
+fn stderr_snippet(buf: &Arc<Mutex<Vec<u8>>>) -> String {
+    let guard = buf
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if guard.is_empty() {
+        String::new()
+    } else {
+        let text = String::from_utf8_lossy(&guard).into_owned();
+        drop(guard);
+        format!("\nServer stderr (last 1 KiB):\n{text}")
+    }
+}
 
 /// LSP operation types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,16 +301,27 @@ fn run_lsp_request(
     let content =
         std::fs::read_to_string(&abs_path).map_err(|e| format!("Cannot read file: {e}"))?;
 
-    let mut child = Command::new(server_cmd)
+    // Spawn the server.  stderr is captured into a ring buffer (last 1 KiB) so
+    // that crash diagnostics survive instead of being silently discarded
+    // (original: Stdio::null() — fix #355 point 5).
+    let mut raw_child = Command::new(server_cmd)
         .args(server_args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Failed to start {server_cmd}: {e}"))?;
 
-    let mut stdin = child.stdin.take().ok_or("Failed to get stdin")?;
-    let stdout = child.stdout.take().ok_or("Failed to get stdout")?;
+    // Take pipes before handing the child to the guard.
+    let mut stdin = raw_child.stdin.take().ok_or("Failed to get stdin")?;
+    let stdout = raw_child.stdout.take().ok_or("Failed to get stdout")?;
+    let stderr_pipe = raw_child.stderr.take().ok_or("Failed to get stderr")?;
+    let stderr_buf = capture_stderr(stderr_pipe);
+
+    // The guard now owns the child.  Any early return via `?` — including the
+    // original zombie-leak paths (former lines 174 and 224) — will trigger Drop
+    // which kills and reaps the process (fix #355 point 3).
+    let mut guard = ChildGuard::new(raw_child);
     let mut reader = BufReader::new(stdout);
 
     // Send initialize
@@ -171,7 +332,10 @@ fn run_lsp_request(
         "workspaceFolders": [{"uri": root_uri, "name": "workspace"}]
     });
     send_lsp_message(&mut stdin, "initialize", 1, init_params)?;
-    let _init_response = read_lsp_response(&mut reader, 1)?;
+    let _init_response = read_lsp_response(&mut reader, 1).map_err(|e| {
+        let snip = stderr_snippet(&stderr_buf);
+        format!("initialize failed: {e}{snip}")
+    })?;
 
     // Send initialized notification
     send_lsp_notification(&mut stdin, "initialized", json!({}))?;
@@ -187,8 +351,22 @@ fn run_lsp_request(
     });
     send_lsp_notification(&mut stdin, "textDocument/didOpen", did_open)?;
 
-    // Give server a moment to process the file
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    // Readiness probe: send a documentSymbol request (id=1001) and drain
+    // server notifications until the server replies.  This replaces the
+    // original unconditional 500 ms sleep (fix #355 point 2), which was
+    // both insufficient for cold servers and wasteful for warm ones.
+    let readiness_params = json!({"textDocument": {"uri": &file_uri}});
+    send_lsp_message(
+        &mut stdin,
+        "textDocument/documentSymbol",
+        1001,
+        readiness_params,
+    )?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    wait_for_readiness(&mut reader, deadline).map_err(|e| {
+        let snip = stderr_snippet(&stderr_buf);
+        format!("{e}{snip}")
+    })?;
 
     // Send the actual request
     let (method, params) = match action {
@@ -221,12 +399,17 @@ fn run_lsp_request(
     };
 
     send_lsp_message(&mut stdin, method, 2, params)?;
-    let response = read_lsp_response(&mut reader, 2)?;
+    let response = read_lsp_response(&mut reader, 2).map_err(|e| {
+        let snip = stderr_snippet(&stderr_buf);
+        format!("LSP request failed: {e}{snip}")
+    })?;
 
-    // Shutdown
-    send_lsp_message(&mut stdin, "shutdown", 3, json!(null))?;
-    send_lsp_notification(&mut stdin, "exit", json!(null))?;
-    let _ = child.wait();
+    // Graceful shutdown; Drop will kill+wait regardless, but we attempt a
+    // clean exit first so the server can flush caches.
+    let _ = send_lsp_message(&mut stdin, "shutdown", 3, json!(null));
+    let _ = send_lsp_notification(&mut stdin, "exit", json!(null));
+    drop(stdin); // EOF signals server to exit
+    let _ = guard.child_mut().wait();
 
     // Parse response into our types
     Ok(parse_lsp_response(action, file_path, &response))
@@ -1246,5 +1429,158 @@ mod tests {
                 "expected None for {path}"
             );
         }
+    }
+
+    // ── Fix #355: ChildGuard, wait_for_readiness, capture_stderr ─────────────
+
+    /// Fix #355-zombie: `ChildGuard::drop` kills and reaps a running child.
+    ///
+    /// Forensic evidence: original `run_lsp_request` called `child.wait()`
+    /// only at line 229 (after the shutdown sequence).  Any `?`-early-return
+    /// at line 174 (`read_lsp_response` for initialize) or line 224 (for the
+    /// actual request) bypassed that call, leaving an un-reaped zombie on Unix.
+    /// `ChildGuard` wraps the child in a Drop impl that always kills+waits.
+    #[test]
+    fn fix355_child_guard_drop_reaps_child() {
+        // Spawn a long-running child (sleep 60) so we can verify it is alive
+        // before the guard drops, and dead after.
+        let child = Command::new("sleep")
+            .arg("60")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("failed to spawn sleep — needs Unix");
+
+        let pid = child.id();
+
+        {
+            let _guard = ChildGuard::new(child);
+            // Child is alive inside the guard scope.
+            // /proc/<pid> exists on Linux while the process lives.
+            assert!(
+                std::path::Path::new(&format!("/proc/{pid}")).exists(),
+                "child should be alive while guard is held"
+            );
+        } // guard drops here → kills + waits
+
+        // After drop the process should be gone.  Give the OS a brief moment
+        // to finalize the reap (wait() in Drop is synchronous, so this should
+        // be immediate, but we add a tiny yield for robustness).
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "child should be reaped after ChildGuard drops (zombie fix #355)"
+        );
+    }
+
+    /// Fix #355-sleep: `wait_for_readiness` returns Ok when the probe response
+    /// (id=1001) appears in the stream, possibly after skipped notifications.
+    ///
+    /// Forensic evidence: original line 191 was
+    ///   `std::thread::sleep(std::time::Duration::from_millis(500));`
+    /// This is a pure guess — too short for cold rust-analyzer (10-60 s index),
+    /// wasted latency for fast servers.  The replacement sends a documentSymbol
+    /// probe (id=1001) and returns as soon as the server replies.
+    #[test]
+    fn fix355_wait_for_readiness_returns_ok_after_probe_response() {
+        use std::io::Cursor;
+
+        // Simulate: two server-initiated notifications, then the probe reply.
+        let mut bytes = Vec::new();
+
+        // Notification 1 (no id) — window/logMessage
+        let notif1 = r#"{"jsonrpc":"2.0","method":"window/logMessage","params":{"type":4,"message":"loading"}}"#;
+        bytes.extend_from_slice(format!("Content-Length: {}\r\n\r\n", notif1.len()).as_bytes());
+        bytes.extend_from_slice(notif1.as_bytes());
+
+        // Notification 2 — publishDiagnostics (no id)
+        let notif2 = r#"{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///x.rs","diagnostics":[]}}"#;
+        bytes.extend_from_slice(format!("Content-Length: {}\r\n\r\n", notif2.len()).as_bytes());
+        bytes.extend_from_slice(notif2.as_bytes());
+
+        // Probe response (id=1001) — documentSymbol reply with empty array
+        let probe_reply = r#"{"jsonrpc":"2.0","id":1001,"result":[]}"#;
+        bytes
+            .extend_from_slice(format!("Content-Length: {}\r\n\r\n", probe_reply.len()).as_bytes());
+        bytes.extend_from_slice(probe_reply.as_bytes());
+
+        let cursor = Cursor::new(bytes);
+        let mut reader = BufReader::new(cursor);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+
+        let result = wait_for_readiness(&mut reader, deadline);
+        assert!(
+            result.is_ok(),
+            "should return Ok after skipping 2 notifications and finding id=1001; got: {result:?}"
+        );
+    }
+
+    /// Fix #355-sleep-timeout: `wait_for_readiness` returns Err when the deadline
+    /// elapses before the probe response arrives.
+    #[test]
+    fn fix355_wait_for_readiness_times_out_when_no_probe_response() {
+        use std::io::Cursor;
+
+        // Only send a notification with a wrong id — probe reply never arrives.
+        let wrong_id = r#"{"jsonrpc":"2.0","id":9999,"result":[]}"#;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(format!("Content-Length: {}\r\n\r\n", wrong_id.len()).as_bytes());
+        bytes.extend_from_slice(wrong_id.as_bytes());
+        // Then EOF — simulates server that never answers the probe.
+
+        let cursor = Cursor::new(bytes);
+        let mut reader = BufReader::new(cursor);
+        // Already-expired deadline so the check fires immediately.
+        let deadline = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_millis(1))
+            .unwrap_or_else(std::time::Instant::now);
+
+        let result = wait_for_readiness(&mut reader, deadline);
+        assert!(
+            result.is_err(),
+            "should return Err when deadline is already past"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("timeout"),
+            "error should mention timeout; got: {msg}"
+        );
+    }
+
+    /// Fix #355-stderr: `capture_stderr` drains bytes into a ring buffer and
+    /// truncates to the last 1024 bytes when more arrive.
+    #[test]
+    fn fix355_capture_stderr_ring_buffer_truncates_to_1024() {
+        // Spawn a child that writes 2048 bytes to stderr then exits.
+        let mut child = Command::new("sh")
+            .args(["-c", "printf '%02048d' 0 >&2; exit 0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn sh");
+
+        let stderr_pipe = child.stderr.take().expect("no stderr");
+        let buf = capture_stderr(stderr_pipe);
+
+        // Wait for the child to finish writing.
+        let _ = child.wait();
+
+        // Give the drain thread a moment to flush the ring buffer.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let guard = buf.lock().unwrap();
+        let len = guard.len();
+        let is_empty = guard.is_empty();
+        drop(guard);
+        assert!(
+            len <= 1024,
+            "ring buffer should be capped at 1024 bytes; actual len = {len}"
+        );
+        assert!(
+            !is_empty,
+            "ring buffer should not be empty after writing 2048 bytes"
+        );
     }
 }

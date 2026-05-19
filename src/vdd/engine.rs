@@ -291,7 +291,7 @@ impl VddEngine {
     ) -> Result<VddBlockingResult, VddError> {
         let mut session = VddSession::new(VddMode::Blocking);
         let mut tracker = ConfabulationTracker::new(
-            self.config.thresholds.false_positive_rate,
+            f64::from(self.config.thresholds.false_positive_rate),
             self.config.thresholds.min_iterations,
         );
 
@@ -328,7 +328,10 @@ impl VddEngine {
                 iteration,
                 genuine = genuine_count,
                 false_positives = fp_count,
-                fp_rate = format!("{:.1}%", tracker.latest_rate() * 100.0),
+                fp_rate = tracker.latest_rate().map_or_else(
+                    || "n/a (no findings)".to_owned(),
+                    |r| format!("{:.1}%", r * 100.0)
+                ),
                 "VDD blocking: iteration complete"
             );
 
@@ -412,17 +415,20 @@ impl VddEngine {
         genuine_count: u32,
     ) -> bool {
         if tracker.should_terminate() {
+            let rate_pct = tracker
+                .latest_rate()
+                .map_or_else(|| "n/a".to_owned(), |r| format!("{:.1}%", r * 100.0));
             session.finalize(
                 true,
                 &format!(
-                    "Confabulation threshold reached: {:.1}% FP rate (threshold: {:.1}%)",
-                    tracker.latest_rate() * 100.0,
+                    "Confabulation threshold reached: {} FP rate (threshold: {:.1}%)",
+                    rate_pct,
                     self.config.thresholds.false_positive_rate * 100.0
                 ),
             );
             info!(
                 iterations = session.iterations.len(),
-                fp_rate = format!("{:.1}%", tracker.latest_rate() * 100.0),
+                fp_rate = rate_pct,
                 "VDD blocking: converged (confabulation threshold)"
             );
             return true;
