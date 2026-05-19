@@ -1,0 +1,10 @@
+{
+  "uuid": "20179c9c-42c4-453c-aa8d-018ab0d4e301",
+  "issue_uuid": "c6c81688-d8c2-448a-9977-58bc205a5a08",
+  "author": "lOrm",
+  "content": "Category A root-cause fix applied (crosslink #258). Forensic evidence: Site 1 manager.rs:500-534 — canonicalize(full) at T0, starts_with check at T0, copy_dir_recursive at T1; symlink swap between T0 and T1 bypasses guard. Site 2 git.rs:107 — is_dir() follows symlinks via metadata(), sub-entry race. Fix: copy_dir_recursive_within uses symlink_metadata() per entry (rejects symlinks unconditionally) + per-entry canonicalize+starts_with(allowed_root). Both call sites in manager.rs updated. 4 security tests added in toctou_tests module. cargo build PASS, 1221 tests pass (1212 baseline + 9 new, all 4 toctou tests green).",
+  "created_at": "2026-05-19T11:40:14.825761168Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAOhjPNaCnEcSwtwUdrxsaRLrwb25YZWsYTmQ7OjT8A7RQhXUzW03QBXsDZDZu18ECls3R2x8RuwOVb1tPW6DYCw=="
+}
