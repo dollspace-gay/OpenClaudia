@@ -1,0 +1,10 @@
+{
+  "uuid": "433f7762-586b-4cd5-9578-66aa30f7d972",
+  "issue_uuid": "44c87000-688a-41f8-8583-fdfb7a8e8d6e",
+  "author": "lOrm",
+  "content": "Applied root-cause fix (Category A): atomic write-then-rename + 0o600 permissions in InstalledPlugins::save.\n\nPart 1 (atomic write): replaced fs::write(&path, json) with write-to-tmp -> fsync -> rename pattern using a static AtomicU64 counter for collision-resistant temp names (pid.nonce suffix, same filesystem as target for POSIX rename atomicity).\n\nPart 2 (permissions): on Unix, set 0o600 on the temp file before rename (file never world-readable); set 0o700 on the parent directory.\n\nAdded 3 tests in save_tests module:\n- save_creates_file_with_mode_0o600: verifies final file mode == 0o600\n- save_is_atomic_concurrent_reads_see_complete_content: 50-write/concurrent-read loop, every snapshot parses as valid JSON\n- save_cleans_up_tempfile_on_rename_failure: makes dir read-only to force rename failure, asserts no .tmp.* debris\n\nTest count: 1215 (was 1212). cargo build: PASS. cargo clippy --lib: PASS (no install.rs errors). rustfmt: PASS.",
+  "created_at": "2026-05-19T11:29:14.280948215Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAvnQVHeq6S1cvGBmDxccG+0KRSlKlfvI0q5SXsfNJBSFVWzhbrzh4kR9MQ35NnNSN/+o0UXkE/aySh9PjYzi2Bg=="
+}
