@@ -1,0 +1,10 @@
+{
+  "uuid": "835b0e56-fe92-43fe-9f07-356335b975e5",
+  "issue_uuid": "142cf873-0bda-4e4c-a36f-29ae6be84cdc",
+  "author": "lOrm",
+  "content": "Applied Category A (root-cause) DRY refactor. Forensic findings: (1) proxy.rs:250-257 hand-built auth URL with stale scope list missing user:sessions:claude_code — replaced with pkce.build_auth_url(); (2) providers/anthropic.rs:272-274 embedded beta header literal inline — replaced with crate::claude_credentials::claude_code_beta_header_value(); (3) claude_credentials.rs get_oauth_headers used interpolated format string missing fine-grained-tool-streaming — replaced with same function. Added FINE_GRAINED_TOOL_STREAMING_BETA const and claude_code_beta_header_value() as the single source of truth. Three regression-guard tests added. Build: PASS (lib). Tests: 8/8 claude_credentials, 1/1 anthropic oauth_headers. Rustfmt: PASS.",
+  "created_at": "2026-05-19T11:40:13.248177765Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAtnYj3d6bXH/PdJP/eHYuziXWWcXDHYZCrs34zjdESAi7aMCqaCfVki9jcKxCdQudm2svGXMLjZKi5oJ2IhTUBQ=="
+}
