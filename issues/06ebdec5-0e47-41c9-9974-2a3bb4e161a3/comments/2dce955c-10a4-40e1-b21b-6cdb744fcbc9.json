@@ -1,0 +1,10 @@
+{
+  "uuid": "2dce955c-10a4-40e1-b21b-6cdb744fcbc9",
+  "issue_uuid": "06ebdec5-0e47-41c9-9974-2a3bb4e161a3",
+  "author": "lOrm",
+  "content": "Fix applied to src/tools/bash/mod.rs:\n\nROOT-CAUSE FIX: moved 'output_retrieved_after_finish.store(true, SeqCst)' from inside an 'if is_finished' gate (pre-fix mod.rs:216-220) to fire unconditionally on every get_output drain (post-fix mod.rs:230-242). This eliminates the documented race: a caller draining BEFORE the wait-thread flips finished=true left the GC flag forever false, so the slot was retained indefinitely.\n\nEVIDENCE:\n- cargo test --lib: 1262 passed; 0 failed (baseline 1259 + 3 new fix351_* tests = 1262 exactly).\n- cargo clippy --lib --all-targets -- -D warnings: EXIT=0.\n- No #[allow], no #[ignore], no clippy.toml additions (verified against the diff).\n\nTESTS ADDED:\n1. fix351_drain_before_finish_marks_retrieved (race-exposing): spawn 'sleep 5', drain while is_running=true, assert flag flipped. Pre-fix this test would FAIL because the 'if is_finished' gate skipped the store.\n2. fix351_drain_after_finish_marks_retrieved (backward-compat): drain after the short-lived process finishes; flag still set.\n3. fix351_never_drained_stays_unretrieved (correctness): spawn, wait for finish but never call get_output; flag remains false so GC must NOT collect.\n\nSCOPE NOTE: the issue body proposed a broader refactor (Mutex<ShellStatus>, background GC thread on a timer, stdout-thread must not set finished). The user explicitly narrowed this task to the GC-flag race only; problems (a)/(b)/(c) in the issue body remain valid but out of scope here.",
+  "created_at": "2026-05-19T14:49:31.146679826Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAZgBavZytdiOg/yVLnmkNHwNtLmGHbEIITNMUH4DCztyCryvlijh9grXl/qtygl+4qIsk4FYFGToz9aDtB1KcAw=="
+}
