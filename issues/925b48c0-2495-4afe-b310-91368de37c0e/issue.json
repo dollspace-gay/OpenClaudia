@@ -3,11 +3,12 @@
   "display_id": 672,
   "title": "QA: TOCTOU — child process spawned before MAX_BACKGROUND_SHELLS check (resource exhaustion)",
   "description": "## Severity\nCritical\n## Dimension\nsecurity\n## Location\nsrc/tools/bash/mod.rs:62-103\n## Violation\n`cmd.spawn()` (line 72 windows / line 84 unix) is invoked BEFORE the capacity guard at lines 87-101. The capacity check is performed only after the child process already exists in the OS, defeating the purpose of `MAX_BACKGROUND_SHELLS`. A flood of `run_in_background=true` calls will spawn unbounded children before any of them are rejected — the rejection only prevents tracking, not spawning.\n\nQuoted source (mod.rs:75-103):\n```\n        #[cfg(not(windows))]\n        let child = {\n            let mut cmd = Command::new(\"bash\");\n            cmd.args([\"-c\", command])\n                .current_dir(&cwd)\n                .stdout(Stdio::piped())\n                .stderr(Stdio::piped())\n                .process_group(0);\n            apply_env_scrub(&mut cmd);\n            cmd.spawn()\n        };\n\n        // Enforce maximum shell limit BEFORE spawning the process\n        if let Ok(mut shells) = self.shells.lock() {\n            ...\n            if shells.len() >= MAX_BACKGROUND_SHELLS {\n                return Err(...);\n            }\n        }\n\n        let mut child = child.map_err(...)?;\n```\n\nThe comment lies — the spawn already happened on line 72/84. The orphan child is leaked because we return `Err` before the spawn result is bound.\n## Mandated refactor\n1. Move the capacity check above the `let child = { ... cmd.spawn() }` block so the spawn never happens when at capacity.\n2. Hold the `shells` lock across both the check AND the insert to make the cap atomic with respect to concurrent spawners.\n3. Add a regression test that fires `MAX_BACKGROUND_SHELLS+1` concurrent spawns and asserts the OS process count does not exceed the cap.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:46:16.792270690Z",
-  "updated_at": "2026-05-18T21:46:21.605020755Z",
+  "updated_at": "2026-05-19T20:18:03.851841518Z",
+  "closed_at": "2026-05-19T20:18:03.851841518Z",
   "labels": [
     "qa-review",
     "security"
