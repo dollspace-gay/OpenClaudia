@@ -1,0 +1,10 @@
+{
+  "uuid": "96553155-9241-477a-abbf-086da4a8c142",
+  "issue_uuid": "e74e21fe-1def-4b64-9584-a95442b42690",
+  "author": "lOrm",
+  "content": "Fixed via src/hooks/mod.rs::fire_post_tool: replaced 'let _ = self.run(event, &input).await' with capturing the HookResult and iterating result.errors, emitting tracing::error! per error with structured event=, tool=, session_id=, hook_error_index=, error= fields. Caller remains fire-and-forget (errors not propagated). Regression tests: fire_post_tool_surfaces_hook_errors_via_tracing_error (forces a HookError::Denied via empty allowlist, asserts ERROR log captured with tool=bash, session_id=Some(sess-778), and 'denied by allowlist'); fire_post_tool_silent_when_hooks_succeed (happy-path counter-test, asserts no ERROR log). OWASP A09 audit trail now records the failure even though the synchronous caller cannot. cargo test --lib: 1510 passed. cargo clippy --all-targets --all-features -- -D warnings: exit 0.",
+  "created_at": "2026-05-19T23:30:42.265723125Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA7p2+JMFfkndwdkkP86MWV65DtUbcQnI6SI86dolvG1rIuKwWUAk1YJ0GOJIKw8kmAnBDPKTyIHaA0eiXh2f0Aw=="
+}
