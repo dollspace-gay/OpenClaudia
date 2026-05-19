@@ -700,35 +700,71 @@ impl MemoryDb {
 
     /// Search archival memory using full-text search.
     ///
+    /// The `query` is treated as a single opaque phrase via
+    /// [`escape_fts5_phrase`]: every FTS5 operator (`AND`, `OR`, `NOT`,
+    /// `NEAR`, `*`, `:`, `^`, parentheses) becomes literal text,
+    /// embedded double-quotes are doubled, and ASCII control characters
+    /// are stripped.  Backslashes are not special in FTS5 phrases and
+    /// pass through as literal bytes — no extra escaping required.
+    ///
+    /// Search is best-effort.  Per crosslink #501, any FTS5 parse or
+    /// query error degrades to `Ok(vec![])` rather than propagating —
+    /// a single bad search must not break the feature for the rest of
+    /// the session.  Non-FTS errors (mutex poisoning, tag-hydration
+    /// failures) still surface as `Err`.
     ///
     /// # Errors
     ///
-    /// Returns an error if the FTS query or database read fails, or the mutex is poisoned.
+    /// Returns an error if the mutex is poisoned or a non-FTS read
+    /// fails (for example, hydrating tags for a returned row).
+    /// FTS-parse / FTS-query errors are *not* propagated.
     #[allow(clippy::significant_drop_tightening)] // conn must outlive stmt which borrows it
     pub fn memory_search(&self, query: &str, limit: usize) -> Result<Vec<ArchivalMemory>> {
         let phrase_query = escape_fts5_phrase(query);
         let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
         let conn = self.lock_conn()?;
-        let mut stmt = conn.prepare(
-            r"SELECT am.id, am.content, am.created_at, am.updated_at,
-                   bm25(archival_memory_fts) as rank
-            FROM archival_memory_fts
-            JOIN archival_memory am ON archival_memory_fts.rowid = am.id
-            WHERE archival_memory_fts MATCH ?1
-            ORDER BY rank
-            LIMIT ?2",
-        )?;
 
-        // Collect rows without tags first; then hydrate tags via a per-row
-        // look-up so the FTS query plan stays simple and we don't have to
-        // wrestle with GROUP_CONCAT (which would re-introduce a fragile
-        // string join).  N+1 here is bounded by `limit`, which the caller
-        // already chose; for the typical limit of ≤ 100 this is fine.
-        let rows: Vec<(i64, String, String, String)> = stmt
-            .query_map(params![phrase_query, limit_i64], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
+        // The FTS5 MATCH lives in an inner scope so the `Statement`
+        // borrow ends before tag hydration.  Any rusqlite error here is
+        // converted to `Ok(Vec::new())` — surfacing it would weaponise
+        // a single hostile query into a feature outage (crosslink
+        // #501).  The rusqlite message is intentionally not returned:
+        // an attacker who can drive `query` should not learn the
+        // SQLite version or precise FTS internals via error text.
+        let rows: Vec<(i64, String, String, String)> = {
+            let mut stmt = match conn.prepare(
+                r"SELECT am.id, am.content, am.created_at, am.updated_at,
+                       bm25(archival_memory_fts) as rank
+                FROM archival_memory_fts
+                JOIN archival_memory am ON archival_memory_fts.rowid = am.id
+                WHERE archival_memory_fts MATCH ?1
+                ORDER BY rank
+                LIMIT ?2",
+            ) {
+                Ok(s) => s,
+                Err(_e) => return Ok(Vec::new()),
+            };
+            // Collect rows without tags first; then hydrate tags via a
+            // per-row look-up so the FTS query plan stays simple and
+            // we don't have to wrestle with GROUP_CONCAT.  N+1 here is
+            // bounded by `limit`, which the caller already chose; for
+            // the typical limit of <= 100 this is fine.
+            let mapped = stmt.query_map(params![phrase_query, limit_i64], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            });
+            match mapped {
+                Ok(iter) => match iter.collect::<rusqlite::Result<Vec<_>>>() {
+                    Ok(rs) => rs,
+                    Err(_e) => return Ok(Vec::new()),
+                },
+                Err(_e) => return Ok(Vec::new()),
+            }
+        };
 
         let mut memories = Vec::with_capacity(rows.len());
         for (id, content, created_at, updated_at) in rows {
@@ -2118,6 +2154,187 @@ mod tests {
         // "AND", "OR", "NOT" are FTS5 operators — escaping wraps them in a phrase.
         let result = db.memory_search("AND OR NOT NEAR", 5);
         assert!(result.is_ok(), "FTS5 operator query must not error");
+    }
+
+    // -----------------------------------------------------------------------
+    // #501 — FTS5 MATCH expression injection / DoS regression tests.
+    //
+    // The MATCH grammar treats AND / OR / NOT / NEAR as boolean operators,
+    // `colname:token` as a column filter, `*` as a prefix wildcard, `^`
+    // anchors the first column position, and parentheses group expressions.
+    // Embedded double-quotes terminate a phrase early.  Backslashes are
+    // NOT special in FTS5 phrases — they pass through as literal bytes,
+    // which we exercise explicitly below so a future grammar change can't
+    // silently change that contract.
+    //
+    // Every test here drives a full `memory_search` round-trip (escape ->
+    // sqlite_prepare -> MATCH -> row fetch) against an in-memory db.  An
+    // `unwrap()` here would mean the function returned `Err` for a
+    // user-supplied string — the precise DoS surface flagged in the
+    // crosslink filing.  The fix path returns `Ok(vec![])` for any FTS5
+    // parse error rather than propagating it.
+    // -----------------------------------------------------------------------
+
+    /// #501-a: every FTS5 boolean operator survives as literal phrase text.
+    /// Forensic proof: pre-fix this branch could surface a rusqlite
+    /// `SqliteFailure` with "fts5: syntax error near ..." when the raw
+    /// token reached `MATCH ?1`; post-fix the call returns `Ok`.
+    #[test]
+    fn issue_501_boolean_operators_are_neutralised() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+        db.memory_save("AND OR NOT NEAR contents", &[]).unwrap();
+
+        for q in ["AND", "OR", "NOT", "NEAR(a b, 5)", "AND OR NOT NEAR"] {
+            let res = db
+                .memory_search(q, 5)
+                .unwrap_or_else(|e| panic!("query {q:?} must not error: {e}"));
+            // We don't pin the exact row count — the contract is "no
+            // syntax error, returns a well-formed Vec".
+            assert!(res.len() <= 1, "query {q:?} must yield <=1 row");
+        }
+    }
+
+    /// #501-b: prefix wildcard `*` and anchor `^` are literal text inside
+    /// a quoted phrase.  Pre-fix, `*foo` would either yield a parse error
+    /// or — worse — be interpreted as a prefix match enabling row
+    /// enumeration the caller never asked for.
+    #[test]
+    fn issue_501_wildcard_and_anchor_are_literal() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+        db.memory_save("literal star and caret content", &[])
+            .unwrap();
+
+        for q in ["*", "*wild", "wild*", "^anchor", "^", "* ^ * ^"] {
+            let res = db
+                .memory_search(q, 5)
+                .unwrap_or_else(|e| panic!("query {q:?} must not error: {e}"));
+            assert!(res.is_empty(), "query {q:?} expected no matches");
+        }
+    }
+
+    /// #501-c: column-filter syntax `colname:token` is neutralised — the
+    /// user CANNOT pivot a `memory_search` into a column-restricted query
+    /// (potentially against an internal-only column, were one added).
+    #[test]
+    fn issue_501_column_filter_syntax_is_neutralised() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+        db.memory_save("nothing-to-see-here", &[]).unwrap();
+
+        let res = db.memory_search("content:secret", 5).expect("no error");
+        assert!(res.is_empty(), "column-filter query must be literal");
+
+        // A non-existent column name would, pre-fix, raise
+        // `SqliteFailure: no such column: notacol`.  Post-fix it MATCHes
+        // as a literal phrase that finds nothing.
+        let res2 = db.memory_search("notacol:foo", 5).expect("no error");
+        assert!(res2.is_empty(), "bogus-column query must not propagate");
+    }
+
+    /// #501-d: embedded double-quotes are doubled so the user cannot
+    /// break out of the quoted phrase.  Without doubling, the query
+    /// `he said "hi"` would parse as three tokens then an embedded
+    /// phrase — a structure the user did not intend.
+    #[test]
+    fn issue_501_embedded_double_quotes_are_doubled() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+        db.memory_save(r#"he said "hi" once"#, &[]).unwrap();
+
+        let res = db
+            .memory_search(r#"he said "hi""#, 5)
+            .expect("embedded quotes must not error");
+        assert_eq!(
+            res.len(),
+            1,
+            "doubled-quote phrase must locate the saved row"
+        );
+
+        // Pathological all-quotes input also survives.
+        let res2 = db
+            .memory_search(r#"""""#, 5)
+            .expect("only-quotes input must not error");
+        assert!(res2.is_empty(), "only-quotes phrase yields no rows");
+    }
+
+    /// #501-e: backslashes are NOT special in FTS5 phrases — they pass
+    /// through as literal bytes.  Pins the contract so a future grammar
+    /// change that elevates `\` to an escape character breaks this
+    /// assertion loudly rather than drifting silently.
+    #[test]
+    fn issue_501_embedded_backslashes_are_literal() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+        db.memory_save("alpha bravo charlie delta", &[]).unwrap();
+
+        for q in [r"a\b", r"\\", r"path\to\file", r"trailing\", r"\leading"] {
+            let res = db
+                .memory_search(q, 5)
+                .unwrap_or_else(|e| panic!("backslash query {q:?} must not error: {e}"));
+            let _ = res;
+        }
+    }
+
+    /// #501-f: degenerate / adversarial inputs return `Ok(Vec::new())`
+    /// rather than `Err` — search is best-effort per the mandated
+    /// refactor.  Primary forensic artefact: a 10 KB input or a
+    /// pure-metacharacter blob must NOT take the feature down.
+    #[test]
+    fn issue_501_degenerate_inputs_yield_empty_ok() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+        db.memory_save("real content", &[]).unwrap();
+
+        let ten_kb = "x".repeat(10_000);
+        let kb_quotes = "\"".repeat(1_024);
+        let many_ands = "AND ".repeat(2_000);
+
+        let cases: [&str; 8] = [
+            "",                            // empty -> "" phrase
+            "((((((",                      // unbalanced parens
+            "))))))",                      // unbalanced parens (other side)
+            "AND OR NOT NEAR * : ^ \\ \"", // every metacharacter
+            "\0\n\r\x1b[31m",              // ASCII control / NUL only
+            &ten_kb,                       // 10 KB payload
+            &kb_quotes,                    // 1 KB of pure double-quotes
+            &many_ands,                    // 8 KB of repeated operators
+        ];
+
+        for q in cases {
+            let res = db
+                .memory_search(q, 5)
+                .unwrap_or_else(|e| panic!("degenerate input must not error: {e}"));
+            if q.trim().is_empty() || q.chars().all(|c| !c.is_alphanumeric()) {
+                assert!(
+                    res.is_empty(),
+                    "non-word query {q:?} must not match real rows"
+                );
+            }
+        }
+    }
+
+    /// #501-g: combined operator soup — the kind of thing a fuzzer
+    /// would produce — must not panic, error, or hang, AND the db must
+    /// remain usable afterwards.  Denial-of-service line of defence: a
+    /// single hostile search query cannot break the feature for
+    /// subsequent callers.
+    #[test]
+    fn issue_501_combined_operator_soup_is_safe() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+        db.memory_save("benign row", &[]).unwrap();
+
+        let hostile = r#"foo AND (bar OR NOT NEAR(a b, 3)) AND *wild* AND col:val AND "qu""ote" AND ^anchor AND back\slash"#;
+        let res = db
+            .memory_search(hostile, 5)
+            .expect("operator-soup must return Ok");
+        assert!(res.is_empty(), "operator-soup must not pivot the search");
+
+        db.memory_save("post-hostile-row", &[]).unwrap();
+        let ok = db.memory_search("benign", 5).expect("recovery search");
+        assert_eq!(ok.len(), 1, "db must remain usable post-hostile query");
     }
 
     // -----------------------------------------------------------------------

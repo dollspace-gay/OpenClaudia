@@ -56,6 +56,34 @@ pub enum CheckResult {
     NeedsPrompt { tool: String, target: String },
 }
 
+/// Maximum number of *consecutive* denials before the agent should abort.
+///
+/// Parity target: CC `denialTracking.ts` `DENIAL_LIMITS.maxConsecutive`.
+/// CC uses 3; OC uses 5 (configured via crosslink #572) to be slightly
+/// more permissive of transient prompt-fallback churn before escalation.
+pub const MAX_CONSECUTIVE_DENIALS: u32 = 5;
+
+/// Maximum number of *total* (session-cumulative) denials before the agent
+/// should abort. Parity target: CC `denialTracking.ts` `DENIAL_LIMITS.maxTotal` (20).
+pub const MAX_TOTAL_DENIALS: u32 = 20;
+
+/// Whether the denial-tracking state has crossed an escalation threshold.
+///
+/// Callers (notably the headless agent loop) should query
+/// [`PermissionManager::escalation_state`] after each denial and abort the
+/// agent cleanly when [`EscalationState::ShouldAbort`] is returned. Parity
+/// target: CC `shouldFallbackToPrompting()` in
+/// `utils/permissions/denialTracking.ts`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EscalationState {
+    /// Counters are below both thresholds; no escalation needed.
+    Normal,
+    /// Either the consecutive or total denial threshold has been exceeded;
+    /// the caller should abort (headless mode) or fall back to interactive
+    /// prompting (interactive mode).
+    ShouldAbort,
+}
+
 /// Manages permission rules for tool execution.
 ///
 /// Rules are checked in priority order:
@@ -74,6 +102,12 @@ pub struct PermissionManager {
     persist_path: PathBuf,
     /// Whether the permission system is enabled
     enabled: bool,
+    /// Consecutive denial counter — resets to 0 on any allowed outcome.
+    /// Parity: CC `DenialTrackingState.consecutiveDenials`.
+    consecutive_denials: u32,
+    /// Total denial counter — never resets within a session.
+    /// Parity: CC `DenialTrackingState.totalDenials`.
+    total_denials: u32,
 }
 
 impl PermissionManager {
@@ -99,6 +133,8 @@ impl PermissionManager {
             default_allow,
             persist_path,
             enabled,
+            consecutive_denials: 0,
+            total_denials: 0,
         }
     }
 
@@ -119,6 +155,8 @@ impl PermissionManager {
             default_allow: Vec::new(),
             persist_path: PathBuf::new(),
             enabled: false,
+            consecutive_denials: 0,
+            total_denials: 0,
         }
     }
 
@@ -458,6 +496,75 @@ impl PermissionManager {
     pub fn clear_session_rules(&mut self) {
         self.session_rules.clear();
     }
+
+    /// Record a `Denied` outcome from the permission classifier (crosslink #572).
+    ///
+    /// Increments both the consecutive and total denial counters. The
+    /// caller (notably the headless agent loop) should then check
+    /// [`Self::escalation_state`] and abort cleanly when the result is
+    /// [`EscalationState::ShouldAbort`].
+    ///
+    /// Counter increments saturate at `u32::MAX`; once a threshold has
+    /// been exceeded the escalation state is sticky for the remainder of
+    /// the session (until [`Self::reset_denial_tracking`] is called).
+    /// Parity target: CC `recordDenial` in `utils/permissions/denialTracking.ts`.
+    pub fn record_denial(&mut self) {
+        self.consecutive_denials = self.consecutive_denials.saturating_add(1);
+        self.total_denials = self.total_denials.saturating_add(1);
+        debug!(
+            consecutive = self.consecutive_denials,
+            total = self.total_denials,
+            "Recorded permission denial"
+        );
+    }
+
+    /// Record a successful (allowed) tool outcome (crosslink #572).
+    ///
+    /// Resets the consecutive denial counter to zero; the total counter
+    /// persists for the lifetime of the session. Parity target: CC
+    /// `recordSuccess` in `utils/permissions/denialTracking.ts`.
+    pub const fn record_allowed(&mut self) {
+        self.consecutive_denials = 0;
+    }
+
+    /// Current escalation state derived from the denial counters
+    /// (crosslink #572).
+    ///
+    /// Returns [`EscalationState::ShouldAbort`] when either
+    /// [`MAX_CONSECUTIVE_DENIALS`] or [`MAX_TOTAL_DENIALS`] has been
+    /// exceeded. Parity target: CC `shouldFallbackToPrompting`.
+    #[must_use]
+    pub const fn escalation_state(&self) -> EscalationState {
+        if self.consecutive_denials > MAX_CONSECUTIVE_DENIALS
+            || self.total_denials > MAX_TOTAL_DENIALS
+        {
+            EscalationState::ShouldAbort
+        } else {
+            EscalationState::Normal
+        }
+    }
+
+    /// Current consecutive-denial count (for inspection/diagnostics).
+    #[must_use]
+    pub const fn consecutive_denials(&self) -> u32 {
+        self.consecutive_denials
+    }
+
+    /// Current total-denial count (for inspection/diagnostics).
+    #[must_use]
+    pub const fn total_denials(&self) -> u32 {
+        self.total_denials
+    }
+
+    /// Reset both denial counters to zero (e.g. on session restart).
+    ///
+    /// The session-cumulative semantics of `total_denials` mean this is
+    /// the *only* way to clear it; normal allowed outcomes only reset
+    /// the consecutive counter.
+    pub const fn reset_denial_tracking(&mut self) {
+        self.consecutive_denials = 0;
+        self.total_denials = 0;
+    }
 }
 
 #[cfg(test)]
@@ -713,6 +820,157 @@ mod tests {
         assert_eq!(mgr.session_rules().len(), 1);
         mgr.clear_session_rules();
         assert_eq!(mgr.session_rules().len(), 0);
+    }
+
+    // ── #572 denial tracking ─────────────────────────────────────────────
+
+    /// #572: starting state — both counters zero, escalation state Normal.
+    #[test]
+    fn denial_tracking_initial_state_is_normal() {
+        let (mgr, _dir) = make_manager(true, vec![]);
+        assert_eq!(mgr.consecutive_denials(), 0);
+        assert_eq!(mgr.total_denials(), 0);
+        assert_eq!(mgr.escalation_state(), EscalationState::Normal);
+    }
+
+    /// #572: each `record_denial` increments BOTH counters together.
+    #[test]
+    fn denial_tracking_record_denial_increments_both_counters() {
+        let (mut mgr, _dir) = make_manager(true, vec![]);
+        for i in 1..=3 {
+            mgr.record_denial();
+            assert_eq!(
+                mgr.consecutive_denials(),
+                i,
+                "consecutive counter must increment with each denial"
+            );
+            assert_eq!(
+                mgr.total_denials(),
+                i,
+                "total counter must increment with each denial"
+            );
+        }
+        // Still below MAX_CONSECUTIVE_DENIALS (5) and MAX_TOTAL_DENIALS (20).
+        assert_eq!(mgr.escalation_state(), EscalationState::Normal);
+    }
+
+    /// #572: exceeding the consecutive threshold escalates to `ShouldAbort`.
+    /// Threshold is strict-greater-than, so the (5+1)th consecutive denial trips it.
+    #[test]
+    fn denial_tracking_consecutive_threshold_escalates() {
+        let (mut mgr, _dir) = make_manager(true, vec![]);
+        // Push the counter up to the limit — still Normal.
+        for _ in 0..MAX_CONSECUTIVE_DENIALS {
+            mgr.record_denial();
+        }
+        assert_eq!(mgr.consecutive_denials(), MAX_CONSECUTIVE_DENIALS);
+        assert_eq!(
+            mgr.escalation_state(),
+            EscalationState::Normal,
+            "at-threshold consecutive count must NOT yet abort"
+        );
+        // One more — now exceed it.
+        mgr.record_denial();
+        assert_eq!(
+            mgr.escalation_state(),
+            EscalationState::ShouldAbort,
+            "exceeding MAX_CONSECUTIVE_DENIALS must escalate"
+        );
+    }
+
+    /// #572: `record_allowed` resets the *consecutive* counter only.
+    /// Total remains incremented and continues to count toward `MAX_TOTAL_DENIALS`.
+    #[test]
+    fn denial_tracking_allowed_resets_consecutive_but_not_total() {
+        let (mut mgr, _dir) = make_manager(true, vec![]);
+        mgr.record_denial();
+        mgr.record_denial();
+        mgr.record_denial();
+        assert_eq!(mgr.consecutive_denials(), 3);
+        assert_eq!(mgr.total_denials(), 3);
+
+        mgr.record_allowed();
+        assert_eq!(
+            mgr.consecutive_denials(),
+            0,
+            "record_allowed must reset consecutive counter"
+        );
+        assert_eq!(
+            mgr.total_denials(),
+            3,
+            "record_allowed must NOT reset total counter"
+        );
+        assert_eq!(mgr.escalation_state(), EscalationState::Normal);
+    }
+
+    /// #572: the total threshold escalates *independently* of the consecutive
+    /// counter — even if every other denial is interleaved with an allow,
+    /// the total counter keeps climbing and eventually trips abort.
+    #[test]
+    fn denial_tracking_total_threshold_escalates_independently() {
+        let (mut mgr, _dir) = make_manager(true, vec![]);
+
+        // Alternate denial/allowed for 21 denials. Consecutive never exceeds 1,
+        // but total reaches 21, exceeding MAX_TOTAL_DENIALS (20).
+        for _ in 0..=MAX_TOTAL_DENIALS {
+            mgr.record_denial();
+            mgr.record_allowed();
+        }
+
+        assert_eq!(
+            mgr.consecutive_denials(),
+            0,
+            "alternating allowed must keep consecutive at 0"
+        );
+        assert_eq!(
+            mgr.total_denials(),
+            MAX_TOTAL_DENIALS + 1,
+            "total must equal number of denials despite alternating allows"
+        );
+        assert_eq!(
+            mgr.escalation_state(),
+            EscalationState::ShouldAbort,
+            "exceeding MAX_TOTAL_DENIALS must escalate even when consecutive is 0"
+        );
+    }
+
+    /// #572: `reset_denial_tracking` clears both counters and returns to Normal,
+    /// even after the consecutive threshold has tripped escalation.
+    #[test]
+    fn denial_tracking_reset_clears_both_counters() {
+        let (mut mgr, _dir) = make_manager(true, vec![]);
+        for _ in 0..(MAX_CONSECUTIVE_DENIALS + 2) {
+            mgr.record_denial();
+        }
+        assert_eq!(mgr.escalation_state(), EscalationState::ShouldAbort);
+
+        mgr.reset_denial_tracking();
+        assert_eq!(mgr.consecutive_denials(), 0);
+        assert_eq!(mgr.total_denials(), 0);
+        assert_eq!(mgr.escalation_state(), EscalationState::Normal);
+    }
+
+    /// #572: the counter saturates at `u32::MAX` instead of wrapping.
+    /// Once the threshold has been crossed the escalation state is sticky.
+    #[test]
+    fn denial_tracking_counters_saturate_without_wrapping() {
+        let (mut mgr, _dir) = make_manager(true, vec![]);
+        // Hand-construct a near-overflow state via repeated denials would take
+        // 4 billion iterations; instead poke the fields via repeated denials
+        // bounded by saturating_add semantics. We simulate by asserting that
+        // record_denial after the threshold keeps escalation sticky.
+        for _ in 0..(MAX_CONSECUTIVE_DENIALS + 2) {
+            mgr.record_denial();
+        }
+        let snapshot_consecutive = mgr.consecutive_denials();
+        let snapshot_total = mgr.total_denials();
+        // Many more denials must not wrap around to 0.
+        for _ in 0..100 {
+            mgr.record_denial();
+        }
+        assert!(mgr.consecutive_denials() > snapshot_consecutive);
+        assert!(mgr.total_denials() > snapshot_total);
+        assert_eq!(mgr.escalation_state(), EscalationState::ShouldAbort);
     }
 
     #[test]

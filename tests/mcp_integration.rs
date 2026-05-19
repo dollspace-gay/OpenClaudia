@@ -416,7 +416,7 @@ async fn call_tool_with_timeout_returns_timeout_error() {
         .await;
 
     assert!(
-        matches!(result, Err(McpError::Timeout)),
+        matches!(result, Err(McpError::Timeout { .. })),
         "expected Timeout, got {result:?}"
     );
 }

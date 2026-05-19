@@ -67,8 +67,23 @@ pub enum McpError {
     #[error("Server not connected: {0}")]
     NotConnected(String),
 
-    #[error("Request timeout")]
-    Timeout,
+    /// Operation exceeded its configured deadline.
+    ///
+    /// `phase` names the lifecycle stage that timed out so the operator
+    /// can distinguish a stalled `initialize` handshake (fix #628 —
+    /// modelled after CC `connectToServer` racing `client.connect`
+    /// against `getConnectionTimeoutMs()`) from a stalled per-request
+    /// tool call.
+    ///
+    /// The Display string keeps the lowercase substring `"timeout"` so
+    /// existing matchers that grep error messages for that token
+    /// continue to work.
+    #[error("Operation timeout during {phase} phase")]
+    Timeout {
+        /// Lifecycle phase whose deadline expired. Static, e.g.
+        /// `"initialize"`, `"tools/list"`, `"tools/call"`.
+        phase: &'static str,
+    },
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -472,7 +487,14 @@ impl McpTransport for HttpTransport {
             .await
             .map_err(|e| {
                 if e.is_timeout() {
-                    McpError::Timeout
+                    // Per-request HTTP cap (`HTTP_REQUEST_TIMEOUT`)
+                    // fired. Phase reflects that this is a steady-state
+                    // request, not the connection-establishment
+                    // handshake (fix #628 — the latter is bounded by
+                    // `McpServer::new_with_config`).
+                    McpError::Timeout {
+                        phase: "http-request",
+                    }
                 } else {
                     McpError::Transport(format!("HTTP request failed: {e}"))
                 }
@@ -510,6 +532,61 @@ impl McpTransport for HttpTransport {
     }
 }
 
+/// Connection-establishment timeout default for [`McpServer::new`]
+/// (fix #628).
+///
+/// CC `connectToServer` (`client.ts:1048-1077`) races `client.connect`
+/// against a configurable deadline (default 30 s, env-tunable) so a
+/// non-responsive MCP server cannot block an agent task indefinitely.
+/// OC mirrors that behaviour: 30 s default, overridable per call via
+/// [`McpServerConfig::initialize_timeout_secs`].
+pub const DEFAULT_INITIALIZE_TIMEOUT_SECS: u64 = 30;
+
+/// Per-server runtime configuration (fix #628).
+///
+/// Distinct from [`crate::plugins::manifest::McpServerConfig`] — that
+/// type models the on-disk Claude-Code-compatible JSON describing
+/// *how* to launch a server (command/args/env/url). This type models
+/// *runtime* connection-policy knobs (timeouts) that callers tune at
+/// the call site, not in the manifest.
+#[derive(Debug, Clone, Copy)]
+pub struct McpServerConfig {
+    /// Hard deadline on the connection-establishment handshake
+    /// (`initialize` + `tools/list`). On expiry,
+    /// [`McpServer::new_with_config`] returns [`McpError::Timeout`]
+    /// with `phase` naming the stage that stalled.
+    ///
+    /// `0` disables the deadline (the explicit opt-out used by tests
+    /// that want to observe a real hang and by callers that supply
+    /// their own outer cancellation scope).
+    pub initialize_timeout_secs: u64,
+}
+
+impl McpServerConfig {
+    /// Default configuration: 30 s initialize-handshake deadline.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            initialize_timeout_secs: DEFAULT_INITIALIZE_TIMEOUT_SECS,
+        }
+    }
+
+    /// Override the initialize-handshake deadline. Builder-style so
+    /// call sites can write
+    /// `McpServerConfig::new().with_initialize_timeout_secs(5)`.
+    #[must_use]
+    pub const fn with_initialize_timeout_secs(mut self, secs: u64) -> Self {
+        self.initialize_timeout_secs = secs;
+        self
+    }
+}
+
+impl Default for McpServerConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// An MCP server connection
 pub struct McpServer {
     name: String,
@@ -520,12 +597,42 @@ pub struct McpServer {
 }
 
 impl McpServer {
-    /// Create a new MCP server with the given transport.
+    /// Create a new MCP server with the given transport, using the
+    /// default [`McpServerConfig`] (30 s initialize-handshake
+    /// deadline).
     ///
     /// # Errors
     ///
-    /// Returns an `McpError` if initialization or tool discovery fails.
+    /// Returns [`McpError::Timeout`] with `phase = "initialize"` or
+    /// `phase = "tools/list"` if the corresponding handshake step
+    /// does not complete within the configured deadline (fix #628).
+    /// Returns other [`McpError`] variants on transport/protocol
+    /// failures.
     pub async fn new(name: &str, transport: Box<dyn McpTransport>) -> Result<Self, McpError> {
+        Self::new_with_config(name, transport, McpServerConfig::new()).await
+    }
+
+    /// Create a new MCP server with explicit runtime configuration.
+    ///
+    /// Wraps the connection-establishment handshake (`initialize` +
+    /// `tools/list`) in [`tokio::time::timeout`] so a non-responsive
+    /// server cannot block the calling task indefinitely (fix #628 —
+    /// mirrors CC `connectToServer` racing `client.connect` against
+    /// `getConnectionTimeoutMs()`).
+    ///
+    /// A `initialize_timeout_secs` of `0` disables the deadline.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::Timeout`] with `phase = "initialize"` if
+    /// the initialize handshake hangs, or `phase = "tools/list"` if
+    /// the post-handshake tool discovery hangs. Returns other
+    /// [`McpError`] variants on transport/protocol failures.
+    pub async fn new_with_config(
+        name: &str,
+        transport: Box<dyn McpTransport>,
+        config: McpServerConfig,
+    ) -> Result<Self, McpError> {
         let mut server = Self {
             name: name.to_string(),
             transport,
@@ -534,11 +641,48 @@ impl McpServer {
             tools: Vec::new(),
         };
 
-        // Initialize the connection
-        server.initialize().await?;
-
-        // Discover tools
-        server.refresh_tools().await?;
+        // Fix #628 — bound the initialize handshake. A non-responsive
+        // server would otherwise hang the calling tokio task forever
+        // because `transport.request("initialize", ...)` has no
+        // built-in deadline (the HTTP transport's `HTTP_REQUEST_TIMEOUT`
+        // covers steady-state requests, the stdio transport has no
+        // wall-clock cap at all).
+        //
+        // `tokio::time::timeout` cancels the inner future on expiry,
+        // which for stdio drops the in-flight `read_until` (the child
+        // process remains, but the caller can decide whether to retry
+        // or close). For HTTP it cancels the `RequestBuilder::send`
+        // future before the per-request `HTTP_REQUEST_TIMEOUT` fires —
+        // which is the intended semantics, since the initialize
+        // handshake has its own (typically shorter) policy.
+        if config.initialize_timeout_secs == 0 {
+            server.initialize().await?;
+            server.refresh_tools().await?;
+        } else {
+            let deadline = Duration::from_secs(config.initialize_timeout_secs);
+            let Ok(init_res) = tokio::time::timeout(deadline, server.initialize()).await else {
+                warn!(
+                    server = %server.name,
+                    timeout_secs = config.initialize_timeout_secs,
+                    "MCP server initialize handshake timed out"
+                );
+                return Err(McpError::Timeout {
+                    phase: "initialize",
+                });
+            };
+            init_res?;
+            let Ok(tools_res) = tokio::time::timeout(deadline, server.refresh_tools()).await else {
+                warn!(
+                    server = %server.name,
+                    timeout_secs = config.initialize_timeout_secs,
+                    "MCP server tools/list timed out"
+                );
+                return Err(McpError::Timeout {
+                    phase: "tools/list",
+                });
+            };
+            tools_res?;
+        }
 
         Ok(server)
     }
@@ -886,7 +1030,7 @@ impl McpManager {
             .await
             .unwrap_or_else(|_| {
                 warn!(tool = %full_name, timeout_secs = timeout.as_secs(), "MCP tool call timed out");
-                Err(McpError::Timeout)
+                Err(McpError::Timeout { phase: "tools/call" })
             })
     }
 
@@ -1065,9 +1209,12 @@ mod tests {
         let err = McpError::NotConnected("server1".to_string());
         assert!(err.to_string().contains("server1"));
 
-        // Test Timeout variant
-        let err = McpError::Timeout;
+        // Test Timeout variant (fix #628 — struct variant with phase)
+        let err = McpError::Timeout {
+            phase: "initialize",
+        };
         assert!(err.to_string().contains("timeout"));
+        assert!(err.to_string().contains("initialize"));
     }
 
     #[test]
@@ -1495,5 +1642,201 @@ mod tests {
         assert_eq!(r2, serde_json::json!(2));
 
         let _ = transport.close().await;
+    }
+
+    /// In-memory transport used to drive [`McpServer::new_with_config`]
+    /// without a child process. `responses` lists canned replies in the
+    /// order they will be returned; `delay_first_response` introduces a
+    /// configurable sleep on the FIRST call so we can simulate a stalled
+    /// initialize. The transport never blocks indefinitely on its own —
+    /// the only stall source is the configured delay.
+    struct FakeTransport {
+        responses: std::sync::Mutex<std::collections::VecDeque<Value>>,
+        delay_first_response: std::sync::Mutex<Option<Duration>>,
+    }
+
+    impl FakeTransport {
+        fn new(responses: Vec<Value>) -> Self {
+            Self {
+                responses: std::sync::Mutex::new(responses.into()),
+                delay_first_response: std::sync::Mutex::new(None),
+            }
+        }
+
+        fn with_initial_delay(self, delay: Duration) -> Self {
+            *self.delay_first_response.lock().expect("lock") = Some(delay);
+            self
+        }
+    }
+
+    #[async_trait]
+    impl McpTransport for FakeTransport {
+        async fn request(&self, _method: &str, _params: Option<Value>) -> Result<Value, McpError> {
+            // Take the delay (once); on first call we honour it.
+            let delay = self.delay_first_response.lock().expect("lock").take();
+            if let Some(d) = delay {
+                tokio::time::sleep(d).await;
+            }
+            let next = self.responses.lock().expect("lock").pop_front();
+            Ok(next.unwrap_or(Value::Null))
+        }
+
+        async fn close(&self) -> Result<(), McpError> {
+            Ok(())
+        }
+    }
+
+    // ─── Fix #628 — initialize-handshake timeout ───────────────────────
+    //
+    // Forensic evidence: the pre-fix `McpServer::new` chained
+    // `server.initialize().await?` directly, with NO `tokio::time::timeout`
+    // guard. A non-responsive transport (one whose `request` future
+    // never resolves) would block the calling tokio task forever
+    // because `transport.request("initialize", ...)` has no built-in
+    // deadline. These tests would hang the runtime entirely without the
+    // fix; with the fix they complete deterministically in well under
+    // a second.
+
+    /// Fix #628: a transport that stalls on the FIRST request (the
+    /// initialize handshake) MUST cause `McpServer::new_with_config`
+    /// to return `McpError::Timeout { phase: "initialize" }` within
+    /// the configured deadline — not hang forever.
+    #[tokio::test]
+    async fn fix628_initialize_timeout_fires_on_hanging_server() {
+        // 60 s stall on first request simulates a non-responsive server.
+        let transport = FakeTransport::new(vec![]).with_initial_delay(Duration::from_mins(1));
+        let config = McpServerConfig::new().with_initialize_timeout_secs(1);
+
+        let start = std::time::Instant::now();
+        let result = tokio::time::timeout(
+            // Outer belt-and-suspenders. If the inner timeout failed to
+            // fire, this catches the bug instead of hanging the test
+            // runtime forever.
+            std::time::Duration::from_secs(10),
+            McpServer::new_with_config("hang", Box::new(transport), config),
+        )
+        .await
+        .expect("outer timeout fired — inner #628 timeout did not enforce");
+        let elapsed = start.elapsed();
+
+        // `McpServer` doesn't implement `Debug`, so we pattern-match on
+        // the `Result` rather than using `.expect_err()`.
+        match result {
+            Err(McpError::Timeout {
+                phase: "initialize",
+            }) => {}
+            Err(other) => panic!("expected Timeout {{ phase: \"initialize\" }}, got {other:?}"),
+            Ok(_) => panic!("hanging server must produce an error, got Ok"),
+        }
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "initialize timeout (1 s) should fire fast; took {elapsed:?}"
+        );
+    }
+
+    /// Fix #628: a well-behaved transport completes the initialize
+    /// handshake well within the deadline and returns a usable
+    /// `McpServer`. Proves the timeout wrapper does NOT regress
+    /// normal behaviour — the production path returns Ok.
+    #[tokio::test]
+    async fn fix628_normal_handshake_succeeds_under_timeout() {
+        // Canned protocol: (1) initialize reply, (2) notifications/initialized
+        // (the production code calls `.ok()` on this so the `Value::Null`
+        // returned by FakeTransport is harmless), (3) tools/list reply.
+        let transport = FakeTransport::new(vec![
+            json!({
+                "serverInfo": {"name": "ok", "version": "1"},
+                "capabilities": {"tools": {"listChanged": false}}
+            }),
+            Value::Null,
+            json!({"tools": []}),
+        ]);
+        let config = McpServerConfig::new().with_initialize_timeout_secs(10);
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            McpServer::new_with_config("ok", Box::new(transport), config),
+        )
+        .await
+        .expect("outer timeout fired — handshake stalled");
+        let server = match result {
+            Ok(s) => s,
+            Err(e) => panic!("handshake must succeed, got error: {e:?}"),
+        };
+
+        assert_eq!(server.name(), "ok");
+        assert!(server.tools().is_empty());
+    }
+
+    /// Fix #628: the timeout duration is configurable via
+    /// [`McpServerConfig::initialize_timeout_secs`]. Verifies the
+    /// public-API contract (default = 30 s, builder is monotonic on
+    /// the targeted field) AND that a short override is actually
+    /// honoured at runtime (a 1 s override fires in < 3 s against a
+    /// 60 s stall).
+    #[tokio::test]
+    async fn fix628_initialize_timeout_is_configurable() {
+        assert_eq!(McpServerConfig::default().initialize_timeout_secs, 30);
+        assert_eq!(McpServerConfig::new().initialize_timeout_secs, 30);
+        assert_eq!(DEFAULT_INITIALIZE_TIMEOUT_SECS, 30);
+
+        let custom = McpServerConfig::new().with_initialize_timeout_secs(5);
+        assert_eq!(custom.initialize_timeout_secs, 5);
+
+        let transport = FakeTransport::new(vec![]).with_initial_delay(Duration::from_mins(1));
+        let config = McpServerConfig::new()
+            .with_initialize_timeout_secs(0)
+            .with_initialize_timeout_secs(1);
+        assert_eq!(config.initialize_timeout_secs, 1);
+
+        let start = std::time::Instant::now();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            McpServer::new_with_config("cfg", Box::new(transport), config),
+        )
+        .await
+        .expect("outer timeout fired — configurable timeout did not enforce");
+        let elapsed = start.elapsed();
+
+        match result {
+            Err(McpError::Timeout {
+                phase: "initialize",
+            }) => {}
+            Err(other) => panic!("expected Timeout {{ phase: \"initialize\" }}, got {other:?}"),
+            Ok(_) => panic!("hanging server must produce an error, got Ok"),
+        }
+        assert!(
+            elapsed < std::time::Duration::from_secs(3),
+            "configurable 1 s timeout should fire fast; took {elapsed:?}"
+        );
+    }
+
+    /// Fix #628: `initialize_timeout_secs = 0` disables the deadline —
+    /// the explicit opt-out for callers that supply their own outer
+    /// cancellation scope. With the timeout disabled, a stalled
+    /// transport hangs the call indefinitely; the outer
+    /// `tokio::time::timeout` is what fires (NOT an inner
+    /// `McpError::Timeout`).
+    #[tokio::test]
+    async fn fix628_initialize_timeout_zero_disables_deadline() {
+        let transport = FakeTransport::new(vec![]).with_initial_delay(Duration::from_mins(1));
+        let config = McpServerConfig::new().with_initialize_timeout_secs(0);
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            McpServer::new_with_config("nocap", Box::new(transport), config),
+        )
+        .await;
+
+        // `tokio::time::timeout` returns `Err(Elapsed)` when the inner
+        // future does not complete. `outcome.is_err()` therefore proves
+        // the inner deadline did NOT fire — the `0 = disabled` contract
+        // held.
+        assert!(
+            outcome.is_err(),
+            "with initialize_timeout_secs=0, the inner call must hang \
+             until the OUTER timeout fires; instead the inner call \
+             completed — the `0 = disabled` contract was violated"
+        );
     }
 }
