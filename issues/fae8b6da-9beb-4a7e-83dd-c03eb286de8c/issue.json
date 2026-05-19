@@ -3,11 +3,12 @@
   "display_id": 694,
   "title": "ACP execute_local_tool bypasses PreToolUse hooks and rules engine",
   "description": "## Severity\nCritical\n## Dimension\nsecurity\n## Location\nsrc/acp.rs:1281-1318 (execute_tool_via_acp branches + execute_local_tool)\n## Violation\n`execute_local_tool` invokes `tools::execute_tool_with_memory` directly — passing the permission manager but never the hook engine. The field `hook_engine` is declared `#[allow(dead_code)]` at line 119 and never consulted:\n\n```rust\n#[allow(dead_code)]\nhook_engine: HookEngine,\n...\nlet result = crate::tools::execute_tool_with_memory(&tc, None, Some(&self.permission_mgr));\n```\n\nLikewise `rules_engine` is `#[allow(dead_code)]` (line 122) and never queried before a tool call. The whole agent loop also calls `prompt::build_system_prompt(None, None, None)` (line 789), dropping both hook-injected instructions and rules context.\n\nResult: in the ACP code path, the configured `PreToolUse` / `PostToolUse` hooks, the rules engine context injection, and any `.openclaudia/rules` content are bypassed entirely. The same project run through the proxy enforces these gates; through ACP it does not. That is a silent security/policy bypass.\n## Mandated refactor\nWire `hook_engine.evaluate_pre_tool_use(...)` before every dispatch in `execute_tool_via_acp` and `execute_tool_via_openclaudia`, abort on `allowed = false`, and run the post-tool path after each result. Inject the rules-engine output and merged hook system messages into the prompt builder (replace the `build_system_prompt(None, None, None)` call with `build_system_prompt_blocks(..., Some(hook_instructions), ...)`). Delete the `#[allow(dead_code)]` once they're live so the next dead-code regression fails CI.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:48:42.694170032Z",
-  "updated_at": "2026-05-18T21:48:56.299731529Z",
+  "updated_at": "2026-05-19T21:48:55.559425863Z",
+  "closed_at": "2026-05-19T21:48:55.559425863Z",
   "labels": [
     "qa-review",
     "security"
