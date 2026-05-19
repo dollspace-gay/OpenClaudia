@@ -1,0 +1,10 @@
+{
+  "uuid": "14d2ed2a-3e71-425a-b148-05833df8a2da",
+  "issue_uuid": "f72f9828-9b9f-4891-b39c-4cc5f239717d",
+  "author": "lOrm",
+  "content": "Plan mode allow check refactored to hard explicit default-deny. is_tool_allowed_in_plan_mode now follows a 5-step explicit flow: (1) mcp__/plugin__ prefix gate (denied by default, opt-in via PlanModePolicy.allow_mcp_tools/allow_plugin_tools), (2) plan-mode markers, (3) write_file-to-plan-file (TOCTOU-safe, #334), (4) explicit PLAN_MODE_ALLOWED_TOOLS allowlist, (5) hard deny. PLAN_MODE_BLOCKED_TOOLS const deleted (was redundant). New companion fn is_tool_allowed_in_plan_mode_with_policy exposes the policy. 4 new tests: known-allowed, unknown-denied, mcp-prefix-denied-by-default (incl shadow attack mcp__evil__read_file), plugin-prefix-denied-by-default. cargo test --lib: 1277 passed. cargo clippy --all-targets -- -D warnings: exit 0. No #[allow]/clippy.toml/#[ignore].",
+  "created_at": "2026-05-19T14:56:16.031973308Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAsz/iR4m4D0GXB1OM3htVylNFKmmAn9D+N1jk375VuG+77gI+LKpoMyeDEP8ifqz9VoMj4GcjtUxEZQHAyMr0CA=="
+}
