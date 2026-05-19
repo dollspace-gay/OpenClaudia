@@ -1,0 +1,10 @@
+{
+  "uuid": "2c1b322f-912b-480b-b53a-d4d2c4ab4251",
+  "issue_uuid": "2572e57c-44e4-4771-ad57-9caf31322d0f",
+  "author": "lOrm",
+  "content": "Fix landed. Two-part solution: (1) resolve_open_path() in src/tools/file/mod.rs builds <canonical_parent>/<original_leaf> — leaf-preserving so O_NOFOLLOW actually catches a leaf-symlink-swap (canonicalize on the leaf resolves the swap away, making naive O_NOFOLLOW useless). (2) write/edit/notebook each open this path with O_NOFOLLOW via OpenOptions::custom_flags(libc::O_NOFOLLOW); edit/notebook use a single FD for read+seek+truncate+write (rewrite_in_place helper) so the inode is fixed for the lifetime of the operation. 8 new tests across the 3 tools: symlink-swap rejected (forensic evidence — pre-fix all 3 wrote through the symlink and overwrote attacker_target.txt; post-fix all 3 return ELOOP and target stays intact), legitimate file passes, create-new works, shrinking edit truncates. Baseline 1314 -> 1325 pass, 0 fail. cargo clippy --lib --no-deps -- -D warnings exits 0. No #[allow], no clippy.toml change, no #[ignore].",
+  "created_at": "2026-05-19T16:32:58.193032396Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAQGAYLlgx561zR5GClAdo8gfeKeM3UakPjjuLgcDAIM92EHsvMGI0MD4ID0X/Dq4idvzdwqlEeK/51ECd/qxxDA=="
+}
