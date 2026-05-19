@@ -1,0 +1,10 @@
+{
+  "uuid": "1d672293-7eb7-49cd-baac-f01354d0904c",
+  "issue_uuid": "483dac5a-c918-4b3a-b2ac-e55398a7647e",
+  "author": "lOrm",
+  "content": "Fixed in src/context.rs ContextInjector::inject. Added allowlist gate before collecting system_messages, with tracing::warn audit line on drop. 4 forensic tests added (3 negative — denied hook with payload/no-payload/no-user-msg fallback — plus 1 positive control). 1499/1499 lib tests pass (baseline 1495 + 4). cargo clippy --lib --tests -D warnings exit 0. No allow/clippy.toml/ignore introduced.",
+  "created_at": "2026-05-19T23:23:33.839816088Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAsBO6QYeGcWhuMkpZa9g31TMRHEuTC4RQmjo1cG3VcbrG9SAF7mUykLwr3R3I72xYwkGwUVC+tOjK264L/d3HBg=="
+}
