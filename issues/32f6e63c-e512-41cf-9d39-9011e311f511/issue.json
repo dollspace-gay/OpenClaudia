@@ -3,11 +3,12 @@
   "display_id": 741,
   "title": "CompletionLedger::save is non-atomic and CompletionLedger::load silently treats corruption as empty",
   "description": "## Severity\nMajor\n## Dimension\nerror-handling\n## Location\nsrc/migrations/ledger.rs:33-48, 67-76\n## Violation\nTwo related defects in the once-only migration ledger:\n\n1. `save()` uses `std::fs::write` directly — non-atomic. A crash mid-write leaves a truncated or empty file, which `load()` will then read as \"no migrations have run.\"\n\n```rust\npub fn save(&self, path: &Path) -> std::io::Result<()> {\n    if let Some(parent) = path.parent() {\n        std::fs::create_dir_all(parent)?;\n    }\n    let file = LedgerFile { applied: self.applied.clone() };\n    let text = serde_json::to_string_pretty(&file).map_err(std::io::Error::other)?;\n    std::fs::write(path, text)  // not atomic\n}\n```\n\n2. `load()` treats parse errors as empty ledger:\n\n```rust\nmatch serde_json::from_str::<LedgerFile>(&text) {\n    Ok(f) => Self { applied: f.applied },\n    Err(err) => {\n        tracing::warn!(...);\n        Self::default()  // every once-only migration will replay\n    }\n}\n```\n\nThe composition is dangerous: a crash during `save()` corrupts the file → next startup, `load()` warns and proceeds with empty ledger → every \"once-only\" migration runs again. If a future migration sends an analytics event, posts a notification, or contacts a remote API \"exactly once\", the user gets a duplicate. Worse, the migration framework's whole premise (RunPolicy::OnceOnly is enforced) becomes a soft promise that breaks on any disk hiccup.\n\n## Mandated refactor\n1. Write atomically: serialize to `path.with_extension(\"json.tmp\")`, then `std::fs::rename` to the final path. POSIX rename is atomic on the same filesystem.\n2. On parse error in `load()`, rename the corrupt file to `migrations.json.corrupt-<timestamp>` and start fresh — preserving the broken file for forensic inspection rather than silently overwriting it on the next save.\n3. Optionally add a checksum (sha256 of payload) field to detect partial writes that happen to parse as valid JSON.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:53:22.615084212Z",
-  "updated_at": "2026-05-19T22:56:05.942179930Z",
+  "updated_at": "2026-05-19T23:02:10.707056867Z",
+  "closed_at": "2026-05-19T23:02:10.707056867Z",
   "labels": [
     "qa-review",
     "error-handling"
