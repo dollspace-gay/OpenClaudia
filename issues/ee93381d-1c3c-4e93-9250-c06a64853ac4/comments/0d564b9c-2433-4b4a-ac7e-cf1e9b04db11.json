@@ -1,0 +1,10 @@
+{
+  "uuid": "0d564b9c-2433-4b4a-ac7e-cf1e9b04db11",
+  "issue_uuid": "ee93381d-1c3c-4e93-9250-c06a64853ac4",
+  "author": "lOrm",
+  "content": "Fixed via src/hooks/mod.rs: added HookEvent::is_deny_intent() (PreToolUse + PermissionRequest only); matches_entry now takes the event and fail-closes (returns true) on regex compile/match errors for deny-intent events, fail-opens for observe events. Both paths emit tracing::warn! with structured event=, pattern=, error=, fail_closed= fields. Regression tests: pre_tool_use_with_malformed_matcher_fails_closed_and_blocks, post_tool_use_with_malformed_matcher_fails_open_and_skips, pre_tool_use_matcher_failure_emits_warn_with_fail_closed_field, post_tool_use_matcher_failure_emits_warn_with_fail_closed_false, is_deny_intent_covers_pre_tool_use_and_permission_request_only. cargo test --lib: 1510 passed (baseline 1495 + 6 new). cargo clippy --all-targets --all-features -- -D warnings: exit 0.",
+  "created_at": "2026-05-19T23:30:37.758263970Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAKv72s8/jGgUF6xMoUFyFlvyR1cR3H0LoTYoIZ0Shi5G3Ds6YtEBwJyERduBPP037lUdZV7rI+4cfyRby2IwLBA=="
+}
