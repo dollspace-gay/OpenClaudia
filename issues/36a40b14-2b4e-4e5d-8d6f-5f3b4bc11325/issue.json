@@ -3,11 +3,12 @@
   "display_id": 738,
   "title": "Concurrent MCP stdio requests can interleave responses and break correlation",
   "description": "## Severity\nMajor\n## Dimension\nconcurrency\n## Location\nsrc/mcp.rs:180-264 (StdioTransport::request)\n## Violation\n`request` takes the `child` mutex to write the request and the newline, then drops it (line 219), then takes the separate `reader` mutex to read a single line. With two concurrent `request` calls A and B:\n\n1. Caller A locks `child`, writes A request, drops `child`.\n2. Caller B locks `child`, writes B request, drops `child`.\n3. Caller A locks `reader`, reads first line — may be B's response.\n4. The `id` check (line 243-248) triggers, A errors out, B's reader future takes A's response on a later read.\n\n```rust\ndrop(child);\n\n// Read response from the persistent BufReader with size limit.\nlet line = {\n    let mut reader = self.reader.lock().await;\n    ...\n```\n\nSplitting the two mutexes breaks request/response correlation under concurrency.\n## Mandated refactor\nEither (a) hold the `child` lock across the entire request+response (simple, serializes all calls), or (b) implement a response router: a background task reads lines, parses `id`, and dispatches to a `HashMap<u64, oneshot::Sender<Value>>` registered by `request`. Option (b) is the correct JSON-RPC-over-stdio shape.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:53:01.169436621Z",
-  "updated_at": "2026-05-18T21:53:32.845468064Z",
+  "updated_at": "2026-05-19T22:18:49.178329170Z",
+  "closed_at": "2026-05-19T22:18:49.178329170Z",
   "labels": [
     "qa-review",
     "concurrency"
