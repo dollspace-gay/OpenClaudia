@@ -3,11 +3,12 @@
   "display_id": 693,
   "title": "Duration::from_mins is nightly-only unstable API in init_vdd_engine_if_enabled",
   "description": "## Severity\nCritical\n## Dimension\ncomplexity\n## Location\nsrc/main.rs:619-622\n## Violation\nThe reqwest client builder uses an unstable nightly-only API.\n\n```rust\nlet http_client = reqwest::Client::builder()\n    .timeout(std::time::Duration::from_mins(2))\n    .build()\n    .unwrap_or_else(|_| reqwest::Client::new());\n```\n\n`std::time::Duration::from_mins` is gated behind the unstable `duration_constructors` feature (`#![feature(duration_constructors)]`) and is not available on stable Rust. This binary will fail to compile on stable toolchains, blocking CI and end-user installation. Additionally, the `unwrap_or_else(|_| reqwest::Client::new())` silently drops the timeout configuration if the builder fails — a configured 2-minute VDD timeout becomes the default (no timeout), which is exactly the bug crosslink #496 was supposed to prevent.\n\n## Mandated refactor\nReplace with stable equivalent and surface the build error:\n\n```rust\nlet http_client = reqwest::Client::builder()\n    .timeout(std::time::Duration::from_secs(120))\n    .build()?;  // propagate the failure rather than silently dropping timeout\n```\n\nIf propagation is infeasible at this call site, return `None` and log a warn so callers know VDD is disabled rather than running with infinite timeout.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:48:31.534698828Z",
-  "updated_at": "2026-05-18T21:48:49.403162753Z",
+  "updated_at": "2026-05-19T20:40:50.954803595Z",
+  "closed_at": "2026-05-19T20:40:50.954803595Z",
   "labels": [
     "qa-review",
     "complexity"
