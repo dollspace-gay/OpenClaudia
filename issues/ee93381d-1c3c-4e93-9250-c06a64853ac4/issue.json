@@ -3,11 +3,12 @@
   "display_id": 758,
   "title": "QA: hook matcher regex failure silently fails open (deny hooks become no-ops)",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/hooks/mod.rs:498-535\n## Violation\n`matches_entry` returns `false` whenever `validate_and_match` returns\n`Err`, which collapses any regex-compile failure into \"this entry does\nnot match\":\n```rust\nfn matches_entry(entry: &HookEntry, context: &str) -> bool {\n    entry.matcher.as_ref().is_none_or(|pattern| {\n        match Self::validate_and_match(pattern, context) {\n            Ok(matched) => matched,\n            Err(e) => {\n                warn!(pattern = %pattern, error = %e, \"Matcher validation failed\");\n                false\n            }\n        }\n    })\n}\n```\nFor an `allow` hook this is fine. For a `PreToolUse` blocker / deny hook\nthis is **fail-open**: a typo in the matcher regex (e.g. `(unclosed`),\nan oversized pattern, or any pattern exceeding `MAX_REGEX_SIZE` silently\nbecomes \"no hooks ran, allow the tool call\". Operators get a `warn!` log\nbut no enforcement.\n## Mandated refactor\nDistinguish hook *intent* in the type system: split `HookEntry` into\n`AllowHookEntry` (fail-open on matcher error is fine) and `DenyHookEntry`\n(must fail-closed). For deny hooks, validate matchers at config-load\ntime and refuse to start with a malformed matcher. Alternatively, surface\nmatcher failures via a non-default `HookResult::errors` lane that the\ncaller MUST inspect, and make the pre-tool-use dispatch path refuse to\nrun when any deny matcher failed to compile.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:54:50.210175062Z",
-  "updated_at": "2026-05-18T21:55:19.963096751Z",
+  "updated_at": "2026-05-19T23:30:22.821928652Z",
+  "closed_at": "2026-05-19T23:30:22.821928652Z",
   "labels": [
     "qa-review",
     "security"
