@@ -1,0 +1,10 @@
+{
+  "uuid": "106822a6-61b3-4545-a218-1fc687e2202f",
+  "issue_uuid": "37b34904-d977-4719-867a-be005bc47785",
+  "author": "lOrm",
+  "content": "Introduced Role enum (User/Assistant/System/Tool) with as_str/from_str/Display — no more string comparisons. Introduced Mode enum replacing TuiSession.mode: String and App.mode: String. Introduced EffortLevel enum replacing effort_level: String fields (App, ApiTurnParams, AgenticCtx). All 47 old-style call sites migrated. 0 old patterns remain in either file. Build clean, clippy clean, 1204 tests pass.",
+  "created_at": "2026-05-19T10:59:39.851190384Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA5QTpfdVE1ExOtHDX/wM+FXjgVwb5nmlV+StsOlkZxz17oEEpSSv5vITEft0uQNnqBga1avJI1IgfqdZNNZDCBw=="
+}
