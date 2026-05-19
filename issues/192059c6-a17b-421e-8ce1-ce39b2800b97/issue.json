@@ -3,9 +3,10 @@
   "display_id": 727,
   "title": "install_from_marketplace canonicalises plugin source AFTER fs::copy via copy_dir_recursive's traversal-unaware walk",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/plugins/manager.rs:575-608, src/plugins/git.rs:101-114\n## Violation\nThe PluginSource::Path branch correctly rejects path-traversal in the *plugin* root via canonicalize and starts_with, but the moment the path passes that gate it is handed to copy_dir_recursive, which walks raw `fs::read_dir` entries and follows symlinks transparently (a symlink inside the plugin pointing at /home/user/.ssh/ would be copied byte-for-byte into the destination). Quoted lines:\n\n    if !canonical.starts_with(&canonical_marketplace) {\n        return Err(PluginError::IoError(format!(\n            \"Plugin path traversal detected: ...\",\n        )));\n    }\n    canonical\n    ...\n    // src/plugins/git.rs\n    for entry in std::fs::read_dir(src)? {\n        let entry = entry?;\n        let src_path = entry.path();\n        let dst_path = dst.join(entry.file_name());\n        if src_path.is_dir() {\n            copy_dir_recursive(&src_path, &dst_path)?;\n        } else {\n            std::fs::copy(&src_path, &dst_path)?;\n        }\n    }\n\n`std::path::Path::is_dir()` follows symlinks, and `std::fs::copy` follows symlinks at the source — so a marketplace can ship a symlink that during install reads any user-readable file and stashes it inside .openclaudia/plugins/, where it then becomes referenced by InstalledPlugins.install_path with `install_path: dest.to_string_lossy()` and exposed via plugin loading.\n## Mandated refactor\nSwitch copy_dir_recursive to use `symlink_metadata()` / `fs::metadata()` with `follow_symlinks=false`, refuse to copy any non-regular-file / non-directory entry, and refuse to copy entries whose canonicalised path escapes `src`. Add a strict allowlist of extensions (.md, .json, .yaml, .toml, .txt, executables only if explicitly allowed) so that compiled binaries cannot be smuggled in. Reject symlinks outright unless a future \"trusted-marketplace\" policy axis explicitly enables them.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:51:30.351561870Z",
-  "updated_at": "2026-05-18T21:51:30.351561870Z"
+  "updated_at": "2026-05-19T21:52:29.177727057Z",
+  "closed_at": "2026-05-19T21:52:29.177727057Z"
 }
