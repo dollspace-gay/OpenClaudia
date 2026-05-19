@@ -10,10 +10,6 @@
     "355": {
       "agent_id": "lOrm",
       "claimed_at": "2026-05-19T13:23:24.894236103Z"
-    },
-    "403": {
-      "agent_id": "lOrm",
-      "claimed_at": "2026-05-19T15:46:54.453770555Z"
     }
   },
   "issues": {},
@@ -1040,8 +1036,8 @@
     }
   ],
   "watermark": {
-    "timestamp": "2026-05-19T15:46:54.453770555Z",
+    "timestamp": "2026-05-19T16:00:36.809225826Z",
     "agent_id": "lOrm",
-    "agent_seq": 23
+    "agent_seq": 24
   }
 }
