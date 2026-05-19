@@ -1,0 +1,10 @@
+{
+  "uuid": "74d197a7-ae98-4010-8c51-4223d901733e",
+  "issue_uuid": "7d7c474d-ebe0-4ae9-9616-01d971c50046",
+  "author": "lOrm",
+  "content": "Decomposed proxy_anthropic_messages (109 LOC -> 37 LOC handler) into 4 helpers + 2 centralized credential transforms. Tests: 1287->1307 pass. cargo clippy --all-targets -- -D warnings: exit 0. Zero #[allow]/#[ignore] introduced. No clippy.toml.",
+  "created_at": "2026-05-19T15:51:50.680731637Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABArLUonxOeGJedXrfA7iKN9gif7yzOoTTROt7kTrKvJ9rHXcMewAxTQ+Z/58ONb5XFvamSYprsLe8RZMiuqmJ+CA=="
+}
