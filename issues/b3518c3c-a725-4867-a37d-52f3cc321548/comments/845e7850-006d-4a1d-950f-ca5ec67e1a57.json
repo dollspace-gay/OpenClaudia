@@ -1,0 +1,10 @@
+{
+  "uuid": "845e7850-006d-4a1d-950f-ca5ec67e1a57",
+  "issue_uuid": "b3518c3c-a725-4867-a37d-52f3cc321548",
+  "author": "lOrm",
+  "content": "Fixed via validate_base_url() in src/config/provider.rs:25 (delegates to crate::web::validate_url SSRF guard from #290). Wired into load_config in src/config/mod.rs after deserialization. 8 tests: validate_base_url_accepts_public_https, validate_base_url_rejects_file_scheme, validate_base_url_rejects_data_scheme, validate_base_url_rejects_ftp_scheme, validate_base_url_rejects_metadata_ip, validate_base_url_rejects_metadata_hostname, validate_base_url_rejects_rfc1918_private, validate_base_url_rejects_malformed. cargo test --lib: 1252 passed. cargo clippy --all-targets --all-features: exit 0.",
+  "created_at": "2026-05-19T14:26:08.668491794Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAtSDJk4uq0rG7LZ1Ro33PegmFF9tp60/ZTwGo7+LCD4nxdd4ZXOtfUoLoXlOPOuU6o3b5rEnAOFJl2l2dl42PCA=="
+}
