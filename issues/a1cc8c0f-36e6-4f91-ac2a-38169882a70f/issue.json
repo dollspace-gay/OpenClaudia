@@ -3,11 +3,12 @@
   "display_id": 713,
   "title": "MCP HttpTransport missing timeout enables indefinite hangs",
   "description": "## Severity\nMajor\n## Dimension\nerror-handling\n## Location\nsrc/mcp.rs:284-293 (HttpTransport::new)\n## Violation\nThe HTTP client is constructed with `reqwest::Client::new()`, which has no default timeout. Any MCP server that hangs (TCP open, no body) blocks the calling task forever. `StdioTransport`'s sibling code has no in-band timeout either; only `McpManager::call_tool_with_timeout` provides a tokio wrapper, but `call_tool` is exposed without one and so are `initialize`, `refresh_tools`, `list_resources`, `read_resource`.\n\n```rust\npub fn new(base_url: &str) -> Self {\n    Self {\n        client: reqwest::Client::new(),\n        ...\n    }\n}\n```\n\nCompare with `src/web.rs:265` which sets `.timeout(Duration::from_secs(30))`.\n## Mandated refactor\nBuild the client with `Client::builder().timeout(Duration::from_secs(30)).connect_timeout(Duration::from_secs(10)).build()`. Apply a default per-request `tokio::time::timeout` inside every transport method (`StdioTransport::request`, `HttpTransport::request`) so the `McpError::Timeout` variant fires when a transport hangs.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:49:58.013796105Z",
-  "updated_at": "2026-05-18T22:04:50.526072165Z",
+  "updated_at": "2026-05-19T21:19:35.250603037Z",
+  "closed_at": "2026-05-19T21:19:35.250603037Z",
   "labels": [
     "qa-review",
     "error-handling"
