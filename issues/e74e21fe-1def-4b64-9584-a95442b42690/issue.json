@@ -3,10 +3,9 @@
   "display_id": 778,
   "title": "QA: hook errors silently discarded by fire_post_tool; OWASP A09 logging failure",
   "description": "## Severity\nMajor\n## Dimension\nerror-handling\n## Location\nsrc/hooks/mod.rs:347-369, 420-447\n## Violation\n`fire_post_tool` is the convenience wrapper used by every tool execution\ncall site. It runs `self.run(event, &input).await` and discards the\nresult:\n```rust\nlet _ = self.run(event, &input).await;\n```\nThe `HookResult` discarded contains `errors: Vec<HookError>` populated in\n`run` at lines 441-444 (`hook_result.errors.push(e)`). Audit-trail,\nsecurity-monitoring, and compliance hooks that fail (timeout, command\nfailed, parse error) leave no signal to the caller, only a\n`tracing::error!` that may not be ingested. Violates OWASP A09 (Security\nLogging and Monitoring Failures). Tool execution must never silently\nskip its audit trail.\n## Mandated refactor\nReturn `Result<(), Vec<HookError>>` from `fire_post_tool` and force every\ncall site to handle the error case (fail the tool call when an audit\nhook fails). At minimum, emit a structured-log entry per discarded error\nincluding session_id, tool_name, hook command, exit code, and increment\na counter operators can scrape. Stop using `let _ =` to silence the\nresult.\n## Filed from QA review dispatch",
-  "status": "closed",
+  "status": "open",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:56:46.198548823Z",
-  "updated_at": "2026-05-19T23:30:27.954430565Z",
-  "closed_at": "2026-05-19T23:30:27.954430565Z"
+  "updated_at": "2026-05-19T23:52:40.154219144Z"
 }
