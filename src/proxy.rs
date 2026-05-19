@@ -523,7 +523,12 @@ async fn prepare_request_context(
     }
 
     // Add MCP tools
-    let mcp_tools = state.mcp_manager.read().await.tools_as_openai_functions();
+    let mcp_tools = state
+        .mcp_manager
+        .read()
+        .await
+        .tools_as_openai_functions()
+        .await;
     if !mcp_tools.is_empty() {
         let mut tools = request.tools.take().unwrap_or_default();
         tools.extend(mcp_tools);
@@ -1047,7 +1052,7 @@ pub async fn handle_mcp_tool_call(
     let parts: Vec<&str> = tool_name.splitn(3, "__").collect();
     if parts.len() == 3 && parts[0] == "mcp" {
         let server_name = parts[1];
-        if !mcp.is_connected(server_name) {
+        if !mcp.is_connected(server_name).await {
             return Err(ProxyError::InvalidBody(format!(
                 "MCP server '{server_name}' is not connected"
             )));
@@ -1083,7 +1088,7 @@ pub async fn fire_tool_error_notification(
 
 /// Disconnect all MCP servers gracefully
 pub async fn shutdown_mcp(mcp_manager: &Arc<RwLock<McpManager>>) {
-    let mut mcp = mcp_manager.write().await;
+    let mcp = mcp_manager.write().await;
     if let Err(e) = mcp.disconnect_all().await {
         warn!(error = %e, "Error disconnecting MCP servers");
     }
@@ -1804,7 +1809,7 @@ async fn connect_mcp_servers(
     mcp_manager: &Arc<RwLock<McpManager>>,
     plugin_manager: &Arc<PluginManager>,
 ) {
-    let mut mcp = mcp_manager.write().await;
+    let mcp = mcp_manager.write().await;
     for (plugin, server) in plugin_manager.all_mcp_servers() {
         match server.transport.as_str() {
             "stdio" => {
@@ -1841,8 +1846,10 @@ async fn connect_mcp_servers(
             }
         }
     }
-    if mcp.server_count() > 0 {
-        info!(connected = mcp.server_count(), "MCP servers initialized");
+    let count = mcp.server_count().await;
+    drop(mcp);
+    if count > 0 {
+        info!(connected = count, "MCP servers initialized");
     }
 }
 

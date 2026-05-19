@@ -139,7 +139,7 @@ async fn handshake_no_elicitation_cap() {
         .mount(&mock_server)
         .await;
 
-    let transport = HttpTransport::new(&mock_server.uri());
+    let transport = HttpTransport::__test_new_unchecked(&mock_server.uri());
     // Handshake succeeds; we only need it to complete to verify what was sent.
     let _ = McpServer::new("mock", Box::new(transport)).await;
 
@@ -405,9 +405,12 @@ async fn call_tool_with_timeout_returns_timeout_error() {
         .mount(&mock_server)
         .await;
 
-    let mut manager = McpManager::new();
+    let manager = McpManager::new();
+    // mock_server.uri() is a 127.0.0.1 loopback that the SSRF guard
+    // (fix #677) rejects in production; tests use the unchecked
+    // variant to point at their own listener.
     manager
-        .connect_http("slow", &mock_server.uri())
+        .__test_connect_http_unchecked("slow", &mock_server.uri())
         .await
         .expect("connect_http");
 
@@ -514,7 +517,7 @@ async fn http_rpc_error_drops_data_field() {
         .mount(&mock_server)
         .await;
 
-    let transport = HttpTransport::new(&mock_server.uri());
+    let transport = HttpTransport::__test_new_unchecked(&mock_server.uri());
     let result = transport.request("anything", None).await;
 
     assert!(result.is_err(), "must return Err for JSON-RPC error");
@@ -648,7 +651,7 @@ async fn arbitrary_unknown_error_codes_do_not_panic() {
             .mount(&mock_server)
             .await;
 
-        let transport = HttpTransport::new(&mock_server.uri());
+        let transport = HttpTransport::__test_new_unchecked(&mock_server.uri());
         let result = transport.request("test", None).await;
         assert!(
             matches!(result, Err(McpError::Protocol(_))),

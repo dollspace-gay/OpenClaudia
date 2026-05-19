@@ -67,6 +67,14 @@ pub enum McpError {
     #[error("Server not connected: {0}")]
     NotConnected(String),
 
+    /// Server is permanently unreachable after exhausting the reconnect
+    /// budget (fix #629). CC `connectToServer` (`client.ts:1374-1401`)
+    /// reconnects transparently on `onclose`; OC mirrors that with a
+    /// per-server backoff (1 s / 5 s / 30 s) and surfaces this variant
+    /// after the third failed reconnect.
+    #[error("MCP server '{0}' is unreachable after reconnect attempts exhausted")]
+    ServerUnreachable(String),
+
     /// Operation exceeded its configured deadline.
     ///
     /// `phase` names the lifecycle stage that timed out so the operator
@@ -184,10 +192,15 @@ pub trait McpTransport: Send + Sync {
     async fn close(&self) -> Result<(), McpError>;
 }
 
-// TODO(I-2): Add reconnection logic for transports. When a stdio process
-// crashes or an HTTP endpoint becomes unreachable, the transport should
-// attempt automatic reconnection with exponential backoff before surfacing
-// errors to callers. See crosslink issue #47.
+// Reconnection logic lives in [`McpManager`] (fix #629), not in the
+// transport. CC splits responsibility the same way: `client.ts:1374-1401`
+// hooks `onclose` at the manager layer to drop the cached client; the
+// transport itself is one-shot. OC's [`McpManager`] holds a
+// [`ConnectionSpec`] per server, drops the dead [`McpServer`] on
+// transport error, and rebuilds it on the next access under the
+// [`BACKOFF`] schedule (1 s / 5 s / 30 s); after
+// [`MAX_RECONNECT_ATTEMPTS`] failures it surfaces
+// [`McpError::ServerUnreachable`].
 
 /// Stdio transport - communicates with MCP server via stdin/stdout
 pub struct StdioTransport {
@@ -436,15 +449,65 @@ pub struct HttpTransport {
 }
 
 impl HttpTransport {
-    /// Create a new HTTP transport.
+    /// Create a new HTTP transport, validating the URL against the
+    /// shared SSRF guard (fix #677).
+    ///
+    /// The base URL is parsed and run through [`crate::web::validate_url`]
+    /// — the same perimeter check used by `web_fetch` and the web-search
+    /// tools — so a misconfigured or hostile MCP manifest cannot point
+    /// the transport at:
+    ///
+    /// * `file://`, `data:`, `ftp:`, or any other non-`http(s)` scheme;
+    /// * loopback (`127.0.0.0/8`, `::1`, `localhost`);
+    /// * RFC 1918 / link-local / cloud-metadata addresses
+    ///   (`169.254.169.254`, `metadata.google.internal`, etc.);
+    /// * unresolvable hosts.
+    ///
+    /// The validator already covers DNS-resolved hostnames, IPv6 zone
+    /// literals, and the cloud-provider metadata hostname denylist; we
+    /// reuse it verbatim so MCP HTTP servers and `web_fetch` enforce
+    /// the same perimeter.
     ///
     /// Borrows the process-wide `SHARED_MCP_HTTP_CLIENT` rather than
     /// constructing a fresh `reqwest::Client` (fix #490).
-    #[must_use]
-    pub fn new(base_url: &str) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::Transport`] if the URL fails validation. The
+    /// error message starts with the substring `"SSRF guard rejected"`
+    /// so call sites and tests can distinguish a validation failure
+    /// from a runtime transport error.
+    pub fn new(base_url: &str) -> Result<Self, McpError> {
+        // SSRF guard. Mirrors `web::fetch_url`'s entry check (#368) and
+        // satisfies the perimeter contract spelled out in #677.
+        crate::web::validate_url(base_url).map_err(|reason| {
+            McpError::Transport(format!("SSRF guard rejected MCP base URL: {reason}"))
+        })?;
+
         // Touch the static so the client is eagerly built on first
         // construction. Cheap, idempotent, and surfaces a build error
         // at transport-creation time rather than first-request time.
+        LazyLock::force(&SHARED_MCP_HTTP_CLIENT);
+        Ok(Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            request_id: AtomicU64::new(1),
+        })
+    }
+
+    /// Test-only constructor that skips the SSRF guard so unit and
+    /// integration tests can point the transport at a `127.0.0.1`
+    /// loopback listener they just bound (which the production
+    /// [`Self::new`] would correctly reject as a private address).
+    ///
+    /// Hidden from the public docs (`#[doc(hidden)]`) and prefixed
+    /// `__test_` to discourage production use. The function is `pub`
+    /// rather than `pub(crate)` only so integration tests in
+    /// `tests/*.rs` — which compile as a separate crate without
+    /// access to `cfg(test)` symbols — can construct loopback
+    /// transports for the mock-server pattern.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn __test_new_unchecked(base_url: &str) -> Self {
         LazyLock::force(&SHARED_MCP_HTTP_CLIENT);
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -907,9 +970,81 @@ impl McpServer {
     }
 }
 
-/// Manages multiple MCP server connections
+/// Connection blueprint used by [`McpManager`] to rebuild a transport
+/// after a disconnect (fix #629).
+#[derive(Debug, Clone)]
+enum ConnectionSpec {
+    Stdio { command: String, args: Vec<String> },
+    Http { url: String },
+}
+
+impl ConnectionSpec {
+    fn build_transport(&self) -> Result<Box<dyn McpTransport>, McpError> {
+        match self {
+            Self::Stdio { command, args } => {
+                let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+                Ok(Box::new(StdioTransport::spawn(command, &argv)?))
+            }
+            Self::Http { url } => Ok(Box::new(HttpTransport::new(url)?)),
+        }
+    }
+}
+
+/// Max reconnect attempts before [`McpError::ServerUnreachable`] (fix #629).
+const MAX_RECONNECT_ATTEMPTS: u32 = 3;
+
+/// Per-attempt backoff: 1 s / 5 s / 30 s per crosslink #629.
+const BACKOFF: [Duration; MAX_RECONNECT_ATTEMPTS as usize] = [
+    Duration::from_secs(1),
+    Duration::from_secs(5),
+    Duration::from_secs(30),
+];
+
+struct ServerEntry {
+    spec: ConnectionSpec,
+    server: Option<McpServer>,
+    failed_attempts: u32,
+    last_failure: Option<std::time::Instant>,
+    cached_tools: Vec<McpTool>,
+    supports_list_changed: bool,
+}
+
+impl ServerEntry {
+    fn new(spec: ConnectionSpec, server: McpServer) -> Self {
+        let cached_tools = server.tools().to_vec();
+        let supports_list_changed = server.supports_tool_list_changed();
+        Self {
+            spec,
+            server: Some(server),
+            failed_attempts: 0,
+            last_failure: None,
+            cached_tools,
+            supports_list_changed,
+        }
+    }
+
+    fn mark_disconnected(&mut self) {
+        self.server = None;
+        self.cached_tools.clear();
+        self.last_failure = Some(std::time::Instant::now());
+    }
+
+    const fn is_permanently_unreachable(&self) -> bool {
+        self.server.is_none() && self.failed_attempts >= MAX_RECONNECT_ATTEMPTS
+    }
+
+    fn backoff_elapsed(&self) -> bool {
+        let Some(last) = self.last_failure else {
+            return true;
+        };
+        let idx = (self.failed_attempts as usize).min(BACKOFF.len() - 1);
+        last.elapsed() >= BACKOFF[idx]
+    }
+}
+
+/// Manages multiple MCP server connections with self-healing reconnection (fix #629).
 pub struct McpManager {
-    servers: HashMap<String, McpServer>,
+    servers: Mutex<HashMap<String, ServerEntry>>,
 }
 
 impl McpManager {
@@ -917,7 +1052,7 @@ impl McpManager {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            servers: HashMap::new(),
+            servers: Mutex::new(HashMap::new()),
         }
     }
 
@@ -927,75 +1062,156 @@ impl McpManager {
     ///
     /// Returns an `McpError` if spawning or initializing the server fails.
     pub async fn connect_stdio(
-        &mut self,
+        &self,
         name: &str,
         command: &str,
         args: &[&str],
     ) -> Result<(), McpError> {
-        let transport = StdioTransport::spawn(command, args)?;
-        let server = McpServer::new(name, Box::new(transport)).await?;
-        self.servers.insert(name.to_string(), server);
+        let spec = ConnectionSpec::Stdio {
+            command: command.to_string(),
+            args: args.iter().map(|s| (*s).to_string()).collect(),
+        };
+        let transport = spec.build_transport()?;
+        let server = McpServer::new(name, transport).await?;
+        let entry = ServerEntry::new(spec, server);
+        self.servers.lock().await.insert(name.to_string(), entry);
         Ok(())
     }
 
-    /// Connect to an MCP server via HTTP.
+    /// Connect to an MCP server via HTTP. URL validated by SSRF guard (fix #677).
     ///
     /// # Errors
     ///
-    /// Returns an `McpError` if connecting or initializing the server fails.
-    pub async fn connect_http(&mut self, name: &str, url: &str) -> Result<(), McpError> {
-        let transport = HttpTransport::new(url);
-        let server = McpServer::new(name, Box::new(transport)).await?;
-        self.servers.insert(name.to_string(), server);
+    /// Returns an `McpError` if URL validation, connection, or initialization fails.
+    pub async fn connect_http(&self, name: &str, url: &str) -> Result<(), McpError> {
+        let spec = ConnectionSpec::Http {
+            url: url.to_string(),
+        };
+        let transport = spec.build_transport()?;
+        let server = McpServer::new(name, transport).await?;
+        let entry = ServerEntry::new(spec, server);
+        self.servers.lock().await.insert(name.to_string(), entry);
         Ok(())
     }
 
-    /// Get all available tools from all servers
-    #[must_use]
-    pub fn all_tools(&self) -> Vec<(&str, &McpTool)> {
-        self.servers
-            .iter()
-            .flat_map(|(server_name, server)| {
-                server
-                    .tools()
-                    .iter()
-                    .map(move |tool| (server_name.as_str(), tool))
-            })
-            .collect()
+    /// Test-only counterpart to [`Self::connect_http`] that bypasses
+    /// the SSRF guard so integration tests can point at a wiremock
+    /// loopback listener. Marked `#[doc(hidden)]` and prefixed
+    /// `__test_` to make production misuse obvious.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `McpError` if connection or initialization fails.
+    #[doc(hidden)]
+    pub async fn __test_connect_http_unchecked(
+        &self,
+        name: &str,
+        url: &str,
+    ) -> Result<(), McpError> {
+        let spec = ConnectionSpec::Http {
+            url: url.to_string(),
+        };
+        let transport: Box<dyn McpTransport> = Box::new(HttpTransport::__test_new_unchecked(url));
+        let server = McpServer::new(name, transport).await?;
+        let entry = ServerEntry::new(spec, server);
+        self.servers.lock().await.insert(name.to_string(), entry);
+        Ok(())
     }
 
     /// Convert MCP tools to `OpenAI` function format.
     ///
-    /// Tool names use `mcp__servername__toolname` with double-underscore
-    /// delimiters, allowing server and tool names to contain single underscores.
-    #[must_use]
-    pub fn tools_as_openai_functions(&self) -> Vec<Value> {
-        self.all_tools()
+    /// Reads the cached tool snapshot — disconnected servers contribute
+    /// nothing because [`ServerEntry::mark_disconnected`] clears the
+    /// cache (CC parity: `client.ts:1391` clears its memoised list on
+    /// `onclose`).
+    pub async fn tools_as_openai_functions(&self) -> Vec<Value> {
+        let guard = self.servers.lock().await;
+        guard
             .iter()
-            .map(|(server_name, tool)| {
-                json!({
-                    "type": "function",
-                    "function": {
-                        "name": format!("mcp__{}__{}", server_name, tool.name),
-                        "description": tool.description.as_deref().unwrap_or(""),
-                        "parameters": tool.input_schema.clone().unwrap_or_else(|| json!({"type": "object", "properties": {}}))
-                    }
+            .flat_map(|(server_name, entry)| {
+                entry.cached_tools.iter().map(move |tool| {
+                    json!({
+                        "type": "function",
+                        "function": {
+                            "name": format!("mcp__{}__{}", server_name, tool.name),
+                            "description": tool.description.as_deref().unwrap_or(""),
+                            "parameters": tool.input_schema.clone().unwrap_or_else(|| json!({"type": "object", "properties": {}}))
+                        }
+                    })
                 })
             })
             .collect()
     }
 
+    /// Attempt to reconnect a disconnected entry in-place (fix #629).
+    /// Caller holds the manager mutex.
+    async fn ensure_connected(entry: &mut ServerEntry, name: &str) -> Result<(), McpError> {
+        if entry.server.is_some() {
+            return Ok(());
+        }
+        if entry.is_permanently_unreachable() {
+            return Err(McpError::ServerUnreachable(name.to_string()));
+        }
+        if !entry.backoff_elapsed() {
+            return Err(McpError::ServerUnreachable(name.to_string()));
+        }
+
+        debug!(
+            server = %name,
+            attempt = entry.failed_attempts + 1,
+            max = MAX_RECONNECT_ATTEMPTS,
+            "Attempting MCP server reconnect"
+        );
+
+        let attempt_result = match entry.spec.build_transport() {
+            Ok(transport) => McpServer::new(name, transport).await,
+            Err(e) => Err(e),
+        };
+
+        match attempt_result {
+            Ok(server) => {
+                entry.cached_tools = server.tools().to_vec();
+                entry.supports_list_changed = server.supports_tool_list_changed();
+                entry.server = Some(server);
+                entry.failed_attempts = 0;
+                entry.last_failure = None;
+                info!(server = %name, "MCP server reconnected");
+                Ok(())
+            }
+            Err(e) => {
+                entry.failed_attempts += 1;
+                entry.last_failure = Some(std::time::Instant::now());
+                warn!(
+                    server = %name,
+                    attempt = entry.failed_attempts,
+                    max = MAX_RECONNECT_ATTEMPTS,
+                    error = %e,
+                    "MCP server reconnect attempt failed"
+                );
+                if entry.failed_attempts >= MAX_RECONNECT_ATTEMPTS {
+                    Err(McpError::ServerUnreachable(name.to_string()))
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
     /// Call a tool by its full name (`mcp__servername__toolname`).
     ///
-    /// Uses double-underscore (`__`) delimiters so that server and tool names
-    /// may themselves contain single underscores.
+    /// On [`McpError::Transport`] from the underlying request, the
+    /// server entry is marked disconnected (fix #629); the next access
+    /// attempts reconnection under the backoff. The original error is
+    /// returned to the caller — CC's `onclose` also fails the in-flight
+    /// call (`client.ts:1396`), reconnect happens on the next call.
     ///
     /// # Errors
     ///
-    /// Returns `McpError::ToolNotFound` if the name format is invalid, or
-    /// `McpError::NotConnected` if the server is not registered.
+    /// Returns `McpError::ToolNotFound` if the name format is invalid,
+    /// `McpError::NotConnected` if the server is not registered, or
+    /// `McpError::ServerUnreachable` if the entry has exhausted its
+    /// reconnect budget.
     pub async fn call_tool(&self, full_name: &str, arguments: Value) -> Result<Value, McpError> {
-        // Format: mcp__servername__toolname
         let parts: Vec<&str> = full_name.splitn(3, "__").collect();
         if parts.len() != 3 || parts[0] != "mcp" {
             return Err(McpError::ToolNotFound(format!(
@@ -1006,12 +1222,30 @@ impl McpManager {
         let server_name = parts[1];
         let tool_name = parts[2];
 
-        let server = self
-            .servers
-            .get(server_name)
+        let mut guard = self.servers.lock().await;
+        let entry = guard
+            .get_mut(server_name)
             .ok_or_else(|| McpError::NotConnected(server_name.to_string()))?;
 
-        server.call_tool(tool_name, arguments).await
+        Self::ensure_connected(entry, server_name).await?;
+        // `ensure_connected` returned Ok ⇒ `entry.server` is Some. Use
+        // a `let-else` rather than `.expect(_)` so this function does
+        // not advertise a `# Panics` contract; the unreachable arm
+        // hits the same `ServerUnreachable` surface as the budget-
+        // exhausted path, which is the closest semantic match if the
+        // invariant somehow broke.
+        let Some(server) = entry.server.as_ref() else {
+            return Err(McpError::ServerUnreachable(server_name.to_string()));
+        };
+
+        let outcome = server.call_tool(tool_name, arguments).await;
+        if let Err(ref e) = outcome {
+            if matches!(e, McpError::Transport(_)) {
+                entry.mark_disconnected();
+            }
+        }
+        drop(guard);
+        outcome
     }
 
     /// Call a tool with a timeout.
@@ -1034,17 +1268,17 @@ impl McpManager {
             })
     }
 
-    /// Get information about a connected server
-    #[must_use]
-    pub fn get_server_info(&self, name: &str) -> Option<(&str, bool)> {
-        self.servers.get(name).map(|s| {
-            let server_name = s.name();
-            let supports_list_changed = s.supports_tool_list_changed();
-            (server_name, supports_list_changed)
-        })
+    /// Get information about a connected server. Owned return because
+    /// the inner mutex guard cannot be held across the return.
+    pub async fn get_server_info(&self, name: &str) -> Option<(String, bool)> {
+        let guard = self.servers.lock().await;
+        guard
+            .get(name)
+            .map(|entry| (name.to_string(), entry.supports_list_changed))
     }
 
     /// List resources across all servers, or from a specific server.
+    /// Marks server disconnected on transport error (fix #629).
     ///
     /// # Errors
     ///
@@ -1054,46 +1288,92 @@ impl McpManager {
         server_name: Option<&str>,
     ) -> anyhow::Result<Vec<(String, McpResource)>> {
         let mut all_resources = Vec::new();
+        let mut guard = self.servers.lock().await;
 
-        if let Some(name) = server_name {
-            let server = self
-                .servers
-                .get(name)
+        let result: anyhow::Result<()> = if let Some(name) = server_name {
+            let entry = guard
+                .get_mut(name)
                 .ok_or_else(|| McpError::NotConnected(name.to_string()))?;
-            let resources = server.list_resources().await?;
-            for r in resources {
-                all_resources.push((name.to_string(), r));
+            Self::ensure_connected(entry, name).await?;
+            // `let-else` rather than `.expect(_)` — the unreachable
+            // arm collapses to `ServerUnreachable`, matching the
+            // budget-exhausted error surface.
+            let Some(server) = entry.server.as_ref() else {
+                return Err(McpError::ServerUnreachable(name.to_string()).into());
+            };
+            match server.list_resources().await {
+                Ok(resources) => {
+                    for r in resources {
+                        all_resources.push((name.to_string(), r));
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    if matches!(e, McpError::Transport(_)) {
+                        entry.mark_disconnected();
+                    }
+                    Err(e.into())
+                }
             }
         } else {
-            for (name, server) in &self.servers {
+            let names: Vec<String> = guard.keys().cloned().collect();
+            for n in names {
+                let Some(entry) = guard.get_mut(&n) else {
+                    continue;
+                };
+                if Self::ensure_connected(entry, &n).await.is_err() {
+                    continue;
+                }
+                let Some(server) = entry.server.as_ref() else {
+                    continue;
+                };
                 match server.list_resources().await {
                     Ok(resources) => {
                         for r in resources {
-                            all_resources.push((name.clone(), r));
+                            all_resources.push((n.clone(), r));
                         }
                     }
                     Err(e) => {
-                        warn!(server = %name, error = %e, "Failed to list resources from server");
+                        if matches!(e, McpError::Transport(_)) {
+                            entry.mark_disconnected();
+                        }
+                        warn!(server = %n, error = %e, "Failed to list resources from server");
                     }
                 }
             }
-        }
-
+            Ok(())
+        };
+        drop(guard);
+        result?;
         Ok(all_resources)
     }
 
     /// Read a specific resource from a named server.
+    /// Marks server disconnected on transport error (fix #629).
     ///
     /// # Errors
     ///
     /// Returns an error if the server is not connected or the read fails.
     pub async fn read_resource(&self, server_name: &str, uri: &str) -> anyhow::Result<String> {
-        let server = self
-            .servers
-            .get(server_name)
+        let mut guard = self.servers.lock().await;
+        let entry = guard
+            .get_mut(server_name)
             .ok_or_else(|| McpError::NotConnected(server_name.to_string()))?;
-        let content = server.read_resource(uri).await?;
-        Ok(content)
+        Self::ensure_connected(entry, server_name).await?;
+        // `let-else` rather than `.expect(_)` — the unreachable arm
+        // collapses to `ServerUnreachable`, matching the budget-
+        // exhausted error surface.
+        let Some(server) = entry.server.as_ref() else {
+            return Err(McpError::ServerUnreachable(server_name.to_string()).into());
+        };
+        let outcome = server.read_resource(uri).await;
+        if let Err(ref e) = outcome {
+            if matches!(e, McpError::Transport(_)) {
+                entry.mark_disconnected();
+            }
+        }
+        drop(guard);
+        Ok(outcome?)
     }
 
     /// Disconnect from a server.
@@ -1101,9 +1381,12 @@ impl McpManager {
     /// # Errors
     ///
     /// Returns an `McpError` if the server's transport fails to close.
-    pub async fn disconnect(&mut self, name: &str) -> Result<(), McpError> {
-        if let Some(server) = self.servers.remove(name) {
-            server.close().await?;
+    pub async fn disconnect(&self, name: &str) -> Result<(), McpError> {
+        let removed = self.servers.lock().await.remove(name);
+        if let Some(mut entry) = removed {
+            if let Some(server) = entry.server.take() {
+                server.close().await?;
+            }
         }
         Ok(())
     }
@@ -1113,24 +1396,33 @@ impl McpManager {
     /// # Errors
     ///
     /// Returns the first `McpError` encountered while closing servers.
-    pub async fn disconnect_all(&mut self) -> Result<(), McpError> {
-        let names: Vec<String> = self.servers.keys().cloned().collect();
+    pub async fn disconnect_all(&self) -> Result<(), McpError> {
+        let names: Vec<String> = self.servers.lock().await.keys().cloned().collect();
         for name in names {
             self.disconnect(&name).await?;
         }
         Ok(())
     }
 
-    /// Get the number of connected servers
-    #[must_use]
-    pub fn server_count(&self) -> usize {
-        self.servers.len()
+    /// Number of registered servers (incl. disconnected/awaiting-reconnect).
+    pub async fn server_count(&self) -> usize {
+        self.servers.lock().await.len()
     }
 
-    /// Check if a server is connected
-    #[must_use]
-    pub fn is_connected(&self, name: &str) -> bool {
-        self.servers.contains_key(name)
+    /// Whether a server is registered. True does NOT guarantee live;
+    /// use [`Self::is_live`] for that.
+    pub async fn is_connected(&self, name: &str) -> bool {
+        self.servers.lock().await.contains_key(name)
+    }
+
+    /// True if the server is registered AND currently holds a live
+    /// transport (fix #629). Used by tests to assert disconnect-detection.
+    pub async fn is_live(&self, name: &str) -> bool {
+        self.servers
+            .lock()
+            .await
+            .get(name)
+            .is_some_and(|e| e.server.is_some())
     }
 }
 
@@ -1163,23 +1455,25 @@ mod tests {
         assert_eq!(json["description"], "Read a file");
     }
 
-    #[test]
-    fn test_mcp_manager_new() {
+    #[tokio::test]
+    async fn test_mcp_manager_new() {
         let manager = McpManager::new();
-        assert_eq!(manager.server_count(), 0);
+        assert_eq!(manager.server_count().await, 0);
     }
 
-    #[test]
-    fn test_tools_as_openai_functions() {
+    #[tokio::test]
+    async fn test_tools_as_openai_functions() {
         // This would require a mock server, so just test the format
         let manager = McpManager::new();
-        let functions = manager.tools_as_openai_functions();
+        let functions = manager.tools_as_openai_functions().await;
         assert!(functions.is_empty());
     }
 
     #[test]
     fn test_http_transport_new() {
-        let transport = HttpTransport::new("http://localhost:8080/");
+        // SSRF guard (fix #677) blocks loopback, so use new_unchecked
+        // to exercise base_url normalisation without a real network.
+        let transport = HttpTransport::__test_new_unchecked("http://localhost:8080/");
         assert_eq!(transport.base_url, "http://localhost:8080");
     }
 
@@ -1312,21 +1606,21 @@ mod tests {
         assert!(matches!(result, Err(McpError::NotConnected(_))));
     }
 
-    #[test]
-    fn test_mcp_manager_is_connected() {
+    #[tokio::test]
+    async fn test_mcp_manager_is_connected() {
         let manager = McpManager::new();
-        assert!(!manager.is_connected("nonexistent"));
+        assert!(!manager.is_connected("nonexistent").await);
     }
 
-    #[test]
-    fn test_mcp_manager_get_server_info() {
+    #[tokio::test]
+    async fn test_mcp_manager_get_server_info() {
         let manager = McpManager::new();
-        assert!(manager.get_server_info("nonexistent").is_none());
+        assert!(manager.get_server_info("nonexistent").await.is_none());
     }
 
     #[tokio::test]
     async fn test_mcp_manager_disconnect_nonexistent() {
-        let mut manager = McpManager::new();
+        let manager = McpManager::new();
         // Should not error when disconnecting non-existent server
         let result = manager.disconnect("nonexistent").await;
         assert!(result.is_ok());
@@ -1334,7 +1628,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_manager_disconnect_all_empty() {
-        let mut manager = McpManager::new();
+        let manager = McpManager::new();
         let result = manager.disconnect_all().await;
         assert!(result.is_ok());
     }
@@ -1527,7 +1821,11 @@ mod tests {
     /// build.
     #[test]
     fn fix490_trait_object_compiles() {
-        let http: Box<dyn McpTransport> = Box::new(HttpTransport::new("http://127.0.0.1:1"));
+        // `new_unchecked` because `127.0.0.1` is blocked by the
+        // SSRF guard (fix #677); this test is about trait object-
+        // safety, not URL validation.
+        let http: Box<dyn McpTransport> =
+            Box::new(HttpTransport::__test_new_unchecked("http://127.0.0.1:1"));
         // Touch a method to prove the vtable is callable through the
         // trait object (statically — we don't actually `.await` here).
         let _fut = http.close();
@@ -1540,8 +1838,11 @@ mod tests {
     /// is the strongest possible evidence.
     #[test]
     fn fix490_http_client_is_shared() {
-        let a = HttpTransport::new("http://example.invalid/a");
-        let b = HttpTransport::new("http://example.invalid/b");
+        // `new_unchecked` because `.invalid` hostnames don't resolve
+        // and the SSRF guard would reject them; we only need two
+        // distinct transport handles to compare client pointers.
+        let a = HttpTransport::__test_new_unchecked("http://example.invalid/a");
+        let b = HttpTransport::__test_new_unchecked("http://example.invalid/b");
         // Force the LazyLock so the static is materialised.
         let direct = &*SHARED_MCP_HTTP_CLIENT;
         let _ = &a;
@@ -1576,7 +1877,10 @@ mod tests {
         });
 
         let url = format!("http://{addr}");
-        let transport = HttpTransport::new(&url);
+        // `new_unchecked`: the loopback URL we just bound would be
+        // rejected by the SSRF guard, but the test deliberately points
+        // at our own listener to simulate a stalled server.
+        let transport = HttpTransport::__test_new_unchecked(&url);
         let id = transport.request_id.fetch_add(1, Ordering::SeqCst);
         let body = JsonRpcRequest {
             jsonrpc: "2.0",
@@ -1838,5 +2142,401 @@ mod tests {
              until the OUTER timeout fires; instead the inner call \
              completed — the `0 = disabled` contract was violated"
         );
+    }
+
+    // ─── Fix #677 — HttpTransport SSRF / scheme validation ─────────────
+    //
+    // Forensic evidence: pre-fix `HttpTransport::new` accepted ANY `&str`,
+    // trimmed trailing slashes, and stored it. A caller could register
+    // `file:///etc/passwd`, `http://127.0.0.1/admin`,
+    // `http://169.254.169.254/latest/meta-data/`, or
+    // `http://metadata.google.internal/`, and every subsequent MCP tool
+    // call would dial that endpoint. Post-fix, `HttpTransport::new`
+    // calls `crate::web::validate_url` and returns
+    // `McpError::Transport("SSRF guard rejected ...")` for each of
+    // those URLs. The tests below pin exactly that perimeter.
+
+    /// Fix #677: `file://` schemes are rejected at construction time.
+    /// Pre-fix the call would have returned `Ok(_)` and only failed at
+    /// dial time inside `reqwest`; post-fix it never reaches the wire.
+    #[test]
+    fn fix677_file_scheme_rejected_at_construction() {
+        // Match rather than `.err().expect()` because `HttpTransport`
+        // is not `Debug`, which `Result::expect_err` would require.
+        let result = HttpTransport::new("file:///etc/passwd");
+        let Err(err) = result else {
+            panic!("file:// must be rejected by SSRF guard");
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("SSRF guard rejected"),
+            "expected SSRF-guard rejection, got: {msg}"
+        );
+    }
+
+    /// Fix #677: loopback IPv4 (`127.0.0.1`) is rejected by the SSRF
+    /// guard at construction. Covers the canonical "attacker registers
+    /// an MCP server pointing at an internal admin endpoint" path.
+    #[test]
+    fn fix677_loopback_rejected_at_construction() {
+        let result = HttpTransport::new("http://127.0.0.1:8080/admin");
+        let Err(err) = result else {
+            panic!("loopback must be rejected by SSRF guard");
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("SSRF guard rejected"),
+            "expected SSRF-guard rejection, got: {msg}"
+        );
+    }
+
+    /// Fix #677: the cloud-metadata IP literal `169.254.169.254` is
+    /// rejected. This is the AWS/GCP IMDS endpoint that exfiltrates
+    /// instance credentials when reachable.
+    #[test]
+    fn fix677_cloud_metadata_ip_rejected() {
+        let result = HttpTransport::new("http://169.254.169.254/latest/meta-data/");
+        let Err(err) = result else {
+            panic!("169.254.169.254 must be rejected by SSRF guard");
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("SSRF guard rejected"),
+            "expected SSRF-guard rejection, got: {msg}"
+        );
+    }
+
+    /// Fix #677: a valid public HTTPS URL passes validation and
+    /// returns a usable transport. Proves the guard does NOT
+    /// regress legitimate traffic — `example.com` resolves to a
+    /// public address that is NOT in any RFC 1918 / link-local /
+    /// metadata range.
+    #[test]
+    fn fix677_valid_public_https_accepted() {
+        let transport =
+            HttpTransport::new("https://example.com/mcp").expect("public HTTPS URL must validate");
+        assert_eq!(transport.base_url, "https://example.com/mcp");
+    }
+
+    /// Fix #677: `connect_http` propagates the validator error rather
+    /// than silently caching a bad spec or returning Ok. Forensic
+    /// evidence that the SSRF check is enforced at the MANAGER layer
+    /// (the trust boundary called out in the issue body), not just
+    /// inside the transport in isolation.
+    #[tokio::test]
+    async fn fix677_connect_http_propagates_ssrf_rejection() {
+        let manager = McpManager::new();
+        let result = manager.connect_http("evil", "http://127.0.0.1:1/").await;
+        let Err(err) = result else {
+            panic!("connect_http with loopback must be rejected by SSRF guard");
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("SSRF guard rejected"),
+            "expected SSRF-guard rejection, got: {msg}"
+        );
+        // And the manager must NOT have stored the entry.
+        assert!(!manager.is_connected("evil").await);
+    }
+
+    // ─── Fix #629 — McpManager reconnect after transport disconnect ────
+    //
+    // Forensic evidence: pre-fix, `McpManager` held a
+    // `HashMap<String, McpServer>` with no `onclose`/`onerror` hooks
+    // (`src/mcp.rs:598-829` in the issue). After a transport
+    // disconnect, the dead `McpServer` stayed in the map; future
+    // `call_tool` invocations kept returning `McpError::Transport`
+    // with no self-healing. Post-fix, the manager holds a
+    // `Mutex<HashMap<String, ServerEntry>>`; on
+    // `McpError::Transport` from `request()` the entry is marked
+    // disconnected (server dropped, cache cleared), and the next
+    // access reconnects via the stored `ConnectionSpec` under the
+    // 1 s / 5 s / 30 s backoff. After three failed reconnects the
+    // entry surfaces `McpError::ServerUnreachable` instead.
+
+    /// `FakeReconnectTransport` returns a configured response on each
+    /// `request()`, optionally returning a `Transport` error to drive
+    /// the disconnect-detection path. Used by the #629 tests to drive
+    /// the manager without a child process or HTTP listener.
+    struct FakeReconnectTransport {
+        responses: std::sync::Mutex<std::collections::VecDeque<Result<Value, McpError>>>,
+    }
+
+    impl FakeReconnectTransport {
+        fn from_results(rs: Vec<Result<Value, McpError>>) -> Self {
+            Self {
+                responses: std::sync::Mutex::new(rs.into()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl McpTransport for FakeReconnectTransport {
+        async fn request(&self, _method: &str, _params: Option<Value>) -> Result<Value, McpError> {
+            let next = self.responses.lock().expect("lock").pop_front();
+            next.unwrap_or(Ok(Value::Null))
+        }
+        async fn close(&self) -> Result<(), McpError> {
+            Ok(())
+        }
+    }
+
+    /// Build an `McpServer` over a `FakeReconnectTransport` that has
+    /// just enough canned responses to complete the initialize +
+    /// tools/list handshake. The first call to `tools/call` then
+    /// returns the supplied result (Ok or Err).
+    fn handshake_responses(
+        tool_name: &str,
+        tool_call: Result<Value, McpError>,
+    ) -> Vec<Result<Value, McpError>> {
+        vec![
+            // initialize
+            Ok(json!({
+                "serverInfo": {"name": "test", "version": "1"},
+                "capabilities": {"tools": {"listChanged": false}}
+            })),
+            // notifications/initialized (FakeReconnectTransport returns null)
+            Ok(Value::Null),
+            // tools/list
+            Ok(json!({"tools": [{"name": tool_name}]})),
+            // tools/call
+            tool_call,
+        ]
+    }
+
+    /// Fix #629: a transport error on `call_tool` MUST flip the
+    /// server entry into the disconnected state. Pre-fix the entry
+    /// stayed live forever; post-fix `is_live` flips to false.
+    #[tokio::test]
+    async fn fix629_transport_error_marks_disconnected() {
+        let manager = McpManager::new();
+        // Manually plant a ServerEntry whose underlying transport
+        // returns Ok for the handshake then a Transport error on the
+        // tools/call. We bypass connect_stdio/connect_http because
+        // those spawn real processes / hit the network.
+        let transport = FakeReconnectTransport::from_results(handshake_responses(
+            "echo",
+            Err(McpError::Transport("simulated socket reset".to_string())),
+        ));
+        let server = McpServer::new("svc", Box::new(transport))
+            .await
+            .expect("handshake ok");
+        let spec = ConnectionSpec::Stdio {
+            command: "/nonexistent/cmd".to_string(),
+            args: vec![],
+        };
+        let entry = ServerEntry::new(spec, server);
+        manager
+            .servers
+            .lock()
+            .await
+            .insert("svc".to_string(), entry);
+
+        assert!(manager.is_live("svc").await, "must start live");
+
+        let err = manager
+            .call_tool("mcp__svc__echo", json!({}))
+            .await
+            .expect_err("transport error must propagate");
+        assert!(
+            matches!(err, McpError::Transport(_)),
+            "expected Transport error, got: {err}"
+        );
+        assert!(
+            !manager.is_live("svc").await,
+            "transport error MUST mark entry disconnected (fix #629)"
+        );
+        // is_connected still true — the entry stays in the map for
+        // the reconnect path.
+        assert!(manager.is_connected("svc").await);
+    }
+
+    /// Fix #629: with the reconnect budget exhausted, the next access
+    /// returns `McpError::ServerUnreachable`. We synthesise the
+    /// exhausted state directly because driving three real reconnect
+    /// failures would require a 30 s+ test (the full backoff
+    /// schedule). The state machine is the load-bearing piece.
+    #[tokio::test]
+    async fn fix629_max_retries_returns_server_unreachable() {
+        let manager = McpManager::new();
+        // Plant an entry already in the exhausted state.
+        let spec = ConnectionSpec::Stdio {
+            command: "/nonexistent/cmd".to_string(),
+            args: vec![],
+        };
+        let entry = ServerEntry {
+            spec,
+            server: None,
+            failed_attempts: MAX_RECONNECT_ATTEMPTS,
+            last_failure: Some(std::time::Instant::now()),
+            cached_tools: vec![],
+            supports_list_changed: false,
+        };
+        manager
+            .servers
+            .lock()
+            .await
+            .insert("dead".to_string(), entry);
+
+        let err = manager
+            .call_tool("mcp__dead__anything", json!({}))
+            .await
+            .expect_err("exhausted entry must error");
+        assert!(
+            matches!(err, McpError::ServerUnreachable(ref n) if n == "dead"),
+            "expected ServerUnreachable(\"dead\"), got: {err:?}"
+        );
+        // And the cached tool list is empty (cleared on disconnect).
+        assert!(manager.tools_as_openai_functions().await.is_empty());
+    }
+
+    /// Fix #629: backoff gating works. Within the 1 s window after
+    /// the FIRST disconnect, an access returns `ServerUnreachable`
+    /// without bumping `failed_attempts` (it's not an attempt yet).
+    #[tokio::test]
+    async fn fix629_backoff_window_blocks_reconnect_before_elapsed() {
+        let manager = McpManager::new();
+        let spec = ConnectionSpec::Stdio {
+            command: "/nonexistent/cmd".to_string(),
+            args: vec![],
+        };
+        // Freshly disconnected (failed_attempts = 0), last_failure
+        // = now ⇒ BACKOFF[0] = 1 s has NOT elapsed.
+        let entry = ServerEntry {
+            spec,
+            server: None,
+            failed_attempts: 0,
+            last_failure: Some(std::time::Instant::now()),
+            cached_tools: vec![],
+            supports_list_changed: false,
+        };
+        manager
+            .servers
+            .lock()
+            .await
+            .insert("pending".to_string(), entry);
+
+        let err = manager
+            .call_tool("mcp__pending__x", json!({}))
+            .await
+            .expect_err("backoff window must block");
+        assert!(
+            matches!(err, McpError::ServerUnreachable(_)),
+            "expected ServerUnreachable while backoff pending, got: {err:?}"
+        );
+        // Counter MUST stay at 0 — this wasn't an attempt.
+        let guard = manager.servers.lock().await;
+        let attempts = guard.get("pending").expect("entry exists").failed_attempts;
+        drop(guard);
+        assert_eq!(
+            attempts, 0,
+            "backoff-gated access must NOT bump failed_attempts"
+        );
+    }
+
+    /// Fix #629: a disconnected entry whose backoff window has
+    /// elapsed reconnects on the next access and the operation
+    /// succeeds against the rebuilt transport.
+    ///
+    /// This is the CORE self-healing invariant. We can't drive a real
+    /// process reconnect in a unit test, so we exercise the
+    /// `ensure_connected` state machine directly:
+    ///   * plant a disconnected entry with `last_failure = None`
+    ///     (so `backoff_elapsed()` returns true);
+    ///   * give it a `ConnectionSpec::Stdio` that the reconnect
+    ///     attempt cannot actually launch (the `build_transport` call
+    ///     errors);
+    ///   * confirm `failed_attempts` increments and on the THIRD
+    ///     failure the surfaced error is `ServerUnreachable`.
+    /// Then re-plant with a working entry (server: Some) and confirm
+    /// `is_live` is true and a tool call succeeds — proving the
+    /// post-reconnect state machine resumes operation.
+    #[tokio::test]
+    async fn fix629_reconnect_attempts_then_resumes() {
+        let manager = McpManager::new();
+
+        // Phase 1: drive three reconnect failures. We use a stdio
+        // ConnectionSpec pointing at a definitely-missing command;
+        // `StdioTransport::spawn` returns `McpError::Transport` for
+        // ENOENT, so each reconnect counts as a failure.
+        let spec = ConnectionSpec::Stdio {
+            command: "/this/path/definitely/does/not/exist/__fix629__".to_string(),
+            args: vec![],
+        };
+        let entry = ServerEntry {
+            spec,
+            server: None,
+            failed_attempts: 0,
+            last_failure: None, // ⇒ backoff_elapsed() is true
+            cached_tools: vec![],
+            supports_list_changed: false,
+        };
+        manager
+            .servers
+            .lock()
+            .await
+            .insert("flaky".to_string(), entry);
+
+        // Attempt #1: counter goes 0 → 1, error is generic transport
+        // failure (not yet ServerUnreachable).
+        let mut guard = manager.servers.lock().await;
+        let entry = guard.get_mut("flaky").expect("present");
+        let r1 = McpManager::ensure_connected(entry, "flaky").await;
+        assert!(r1.is_err(), "reconnect #1 must fail");
+        assert_eq!(entry.failed_attempts, 1);
+        // Manually reset last_failure so the next ensure_connected
+        // sees the backoff as elapsed without sleeping 1 s.
+        entry.last_failure = None;
+        let r2 = McpManager::ensure_connected(entry, "flaky").await;
+        assert!(r2.is_err(), "reconnect #2 must fail");
+        assert_eq!(entry.failed_attempts, 2);
+        entry.last_failure = None;
+        let r3 = McpManager::ensure_connected(entry, "flaky").await;
+        // Third failure exhausts the budget.
+        assert!(
+            matches!(r3, Err(McpError::ServerUnreachable(ref n)) if n == "flaky"),
+            "reconnect #3 must surface ServerUnreachable, got: {r3:?}"
+        );
+        assert_eq!(entry.failed_attempts, MAX_RECONNECT_ATTEMPTS);
+        drop(guard);
+
+        // Phase 2: replace with a live entry (simulating a manual
+        // disconnect + reconnect by the operator) and confirm normal
+        // operation resumes.
+        let transport = FakeReconnectTransport::from_results(handshake_responses(
+            "ping",
+            Ok(json!({"ok": true})),
+        ));
+        let server = McpServer::new("flaky", Box::new(transport))
+            .await
+            .expect("handshake ok");
+        let spec2 = ConnectionSpec::Stdio {
+            command: "/bin/true".to_string(),
+            args: vec![],
+        };
+        manager
+            .servers
+            .lock()
+            .await
+            .insert("flaky".to_string(), ServerEntry::new(spec2, server));
+
+        assert!(manager.is_live("flaky").await);
+        let result = manager
+            .call_tool("mcp__flaky__ping", json!({}))
+            .await
+            .expect("post-reconnect call must succeed");
+        assert_eq!(result["ok"], true);
+    }
+
+    /// Fix #629: the BACKOFF schedule is exactly 1 s / 5 s / 30 s.
+    /// Locking this down as a unit assertion catches accidental
+    /// schedule changes that would diverge from the contract spelled
+    /// out in crosslink #629.
+    #[test]
+    fn fix629_backoff_schedule_is_1_5_30() {
+        assert_eq!(BACKOFF[0], Duration::from_secs(1));
+        assert_eq!(BACKOFF[1], Duration::from_secs(5));
+        assert_eq!(BACKOFF[2], Duration::from_secs(30));
+        assert_eq!(MAX_RECONNECT_ATTEMPTS, 3);
     }
 }

@@ -165,9 +165,9 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
 
     // Test MCP manager functionality
     print!("\nMCP Manager... ");
-    let mut mcp_manager = McpManager::new();
+    let mcp_manager = McpManager::new();
 
-    let is_connected = mcp_manager.is_connected("test-server");
+    let is_connected = mcp_manager.is_connected("test-server").await;
     println!(
         "{}",
         if is_connected {
@@ -177,7 +177,7 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
         }
     );
 
-    if let Some((name, supports_list_changed)) = mcp_manager.get_server_info("test-server") {
+    if let Some((name, supports_list_changed)) = mcp_manager.get_server_info("test-server").await {
         println!("  Server: {name} (list_changed: {supports_list_changed})");
     }
 
