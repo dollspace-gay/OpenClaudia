@@ -1,0 +1,10 @@
+{
+  "uuid": "efe76b51-ed51-4d91-9155-bd2bd21f7a8f",
+  "issue_uuid": "82788825-a530-4909-9ca3-88848daf58d7",
+  "author": "lOrm",
+  "content": "Fixed. HttpTransport::new now calls crate::web::validate_url at construction (same SSRF guard as web_fetch) and returns Result<Self, McpError>. McpManager::connect_http propagates the validation error. Rejects file://, data:, ftp:, loopback (127.0.0.0/8, ::1, localhost), RFC 1918, link-local (169.254.169.254), cloud-metadata hostnames, and unresolvable hosts. A test-only __test_new_unchecked is exposed via #[doc(hidden)] so loopback-binding tests can still operate. Tests: fix677_file_scheme_rejected, fix677_loopback_rejected, fix677_cloud_metadata_ip_rejected, fix677_valid_public_https_accepted, fix677_connect_http_propagates_ssrf_rejection. 48 mcp tests pass, clippy clean.",
+  "created_at": "2026-05-19T20:36:48.134659864Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAxQMtQO3ErzDkLWH7gz4jWltw10gJHMI/GZTw/uOZR/31+gYyJ18nIHuufzuQFlNbmqCiLg5cu/M8ExWNoNfMCg=="
+}
