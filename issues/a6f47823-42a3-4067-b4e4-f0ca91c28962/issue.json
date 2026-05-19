@@ -3,11 +3,12 @@
   "display_id": 724,
   "title": "execute_tool_calls_for_tui resets always-allow/deny sets every invocation",
   "description": "## Severity\nMajor\n## Dimension\nsolid\n## Location\nsrc/pipeline.rs:858-935\n## Violation\nThe function violates SRP (guardrails, permission UX, blocking dispatch, quality gates) AND carries a correctness defect. The session-level always-allow/deny caches are constructed inside the function body, so they reset on every call:\n\n```rust\nlet mut always_allowed: std::collections::HashSet<String> = std::collections::HashSet::new();\nlet mut always_denied: std::collections::HashSet<String> = std::collections::HashSet::new();\n```\n\nThe doc comment claims 'lives for this agentic loop' but the function is called per API turn; user clicks 'Always allow' and is re-prompted on the next turn. The return type (Vec<Value>, bool) overloads meaning — 'true' means 'had tool calls' but is consumed as 'needs_followup'.\n## Mandated refactor\nHoist always_allowed/always_denied into SessionManager (Arc<Mutex<HashSet>>). Split function into apply_guardrails / check_and_request_permission / dispatch_tool / run_post_batch_gates. Return typed ToolBatchOutcome { results, needs_followup, had_denials }.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:51:25.432358803Z",
-  "updated_at": "2026-05-18T21:51:29.079437767Z",
+  "updated_at": "2026-05-19T22:09:28.321978668Z",
+  "closed_at": "2026-05-19T22:09:28.321978668Z",
   "labels": [
     "qa-review",
     "solid"
