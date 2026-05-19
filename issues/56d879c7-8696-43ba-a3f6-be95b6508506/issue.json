@@ -3,9 +3,10 @@
   "display_id": 695,
   "title": "SSE buffer can grow unbounded when upstream never emits newlines",
   "description": "## Severity\nCritical\n## Dimension\nsecurity\n## Location\nsrc/pipeline.rs:516-543\n## Violation\nThe SSE parsing loop in `stream_sse_response` accumulates upstream bytes into an unbounded `String` until a `\\n` is found:\n\n```rust\nlet mut buffer = String::new();\n...\nwhile let Some(chunk_result) = stream.next().await {\n    ...\n    buffer.push_str(&String::from_utf8_lossy(&chunk));\n    while let Some(line_end) = buffer.find('\\n') {\n        ...\n    }\n}\n```\nA hostile or broken upstream that streams large payloads without `\\n` (or a single very long SSE event) will inflate `buffer` until the process OOMs. There is no cap on a single line, no cap on the buffer, and the only timeout (`last_data_time.elapsed()`) is reset by every byte received, so a 1 MiB/s newline-free stream is welcomed. The `String::from_utf8_lossy().to_string()` allocation also forces a full UTF-8 validation+copy on every chunk.\n## Mandated refactor\nIntroduce `MAX_SSE_LINE_BYTES` (e.g. 1 MiB) and `MAX_SSE_BUFFER_BYTES` constants; abort the stream and emit `AppEvent::ApiError` when either is exceeded. Switch to `BytesMut` with a SIMD `memchr` scan over raw bytes to avoid the per-chunk UTF-8 round-trip. Track total bytes received against an absolute ceiling separate from the inactivity timeout.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:48:44.459256723Z",
-  "updated_at": "2026-05-18T21:48:44.459256723Z"
+  "updated_at": "2026-05-19T21:45:42.814286168Z",
+  "closed_at": "2026-05-19T21:45:42.814286168Z"
 }
