@@ -14,7 +14,7 @@ use std::sync::{Mutex, MutexGuard};
 const MEMORY_DB_NAME: &str = "memory.db";
 
 /// Current schema version - increment when adding migrations
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 /// Short-term memory expiration (hours)
 const SHORT_TERM_EXPIRY_HOURS: i64 = 48;
@@ -165,6 +165,13 @@ impl MemoryDb {
         let conn = Connection::open(path)
             .with_context(|| format!("Failed to open memory database at {}", path.display()))?;
 
+        // Enable foreign-key enforcement (off by default in SQLite).  The v4
+        // migration introduces `archival_memory_tags` with an `ON DELETE
+        // CASCADE` reference to `archival_memory(id)` — without this PRAGMA
+        // the cascade is silently a no-op and orphaned tag rows accumulate.
+        conn.execute_batch("PRAGMA foreign_keys = ON;")
+            .context("Failed to enable SQLite foreign-key enforcement")?;
+
         // Run schema migrations on the bare connection before wrapping in Mutex
         Self::ensure_schema_on(&conn)?;
 
@@ -304,6 +311,18 @@ impl MemoryDb {
             Self::migrate_v3_on(conn)?;
         }
 
+        // Version 4: Normalise archival-memory tags into a junction table
+        // (crosslink #464).  The previous schema stored `tags` as a single
+        // comma-joined `TEXT` column on `archival_memory`, which lost data
+        // round-trip when a tag itself contained a comma and forced every
+        // query to use substring `LIKE` semantics that produced false
+        // matches.  Moving tags into `archival_memory_tags(memory_id, tag)`
+        // restores 1NF, gives O(log n) tag look-up via the natural index,
+        // and makes the comma no longer special.
+        if from_version < 4 {
+            Self::migrate_v4_on(conn)?;
+        }
+
         // Record current version
         conn.execute(
             "INSERT OR REPLACE INTO schema_version (version) VALUES (?1)",
@@ -436,22 +455,247 @@ impl MemoryDb {
         Ok(())
     }
 
+    /// Migration v4: Normalise `archival_memory.tags` into a junction table.
+    ///
+    /// Forensic context (crosslink #464):
+    /// * `archival_memory.tags` was a comma-joined `TEXT` column written by
+    ///   `tags.join(",")` and read with `String::split(',')`.  A tag that
+    ///   contained a literal comma — e.g. `"rust, tokio"` — was silently
+    ///   broken into two fake tags on read; there was no escaping.
+    /// * No index existed on `tags`, so every "memories tagged X" query
+    ///   was a full-table `LIKE '%X%'` scan that also matched substrings
+    ///   (`%rust%` matched `rustaceans`).
+    /// * The FTS5 virtual table indexed the tag blob as one giant token,
+    ///   so FTS searches on tags were equally unreliable.
+    ///
+    /// Migration plan, executed inside a `SAVEPOINT` so partial failure
+    /// rolls back cleanly (same pattern as the #400 reset-all fix):
+    /// 1. Create `archival_memory_tags(memory_id, tag)` with a CASCADE FK
+    ///    onto `archival_memory(id)` and an index on `tag`.
+    /// 2. Back-fill from the legacy column — `split(',')`, trim, dedupe per
+    ///    row, skip empty fragments.
+    /// 3. Rebuild the FTS5 virtual table so it indexes only `content`; the
+    ///    tags filter is a separate JOIN going forward.
+    /// 4. Drop the legacy `tags` column from `archival_memory`.
+    fn migrate_v4_on(conn: &Connection) -> Result<()> {
+        tracing::debug!("Running migration v4: archival_memory_tags junction table (#464)");
+
+        // `Connection::execute_batch` does not wrap its statements in a
+        // transaction, so we use an explicit SAVEPOINT to get rollback
+        // semantics across the multi-step migration.  Inner work is
+        // factored out so the savepoint guard stays short and the
+        // function body stays inside clippy's 100-line ceiling.
+        conn.execute_batch("SAVEPOINT migrate_v4;")
+            .context("v4: failed to begin SAVEPOINT")?;
+
+        match Self::migrate_v4_inner(conn) {
+            Ok(()) => {
+                conn.execute_batch("RELEASE SAVEPOINT migrate_v4;")
+                    .context("v4: failed to RELEASE SAVEPOINT")?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK TO SAVEPOINT migrate_v4;");
+                let _ = conn.execute_batch("RELEASE SAVEPOINT migrate_v4;");
+                Err(e)
+            }
+        }
+    }
+
+    /// Inner body of [`migrate_v4_on`] — runs steps 1-4 of the schema
+    /// migration so the savepoint wrapper stays under the per-function
+    /// line ceiling.
+    fn migrate_v4_inner(conn: &Connection) -> Result<()> {
+        // Step 1: junction table + index.
+        conn.execute_batch(
+            r"
+            CREATE TABLE IF NOT EXISTS archival_memory_tags (
+                memory_id INTEGER NOT NULL
+                    REFERENCES archival_memory(id) ON DELETE CASCADE,
+                tag TEXT NOT NULL,
+                PRIMARY KEY (memory_id, tag)
+            );
+            CREATE INDEX IF NOT EXISTS idx_archival_memory_tags_tag
+                ON archival_memory_tags(tag);
+            ",
+        )
+        .context("v4: failed to create archival_memory_tags table")?;
+
+        // Step 2: back-fill from the legacy comma-joined column.  The
+        // legacy column may or may not exist depending on how the db
+        // was built; check first so a fresh db (which already lacks the
+        // column post-v4) doesn't error.
+        let has_legacy_tags_col = Self::archival_memory_has_legacy_tags(conn)?;
+        if has_legacy_tags_col {
+            Self::backfill_legacy_tags(conn)?;
+        }
+
+        // Step 3: rebuild the FTS5 virtual table without the `tags`
+        // column.  The accompanying triggers must be dropped first
+        // because they reference the old virtual-table schema.
+        conn.execute_batch(
+            r"
+            DROP TRIGGER IF EXISTS archival_memory_ai;
+            DROP TRIGGER IF EXISTS archival_memory_ad;
+            DROP TRIGGER IF EXISTS archival_memory_au;
+            DROP TABLE  IF EXISTS archival_memory_fts;
+
+            CREATE VIRTUAL TABLE archival_memory_fts USING fts5(
+                content, content=archival_memory, content_rowid=id
+            );
+            INSERT INTO archival_memory_fts(rowid, content)
+                SELECT id, content FROM archival_memory;
+
+            CREATE TRIGGER archival_memory_ai
+                AFTER INSERT ON archival_memory BEGIN
+                    INSERT INTO archival_memory_fts(rowid, content)
+                        VALUES (new.id, new.content);
+                END;
+            CREATE TRIGGER archival_memory_ad
+                AFTER DELETE ON archival_memory BEGIN
+                    INSERT INTO archival_memory_fts(archival_memory_fts, rowid, content)
+                        VALUES ('delete', old.id, old.content);
+                END;
+            CREATE TRIGGER archival_memory_au
+                AFTER UPDATE ON archival_memory BEGIN
+                    INSERT INTO archival_memory_fts(archival_memory_fts, rowid, content)
+                        VALUES ('delete', old.id, old.content);
+                    INSERT INTO archival_memory_fts(rowid, content)
+                        VALUES (new.id, new.content);
+                END;
+            ",
+        )
+        .context("v4: failed to rebuild FTS5 virtual table without tags column")?;
+
+        // Step 4: drop the now-redundant legacy `tags` column.  SQLite
+        // 3.35+ supports `ALTER TABLE ... DROP COLUMN`; the bundled
+        // build in `rusqlite` 0.38 ships a newer SQLite than that.
+        if has_legacy_tags_col {
+            conn.execute_batch("ALTER TABLE archival_memory DROP COLUMN tags;")
+                .context("v4: failed to drop legacy archival_memory.tags column")?;
+        }
+
+        Ok(())
+    }
+
+    /// Returns `true` when `archival_memory` still carries the legacy
+    /// pre-v4 comma-joined `tags` column.
+    fn archival_memory_has_legacy_tags(conn: &Connection) -> Result<bool> {
+        let found = conn
+            .prepare("PRAGMA table_info(archival_memory)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|name| name == "tags");
+        Ok(found)
+    }
+
+    /// Read the legacy comma-joined `tags` column and write each split
+    /// fragment into `archival_memory_tags`.  Tags are trimmed; empty
+    /// fragments are skipped; `INSERT OR IGNORE` collapses duplicates.
+    fn backfill_legacy_tags(conn: &Connection) -> Result<()> {
+        let mut select = conn
+            .prepare(
+                "SELECT id, tags FROM archival_memory \
+                 WHERE tags IS NOT NULL AND tags != ''",
+            )
+            .context("v4: failed to prepare legacy tag read")?;
+        let rows: Vec<(i64, String)> = select
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .context("v4: failed to read legacy tag rows")?;
+        drop(select);
+
+        let mut insert = conn
+            .prepare(
+                "INSERT OR IGNORE INTO archival_memory_tags (memory_id, tag) \
+                 VALUES (?1, ?2)",
+            )
+            .context("v4: failed to prepare tag insert")?;
+        for (memory_id, joined) in rows {
+            for raw in joined.split(',') {
+                let tag = raw.trim();
+                if tag.is_empty() {
+                    continue;
+                }
+                insert
+                    .execute(params![memory_id, tag])
+                    .context("v4: failed to back-fill tag row")?;
+            }
+        }
+        Ok(())
+    }
+
     // === Archival Memory Operations ===
 
     /// Save a new memory entry.
     ///
+    /// The content row and any number of tag rows are inserted together
+    /// inside a single SQL transaction so a partial write — say a tag
+    /// insertion failing on disk-full — leaves the database with neither
+    /// the content row nor any of its tags.  Tags are stored as separate
+    /// rows in `archival_memory_tags(memory_id, tag)`; an empty `tags`
+    /// slice writes only the content row.  Duplicate tags within a single
+    /// call are coalesced by the table's `PRIMARY KEY(memory_id, tag)`.
     ///
     /// # Errors
     ///
     /// Returns an error if the database insert fails or the mutex is poisoned.
     pub fn memory_save(&self, content: &str, tags: &[String]) -> Result<i64> {
-        let tags_str = tags.join(",");
-        let conn = self.lock_conn()?;
-        conn.execute(
-            "INSERT INTO archival_memory (content, tags) VALUES (?1, ?2)",
-            params![content, tags_str],
-        )?;
-        Ok(conn.last_insert_rowid())
+        // Delegate to a `&mut Connection` helper so the mutex guard is
+        // dropped on return — keeps clippy::significant_drop_tightening
+        // satisfied without a per-call `#[allow]` annotation.
+        Self::memory_save_on(&mut *self.lock_conn()?, content, tags)
+    }
+
+    /// Inner save helper: insert the content row and any tag rows in a
+    /// single transaction.  Extracted so the mutex guard in
+    /// [`memory_save`] has no lifetime overlap with the returned `Ok(id)`.
+    fn memory_save_on(conn: &mut Connection, content: &str, tags: &[String]) -> Result<i64> {
+        let tx = conn
+            .transaction()
+            .context("memory_save: failed to begin transaction")?;
+
+        tx.execute(
+            "INSERT INTO archival_memory (content) VALUES (?1)",
+            params![content],
+        )
+        .context("memory_save: archival_memory INSERT failed")?;
+        let id = tx.last_insert_rowid();
+
+        if !tags.is_empty() {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT OR IGNORE INTO archival_memory_tags (memory_id, tag) \
+                     VALUES (?1, ?2)",
+                )
+                .context("memory_save: failed to prepare tag insert")?;
+            for tag in tags {
+                if tag.is_empty() {
+                    continue;
+                }
+                stmt.execute(params![id, tag])
+                    .context("memory_save: tag insert failed")?;
+            }
+        }
+
+        tx.commit().context("memory_save: commit failed")?;
+        Ok(id)
+    }
+
+    /// Load all tags for a given memory id (sorted for deterministic output).
+    ///
+    /// Returns an empty vector if the memory has no tags or does not exist.
+    /// Called from every read-path so the public `ArchivalMemory` value
+    /// always carries the live tag set, never a stale comma-joined string.
+    fn load_tags_for(conn: &Connection, memory_id: i64) -> rusqlite::Result<Vec<String>> {
+        let mut stmt =
+            conn.prepare("SELECT tag FROM archival_memory_tags WHERE memory_id = ?1 ORDER BY tag")?;
+        let tags = stmt
+            .query_map(params![memory_id], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(tags)
     }
 
     /// Search archival memory using full-text search.
@@ -466,7 +710,7 @@ impl MemoryDb {
         let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
         let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
-            r"SELECT am.id, am.content, am.tags, am.created_at, am.updated_at,
+            r"SELECT am.id, am.content, am.created_at, am.updated_at,
                    bm25(archival_memory_fts) as rank
             FROM archival_memory_fts
             JOIN archival_memory am ON archival_memory_fts.rowid = am.id
@@ -475,22 +719,87 @@ impl MemoryDb {
             LIMIT ?2",
         )?;
 
-        let memories = stmt
+        // Collect rows without tags first; then hydrate tags via a per-row
+        // look-up so the FTS query plan stays simple and we don't have to
+        // wrestle with GROUP_CONCAT (which would re-introduce a fragile
+        // string join).  N+1 here is bounded by `limit`, which the caller
+        // already chose; for the typical limit of ≤ 100 this is fine.
+        let rows: Vec<(i64, String, String, String)> = stmt
             .query_map(params![phrase_query, limit_i64], |row| {
-                Ok(ArchivalMemory {
-                    id: row.get(0)?,
-                    content: row.get(1)?,
-                    tags: row
-                        .get::<_, String>(2)?
-                        .split(',')
-                        .filter(|s| !s.is_empty())
-                        .map(String::from)
-                        .collect(),
-                    created_at: row.get(3)?,
-                    updated_at: row.get(4)?,
-                })
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
             })?
             .collect::<Result<Vec<_>, _>>()?;
+
+        let mut memories = Vec::with_capacity(rows.len());
+        for (id, content, created_at, updated_at) in rows {
+            let tags = Self::load_tags_for(&conn, id)?;
+            memories.push(ArchivalMemory {
+                id,
+                content,
+                tags,
+                created_at,
+                updated_at,
+            });
+        }
+
+        Ok(memories)
+    }
+
+    /// Return every archival memory tagged with `tag` (exact match).
+    ///
+    /// This is the query path the FTS-on-tags approach broke: a literal
+    /// `tag` lookup is a single equality on the `idx_archival_memory_tags_tag`
+    /// index, so it is O(log n) and never matches substrings.  Comma is
+    /// not special — `tag` is compared character-for-character.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails or the mutex is poisoned.
+    pub fn memory_search_by_tag(&self, tag: &str, limit: usize) -> Result<Vec<ArchivalMemory>> {
+        // Same delegate pattern as `memory_save` / `reset_all`: do the
+        // work in a free helper that takes `&Connection` so the mutex
+        // guard is dropped on return — keeps clippy's
+        // `significant_drop_tightening` lint satisfied without a
+        // per-call `#[allow]` annotation.
+        Self::memory_search_by_tag_on(&*self.lock_conn()?, tag, limit)
+    }
+
+    /// Inner search helper: read rows tagged with `tag` and hydrate each
+    /// with its full tag set.  Extracted so the mutex guard in
+    /// [`memory_search_by_tag`] has no lifetime overlap with the returned
+    /// `Vec`.
+    fn memory_search_by_tag_on(
+        conn: &Connection,
+        tag: &str,
+        limit: usize,
+    ) -> Result<Vec<ArchivalMemory>> {
+        let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut stmt = conn.prepare(
+            r"SELECT am.id, am.content, am.created_at, am.updated_at
+            FROM archival_memory am
+            JOIN archival_memory_tags amt ON amt.memory_id = am.id
+            WHERE amt.tag = ?1
+            ORDER BY am.updated_at DESC
+            LIMIT ?2",
+        )?;
+
+        let rows: Vec<(i64, String, String, String)> = stmt
+            .query_map(params![tag, limit_i64], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut memories = Vec::with_capacity(rows.len());
+        for (id, content, created_at, updated_at) in rows {
+            let tags = Self::load_tags_for(conn, id)?;
+            memories.push(ArchivalMemory {
+                id,
+                content,
+                tags,
+                created_at,
+                updated_at,
+            });
+        }
 
         Ok(memories)
     }
@@ -505,25 +814,33 @@ impl MemoryDb {
     pub fn memory_get(&self, id: i64) -> Result<Option<ArchivalMemory>> {
         let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
-            "SELECT id, content, tags, created_at, updated_at FROM archival_memory WHERE id = ?1",
+            "SELECT id, content, created_at, updated_at FROM archival_memory WHERE id = ?1",
         )?;
 
-        let memory = stmt
+        let core = stmt
             .query_row(params![id], |row| {
-                Ok(ArchivalMemory {
-                    id: row.get(0)?,
-                    content: row.get(1)?,
-                    tags: row
-                        .get::<_, String>(2)?
-                        .split(',')
-                        .filter(|s| !s.is_empty())
-                        .map(String::from)
-                        .collect(),
-                    created_at: row.get(3)?,
-                    updated_at: row.get(4)?,
-                })
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
             })
             .optional()?;
+
+        let memory = match core {
+            Some((row_id, content, created_at, updated_at)) => {
+                let tags = Self::load_tags_for(&conn, row_id)?;
+                Some(ArchivalMemory {
+                    id: row_id,
+                    content,
+                    tags,
+                    created_at,
+                    updated_at,
+                })
+            }
+            None => None,
+        };
 
         Ok(memory)
     }
@@ -566,25 +883,27 @@ impl MemoryDb {
         let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
         let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
-            "SELECT id, content, tags, created_at, updated_at FROM archival_memory ORDER BY updated_at DESC LIMIT ?1",
+            "SELECT id, content, created_at, updated_at FROM archival_memory \
+             ORDER BY updated_at DESC LIMIT ?1",
         )?;
 
-        let memories = stmt
+        let rows: Vec<(i64, String, String, String)> = stmt
             .query_map(params![limit_i64], |row| {
-                Ok(ArchivalMemory {
-                    id: row.get(0)?,
-                    content: row.get(1)?,
-                    tags: row
-                        .get::<_, String>(2)?
-                        .split(',')
-                        .filter(|s| !s.is_empty())
-                        .map(String::from)
-                        .collect(),
-                    created_at: row.get(3)?,
-                    updated_at: row.get(4)?,
-                })
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
             })?
             .collect::<Result<Vec<_>, _>>()?;
+
+        let mut memories = Vec::with_capacity(rows.len());
+        for (id, content, created_at, updated_at) in rows {
+            let tags = Self::load_tags_for(&conn, id)?;
+            memories.push(ArchivalMemory {
+                id,
+                content,
+                tags,
+                created_at,
+                updated_at,
+            });
+        }
 
         Ok(memories)
     }
@@ -1351,6 +1670,7 @@ impl MemoryDb {
 
         tx.execute_batch(
             r"
+            DELETE FROM archival_memory_tags;
             DELETE FROM archival_memory;
             DELETE FROM core_memory;
             DELETE FROM recent_sessions;
@@ -2140,6 +2460,312 @@ mod tests {
         assert!(
             reader_obs > 0,
             "reader must have observed core_memory at least once"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Crosslink #464 — archival_memory tags normalised into a junction table
+    //
+    // Before the fix, `memory_save(content, &["rust, tokio".into()])` was
+    // serialised as the literal string "rust, tokio" in `archival_memory.tags`.
+    // Every read path split on ',' so the single tag came back as
+    // ["rust", "tokio"] — silent data corruption.  Queries used substring
+    // `LIKE` semantics so `%rust%` also matched `rustaceans`.
+    //
+    // The fix moves tags into `archival_memory_tags(memory_id, tag)`.
+    // The tests below pin the four properties the schema must satisfy:
+    //   1. A tag value with a literal comma round-trips unchanged.
+    //   2. `memory_search_by_tag` returns exactly the memories tagged with
+    //      that tag — no substring false positives, no false negatives.
+    //   3. Pre-v4 comma-joined data is migrated into the new table without
+    //      loss for well-formed input, and `ALTER TABLE DROP COLUMN`
+    //      retires the legacy column.
+    //   4. `memory_save(content, &[])` writes the content row with zero
+    //      tag rows; the read path returns an empty `tags: Vec<String>`.
+    // ---------------------------------------------------------------------
+
+    /// #464-1: a tag containing a literal comma survives a save -> get
+    /// round-trip unchanged.  This is the forensic evidence that the old
+    /// `tags.join(",")` + `split(',')` pipeline was corrupting data.
+    #[test]
+    fn issue_464_tag_with_comma_round_trips_intact() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+
+        let mut original = vec![
+            "rust, tokio".to_string(),           // literal comma — old code split this
+            "key=value, with comma".to_string(), // another comma-bearing tag
+            "no-comma".to_string(),
+        ];
+        let id = db
+            .memory_save("project notes", &original)
+            .expect("save must succeed");
+
+        let got = db
+            .memory_get(id)
+            .expect("get must succeed")
+            .expect("row must exist");
+
+        // load_tags_for orders by tag, so got.tags comes back sorted.
+        original.sort();
+        assert_eq!(
+            got.tags, original,
+            "comma-bearing tags must round-trip intact; \
+             before #464 'rust, tokio' would have come back as ['rust', 'tokio']"
+        );
+
+        // Specifically: the literal "rust, tokio" tag is present as ONE entry.
+        assert!(
+            got.tags.iter().any(|t| t == "rust, tokio"),
+            "the literal comma-bearing tag must be preserved as a single tag, got: {:?}",
+            got.tags
+        );
+        assert!(
+            !got.tags.iter().any(|t| t == "rust"),
+            "the comma must NOT have split the tag into 'rust' — got: {:?}",
+            got.tags
+        );
+    }
+
+    /// #464-2: `memory_search_by_tag` is exact-match and indexed — querying
+    /// for "rust" must return only rows tagged exactly "rust", never rows
+    /// whose tag merely contains "rust" as a substring.
+    #[test]
+    fn issue_464_search_by_tag_is_exact_match_not_substring() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+
+        let id_rust = db.memory_save("about rust", &["rust".into()]).unwrap();
+        // "rustaceans" shares the 'rust' substring — old LIKE-based query
+        // would falsely match this.
+        let _id_rustaceans = db
+            .memory_save("about the community", &["rustaceans".into()])
+            .unwrap();
+        // Multi-tag row — should also match a query for "rust".
+        let id_multi = db
+            .memory_save("two tags", &["rust".into(), "tokio".into()])
+            .unwrap();
+
+        let hits = db
+            .memory_search_by_tag("rust", 50)
+            .expect("tag search must succeed");
+        let hit_ids: Vec<i64> = hits.iter().map(|m| m.id).collect();
+
+        assert!(
+            hit_ids.contains(&id_rust),
+            "exact-match row must be returned"
+        );
+        assert!(
+            hit_ids.contains(&id_multi),
+            "row carrying 'rust' alongside other tags must be returned"
+        );
+        assert_eq!(
+            hit_ids.len(),
+            2,
+            "exact-match tag query must NOT match 'rustaceans' (substring); got ids: {hit_ids:?}",
+        );
+
+        // Sanity: searching for a tag nobody has returns no rows.
+        let zero = db.memory_search_by_tag("nonexistent", 50).unwrap();
+        assert!(zero.is_empty(), "unknown tag must return empty results");
+    }
+
+    /// #464-3: migration from a pre-v4 database preserves every well-formed
+    /// tag in the legacy comma-joined column.  We build a v3-shaped
+    /// database by hand (because production code now starts at v4), then
+    /// reopen it through `MemoryDb::open` which triggers `migrate_v4_on`.
+    #[test]
+    fn issue_464_migration_preserves_legacy_comma_joined_data() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("legacy.db");
+
+        // Step 1: build a legacy v3 schema by hand.  We deliberately do
+        // NOT call MemoryDb::open here — that would jump straight to v4.
+        {
+            let raw = rusqlite::Connection::open(&db_path).unwrap();
+            raw.execute_batch(
+                r"
+                CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
+                CREATE TABLE archival_memory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content TEXT NOT NULL,
+                    tags TEXT DEFAULT '',
+                    created_at TEXT DEFAULT (datetime('now')),
+                    updated_at TEXT DEFAULT (datetime('now'))
+                );
+                CREATE TABLE core_memory (
+                    section TEXT PRIMARY KEY,
+                    content TEXT NOT NULL,
+                    updated_at TEXT DEFAULT (datetime('now'))
+                );
+                INSERT INTO core_memory (section, content) VALUES
+                    ('persona', 'p'),
+                    ('project_info', 'pi'),
+                    ('user_preferences', 'up');
+                CREATE VIRTUAL TABLE archival_memory_fts USING fts5(
+                    content, tags, content=archival_memory, content_rowid=id
+                );
+                CREATE TRIGGER archival_memory_ai AFTER INSERT ON archival_memory BEGIN
+                    INSERT INTO archival_memory_fts(rowid, content, tags)
+                        VALUES (new.id, new.content, new.tags);
+                END;
+                INSERT INTO schema_version (version) VALUES (3);
+                ",
+            )
+            .unwrap();
+            // Insert three legacy rows with comma-joined tag strings.
+            raw.execute(
+                "INSERT INTO archival_memory (id, content, tags) VALUES (?1, ?2, ?3)",
+                params![1_i64, "row one", "rust,tokio,async"],
+            )
+            .unwrap();
+            raw.execute(
+                "INSERT INTO archival_memory (id, content, tags) VALUES (?1, ?2, ?3)",
+                params![2_i64, "row two", "  sqlite , fts  "], // whitespace around tags
+            )
+            .unwrap();
+            // Empty tag string must produce zero junction rows, not [""].
+            raw.execute(
+                "INSERT INTO archival_memory (id, content, tags) VALUES (?1, ?2, ?3)",
+                params![3_i64, "row three", ""],
+            )
+            .unwrap();
+            drop(raw);
+        }
+
+        // Step 2: reopen via MemoryDb::open — this triggers migrate_v4_on.
+        let db = MemoryDb::open(&db_path).expect("v4 migration must succeed");
+
+        // Forensic evidence: junction-table rows exist for the well-formed
+        // legacy data, and the legacy `tags` column is gone.
+        let row_one = db.memory_get(1).unwrap().unwrap();
+        assert_eq!(
+            row_one.tags,
+            vec!["async".to_string(), "rust".to_string(), "tokio".to_string()],
+            "row 1 must migrate to three discrete tag rows; got {:?}",
+            row_one.tags
+        );
+
+        let row_two = db.memory_get(2).unwrap().unwrap();
+        assert_eq!(
+            row_two.tags,
+            vec!["fts".to_string(), "sqlite".to_string()],
+            "whitespace around legacy tags must be trimmed during migration"
+        );
+
+        let row_three = db.memory_get(3).unwrap().unwrap();
+        assert!(
+            row_three.tags.is_empty(),
+            "empty legacy tag string must migrate to zero junction rows; got {:?}",
+            row_three.tags
+        );
+
+        // The legacy column must be gone: re-querying `tags` from
+        // `archival_memory` should error with "no such column".
+        let lock = db.conn.lock().unwrap();
+        let err = lock
+            .prepare("SELECT tags FROM archival_memory LIMIT 1")
+            .expect_err("legacy tags column must have been dropped");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("no such column") || msg.contains("tags"),
+            "expected 'no such column' error after v4 drop; got: {msg}"
+        );
+        drop(lock);
+
+        // schema_version must now be 4.
+        let v_lock = db.conn.lock().unwrap();
+        let version: i64 = v_lock
+            .query_row("SELECT MAX(version) FROM schema_version", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        drop(v_lock);
+        assert_eq!(version, 4, "schema_version must be 4 after migration");
+    }
+
+    /// #464-4: `memory_save(content, &[])` writes only the content row;
+    /// the read path returns `tags: Vec<String>` with `len() == 0`.
+    /// Before the fix, the empty slice was joined to "" and split back to
+    /// `[""]`, then filtered — wasted allocations and a leaky abstraction.
+    /// Now the empty case writes zero junction rows by construction.
+    #[test]
+    fn issue_464_empty_tag_list_produces_no_junction_rows() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+
+        let id = db
+            .memory_save("untagged content", &[])
+            .expect("save with empty tag list must succeed");
+
+        let got = db.memory_get(id).unwrap().unwrap();
+        assert!(
+            got.tags.is_empty(),
+            "memory with empty tag slice must read back with no tags; got {:?}",
+            got.tags
+        );
+
+        // Direct forensic check: zero rows in archival_memory_tags for this id.
+        let conn = db.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM archival_memory_tags WHERE memory_id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(conn);
+        assert_eq!(
+            count, 0,
+            "empty tag slice must write zero rows to the junction table; found {count}"
+        );
+
+        // And `memory_search_by_tag("")` must not match this row.
+        let hits = db.memory_search_by_tag("", 10).unwrap();
+        assert!(
+            hits.iter().all(|m| m.id != id),
+            "the empty-tag-list row must not appear in a tag search for empty string"
+        );
+    }
+
+    /// #464-5 (bonus): `memory_delete` cascades into `archival_memory_tags`
+    /// via the FK + `PRAGMA foreign_keys=ON`.  Without the pragma, the
+    /// cascade is silently inert and stale tag rows accumulate forever.
+    #[test]
+    fn issue_464_delete_cascades_into_junction_table() {
+        let dir = tempdir().unwrap();
+        let db = MemoryDb::open(&dir.path().join("test.db")).unwrap();
+
+        let id = db
+            .memory_save("doomed", &["a".into(), "b".into(), "c".into()])
+            .unwrap();
+
+        let before_count: i64 = {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT COUNT(*) FROM archival_memory_tags WHERE memory_id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(before_count, 3, "three tag rows must exist pre-delete");
+
+        assert!(db.memory_delete(id).unwrap());
+
+        let after_count: i64 = {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT COUNT(*) FROM archival_memory_tags WHERE memory_id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            after_count, 0,
+            "FK CASCADE must remove all tag rows when the memory is deleted; \
+             found {after_count} orphans (indicates PRAGMA foreign_keys is off)"
         );
     }
 }

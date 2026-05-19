@@ -8,6 +8,13 @@
 //! The central match arms in `execute_tool_with_memory`, `execute_tool_full`,
 //! and `execute_tool_with_tasks` have been replaced by
 //! [`ToolRegistry::dispatch`].
+//!
+//! Each handler also owns its OpenAI-format schema via
+//! [`ToolHandler::definition`], so the model-facing tool list emitted by
+//! `tools::get_tool_definitions` is now composed from the same place the
+//! tool's execute logic lives. This closes the schema/handler drift identified
+//! in crosslink #463 (schemas were previously hand-maintained in a 684-line
+//! `json!` macro far from the code that interpreted the arguments).
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -15,7 +22,7 @@ use std::sync::OnceLock;
 use crate::config::AppConfig;
 use crate::memory::MemoryDb;
 use crate::session::TaskManager;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 // ─── Context ─────────────────────────────────────────────────────────────────
 
@@ -43,6 +50,12 @@ pub struct ToolContext<'a> {
 pub trait ToolHandler: Send + Sync {
     /// The canonical tool name sent by the model.
     fn name(&self) -> &'static str;
+
+    /// The OpenAI-format function definition for this tool — the JSON the
+    /// upstream API sees as a tool description. Returned as a `Value` because
+    /// every tool ultimately serialises to JSON; constructing via `json!` here
+    /// keeps the schema next to the execute logic that interprets it.
+    fn definition(&self) -> Value;
 
     /// Execute the tool and return `(output_text, is_error)`.
     fn execute(&self, args: &HashMap<String, Value>, ctx: &mut ToolContext<'_>) -> (String, bool);
@@ -85,6 +98,29 @@ impl ToolHandler for BashHandler {
     fn name(&self) -> &'static str {
         "bash"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "bash",
+                "description": "Execute a bash shell command and return the output. On Windows, Git Bash is used so standard Unix commands (ls, grep, find, cat, etc.) work normally. Use this for running commands, installing packages, git operations, file exploration, etc. Use run_in_background for long-running commands.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string",
+                            "description": "The bash command to execute. Unix-style commands work on all platforms."
+                        },
+                        "run_in_background": {
+                            "type": "boolean",
+                            "description": "If true, run the command in the background and return a shell_id. Use bash_output to retrieve output later."
+                        }
+                    },
+                    "required": ["command"]
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         bash::execute_bash(args)
     }
@@ -95,6 +131,25 @@ impl ToolHandler for BashOutputHandler {
     fn name(&self) -> &'static str {
         "bash_output"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "bash_output",
+                "description": "Retrieve output from a background shell. Returns new output since last check, along with status (running/finished) and exit code if finished.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "shell_id": {
+                            "type": "string",
+                            "description": "The shell ID returned from a bash command with run_in_background=true"
+                        }
+                    },
+                    "required": ["shell_id"]
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         bash::execute_bash_output(args)
     }
@@ -104,6 +159,25 @@ struct KillShellHandler;
 impl ToolHandler for KillShellHandler {
     fn name(&self) -> &'static str {
         "kill_shell"
+    }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "kill_shell",
+                "description": "Terminate a background shell process.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "shell_id": {
+                            "type": "string",
+                            "description": "The shell ID to terminate"
+                        }
+                    },
+                    "required": ["shell_id"]
+                }
+            }
+        })
     }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         bash::execute_kill_shell(args)
@@ -117,6 +191,37 @@ impl ToolHandler for ReadFileHandler {
     fn name(&self) -> &'static str {
         "read_file"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read the contents of a file. Returns the file content as text with line numbers. Supports images (PNG, JPG, GIF, WebP) via base64 encoding, PDFs via pdftotext extraction, and Jupyter notebooks (.ipynb) with formatted cell output.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "The absolute path to the file to read (must be absolute, not relative)"
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "Line number to start reading from (1-indexed). Defaults to 1."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of lines to read. Defaults to reading entire file."
+                        },
+                        "pages": {
+                            "type": "string",
+                            "description": "Page range for PDF files (e.g., '1-5', '3', '10-20'). Required for PDFs with more than 10 pages."
+                        }
+                    },
+                    "required": ["path"]
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         file::execute_read_file(args)
     }
@@ -126,6 +231,29 @@ struct WriteFileHandler;
 impl ToolHandler for WriteFileHandler {
     fn name(&self) -> &'static str {
         "write_file"
+    }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "The absolute path to the file to write (must be absolute, not relative)"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "The content to write to the file"
+                        }
+                    },
+                    "required": ["path", "content"]
+                }
+            }
+        })
     }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         file::execute_write_file(args)
@@ -137,6 +265,33 @@ impl ToolHandler for EditFileHandler {
     fn name(&self) -> &'static str {
         "edit_file"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "edit_file",
+                "description": "Make a targeted edit to a file by replacing old_string with new_string. The old_string must match exactly.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "The absolute path to the file to edit (must be absolute, not relative)"
+                        },
+                        "old_string": {
+                            "type": "string",
+                            "description": "The exact string to find and replace"
+                        },
+                        "new_string": {
+                            "type": "string",
+                            "description": "The string to replace it with"
+                        }
+                    },
+                    "required": ["path", "old_string", "new_string"]
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         file::execute_edit_file(args)
     }
@@ -147,6 +302,47 @@ impl ToolHandler for NotebookEditHandler {
     fn name(&self) -> &'static str {
         "notebook_edit"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "notebook_edit",
+                "description": "Edit a Jupyter notebook (.ipynb file). Supports replacing cell contents, inserting new cells, and deleting cells. The notebook must be read with read_file before editing. Accepts either `cell_id` (Claude Code-compatible stable ID from the notebook's cell metadata) or `cell_number` (0-indexed position). For `insert`, `cell_id` means 'insert after this cell' and omitting it inserts at the beginning.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "notebook_path": {
+                            "type": "string",
+                            "description": "The absolute path to the .ipynb file to edit"
+                        },
+                        "cell_id": {
+                            "type": "string",
+                            "description": "Claude Code-compatible stable cell ID (preferred over cell_number). For `insert`, new cell is added after this one; omit to insert at the beginning."
+                        },
+                        "cell_number": {
+                            "type": "integer",
+                            "description": "Legacy 0-indexed cell position. Use `cell_id` when possible — `cell_number` is kept only for back-compat with earlier OpenClaudia sessions."
+                        },
+                        "new_source": {
+                            "type": "string",
+                            "description": "The new source content for the cell. For delete mode, this can be empty."
+                        },
+                        "cell_type": {
+                            "type": "string",
+                            "enum": ["code", "markdown"],
+                            "description": "The type of cell. Required when inserting a new cell."
+                        },
+                        "edit_mode": {
+                            "type": "string",
+                            "enum": ["replace", "insert", "delete"],
+                            "description": "The edit operation: 'replace' (default) overwrites cell source, 'insert' adds a new cell at the index, 'delete' removes the cell."
+                        }
+                    },
+                    "required": ["notebook_path", "new_source"]
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         file::execute_notebook_edit(args)
     }
@@ -156,6 +352,25 @@ struct ListFilesHandler;
 impl ToolHandler for ListFilesHandler {
     fn name(&self) -> &'static str {
         "list_files"
+    }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "list_files",
+                "description": "List files and directories at a given path. Returns a list of entries.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "The absolute directory path to list (defaults to current working directory)"
+                        }
+                    },
+                    "required": []
+                }
+            }
+        })
     }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         file::execute_list_files(args)
@@ -169,6 +384,25 @@ impl ToolHandler for ChainlinkHandler {
     fn name(&self) -> &'static str {
         "chainlink"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "chainlink",
+                "description": "Task management tool for tracking issues and work. Commands: 'create \"title\" -p priority' (create issue), 'close ID' (close issue), 'comment ID \"text\"' (add comment), 'label ID label' (add label), 'list' (show open issues), 'show ID' (show issue details), 'subissue ID \"title\"' (create subissue), 'session start/end/work ID' (session management).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "args": {
+                            "type": "string",
+                            "description": "The chainlink command arguments (e.g., 'create \"Fix bug\" -p high' or 'close 5')"
+                        }
+                    },
+                    "required": ["args"]
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         chainlink::execute_chainlink(args)
     }
@@ -181,6 +415,25 @@ impl ToolHandler for WebFetchHandler {
     fn name(&self) -> &'static str {
         "web_fetch"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "web_fetch",
+                "description": "Fetch the content of a web page and return it as markdown. Handles JavaScript rendering and bypasses most bot detection. Use this to read documentation, articles, or any web content.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "The URL to fetch (must be a valid http:// or https:// URL)"
+                        }
+                    },
+                    "required": ["url"]
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         web::execute_web_fetch(args)
     }
@@ -191,6 +444,39 @@ impl ToolHandler for WebSearchHandler {
     fn name(&self) -> &'static str {
         "web_search"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Search the web and return relevant results. Uses DuckDuckGo by default (free, no API key). Falls back to Tavily or Brave API if configured. Returns titles, snippets, and URLs. `allowed_domains` / `blocked_domains` mirror Claude Code's WebSearchTool — results are filtered to domains that match (or don't match) the respective list.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The search query (must be at least 2 characters)"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of results to return (default: 5)"
+                        },
+                        "allowed_domains": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Only include search results from these domains. Matches the hostname suffix, so 'docs.python.org' would match both 'docs.python.org' and 'foo.docs.python.org'."
+                        },
+                        "blocked_domains": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Never include search results from these domains. Same hostname-suffix matching as `allowed_domains`. Takes precedence when a result matches both lists."
+                        }
+                    },
+                    "required": ["query"]
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         web::execute_web_search(args)
     }
@@ -200,6 +486,25 @@ struct WebBrowserHandler;
 impl ToolHandler for WebBrowserHandler {
     fn name(&self) -> &'static str {
         "web_browser"
+    }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "web_browser",
+                "description": "Fetch a web page using a full headless Chrome browser. Use this as a fallback when web_fetch fails due to complex JavaScript, authentication, or strict bot protection. Requires the 'browser' feature to be enabled at build time.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "The URL to fetch (must be a valid http:// or https:// URL)"
+                        }
+                    },
+                    "required": ["url"]
+                }
+            }
+        })
     }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         web::execute_web_browser(args)
@@ -213,6 +518,38 @@ impl ToolHandler for LspHandler {
     fn name(&self) -> &'static str {
         "lsp"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "lsp",
+                "description": "Perform code intelligence operations via Language Server Protocol. Communicates with external language servers (rust-analyzer, typescript-language-server, pylsp, gopls, clangd, etc.) to provide goToDefinition, findReferences, hover, and documentSymbols. Automatically detects the appropriate language server based on file extension. Line numbers are 1-indexed.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["goToDefinition", "findReferences", "hover", "documentSymbols"],
+                            "description": "The LSP operation to perform"
+                        },
+                        "file_path": {
+                            "type": "string",
+                            "description": "Absolute path to the source file"
+                        },
+                        "line": {
+                            "type": "integer",
+                            "description": "1-indexed line number of the symbol (required for goToDefinition, findReferences, hover)"
+                        },
+                        "character": {
+                            "type": "integer",
+                            "description": "0-indexed character offset within the line (required for goToDefinition, findReferences, hover)"
+                        }
+                    },
+                    "required": ["action", "file_path"]
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         lsp::execute_lsp(args)
     }
@@ -225,6 +562,44 @@ impl ToolHandler for TodoWriteHandler {
     fn name(&self) -> &'static str {
         "todo_write"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "todo_write",
+                "description": "Create and manage a structured task list. Use this as a fallback when chainlink is unavailable. Helps track progress and show the user what you're working on. Only one task should be 'in_progress' at a time.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "todos": {
+                            "type": "array",
+                            "description": "The complete todo list (replaces existing list)",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "content": {
+                                        "type": "string",
+                                        "description": "Task description in imperative form (e.g., 'Fix the bug')"
+                                    },
+                                    "status": {
+                                        "type": "string",
+                                        "enum": ["pending", "in_progress", "completed"],
+                                        "description": "Task status"
+                                    },
+                                    "activeForm": {
+                                        "type": "string",
+                                        "description": "Task in present continuous form (e.g., 'Fixing the bug')"
+                                    }
+                                },
+                                "required": ["content", "status", "activeForm"]
+                            }
+                        }
+                    },
+                    "required": ["todos"]
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         todo::execute_todo_write(args)
     }
@@ -234,6 +609,20 @@ struct TodoReadHandler;
 impl ToolHandler for TodoReadHandler {
     fn name(&self) -> &'static str {
         "todo_read"
+    }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "todo_read",
+                "description": "Read the current todo list. Returns all tasks with their status.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+        })
     }
     fn execute(
         &self,
@@ -251,6 +640,70 @@ impl ToolHandler for AskUserQuestionHandler {
     fn name(&self) -> &'static str {
         "ask_user_question"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "ask_user_question",
+                "description": "Ask the user one or more structured questions with predefined options. Use this when you need clarification or want the user to make a choice before proceeding. Each question can have 2-4 options plus an automatic 'Other' option. Supports single- or multi-select (via `multiSelect`). Question texts must be unique across the array, and option labels must be unique within each question.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "questions": {
+                            "type": "array",
+                            "description": "1-4 questions to ask the user",
+                            "minItems": 1,
+                            "maxItems": 4,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "question": {
+                                        "type": "string",
+                                        "description": "The question text to display"
+                                    },
+                                    "header": {
+                                        "type": "string",
+                                        "description": "Short label (max 12 chars) shown as a tag",
+                                        "maxLength": 12
+                                    },
+                                    "options": {
+                                        "type": "array",
+                                        "description": "2-4 answer options",
+                                        "minItems": 2,
+                                        "maxItems": 4,
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "label": {
+                                                    "type": "string",
+                                                    "description": "Option name (e.g., 'PostgreSQL')"
+                                                },
+                                                "description": {
+                                                    "type": "string",
+                                                    "description": "Brief description of this option"
+                                                },
+                                                "preview": {
+                                                    "type": "string",
+                                                    "description": "Optional preview content (mockup, code snippet, comparison) rendered when this option is focused. Claude Code-compatible."
+                                                }
+                                            },
+                                            "required": ["label", "description"]
+                                        }
+                                    },
+                                    "multiSelect": {
+                                        "type": "boolean",
+                                        "description": "If true, user can select multiple options (comma-separated). Claude Code-compatible name; `multi_select` is also accepted for back-compat."
+                                    }
+                                },
+                                "required": ["question", "header", "options"]
+                            }
+                        }
+                    },
+                    "required": ["questions"]
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         ask_user::execute_ask_user_question(args)
     }
@@ -263,6 +716,25 @@ impl ToolHandler for EnterWorktreeHandler {
     fn name(&self) -> &'static str {
         "enter_worktree"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "enter_worktree",
+                "description": "Create an isolated git worktree under .worktrees/<branch>/ based on the current HEAD. Returns the new worktree path. Does NOT change the process working directory — pass the returned path to subsequent bash/file calls (and to exit_worktree) to operate inside the worktree.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "branch": {
+                            "type": "string",
+                            "description": "The branch name to create for the worktree (e.g., 'agent/fix-bug-123')"
+                        }
+                    },
+                    "required": ["branch"]
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         worktree::execute_enter_worktree(args)
     }
@@ -273,6 +745,29 @@ impl ToolHandler for ExitWorktreeHandler {
     fn name(&self) -> &'static str {
         "exit_worktree"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "exit_worktree",
+                "description": "Remove an isolated git worktree previously created by enter_worktree. Optionally commits and merges changes back, or discards them. Does NOT change the process working directory.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Absolute path to the worktree to exit (as returned by enter_worktree)."
+                        },
+                        "apply_changes": {
+                            "type": "boolean",
+                            "description": "If true, commit any uncommitted changes and merge the worktree branch into the main branch. If false (default), discard the worktree."
+                        }
+                    },
+                    "required": ["path"]
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         worktree::execute_exit_worktree(args)
     }
@@ -282,6 +777,20 @@ struct ListWorktreesHandler;
 impl ToolHandler for ListWorktreesHandler {
     fn name(&self) -> &'static str {
         "list_worktrees"
+    }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "list_worktrees",
+                "description": "List all active git worktrees in the current repository, showing their paths and branches.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+        })
     }
     fn execute(
         &self,
@@ -299,6 +808,33 @@ impl ToolHandler for CronCreateHandler {
     fn name(&self) -> &'static str {
         "cron_create"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "cron_create",
+                "description": "Create a recurring scheduled task with a cron expression. Schedules are stored in .openclaudia/schedules.json and executed by loop mode or an external scheduler.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Unique name for the schedule (e.g., 'daily-cleanup')"
+                        },
+                        "schedule": {
+                            "type": "string",
+                            "description": "Standard 5-field cron expression: minute hour day month weekday (e.g., '0 9 * * 1-5' for weekdays at 9am)"
+                        },
+                        "prompt": {
+                            "type": "string",
+                            "description": "The prompt or command to execute on each trigger"
+                        }
+                    },
+                    "required": ["name", "schedule", "prompt"]
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         cron::execute_cron_create(args)
     }
@@ -309,6 +845,35 @@ impl ToolHandler for CronDeleteHandler {
     fn name(&self) -> &'static str {
         "cron_delete"
     }
+    fn definition(&self) -> Value {
+        // NOTE: schema declares no required fields but execute_cron_delete
+        // requires one-of {id, name}. See crosslink #463 violation point 4 —
+        // a future fix should express the one-of constraint via JSON Schema
+        // (`oneOf` / `anyOf`). Keeping the existing schema verbatim here so
+        // this refactor stays byte-for-byte equivalent; the bug is now
+        // tracked next to the handler that exhibits it.
+        json!({
+            "type": "function",
+            "function": {
+                "name": "cron_delete",
+                "description": "Delete a scheduled task by its ID or name.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The schedule ID (8-character hex string)"
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "The schedule name (alternative to ID)"
+                        }
+                    },
+                    "required": []
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         cron::execute_cron_delete(args)
     }
@@ -318,6 +883,20 @@ struct CronListHandler;
 impl ToolHandler for CronListHandler {
     fn name(&self) -> &'static str {
         "cron_list"
+    }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "cron_list",
+                "description": "List all scheduled tasks with their status, cron expressions, and run history.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+        })
     }
     fn execute(
         &self,
@@ -335,6 +914,20 @@ impl ToolHandler for EnterPlanModeHandler {
     fn name(&self) -> &'static str {
         "enter_plan_mode"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "enter_plan_mode",
+                "description": "Switch to plan mode. In plan mode, only read-only tools (read_file, list_files, grep, web_fetch, web_search), ask_user_question, and the task/agent tool are available. Write/Edit/Bash are blocked. Use write_file ONLY to write to the plan file. This is useful when you want to analyze the codebase and create a structured implementation plan before making changes.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+        })
+    }
     fn execute(
         &self,
         _args: &HashMap<String, Value>,
@@ -348,6 +941,39 @@ struct ExitPlanModeHandler;
 impl ToolHandler for ExitPlanModeHandler {
     fn name(&self) -> &'static str {
         "exit_plan_mode"
+    }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "exit_plan_mode",
+                "description": "Exit plan mode and return to build mode. The plan file content will be shown to the user for approval. If approved, full tool access is restored and the plan is injected as context. If rejected, you stay in plan mode.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "allowed_prompts": {
+                            "type": "array",
+                            "description": "Optional list of allowed tool+prompt pairs that constrain what operations are permitted after plan approval",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "tool": {
+                                        "type": "string",
+                                        "description": "Tool name (e.g., 'write_file', 'bash')"
+                                    },
+                                    "prompt": {
+                                        "type": "string",
+                                        "description": "Description of the allowed operation"
+                                    }
+                                },
+                                "required": ["tool", "prompt"]
+                            }
+                        }
+                    },
+                    "required": []
+                }
+            }
+        })
     }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         plan_mode::execute_exit_plan_mode(args)
@@ -363,6 +989,33 @@ impl ToolHandler for TaskCreateHandler {
     fn name(&self) -> &'static str {
         "task_create"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "task_create",
+                "description": "Create a new structured task with dependency tracking. Tasks are stored in the session and support blocking/blocked_by relationships. Only one task can be in_progress at a time.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "subject": {
+                            "type": "string",
+                            "description": "Brief title in imperative form (e.g., 'Add permission system')"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Detailed description of the task"
+                        },
+                        "active_form": {
+                            "type": "string",
+                            "description": "Present continuous form for spinner display (e.g., 'Adding permission system')"
+                        }
+                    },
+                    "required": ["subject", "description"]
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, ctx: &mut ToolContext<'_>) -> (String, bool) {
         ctx.task_mgr.as_deref_mut().map_or_else(
             || (NO_SESSION.0.to_string(), NO_SESSION.1),
@@ -375,6 +1028,52 @@ struct TaskUpdateHandler;
 impl ToolHandler for TaskUpdateHandler {
     fn name(&self) -> &'static str {
         "task_update"
+    }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "task_update",
+                "description": "Update an existing task's status, subject, description, or dependencies. Setting status to 'in_progress' will demote any currently in-progress task to 'pending'. Setting status to 'deleted' removes the task entirely.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task_id": {
+                            "type": "string",
+                            "description": "The task ID (e.g., 'task-1')"
+                        },
+                        "status": {
+                            "type": "string",
+                            "enum": ["pending", "in_progress", "completed", "deleted"],
+                            "description": "New task status"
+                        },
+                        "subject": {
+                            "type": "string",
+                            "description": "Updated task title"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Updated task description"
+                        },
+                        "active_form": {
+                            "type": "string",
+                            "description": "Updated spinner text (present continuous form)"
+                        },
+                        "add_blocks": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Task IDs that this task blocks (downstream dependencies)"
+                        },
+                        "add_blocked_by": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Task IDs that block this task (upstream dependencies)"
+                        }
+                    },
+                    "required": ["task_id"]
+                }
+            }
+        })
     }
     fn execute(&self, args: &HashMap<String, Value>, ctx: &mut ToolContext<'_>) -> (String, bool) {
         ctx.task_mgr.as_deref_mut().map_or_else(
@@ -389,6 +1088,25 @@ impl ToolHandler for TaskGetHandler {
     fn name(&self) -> &'static str {
         "task_get"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "task_get",
+                "description": "Get full details of a specific task including its dependencies, status, and timestamps.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task_id": {
+                            "type": "string",
+                            "description": "The task ID (e.g., 'task-1')"
+                        }
+                    },
+                    "required": ["task_id"]
+                }
+            }
+        })
+    }
     fn execute(&self, args: &HashMap<String, Value>, ctx: &mut ToolContext<'_>) -> (String, bool) {
         ctx.task_mgr.as_deref_mut().map_or_else(
             || (NO_SESSION.0.to_string(), NO_SESSION.1),
@@ -402,6 +1120,20 @@ impl ToolHandler for TaskListHandler {
     fn name(&self) -> &'static str {
         "task_list"
     }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "task_list",
+                "description": "List all tasks with their status and dependency summary. Shows pending, in-progress, and completed counts.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+        })
+    }
     fn execute(&self, _args: &HashMap<String, Value>, ctx: &mut ToolContext<'_>) -> (String, bool) {
         ctx.task_mgr.as_deref_mut().map_or_else(
             || (NO_SESSION.0.to_string(), NO_SESSION.1),
@@ -410,11 +1142,101 @@ impl ToolHandler for TaskListHandler {
     }
 }
 
+// ── mcp resource tools ────────────────────────────────────────────────────────
+//
+// These two tools have schemas exposed to the model but their dispatch was
+// never wired into the registry — calling them today falls through to the
+// "Unknown tool" path. Tracked as a latent bug separate from #463; the handler
+// stubs below at least bind the schema next to a named handler so the next
+// person to wire MCP resources into the tool dispatch system finds an obvious
+// landing pad instead of an orphan schema.
+
+struct ListMcpResourcesHandler;
+impl ToolHandler for ListMcpResourcesHandler {
+    fn name(&self) -> &'static str {
+        "list_mcp_resources"
+    }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "list_mcp_resources",
+                "description": "List resources available from connected MCP servers. Resources are data sources (files, database tables, API endpoints) that MCP servers expose for reading.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "server": {
+                            "type": "string",
+                            "description": "Optional: filter resources to a specific MCP server by name. If omitted, lists resources from all connected servers."
+                        }
+                    },
+                    "required": []
+                }
+            }
+        })
+    }
+    fn execute(
+        &self,
+        _args: &HashMap<String, Value>,
+        _ctx: &mut ToolContext<'_>,
+    ) -> (String, bool) {
+        (
+            "list_mcp_resources is not wired into the tool dispatch system yet. \
+             The schema is published to the model but dispatch is unimplemented."
+                .to_string(),
+            true,
+        )
+    }
+}
+
+struct ReadMcpResourceHandler;
+impl ToolHandler for ReadMcpResourceHandler {
+    fn name(&self) -> &'static str {
+        "read_mcp_resource"
+    }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "read_mcp_resource",
+                "description": "Read the content of a specific resource from an MCP server. Use list_mcp_resources first to discover available resources and their URIs.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "server": {
+                            "type": "string",
+                            "description": "The name of the MCP server that provides the resource"
+                        },
+                        "uri": {
+                            "type": "string",
+                            "description": "The URI of the resource to read (as returned by list_mcp_resources)"
+                        }
+                    },
+                    "required": ["server", "uri"]
+                }
+            }
+        })
+    }
+    fn execute(
+        &self,
+        _args: &HashMap<String, Value>,
+        _ctx: &mut ToolContext<'_>,
+    ) -> (String, bool) {
+        (
+            "read_mcp_resource is not wired into the tool dispatch system yet. \
+             The schema is published to the model but dispatch is unimplemented."
+                .to_string(),
+            true,
+        )
+    }
+}
+
 // ─── Registry construction ────────────────────────────────────────────────────
 
-/// All registered handlers as static references.
-///
-/// Each handler appears once; the registry key is `handler.name()`.
+/// All registered handlers as static references, in **JSON-output order** —
+/// `tools::get_tool_definitions()` emits the schema list in this order, and
+/// the registry map is built from the same slice so handler-name and schema
+/// stay co-located. Adding a new tool: append a single line here.
 static HANDLERS: &[&dyn ToolHandler] = &[
     // bash
     &BashHandler,
@@ -424,7 +1246,6 @@ static HANDLERS: &[&dyn ToolHandler] = &[
     &ReadFileHandler,
     &WriteFileHandler,
     &EditFileHandler,
-    &NotebookEditHandler,
     &ListFilesHandler,
     // chainlink
     &ChainlinkHandler,
@@ -432,13 +1253,27 @@ static HANDLERS: &[&dyn ToolHandler] = &[
     &WebFetchHandler,
     &WebSearchHandler,
     &WebBrowserHandler,
-    // lsp
-    &LspHandler,
     // todo
     &TodoWriteHandler,
     &TodoReadHandler,
-    // ask_user
+    // notebook (file)
+    &NotebookEditHandler,
+    // task (session task management) — note: task_create precedes
+    // ask_user_question in the legacy JSON output; preserved for byte-for-byte
+    // back-compat with #463 baseline.
+    &TaskCreateHandler,
     &AskUserQuestionHandler,
+    &TaskUpdateHandler,
+    &TaskGetHandler,
+    &TaskListHandler,
+    // plan_mode
+    &EnterPlanModeHandler,
+    &ExitPlanModeHandler,
+    // mcp resources (schema-only stubs; see handler comment)
+    &ListMcpResourcesHandler,
+    &ReadMcpResourceHandler,
+    // lsp
+    &LspHandler,
     // worktree
     &EnterWorktreeHandler,
     &ExitWorktreeHandler,
@@ -447,15 +1282,14 @@ static HANDLERS: &[&dyn ToolHandler] = &[
     &CronCreateHandler,
     &CronDeleteHandler,
     &CronListHandler,
-    // plan_mode
-    &EnterPlanModeHandler,
-    &ExitPlanModeHandler,
-    // task (session task management)
-    &TaskCreateHandler,
-    &TaskUpdateHandler,
-    &TaskGetHandler,
-    &TaskListHandler,
 ];
+
+/// Iterate every registered handler in JSON-output order. The public
+/// `tools::get_tool_definitions` calls this to build the API-facing schema
+/// list without duplicating the order or the schema bodies.
+pub(crate) fn iter_handlers() -> impl Iterator<Item = &'static dyn ToolHandler> {
+    HANDLERS.iter().copied()
+}
 
 fn build_registry() -> ToolRegistry {
     let mut handlers: HashMap<&'static str, &'static dyn ToolHandler> =

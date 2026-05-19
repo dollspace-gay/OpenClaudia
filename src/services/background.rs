@@ -390,9 +390,14 @@ mod tests {
         // we can assert which one survives. `datetime('now')` has 1-second
         // resolution; using raw SQL with explicit offsets guarantees the gap
         // without relying on wall-clock ticks.
+        // Crosslink #464 dropped the `tags` column from archival_memory in
+        // favour of the `archival_memory_tags` junction table.  These raw
+        // inserts therefore name only the columns that still exist on the
+        // base table; tag assignment is exercised by the dedicated #464
+        // tests in memory.rs.
         db.execute_raw(
-            "INSERT INTO archival_memory (content, tags, created_at, updated_at) \
-             VALUES ('same content', '', \
+            "INSERT INTO archival_memory (content, created_at, updated_at) \
+             VALUES ('same content', \
              datetime('now', '-10 seconds'), datetime('now', '-10 seconds'))",
         )
         .unwrap();
@@ -406,8 +411,8 @@ mod tests {
 
         // Insert the newer duplicate with a strictly later timestamp.
         db.execute_raw(
-            "INSERT INTO archival_memory (content, tags, created_at, updated_at) \
-             VALUES ('same content', '', \
+            "INSERT INTO archival_memory (content, created_at, updated_at) \
+             VALUES ('same content', \
              datetime('now'), datetime('now'))",
         )
         .unwrap();

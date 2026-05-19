@@ -44,7 +44,7 @@ use crate::permissions::{CheckResult, PermissionManager};
 use crate::session::TaskManager;
 use crate::subagent;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 
 /// Safely truncate a string at a byte boundary without splitting multi-byte UTF-8 characters.
@@ -106,716 +106,20 @@ pub const ENTER_PLAN_MODE_MARKER: &str = "enter_plan_mode";
 /// Marker type for `exit_plan_mode` results.
 pub const EXIT_PLAN_MODE_MARKER: &str = "exit_plan_mode";
 
-/// Get all tool definitions for the API request (`OpenAI` function format)
+/// Get all tool definitions for the API request (`OpenAI` function format).
+///
+/// Each entry is sourced from the corresponding [`ToolHandler::definition`]
+/// implementation, so a tool's schema lives next to its execute logic. The
+/// emission order is fixed by `registry::iter_handlers()` (the canonical
+/// `HANDLERS` slice) which preserves byte-for-byte equivalence with the
+/// pre-#463 hand-maintained JSON literal.
 #[must_use]
-#[allow(clippy::too_many_lines)]
 pub fn get_tool_definitions() -> Value {
-    json!([
-        {
-            "type": "function",
-            "function": {
-                "name": "bash",
-                "description": "Execute a bash shell command and return the output. On Windows, Git Bash is used so standard Unix commands (ls, grep, find, cat, etc.) work normally. Use this for running commands, installing packages, git operations, file exploration, etc. Use run_in_background for long-running commands.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "command": {
-                            "type": "string",
-                            "description": "The bash command to execute. Unix-style commands work on all platforms."
-                        },
-                        "run_in_background": {
-                            "type": "boolean",
-                            "description": "If true, run the command in the background and return a shell_id. Use bash_output to retrieve output later."
-                        }
-                    },
-                    "required": ["command"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "bash_output",
-                "description": "Retrieve output from a background shell. Returns new output since last check, along with status (running/finished) and exit code if finished.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "shell_id": {
-                            "type": "string",
-                            "description": "The shell ID returned from a bash command with run_in_background=true"
-                        }
-                    },
-                    "required": ["shell_id"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "kill_shell",
-                "description": "Terminate a background shell process.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "shell_id": {
-                            "type": "string",
-                            "description": "The shell ID to terminate"
-                        }
-                    },
-                    "required": ["shell_id"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "read_file",
-                "description": "Read the contents of a file. Returns the file content as text with line numbers. Supports images (PNG, JPG, GIF, WebP) via base64 encoding, PDFs via pdftotext extraction, and Jupyter notebooks (.ipynb) with formatted cell output.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "The absolute path to the file to read (must be absolute, not relative)"
-                        },
-                        "offset": {
-                            "type": "integer",
-                            "description": "Line number to start reading from (1-indexed). Defaults to 1."
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum number of lines to read. Defaults to reading entire file."
-                        },
-                        "pages": {
-                            "type": "string",
-                            "description": "Page range for PDF files (e.g., '1-5', '3', '10-20'). Required for PDFs with more than 10 pages."
-                        }
-                    },
-                    "required": ["path"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "write_file",
-                "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "The absolute path to the file to write (must be absolute, not relative)"
-                        },
-                        "content": {
-                            "type": "string",
-                            "description": "The content to write to the file"
-                        }
-                    },
-                    "required": ["path", "content"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "edit_file",
-                "description": "Make a targeted edit to a file by replacing old_string with new_string. The old_string must match exactly.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "The absolute path to the file to edit (must be absolute, not relative)"
-                        },
-                        "old_string": {
-                            "type": "string",
-                            "description": "The exact string to find and replace"
-                        },
-                        "new_string": {
-                            "type": "string",
-                            "description": "The string to replace it with"
-                        }
-                    },
-                    "required": ["path", "old_string", "new_string"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "list_files",
-                "description": "List files and directories at a given path. Returns a list of entries.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "The absolute directory path to list (defaults to current working directory)"
-                        }
-                    },
-                    "required": []
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "chainlink",
-                "description": "Task management tool for tracking issues and work. Commands: 'create \"title\" -p priority' (create issue), 'close ID' (close issue), 'comment ID \"text\"' (add comment), 'label ID label' (add label), 'list' (show open issues), 'show ID' (show issue details), 'subissue ID \"title\"' (create subissue), 'session start/end/work ID' (session management).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "args": {
-                            "type": "string",
-                            "description": "The chainlink command arguments (e.g., 'create \"Fix bug\" -p high' or 'close 5')"
-                        }
-                    },
-                    "required": ["args"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "web_fetch",
-                "description": "Fetch the content of a web page and return it as markdown. Handles JavaScript rendering and bypasses most bot detection. Use this to read documentation, articles, or any web content.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "url": {
-                            "type": "string",
-                            "description": "The URL to fetch (must be a valid http:// or https:// URL)"
-                        }
-                    },
-                    "required": ["url"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "web_search",
-                "description": "Search the web and return relevant results. Uses DuckDuckGo by default (free, no API key). Falls back to Tavily or Brave API if configured. Returns titles, snippets, and URLs. `allowed_domains` / `blocked_domains` mirror Claude Code's WebSearchTool — results are filtered to domains that match (or don't match) the respective list.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The search query (must be at least 2 characters)"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum number of results to return (default: 5)"
-                        },
-                        "allowed_domains": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Only include search results from these domains. Matches the hostname suffix, so 'docs.python.org' would match both 'docs.python.org' and 'foo.docs.python.org'."
-                        },
-                        "blocked_domains": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Never include search results from these domains. Same hostname-suffix matching as `allowed_domains`. Takes precedence when a result matches both lists."
-                        }
-                    },
-                    "required": ["query"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "web_browser",
-                "description": "Fetch a web page using a full headless Chrome browser. Use this as a fallback when web_fetch fails due to complex JavaScript, authentication, or strict bot protection. Requires the 'browser' feature to be enabled at build time.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "url": {
-                            "type": "string",
-                            "description": "The URL to fetch (must be a valid http:// or https:// URL)"
-                        }
-                    },
-                    "required": ["url"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "todo_write",
-                "description": "Create and manage a structured task list. Use this as a fallback when chainlink is unavailable. Helps track progress and show the user what you're working on. Only one task should be 'in_progress' at a time.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "todos": {
-                            "type": "array",
-                            "description": "The complete todo list (replaces existing list)",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "content": {
-                                        "type": "string",
-                                        "description": "Task description in imperative form (e.g., 'Fix the bug')"
-                                    },
-                                    "status": {
-                                        "type": "string",
-                                        "enum": ["pending", "in_progress", "completed"],
-                                        "description": "Task status"
-                                    },
-                                    "activeForm": {
-                                        "type": "string",
-                                        "description": "Task in present continuous form (e.g., 'Fixing the bug')"
-                                    }
-                                },
-                                "required": ["content", "status", "activeForm"]
-                            }
-                        }
-                    },
-                    "required": ["todos"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "todo_read",
-                "description": "Read the current todo list. Returns all tasks with their status.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "notebook_edit",
-                "description": "Edit a Jupyter notebook (.ipynb file). Supports replacing cell contents, inserting new cells, and deleting cells. The notebook must be read with read_file before editing. Accepts either `cell_id` (Claude Code-compatible stable ID from the notebook's cell metadata) or `cell_number` (0-indexed position). For `insert`, `cell_id` means 'insert after this cell' and omitting it inserts at the beginning.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "notebook_path": {
-                            "type": "string",
-                            "description": "The absolute path to the .ipynb file to edit"
-                        },
-                        "cell_id": {
-                            "type": "string",
-                            "description": "Claude Code-compatible stable cell ID (preferred over cell_number). For `insert`, new cell is added after this one; omit to insert at the beginning."
-                        },
-                        "cell_number": {
-                            "type": "integer",
-                            "description": "Legacy 0-indexed cell position. Use `cell_id` when possible — `cell_number` is kept only for back-compat with earlier OpenClaudia sessions."
-                        },
-                        "new_source": {
-                            "type": "string",
-                            "description": "The new source content for the cell. For delete mode, this can be empty."
-                        },
-                        "cell_type": {
-                            "type": "string",
-                            "enum": ["code", "markdown"],
-                            "description": "The type of cell. Required when inserting a new cell."
-                        },
-                        "edit_mode": {
-                            "type": "string",
-                            "enum": ["replace", "insert", "delete"],
-                            "description": "The edit operation: 'replace' (default) overwrites cell source, 'insert' adds a new cell at the index, 'delete' removes the cell."
-                        }
-                    },
-                    "required": ["notebook_path", "new_source"]
-                }
-            }
-        },
-        // ====================================================================
-        // Structured Task Management Tools
-        // ====================================================================
-        {
-            "type": "function",
-            "function": {
-                "name": "task_create",
-                "description": "Create a new structured task with dependency tracking. Tasks are stored in the session and support blocking/blocked_by relationships. Only one task can be in_progress at a time.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "subject": {
-                            "type": "string",
-                            "description": "Brief title in imperative form (e.g., 'Add permission system')"
-                        },
-                        "description": {
-                            "type": "string",
-                            "description": "Detailed description of the task"
-                        },
-                        "active_form": {
-                            "type": "string",
-                            "description": "Present continuous form for spinner display (e.g., 'Adding permission system')"
-                        }
-                    },
-                    "required": ["subject", "description"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "ask_user_question",
-                "description": "Ask the user one or more structured questions with predefined options. Use this when you need clarification or want the user to make a choice before proceeding. Each question can have 2-4 options plus an automatic 'Other' option. Supports single- or multi-select (via `multiSelect`). Question texts must be unique across the array, and option labels must be unique within each question.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "questions": {
-                            "type": "array",
-                            "description": "1-4 questions to ask the user",
-                            "minItems": 1,
-                            "maxItems": 4,
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "question": {
-                                        "type": "string",
-                                        "description": "The question text to display"
-                                    },
-                                    "header": {
-                                        "type": "string",
-                                        "description": "Short label (max 12 chars) shown as a tag",
-                                        "maxLength": 12
-                                    },
-                                    "options": {
-                                        "type": "array",
-                                        "description": "2-4 answer options",
-                                        "minItems": 2,
-                                        "maxItems": 4,
-                                        "items": {
-                                            "type": "object",
-                                            "properties": {
-                                                "label": {
-                                                    "type": "string",
-                                                    "description": "Option name (e.g., 'PostgreSQL')"
-                                                },
-                                                "description": {
-                                                    "type": "string",
-                                                    "description": "Brief description of this option"
-                                                },
-                                                "preview": {
-                                                    "type": "string",
-                                                    "description": "Optional preview content (mockup, code snippet, comparison) rendered when this option is focused. Claude Code-compatible."
-                                                }
-                                            },
-                                            "required": ["label", "description"]
-                                        }
-                                    },
-                                    "multiSelect": {
-                                        "type": "boolean",
-                                        "description": "If true, user can select multiple options (comma-separated). Claude Code-compatible name; `multi_select` is also accepted for back-compat."
-                                    }
-                                },
-                                "required": ["question", "header", "options"]
-                            }
-                        }
-                    },
-                    "required": ["questions"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "task_update",
-                "description": "Update an existing task's status, subject, description, or dependencies. Setting status to 'in_progress' will demote any currently in-progress task to 'pending'. Setting status to 'deleted' removes the task entirely.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "task_id": {
-                            "type": "string",
-                            "description": "The task ID (e.g., 'task-1')"
-                        },
-                        "status": {
-                            "type": "string",
-                            "enum": ["pending", "in_progress", "completed", "deleted"],
-                            "description": "New task status"
-                        },
-                        "subject": {
-                            "type": "string",
-                            "description": "Updated task title"
-                        },
-                        "description": {
-                            "type": "string",
-                            "description": "Updated task description"
-                        },
-                        "active_form": {
-                            "type": "string",
-                            "description": "Updated spinner text (present continuous form)"
-                        },
-                        "add_blocks": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "Task IDs that this task blocks (downstream dependencies)"
-                        },
-                        "add_blocked_by": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "Task IDs that block this task (upstream dependencies)"
-                        }
-                    },
-                    "required": ["task_id"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "task_get",
-                "description": "Get full details of a specific task including its dependencies, status, and timestamps.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "task_id": {
-                            "type": "string",
-                            "description": "The task ID (e.g., 'task-1')"
-                        }
-                    },
-                    "required": ["task_id"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "task_list",
-                "description": "List all tasks with their status and dependency summary. Shows pending, in-progress, and completed counts.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "enter_plan_mode",
-                "description": "Switch to plan mode. In plan mode, only read-only tools (read_file, list_files, grep, web_fetch, web_search), ask_user_question, and the task/agent tool are available. Write/Edit/Bash are blocked. Use write_file ONLY to write to the plan file. This is useful when you want to analyze the codebase and create a structured implementation plan before making changes.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "exit_plan_mode",
-                "description": "Exit plan mode and return to build mode. The plan file content will be shown to the user for approval. If approved, full tool access is restored and the plan is injected as context. If rejected, you stay in plan mode.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "allowed_prompts": {
-                            "type": "array",
-                            "description": "Optional list of allowed tool+prompt pairs that constrain what operations are permitted after plan approval",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "tool": {
-                                        "type": "string",
-                                        "description": "Tool name (e.g., 'write_file', 'bash')"
-                                    },
-                                    "prompt": {
-                                        "type": "string",
-                                        "description": "Description of the allowed operation"
-                                    }
-                                },
-                                "required": ["tool", "prompt"]
-                            }
-                        }
-                    },
-                    "required": []
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "list_mcp_resources",
-                "description": "List resources available from connected MCP servers. Resources are data sources (files, database tables, API endpoints) that MCP servers expose for reading.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "server": {
-                            "type": "string",
-                            "description": "Optional: filter resources to a specific MCP server by name. If omitted, lists resources from all connected servers."
-                        }
-                    },
-                    "required": []
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "read_mcp_resource",
-                "description": "Read the content of a specific resource from an MCP server. Use list_mcp_resources first to discover available resources and their URIs.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "server": {
-                            "type": "string",
-                            "description": "The name of the MCP server that provides the resource"
-                        },
-                        "uri": {
-                            "type": "string",
-                            "description": "The URI of the resource to read (as returned by list_mcp_resources)"
-                        }
-                    },
-                    "required": ["server", "uri"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "lsp",
-                "description": "Perform code intelligence operations via Language Server Protocol. Communicates with external language servers (rust-analyzer, typescript-language-server, pylsp, gopls, clangd, etc.) to provide goToDefinition, findReferences, hover, and documentSymbols. Automatically detects the appropriate language server based on file extension. Line numbers are 1-indexed.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "action": {
-                            "type": "string",
-                            "enum": ["goToDefinition", "findReferences", "hover", "documentSymbols"],
-                            "description": "The LSP operation to perform"
-                        },
-                        "file_path": {
-                            "type": "string",
-                            "description": "Absolute path to the source file"
-                        },
-                        "line": {
-                            "type": "integer",
-                            "description": "1-indexed line number of the symbol (required for goToDefinition, findReferences, hover)"
-                        },
-                        "character": {
-                            "type": "integer",
-                            "description": "0-indexed character offset within the line (required for goToDefinition, findReferences, hover)"
-                        }
-                    },
-                    "required": ["action", "file_path"]
-                }
-            }
-        },
-        // ====================================================================
-        // Git Worktree Isolation Tools
-        // ====================================================================
-        {
-            "type": "function",
-            "function": {
-                "name": "enter_worktree",
-                "description": "Create an isolated git worktree under .worktrees/<branch>/ based on the current HEAD. Returns the new worktree path. Does NOT change the process working directory — pass the returned path to subsequent bash/file calls (and to exit_worktree) to operate inside the worktree.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "branch": {
-                            "type": "string",
-                            "description": "The branch name to create for the worktree (e.g., 'agent/fix-bug-123')"
-                        }
-                    },
-                    "required": ["branch"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "exit_worktree",
-                "description": "Remove an isolated git worktree previously created by enter_worktree. Optionally commits and merges changes back, or discards them. Does NOT change the process working directory.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "Absolute path to the worktree to exit (as returned by enter_worktree)."
-                        },
-                        "apply_changes": {
-                            "type": "boolean",
-                            "description": "If true, commit any uncommitted changes and merge the worktree branch into the main branch. If false (default), discard the worktree."
-                        }
-                    },
-                    "required": ["path"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "list_worktrees",
-                "description": "List all active git worktrees in the current repository, showing their paths and branches.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            }
-        },
-        // ====================================================================
-        // Cron Scheduling Tools
-        // ====================================================================
-        {
-            "type": "function",
-            "function": {
-                "name": "cron_create",
-                "description": "Create a recurring scheduled task with a cron expression. Schedules are stored in .openclaudia/schedules.json and executed by loop mode or an external scheduler.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "name": {
-                            "type": "string",
-                            "description": "Unique name for the schedule (e.g., 'daily-cleanup')"
-                        },
-                        "schedule": {
-                            "type": "string",
-                            "description": "Standard 5-field cron expression: minute hour day month weekday (e.g., '0 9 * * 1-5' for weekdays at 9am)"
-                        },
-                        "prompt": {
-                            "type": "string",
-                            "description": "The prompt or command to execute on each trigger"
-                        }
-                    },
-                    "required": ["name", "schedule", "prompt"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "cron_delete",
-                "description": "Delete a scheduled task by its ID or name.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "id": {
-                            "type": "string",
-                            "description": "The schedule ID (8-character hex string)"
-                        },
-                        "name": {
-                            "type": "string",
-                            "description": "The schedule name (alternative to ID)"
-                        }
-                    },
-                    "required": []
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "cron_list",
-                "description": "List all scheduled tasks with their status, cron expressions, and run history.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            }
-        }
-    ])
+    Value::Array(
+        registry::iter_handlers()
+            .map(ToolHandler::definition)
+            .collect(),
+    )
 }
 
 /// Execute a tool call and return the result (non-stateful mode).
@@ -1351,6 +655,71 @@ mod tests {
     use super::*;
     use crate::session::TaskManager;
     use base64::Engine;
+    use serde_json::json;
+
+    /// Temporary forensic dump used to verify byte-for-byte equivalence of
+    /// `get_tool_definitions()` against the pre-#463 baseline. Writes to a
+    /// path supplied via `OPENCLAUDIA_DUMP_TOOLS_PATH` (default `/tmp/...`).
+    /// Skipped unless the env var is set.
+    #[test]
+    fn forensic_dump_tool_definitions_when_env_set() {
+        let Ok(path) = std::env::var("OPENCLAUDIA_DUMP_TOOLS_PATH") else {
+            return;
+        };
+        let s = serde_json::to_string(&get_tool_definitions()).unwrap();
+        std::fs::write(&path, s).unwrap();
+    }
+
+    /// Regression test for crosslink #463 — every handler in the registry
+    /// must expose a `definition()` whose `function.name` matches
+    /// `handler.name()`. Catches the schema/handler drift that the original
+    /// 684-line `json!` literal made silently possible.
+    #[test]
+    fn handler_definition_name_matches_handler_name() {
+        for handler in registry::iter_handlers() {
+            let def = handler.definition();
+            let schema_name = def
+                .pointer("/function/name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "handler {} returned definition without function.name",
+                        handler.name()
+                    )
+                });
+            assert_eq!(
+                schema_name,
+                handler.name(),
+                "definition().function.name disagrees with handler.name() for {}",
+                handler.name()
+            );
+        }
+    }
+
+    /// Regression test for crosslink #463 — the composed `get_tool_definitions`
+    /// must contain exactly one entry per registered handler, in handler
+    /// registration order. This pins the JSON shape so future handlers can't
+    /// silently desync the tool list emitted to the model from the dispatch
+    /// table.
+    #[test]
+    fn get_tool_definitions_matches_handler_registry_order() {
+        let json = get_tool_definitions();
+        let arr = json.as_array().expect("tool definitions must be an array");
+        let handler_names: Vec<&str> = registry::iter_handlers().map(ToolHandler::name).collect();
+        let json_names: Vec<&str> = arr
+            .iter()
+            .map(|t| {
+                t.pointer("/function/name")
+                    .and_then(|v| v.as_str())
+                    .expect("every tool entry must have function.name")
+            })
+            .collect();
+        assert_eq!(
+            handler_names, json_names,
+            "get_tool_definitions() emission order must mirror registry::HANDLERS"
+        );
+    }
+
     use file::{
         detect_file_type, parse_page_range, read_image_file, read_notebook_file,
         source_to_line_array, FileType, READ_TRACKER,
