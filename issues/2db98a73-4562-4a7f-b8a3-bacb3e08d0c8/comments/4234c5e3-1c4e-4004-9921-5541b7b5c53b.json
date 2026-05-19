@@ -1,0 +1,10 @@
+{
+  "uuid": "4234c5e3-1c4e-4004-9921-5541b7b5c53b",
+  "issue_uuid": "2db98a73-4562-4a7f-b8a3-bacb3e08d0c8",
+  "author": "lOrm",
+  "content": "Fixed both QA findings in StdioTransport.\n\nForensic evidence:\n1. Stderr drain (point 1): spawn_stderr_drain runs a tokio task that reads ChildStderr into a 1 MiB ring buffer. Test fix445_stderr_drained_does_not_deadlock pushes 128 KiB to stderr before responding — pre-fix this hung because the server blocked on write(2); post-fix it completes in <200 ms. Test fix445_stderr_drain_populates_ring_buffer verifies the marker 'KERNEL_PANIC_MARKER_445' appears in the captured buffer.\n2. Bounded read (point 2): replaced BufReader::read_line with (&mut *reader).take(MAX_RESPONSE_SIZE+1).read_until(b'\\n', &mut buf). Test fix445_oversized_line_rejected_before_full_buffering forces an 11 MiB unterminated response — post-fix it errors with 'exceeded N bytes without newline' having buffered at most 10 MiB + 1 byte, NOT the full 11 MiB. UTF-8 validation moved AFTER the bounded-byte read so an invalid 10 MiB string is rejected without allocation.\n3. Stderr snippet bubbled into both EOF and parse errors. Concurrent-deadlock test fix445_concurrent_drain_and_request_no_deadlock confirms drain task + request future do not contend pathologically on the stderr_buf mutex.\n\nTests: 28 mcp tests pass (was 23). Full lib: 1357 pass / 0 fail. cargo clippy on mcp.rs: zero findings. No #[allow], no #[ignore], no clippy.toml changes.\n\nOut-of-scope items from the issue body (per-request timeout, McpError::Io construction, request_id overflow) deferred — fixing them changes call sites and warrants separate review per #47 reconnection work.",
+  "created_at": "2026-05-19T17:01:56.029161551Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAfsq+s6d5dFAMCrFUMWxDYzio9MpUbCVe84rddMGRz9UrvctpMfNIN2EIyTZn21M6LRpFStF1XAKhfXW1Kw1WDw=="
+}
