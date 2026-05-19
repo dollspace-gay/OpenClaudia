@@ -3,11 +3,12 @@
   "display_id": 782,
   "title": "QA: PermissionManager::extract_target hard-codes three tool names; new tools fail-open",
   "description": "## Severity\nMajor\n## Dimension\ndecoupling\n## Location\nsrc/permissions.rs:270-302\n## Violation\n`extract_target` exhaustively enumerates only three permission-relevant\ntools:\n```rust\nmatch tool_name {\n    \"bash\" => { ... }\n    \"edit_file\" => { ... }\n    \"write_file\" => { ... }\n    // Read-only tools, task tools, and memory tools don't need permission checks\n    _ => None,\n}\n```\nThe `_ => None` catch-all means **any tool added elsewhere in the code\nbase bypasses permission checks entirely**. The list lives in\npermissions.rs; the tool definitions live in tools.rs (per CLAUDE.md\narchitecture map). There is no compile-time link between the two. A\ncontributor adding `delete_file`, `chmod`, `run_subprocess`, or an MCP\ntool gets no warning — just silent allow-all. This is an OCP violation\n(open for modification, not extension) and a security gap.\n## Mandated refactor\nInvert the dependency: have each tool register its permission target via\na trait method `fn permission_target(&self, args: &Value) ->\nOption<PermissionTarget>` that the `PermissionManager` queries. Or\nreplace the `match` with a `HashMap<&str, TargetExtractor>` populated by\na registration macro in tools.rs at compile time. Add a `#[deny]` or\nbuild-time assertion that every tool name registered in `tools.rs`\nappears in the permission table.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:57:36.420085397Z",
-  "updated_at": "2026-05-18T21:57:42.709691047Z",
+  "updated_at": "2026-05-19T23:38:36.366642285Z",
+  "closed_at": "2026-05-19T23:38:36.366642285Z",
   "labels": [
     "qa-review",
     "decoupling"
