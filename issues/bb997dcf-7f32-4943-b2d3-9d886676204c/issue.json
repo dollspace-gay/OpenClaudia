@@ -3,12 +3,13 @@
   "display_id": 586,
   "title": "PermissionManager::unrestricted() bypasses safety-path checks that CC enforces even in bypassPermissions mode",
   "description": "## Summary\n\nCC's bypassPermissions mode (utils/permissions/permissions.ts:1266-1281) still enforces:\n- Step 1g: safetyCheck decisions (writes to .git/, .claude/, .vscode/, shell configs must prompt)\n- Step 1e: requiresUserInteraction tools (ExitPlanMode, AskUserQuestion) still ask\n- Step 1f: content-specific ask rules still fire\n- Step 1d: deny rules still fire\n\nOC's PermissionManager::unrestricted() (src/permissions.rs:105-123) sets enabled=false, which short-circuits check() at line 132-134 before ANY of these checks run. A call site using unrestricted() allows:\n- Edit to .git/config\n- Write to .claude/settings.json\n- Write to ~/.zshrc\nwithout any check.\n\n## Security relevance (high)\nCC explicitly designed bypassPermissions to still block safety-critical paths. OC's unrestricted() is a superset bypass that removes all protection. Any OC call site that uses unrestricted() instead of bypassPermissions-mode is unintentionally more permissive than CC.\n\n## Behaviors to align\n- Add a safety-path check that fires even when enabled=false or in unrestricted()\n- OR document that unrestricted() callers must not be used in contexts where safety paths matter\n- Add test: unrestricted().check('edit_file', {path: '.git/config'}) currently returns Allowed (document this gap)\n- Add test: CC bypassPermissions + .git/config write → still prompts (safetyCheck step 1g)\n\n## Parent issue\n#531\n\n## References\n- CC: utils/permissions/permissions.ts:1253-1261 (step 1g, safetyCheck bypass-immune)\n- CC: utils/permissions/permissions.ts:1230-1236 (step 1e, requiresUserInteraction)\n- OC: src/permissions.rs:105-134 (unrestricted + short-circuit)",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:53:34.678023338Z",
-  "updated_at": "2026-05-18T15:53:45.980641282Z",
+  "updated_at": "2026-05-19T19:22:31.505990764Z",
+  "closed_at": "2026-05-19T19:22:31.505990764Z",
   "labels": [
     "feature",
     "cc-parity"
