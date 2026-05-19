@@ -3,9 +3,10 @@
   "display_id": 730,
   "title": "QA: env scrub uses denylist instead of allowlist (sensitive vars without matching suffix leak)",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/tools/bash/policy.rs:143-151\n## Violation\n`apply_env_scrub` only removes env vars whose names match `is_sensitive_env` — a denylist. ANY sensitive credential whose name does not conform to the heuristics (e.g., `DB_URL`, `STRIPE_KEY` without `_API_KEY` suffix, `MONGODB_URI`, `DATABASE_URL`, `REDIS_URL`, `SLACK_WEBHOOK`, `JWT_PRIVATE_KEY_FILE`, or any custom name) flows freely into every spawned child.\n\nQuoted (policy.rs:143-151):\n```\npub fn apply_env_scrub(cmd: &mut Command) {\n    let sensitive: Vec<String> = std::env::vars()\n        .map(|(k, _)| k)\n        .filter(|k| is_sensitive_env(k))\n        .collect();\n    for key in sensitive {\n        cmd.env_remove(key);\n    }\n}\n```\n\nThe comment (\"Do NOT `env_clear`\") acknowledges the tradeoff but ships the insecure default. OWASP A04 (Insecure Design).\n## Mandated refactor\n1. Flip to allowlist: `cmd.env_clear()` and then `cmd.env(key, val)` for each name in an explicit safe set (`PATH`, `HOME`, `USER`, `LANG`, `TERM`, `CARGO_HOME`, `RUST_LOG`, etc.).\n2. Make the allowlist configurable via `.openclaudia/config.yaml` so operators can add project-specific safe vars.\n3. Add a `passthrough_env: [...]` explicit opt-in for variables the model genuinely needs, audited per-deployment.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:51:54.795635224Z",
-  "updated_at": "2026-05-18T21:51:54.795635224Z"
+  "updated_at": "2026-05-19T22:54:02.764232112Z",
+  "closed_at": "2026-05-19T22:54:02.764232112Z"
 }
