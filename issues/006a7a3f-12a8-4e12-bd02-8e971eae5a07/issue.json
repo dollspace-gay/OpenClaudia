@@ -3,11 +3,12 @@
   "display_id": 784,
   "title": "QA: env scrub uses denylist instead of allowlist (sensitive vars without matching suffix leak)",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/tools/bash/policy.rs:143-151\n## Violation\n`apply_env_scrub` only removes env vars whose names match `is_sensitive_env` — a denylist. Sensitive credentials whose names don't match the heuristics (e.g., `DATABASE_URL`, `MONGODB_URI`, `REDIS_URL`, `SLACK_WEBHOOK`, custom names) flow freely into every spawned child.\n\nQuoted (policy.rs:143-151):\n```\npub fn apply_env_scrub(cmd: &mut Command) {\n    let sensitive: Vec<String> = std::env::vars()\n        .map(|(k, _)| k)\n        .filter(|k| is_sensitive_env(k))\n        .collect();\n    for key in sensitive {\n        cmd.env_remove(key);\n    }\n}\n```\nThe comment (\"Do NOT `env_clear`\") acknowledges the tradeoff but ships the insecure default. OWASP A04.\n## Mandated refactor\n1. Flip to allowlist: `cmd.env_clear()` then `cmd.env(key, val)` for an explicit safe set (`PATH`, `HOME`, `USER`, `LANG`, `TERM`, `CARGO_HOME`, `RUST_LOG`).\n2. Make the allowlist configurable via `.openclaudia/config.yaml`.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:56:24.822730246Z",
-  "updated_at": "2026-05-18T21:57:53.467184661Z",
+  "updated_at": "2026-05-19T23:18:35.982909795Z",
+  "closed_at": "2026-05-19T23:18:35.982909795Z",
   "labels": [
     "qa-review",
     "security"
