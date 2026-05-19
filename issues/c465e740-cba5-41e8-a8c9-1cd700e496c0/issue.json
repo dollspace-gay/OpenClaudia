@@ -3,11 +3,12 @@
   "display_id": 954,
   "title": "Token warning threshold cast uses lossy f32 to f64 conversion with cast_possible_truncation allow",
   "description": "## Severity\nTrivial\n## Dimension\ncomplexity\n## Location\nsrc/proxy.rs:629-648\n## Violation\nrecord_turn_estimate computes utilization with two awkward integer/float casts:\n\n  let utilization_pct_x10 = estimated_input.saturating_mul(1000).checked_div(context_window).unwrap_or(0);\n  let usage_pct_f64 = f64::from(utilization_pct_x10 as u32) / 10.0;\n  ...\n  let threshold_tokens = (f64::from(context_window as u32) * f64::from(warn_threshold)) as usize;\n\nFor context_window > u32::MAX (a future model with 5B-token context), the as u32 truncates silently. warn_threshold is f32 but used in f64 arithmetic — a sub-percent threshold loses ~7 digits of precision. The allow(cast_possible_truncation) annotation is the LARP that masks a real future bug.\n## Mandated refactor\nCompute threshold via integer math: threshold_tokens = context_window * (warn_threshold * 1000.0).round() as usize / 1000. Use u128 if guarding against future context-window growth.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:19:58.886542518Z",
-  "updated_at": "2026-05-18T22:20:09.040835972Z",
+  "updated_at": "2026-05-19T16:05:33.213546454Z",
+  "closed_at": "2026-05-19T16:05:33.213546454Z",
   "labels": [
     "qa-review",
     "complexity"
