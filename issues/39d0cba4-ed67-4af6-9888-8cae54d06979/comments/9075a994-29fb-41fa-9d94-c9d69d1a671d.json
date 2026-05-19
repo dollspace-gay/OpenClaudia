@@ -1,0 +1,10 @@
+{
+  "uuid": "9075a994-29fb-41fa-9d94-c9d69d1a671d",
+  "issue_uuid": "39d0cba4-ed67-4af6-9888-8cae54d06979",
+  "author": "lOrm",
+  "content": "Fixed: added McpError::ResponseIdMismatch{expected,got} variant; HttpTransport::request now compares response.id against request.id and returns the new variant on mismatch. StdioTransport refactored to use the same variant (DRY). 4 new unit tests fix701_* (matching id OK, mismatched numeric id rejected with ResponseIdMismatch, non-numeric id rejected at JSON decode step, stdio mismatch surfaces ResponseIdMismatch). cargo test --lib: 1436 passed = 1432 baseline + 4 new. cargo clippy --lib --tests -- -D warnings: exit 0. No #[allow], no clippy.toml, no #[ignore].",
+  "created_at": "2026-05-19T21:27:10.574258802Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAI1qQw9iY0jtKjPalk4eG3SCKYg0Z+eR79BvJdhASTVBhbCvGG2/joSk77/e/BXuteNTO0I5DmhJBkqBtMeU+AA=="
+}
