@@ -3,11 +3,12 @@
   "display_id": 793,
   "title": "coordinator/permission: QueuedPermission docs promise a reply channel that doesn't exist",
   "description": "## Severity\nMajor\n## Dimension\ndecoupling\n## Location\nsrc/coordinator/permission.rs:20-26 (QueuedPermission)\n## Violation\n```rust\n/// A permission request from a specific teammate, awaiting the\n/// leader's decision. The reply channel lets the teammate's task\n/// thread resume once the user decides.\npub struct QueuedPermission {\n    pub teammate: TeammateId,\n    pub tool_name: String,\n    pub tool_args: String,\n}\n```\n\nThe doc comment claims there is a reply channel, but the struct has no oneshot, no `Sender`, no `Notify`, nothing the teammate could `.await` on. As specified, a teammate that calls `enqueue` has no way to learn the user's decision — the design literally cannot work without a reply path.\n\nPhase 3 will discover this when wiring the event loop and either retrofit a channel onto every existing `QueuedPermission` constructor, or build a parallel out-of-band correlation map keyed by request id. Either path is a rework, and the gap is invisible to anyone reading the public API today.\n\n## Mandated refactor\nAdd `reply: tokio::sync::oneshot::Sender<PermissionDecision>` (or equivalent) to `QueuedPermission` now, even unused. Update the FIFO and tests so the contract is enforced at compile time. If a oneshot is rejected on Phase 1 grounds, replace the doc-comment lie with an explicit `// TODO Phase 3: add reply channel — current shape cannot resume teammates`.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:59:12.905109796Z",
-  "updated_at": "2026-05-18T21:59:42.735486528Z",
+  "updated_at": "2026-05-19T23:50:35.681761682Z",
+  "closed_at": "2026-05-19T23:50:35.681761682Z",
   "labels": [
     "qa-review"
   ]
