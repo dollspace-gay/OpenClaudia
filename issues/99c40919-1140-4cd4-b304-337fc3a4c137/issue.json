@@ -3,11 +3,12 @@
   "display_id": 685,
   "title": "QA: bash denylist is fundamentally bypassable substring matching (security theater)",
   "description": "## Severity\nCritical\n## Dimension\nsecurity\n## Location\nsrc/tools/bash/policy.rs:82-136\n## Violation\nThe denylist matches lowercased substrings against a hard-coded list. The module's own doc-comment admits this is \"NOT a substitute for a real sandbox\" (policy.rs:3-7). The pinning test `b5_gap_589_advanced_injection_not_blocked` (policy.rs:453-469) further confirms process substitution, IFS injection, and `/proc/environ` reads pass through.\n\nTrivial bypasses for the canonical \"rm -rf /\" rule include: `r''m -rf /`, `\\rm -rf /`, `eval $(echo cm0gLXJmIC8K | base64 -d)`, `${HOME:0:0}rm -rf /`, `rm$IFS-rf$IFS/`, or any newline-separated multi-statement.\n\nQuoted (policy.rs:82-136):\n```\n/// Hard denylist of command patterns that are effectively always malicious\n/// or catastrophic. Returns `Some(reason)` when the command is denied.\n...\n    const SUBSTRINGS: &[(&str, &str)] = &[\n        (\"rm -rf /\", \"rm -rf of root filesystem\"),\n        ...\n    ];\n```\n\nEncoding a denylist this thin into a security boundary creates false confidence — operators may believe `validate_command` provides defense it cannot.\n## Mandated refactor\n1. Rename `validate_command` to `coarse_safety_screen` and document explicitly that it only catches naive prompt-injection, NOT determined attackers.\n2. Architect a real sandbox (firejail/bubblewrap on Linux, seatbelt on macOS, AppContainer on Windows) and require it for ALL bash execution in production mode.\n3. Add an explicit opt-in \"unsandboxed\" mode for development that prints a loud warning on every invocation.\n4. Adopt parameterized command construction (no `bash -c` of arbitrary strings) for any internal callers — only model-supplied commands should ever traverse the policy layer, and they MUST hit the sandbox.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:47:00.392162736Z",
-  "updated_at": "2026-05-18T21:49:35.778627554Z",
+  "updated_at": "2026-05-20T06:42:07.434437495Z",
+  "closed_at": "2026-05-20T06:42:07.434437495Z",
   "labels": [
     "security"
   ]
