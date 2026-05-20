@@ -1,0 +1,10 @@
+{
+  "uuid": "a44a4b8c-b0bb-4804-958e-fcfaa5a24b5f",
+  "issue_uuid": "e40aa76a-40dd-4864-ad52-4fcfb689d938",
+  "author": "lOrm",
+  "content": "Issue calls for DreamTask (speculative planning / memory consolidation) task type. Not addressable in a cleanup pass: depends on #507 coordinator task framework and #508 memdir. Parent audit #523.",
+  "created_at": "2026-05-20T14:41:09.450318911Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABATVqccTvghoXIU6oI5y06v1IADQcKz15Vpj0ddnX4a907R7iFpP2dLwcZkpAyBS/4jqikF4HV+X47N0KT38/5CA=="
+}
