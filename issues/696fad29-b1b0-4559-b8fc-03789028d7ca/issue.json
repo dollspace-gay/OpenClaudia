@@ -3,9 +3,10 @@
   "display_id": 715,
   "title": "git_pull lacks URL/scope re-validation, allowing remote-set tampering to redirect updates",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/plugins/git.rs:79-94, src/plugins/manager.rs:488-525\n## Violation\ngit_pull is dispatched against any directory under ~/.claude/marketplaces/ with no verification that the .git/config remote URL still points at the originally-vetted endpoint, and no re-validation against the current PluginPolicy. Quoted lines:\n\n    pub fn git_pull(dir: &Path) -> Result<(), PluginError> {\n        let output = std::process::Command::new(\"git\")\n            .arg(\"pull\")\n            .current_dir(dir)\n    ...\n        if dir.join(\".git\").exists() {\n            git_pull(&dir)?;\n        }\n\nAn attacker that can write inside the .git/config of an installed marketplace (filesystem race, supply-chain compromise of a nested plugin, or social-engineered \"/plugin marketplace add\" of a malicious local dir whose .git/config is then mutated) can repoint origin to an attacker-controlled URL. The next `/plugin marketplace update` then silently pulls and executes arbitrary content, bypassing strict_known_marketplaces (policy::check_marketplace_allowed only runs at add time, never at pull time per manager.rs:332-372 vs. 488-525).\n## Mandated refactor\nBefore invoking git_pull, read the remote URL (shell out to \"git remote get-url origin\" with the absolute git path, or use gix-config), run it through validate::validate_source_url, and re-run the derived MarketplaceSource through policy::check_marketplace_allowed using the live PluginPolicy. Persist the canonical add-time URL alongside the marketplace install (extend InstalledPlugins or add a sibling marketplaces_state.json) and refuse to pull when the live remote no longer equals the recorded one. Errors should surface as PluginError::PolicyRejected to mirror the add-time contract.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:50:08.897868827Z",
-  "updated_at": "2026-05-18T21:50:08.897868827Z"
+  "updated_at": "2026-05-20T06:42:08.958789910Z",
+  "closed_at": "2026-05-20T06:42:08.958789910Z"
 }
