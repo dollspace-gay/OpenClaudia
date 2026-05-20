@@ -1,0 +1,10 @@
+{
+  "uuid": "8213d144-0515-4066-a759-160ab1ed2dc4",
+  "issue_uuid": "d213895c-6384-4a52-9ea8-c40550510c61",
+  "author": "lOrm",
+  "content": "Fixed silent flag drop: src/cli/repl/input.rs now reads multiSelect first (validator-canonical key) and falls back to multi_select for back-compat. Added two #585-banner tests in src/tools/ask_user.rs: fix585_canonical_multiselect_survives_validator (canonical key preserved + read pattern observes true) and fix585_legacy_multi_select_normalised_then_read_by_renderer (legacy key rewritten to canonical, renderer pattern still observes true). Verified: cargo test --lib fix585 → 2/2 pass.",
+  "created_at": "2026-05-20T03:58:58.160641492Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAT0lQEsDQWewjuInqV/kuZ122WgjhgdBs8qD6qZgu0ZDddK85FAQSqlzC0UGXvM8xvR92CQMBSSIyHbi4yOlDCw=="
+}
