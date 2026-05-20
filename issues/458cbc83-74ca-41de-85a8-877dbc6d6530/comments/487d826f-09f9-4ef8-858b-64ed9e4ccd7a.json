@@ -1,0 +1,10 @@
+{
+  "uuid": "487d826f-09f9-4ef8-858b-64ed9e4ccd7a",
+  "issue_uuid": "458cbc83-74ca-41de-85a8-877dbc6d6530",
+  "author": "lOrm",
+  "content": "#608 closed. Added WebFetchConfig in src/config/webfetch.rs with distillation_enabled (default off for back-compat), max_distillation_bytes (default 100_000 = CC's MAX_MARKDOWN_LENGTH pinned by test), distillation_provider, distillation_model. truncate_for_distillation helper enforces char-boundary truncation. 5 unit tests pin: default posture, char-boundary truncate, under-cap no-op, yaml round-trip, CC constant equality. Runtime hook (small-model dispatch in tools/web.rs) awaits a separate landing of the secondary-model invocation path; the config surface is complete.",
+  "created_at": "2026-05-20T20:35:29.868129108Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAKp4iwBT0FqRhYO5czNibdBzbpcy8F9MBc7u75zutOISzQ58xXRlAP3rF1TqZIolbmEt6fY5/m7hKOJx0PN4LBQ=="
+}
