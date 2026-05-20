@@ -1,0 +1,10 @@
+{
+  "uuid": "1e46b8f3-10d1-4093-a14a-b036e9f7969e",
+  "issue_uuid": "c8f1326c-6a66-42be-81fc-888614f4ef84",
+  "author": "lOrm",
+  "content": "FORBIDDEN: src/tools/bash/* is on the locked file list for this bulk pass. spawn/get_output/kill returning Result<_, String> at mod.rs:54,173,230 forces consumers to substring-match error messages. Mandated refactor (introduce ShellError enum via thiserror, return Result<_, ShellError>, update tests to match variants) stands for a bash-focused worktree.",
+  "created_at": "2026-05-20T13:25:45.033617787Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA9Wzcg9tce2QvC7R0LcpxfLfCkTh5QS4+sK5yci/wU7PXXQjFcK1vd/dPKLl+ru2+ido9C3H4xrYgtzQbNOcoBQ=="
+}
