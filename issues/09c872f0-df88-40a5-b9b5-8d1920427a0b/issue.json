@@ -3,11 +3,12 @@
   "display_id": 809,
   "title": "QA: busy-poll loop in terminate_process_tree spawns subprocess per 50ms tick",
   "description": "## Severity\nMinor\n## Dimension\ncomplexity\n## Location\nsrc/tools/bash/kill.rs:38-53\n## Violation\nAfter SIGTERM the code polls process existence by spawning `kill -0 <pid>` every 50ms for up to 2 seconds — that's up to 40 fork/exec cycles per kill, plus the 50ms sleep granularity. Each subprocess walks PATH, allocates a Process, runs a syscall, then exits. The cost is paid even when the child exits immediately.\n\nQuoted (kill.rs:38-53):\n```\n        let deadline = Instant::now() + Duration::from_secs(2);\n        let mut exited = false;\n        while Instant::now() < deadline {\n            let check = Command::new(\"kill\").args([\"-0\", &pid_str]).output();\n            match check {\n                Ok(output) if !output.status.success() => {\n                    exited = true;\n                    break;\n                }\n                _ => {\n                    std::thread::sleep(Duration::from_millis(50));\n                }\n            }\n        }\n```\n## Mandated refactor\n1. Use `nix::sys::wait::waitpid(pid, Some(WaitPidFlag::WNOHANG))` with `nix::sys::signal::kill(pid, None)` (libc — zero subprocesses).\n2. Or use a `crossbeam_channel::after(Duration)` + a channel populated by the existing wait thread so the kill path just blocks on a signal rather than polling.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:01:42.961476543Z",
-  "updated_at": "2026-05-18T22:01:51.523478955Z",
+  "updated_at": "2026-05-20T13:26:07.882549984Z",
+  "closed_at": "2026-05-20T13:26:07.882549984Z",
   "labels": [
     "qa-review",
     "complexity"
