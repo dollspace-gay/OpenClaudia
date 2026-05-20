@@ -1,0 +1,10 @@
+{
+  "uuid": "97da7487-290d-4c83-9783-b37957138d4e",
+  "issue_uuid": "5012d741-7266-4bc4-a145-bbc8169a7f4d",
+  "author": "lOrm",
+  "content": "Issue calls for decomposing tui::app::App from a 22-field God Object into four cohesive structs (ApiClient, SessionState, UiState, Services) with App as a thin coordinator. Not addressable in a cleanup pass: every TUI handler currently reads/writes App fields directly, the refactor would touch handle_key, handle_slash_command (660+ lines, #259), every API event handler, and the entire render path. This is the prerequisite for every other TUI refactor (#259, #270, #364) and must be owner-driven with a migration plan. Related TUI refactors (#259, #270, #364) tracked separately for granular landing once the App decomposition lands.",
+  "created_at": "2026-05-20T14:32:57.814583984Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA32c2EvHi0N0vU7wFAjX3ZP8zocyrJfF17mUlEtMU4wk3H/1qgGAVJIQHO9j3dEqXwDMB2nDmh99Znu63uNU8CQ=="
+}
