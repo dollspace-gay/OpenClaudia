@@ -1,0 +1,10 @@
+{
+  "uuid": "11f52a5f-30c6-4ae5-b81b-407b0ccd46a0",
+  "issue_uuid": "06f5bf93-eef7-4deb-8949-bd062128ab01",
+  "author": "lOrm",
+  "content": "Added classifier-based auto-allow in src/permissions.rs (#571): auto_allow_score(tool_name, args) -> f32 and PermissionManager::check_auto_allow(tool, args, threshold). Heuristic scorer (Bayesian-style, no ML dep): read-only tools = 1.0; safe bash prefixes (ls/pwd/cat/echo/git status/git diff/git log/...) = 0.95; destructive bash tokens (rm -rf, sudo, dd, mkfs, curl, wget, shutdown, /dev/, chmod 777) = 0.0 hard veto; project-tree edits = 0.6; default = 0.3. check_auto_allow consults explicit Deny rules FIRST so a Deny always beats classifier allow. 4 tests pin: read-only=1.0, safe-bash>=0.9, destructive=0.0, explicit-deny-overrides. NOT included: autoModeState global circuit-breaker, headless AbortError fast-path, acceptEdits would-allow short-circuit — those need PermissionMode lattice work and are left as follow-ups. Pairs with #577 DenialTracker for fallback-to-prompting once thresholds cross.",
+  "created_at": "2026-05-20T17:43:24.015706117Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA6wAbkPx7uJV5n9yHAqhkNfpjO4/NiU5pWOrw4AX+7UyTI+no2bAdrOsptbEOyQwOhbV7+S+kRxHNVgaXXkzMBw=="
+}
