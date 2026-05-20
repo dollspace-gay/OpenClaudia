@@ -1,0 +1,10 @@
+{
+  "uuid": "168671e0-af7e-465e-81e3-92d35ef1989f",
+  "issue_uuid": "8ee0b065-e745-40fb-a790-7b571b263dd8",
+  "author": "lOrm",
+  "content": "Deferred — requires unrestricted access to src/permissions.rs (FORBIDDEN under current cleanup scope).\n\n**Fix outline:** At src/permissions.rs:155-169, change the dangerously_disable_sandbox handling from warn-and-fall-through to warn-and-explicitly-deny. The fix is two lines: replace the warn block with warn! { ... }; return CheckResult::Denied { reason: 'dangerously_disable_sandbox in tool args is not honored — must be set in user-level configuration only' }. Defense-in-depth: even if model-injected flags can never actually flip the sandbox (the loader only reads user config), denying the request deters the pattern and surfaces it in audit logs as a deny rather than a silent ignore.\n\n**Blocking:** src/permissions.rs is reserved scope. Defer to a future unrestricted pass.",
+  "created_at": "2026-05-20T14:12:20.181013231Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAzULOLdah0ndX3eb4NtgBVMySFCw6m/chStawvrWs1WjeITA7RONgyt8Frmrf2ZrzNBZUAaGZ47JwGGrtUzmLAw=="
+}
