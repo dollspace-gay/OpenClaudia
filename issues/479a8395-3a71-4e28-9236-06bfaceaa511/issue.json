@@ -3,12 +3,13 @@
   "display_id": 579,
   "title": "Adopt tree-sitter bash parser for command validation (parity with CC utils/bash/bashParser.ts)",
   "description": "## Gap\n\nClaude Code uses a tree-sitter AST-based bash parser (utils/bash/bashParser.ts ~4436 lines, utils/bash/treeSitterAnalysis.ts ~506 lines) for command validation and path analysis. The AST path is the primary (non-deprecated) validation route:\n- checkPathConstraints (pathValidation.ts:1013) uses AST-derived SimpleCommand[] when available\n- validateSinglePathCommandArgv (pathValidation.ts:888) operates on pre-parsed argv from AST\n- checkReadOnlyConstraints (readOnlyValidation.ts:1876) calls tryParseShellCommand which uses tree-sitter\n- AST avoids the shell-quote single-quote backslash bug that affects the deprecated string-parsing path\n\nOpenClaudia has no tree-sitter parser. Command validation is pure substring/regex denylist (src/tools/bash/policy.rs:89-133). No AST analysis of command structure is performed.\n\n## Parity reference\n- CC: utils/bash/bashParser.ts (AST parse), utils/bash/treeSitterAnalysis.ts (analysis helpers), pathValidation.ts (AST-backed path checking)\n- OC: missing entirely\n\n## Acceptance\n- tree-sitter-bash crate integration (or equivalent Rust parser)\n- SimpleCommand / argv extraction from parsed AST\n- AST-backed path validation replacing or augmenting the current regex denylist\n- Handles quoted strings, heredocs, compound commands correctly\n",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:53:00.147970447Z",
-  "updated_at": "2026-05-20T16:57:55.231408310Z",
+  "updated_at": "2026-05-20T18:19:10.256744235Z",
+  "closed_at": "2026-05-20T18:19:10.256744235Z",
   "labels": [
     "feature",
     "cc-parity"
