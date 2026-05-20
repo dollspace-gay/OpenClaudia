@@ -1,0 +1,10 @@
+{
+  "uuid": "c2ebcb76-59c3-497c-b754-ea241b99f110",
+  "issue_uuid": "38350460-ccd0-47f2-91b7-09edcb528c76",
+  "author": "lOrm",
+  "content": "Issue calls for filtering gitignored locations from LSP results via git check-ignore (parity with CC LSPTool.ts:556-611). Not addressable in a cleanup pass: depends on #636 LSP server pool. Adds a git subprocess hop per result. Parent audit #523.",
+  "created_at": "2026-05-20T14:39:10.706350347Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAmqKk8iTWgi6VlZpg8L6izYoueiqWbw/xP/GPX9nGdDpXBnZwavia9EjZsr0ydF0eRMB0CHNuj8PKj1HEs+TcAQ=="
+}
