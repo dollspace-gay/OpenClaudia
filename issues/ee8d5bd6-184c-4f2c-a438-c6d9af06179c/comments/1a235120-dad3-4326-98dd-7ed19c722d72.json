@@ -1,0 +1,10 @@
+{
+  "uuid": "1a235120-dad3-4326-98dd-7ed19c722d72",
+  "issue_uuid": "ee8d5bd6-184c-4f2c-a438-c6d9af06179c",
+  "author": "lOrm",
+  "content": "Schedule id is now 16 hex chars (64 bits of entropy) extracted from Uuid::new_v4 with dashes stripped. Added an in-store uniqueness check that fails-fast on the astronomically rare collision. Test schedule_id_is_16_hex_chars verifies the new length.",
+  "created_at": "2026-05-20T12:23:42.473819877Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABASJLvAzg0ODegRac+QcZFixD7+Bxl1zaQTS+56QmJ9wmdvXqM/5vmEy/3YtB/dsYQyanaaO/PMfoC/Q2Vr47UAQ=="
+}
