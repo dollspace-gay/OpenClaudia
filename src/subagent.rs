@@ -12,13 +12,13 @@ use crate::tools::{safe_truncate, ToolCall};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Instant;
+use std::sync::{Arc, LazyLock, Mutex, Once};
+use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 use uuid::Uuid;
 
@@ -452,42 +452,232 @@ pub(crate) struct StoredTranscript {
     created_at: Instant,
 }
 
-/// TTL for stored transcripts (30 minutes)
+/// TTL for stored transcripts (30 minutes).
 const TRANSCRIPT_TTL_SECS: u64 = 30 * 60;
 
-/// Global transcript store for agent resume
-pub(crate) static TRANSCRIPT_STORE: LazyLock<Mutex<HashMap<String, StoredTranscript>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Hard cap on the number of transcripts retained at once. When the
+/// store would exceed this, the oldest entry (by `created_at`) is
+/// evicted in O(log N) via the auxiliary `BTreeSet` index — see
+/// [`TranscriptStore::insert`]. Crosslink #415.
+pub(crate) const MAX_STORED_TRANSCRIPTS: usize = 50;
 
-/// Store a transcript for future resume
-fn store_transcript(agent_id: &str, messages: Vec<Value>, agent_type: AgentType) {
+/// Hard cap on the number of messages retained per transcript. When a
+/// caller stores a longer message list, the head is dropped and only
+/// the most recent `MAX_MESSAGES_PER_TRANSCRIPT` messages are kept; a
+/// `tracing::warn!` is emitted noting how many were dropped. Crosslink
+/// #415.
+pub(crate) const MAX_MESSAGES_PER_TRANSCRIPT: usize = 500;
+
+/// Interval at which the background sweep runs TTL eviction.
+const SWEEP_INTERVAL_SECS: u64 = 60;
+
+/// Bounded transcript store with O(log N) LRU eviction.
+///
+/// Crosslink #415: the previous implementation iterated the entire
+/// `HashMap` on every insert (O(N)) and only ran eviction when a
+/// caller stored or loaded — meaning a long-running session with no
+/// new spawns would never reclaim memory. This struct:
+///
+/// 1. Hard-caps the number of transcripts at `MAX_STORED_TRANSCRIPTS`,
+///    evicting the oldest in O(log N) via a `BTreeSet` index keyed by
+///    `(created_at, id)`.
+/// 2. Truncates per-transcript message lists at
+///    `MAX_MESSAGES_PER_TRANSCRIPT`, keeping the most recent messages
+///    so resume retains the latest conversation context.
+/// 3. Provides a `sweep` entry point invoked from a background tokio
+///    task (see [`spawn_transcript_sweeper`]) so TTL eviction runs
+///    independently of insert/load traffic.
+pub(crate) struct TranscriptStore {
+    entries: HashMap<String, StoredTranscript>,
+    /// Insertion-time-ordered index: `(created_at, agent_id)`.
+    /// `Instant` is monotonic; collisions on the same instant are
+    /// broken by `agent_id` so each entry has a unique key. The
+    /// `BTreeSet` first element is always the oldest, giving O(log N)
+    /// LRU eviction without a full `HashMap` scan.
+    order: BTreeSet<(Instant, String)>,
+}
+
+impl TranscriptStore {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: BTreeSet::new(),
+        }
+    }
+
+    /// Number of stored transcripts. Test-only.
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        debug_assert_eq!(self.entries.len(), self.order.len());
+        self.entries.len()
+    }
+
+    /// Insert (or replace) a transcript for `agent_id`.
+    ///
+    /// On replace the prior entry's order-index slot is removed so the
+    /// two indexes stay in sync. After insertion, if the store exceeds
+    /// `MAX_STORED_TRANSCRIPTS`, the oldest entry is evicted.
+    fn insert(&mut self, agent_id: String, transcript: StoredTranscript) {
+        // If replacing, remove the prior entry from the order index so
+        // we don't leak a stale key.
+        if let Some(old) = self.entries.remove(&agent_id) {
+            self.order.remove(&(old.created_at, agent_id.clone()));
+        }
+        self.order.insert((transcript.created_at, agent_id.clone()));
+        self.entries.insert(agent_id, transcript);
+
+        // Enforce the hard cap. O(log N) per eviction.
+        while self.entries.len() > MAX_STORED_TRANSCRIPTS {
+            // `order` is non-empty here: `entries.len() > 0` and the
+            // two indexes are kept in lockstep, so unwrap-on-None
+            // would indicate an invariant violation.
+            let oldest = self
+                .order
+                .iter()
+                .next()
+                .cloned()
+                .expect("order index must mirror entries when entries is non-empty");
+            self.order.remove(&oldest);
+            self.entries.remove(&oldest.1);
+        }
+    }
+
+    fn get(&self, agent_id: &str) -> Option<&StoredTranscript> {
+        self.entries.get(agent_id)
+    }
+
+    /// Remove every entry whose age exceeds `TRANSCRIPT_TTL_SECS`.
+    /// Uses the ordered index so we stop scanning as soon as we hit
+    /// the first non-expired entry (entries are ordered oldest-first).
+    /// Returns the number of evicted entries.
+    fn sweep(&mut self, now: Instant) -> usize {
+        let ttl = Duration::from_secs(TRANSCRIPT_TTL_SECS);
+        let mut removed = 0;
+        while let Some(oldest) = self.order.iter().next().cloned() {
+            if now.duration_since(oldest.0) < ttl {
+                // Ordered oldest-first: nothing further can be expired.
+                break;
+            }
+            self.order.remove(&oldest);
+            self.entries.remove(&oldest.1);
+            removed += 1;
+        }
+        removed
+    }
+}
+
+/// Global transcript store for agent resume. Bounded by
+/// `MAX_STORED_TRANSCRIPTS` and swept periodically by the background
+/// task spawned in [`spawn_transcript_sweeper`].
+pub(crate) static TRANSCRIPT_STORE: LazyLock<Mutex<TranscriptStore>> =
+    LazyLock::new(|| Mutex::new(TranscriptStore::new()));
+
+/// Guards the one-shot spawn of the transcript sweeper task. Calling
+/// `spawn_transcript_sweeper` more than once is a no-op.
+static SWEEPER_INIT: Once = Once::new();
+
+/// Spawn (once per process) a tokio task that periodically sweeps
+/// expired transcripts. Idempotent — subsequent calls are no-ops.
+///
+/// Returns `true` iff this call performed the spawn. The function is
+/// safe to call when no tokio runtime is in scope (e.g. unit tests
+/// without `#[tokio::test]`); in that case the spawn is skipped and
+/// the `Once` is still marked complete so a later call doesn't try
+/// again.
+pub(crate) fn spawn_transcript_sweeper() -> bool {
+    let mut spawned = false;
+    SWEEPER_INIT.call_once(|| {
+        if let Ok(handle) = Handle::try_current() {
+            handle.spawn(async {
+                let mut ticker =
+                    tokio::time::interval(Duration::from_secs(SWEEP_INTERVAL_SECS));
+                // The first tick fires immediately; skip it so the
+                // first sweep happens after one full interval (avoids
+                // a thundering-herd sweep at process start).
+                ticker.tick().await;
+                loop {
+                    ticker.tick().await;
+                    let removed = TRANSCRIPT_STORE
+                        .lock()
+                        .map_or(0, |mut store| store.sweep(Instant::now()));
+                    if removed > 0 {
+                        tracing::debug!(
+                            evicted = removed,
+                            "transcript sweep evicted expired entries"
+                        );
+                    }
+                }
+            });
+            spawned = true;
+        }
+    });
+    spawned
+}
+
+/// Store a transcript for future resume.
+///
+/// Enforces the per-transcript message cap (`MAX_MESSAGES_PER_TRANSCRIPT`)
+/// by retaining the most recent messages; warns when truncation occurs.
+/// Also ensures the background sweeper has been spawned so TTL
+/// eviction does not depend on insert traffic.
+fn store_transcript(agent_id: &str, mut messages: Vec<Value>, agent_type: AgentType) {
+    // Make sure the background TTL sweep is running. Idempotent.
+    let _ = spawn_transcript_sweeper();
+
+    if messages.len() > MAX_MESSAGES_PER_TRANSCRIPT {
+        let dropped = messages.len() - MAX_MESSAGES_PER_TRANSCRIPT;
+        tracing::warn!(
+            agent_id = %agent_id,
+            total = messages.len(),
+            cap = MAX_MESSAGES_PER_TRANSCRIPT,
+            dropped,
+            "transcript exceeds per-transcript message cap; dropping oldest messages"
+        );
+        // Keep the tail (most recent messages) so resume retains the
+        // latest conversation context. `drain(..dropped)` is O(N) on
+        // the dropped prefix but bounded by `dropped` and only runs
+        // when the cap is exceeded.
+        messages.drain(..dropped);
+    }
+
     if let Ok(mut store) = TRANSCRIPT_STORE.lock() {
-        // Evict expired transcripts
-        let now = Instant::now();
-        store.retain(|_, t| now.duration_since(t.created_at).as_secs() < TRANSCRIPT_TTL_SECS);
-
         store.insert(
             agent_id.to_string(),
             StoredTranscript {
                 messages,
                 agent_type,
-                created_at: now,
+                created_at: Instant::now(),
             },
         );
     }
 }
 
-/// Load a stored transcript for resume
+/// Load a stored transcript for resume.
+///
+/// No longer scans the entire map for expired entries on every call
+/// — the background sweep (see [`spawn_transcript_sweeper`]) handles
+/// that. Per-call eviction is also unnecessary because every read
+/// path verifies the entry's own age in O(1).
 fn load_transcript(agent_id: &str) -> Option<(Vec<Value>, AgentType)> {
-    TRANSCRIPT_STORE.lock().map_or(None, |mut store| {
-        // Evict expired first
-        let now = Instant::now();
-        store.retain(|_, t| now.duration_since(t.created_at).as_secs() < TRANSCRIPT_TTL_SECS);
-
-        store
-            .get(agent_id)
-            .map(|t| (t.messages.clone(), t.agent_type))
-    })
+    // Tighten lock scope: read out what we need, then release before
+    // the rest of the function body. The clippy
+    // `significant_drop_tightening` lint flags holding a `MutexGuard`
+    // longer than necessary.
+    let snapshot = TRANSCRIPT_STORE
+        .lock()
+        .ok()
+        .and_then(|store| {
+            store
+                .get(agent_id)
+                .map(|entry| (entry.messages.clone(), entry.agent_type, entry.created_at))
+        });
+    let (messages, agent_type, created_at) = snapshot?;
+    // Treat an expired entry as absent so resume fails cleanly even
+    // if the background sweep is briefly behind.
+    if Instant::now().duration_since(created_at).as_secs() >= TRANSCRIPT_TTL_SECS {
+        return None;
+    }
+    Some((messages, agent_type))
 }
 
 // === Worktree Isolation ===
@@ -2189,5 +2379,178 @@ mod tests {
             !msg.contains("cannot block_on without deadlock"),
             "no-runtime branch must NOT trigger the deadlock guard; got: {msg}"
         );
+    }
+
+    // ── Crosslink #415: TRANSCRIPT_STORE bounded growth + bg sweep ──
+    //
+    // These tests exercise the private `TranscriptStore` struct
+    // directly so the global `TRANSCRIPT_STORE` is not polluted by
+    // test data and so each test gets a fresh, deterministic store.
+    // The global is exercised indirectly by the existing spec2
+    // round-trip tests above and by the no-double-spawn test below.
+
+    /// #415 — A 51st insert must evict the oldest entry, leaving the
+    /// store at exactly `MAX_STORED_TRANSCRIPTS` (= 50) and the very
+    /// first insert gone.
+    #[test]
+    fn issue415_lru_cap_evicts_oldest_at_51st_insert() {
+        let mut store = TranscriptStore::new();
+        // Insert 51 distinct transcripts with strictly-ordered
+        // `created_at` so eviction order is deterministic.
+        let base = Instant::now();
+        let mut first_id = String::new();
+        for i in 0u64..51 {
+            let id = format!("agent-{i:03}");
+            if i == 0 {
+                first_id = id.clone();
+            }
+            store.insert(
+                id,
+                StoredTranscript {
+                    messages: vec![json!({"role": "user", "content": "x"})],
+                    agent_type: AgentType::Explore,
+                    // Stagger timestamps so #0 is unambiguously oldest.
+                    created_at: base + Duration::from_micros(i),
+                },
+            );
+        }
+
+        assert_eq!(
+            store.len(),
+            MAX_STORED_TRANSCRIPTS,
+            "store must be capped at MAX_STORED_TRANSCRIPTS after 51 inserts"
+        );
+        assert!(
+            store.get(&first_id).is_none(),
+            "first-inserted (oldest) transcript must be the one evicted"
+        );
+        // A representative middle-aged entry must still be present.
+        assert!(
+            store.get("agent-025").is_some(),
+            "non-oldest entries must be retained"
+        );
+        // The most-recent entry must still be present.
+        assert!(
+            store.get("agent-050").is_some(),
+            "newest entry must be retained"
+        );
+    }
+
+    /// #415 — A transcript with 600 messages must be truncated to 500
+    /// at store time. We exercise the public `store_transcript` path
+    /// because it owns the truncation + warn behavior.
+    #[test]
+    fn issue415_per_transcript_message_cap_truncates_at_500() {
+        let id = format!("issue415-cap-{}", Uuid::new_v4());
+        let big: Vec<Value> = (0..600)
+            .map(|i| json!({"role": "user", "content": format!("msg {i}")}))
+            .collect();
+
+        store_transcript(&id, big, AgentType::Plan);
+
+        let loaded = load_transcript(&id).expect("just-stored transcript must be loadable");
+        assert_eq!(
+            loaded.0.len(),
+            MAX_MESSAGES_PER_TRANSCRIPT,
+            "transcript must be truncated to MAX_MESSAGES_PER_TRANSCRIPT (=500)"
+        );
+        // Truncation drops the OLDEST messages; the tail (newest) is
+        // what's kept, so the last message must be the original 599th
+        // and the first kept message must be the original 100th.
+        assert_eq!(
+            loaded.0[0]["content"].as_str(),
+            Some("msg 100"),
+            "truncation must drop the oldest 100 messages, keeping the tail"
+        );
+        assert_eq!(
+            loaded.0[MAX_MESSAGES_PER_TRANSCRIPT - 1]["content"].as_str(),
+            Some("msg 599"),
+            "last message must be the most-recent input"
+        );
+    }
+
+    /// #415 — Calling `sweep` against an empty store must be a no-op
+    /// (no panic, no eviction). This is the safety invariant the
+    /// background timer relies on: it ticks every 60s regardless of
+    /// store state.
+    #[test]
+    fn issue415_sweep_on_empty_store_is_noop() {
+        let mut store = TranscriptStore::new();
+        let removed = store.sweep(Instant::now());
+        assert_eq!(removed, 0, "empty-store sweep must remove nothing");
+        assert_eq!(store.len(), 0, "empty-store sweep must leave store empty");
+    }
+
+    /// #415 — `sweep` must evict entries older than the TTL while
+    /// retaining fresh ones. We simulate "old" entries by setting
+    /// their `created_at` to `now - (TTL + 1s)`.
+    #[test]
+    fn issue415_sweep_evicts_expired_entries() {
+        let mut store = TranscriptStore::new();
+        let now = Instant::now();
+        let past = now
+            .checked_sub(Duration::from_secs(TRANSCRIPT_TTL_SECS + 1))
+            .expect("clock must permit subtracting TTL+1s");
+
+        // Two stale + one fresh.
+        store.insert(
+            "stale-a".to_string(),
+            StoredTranscript {
+                messages: vec![],
+                agent_type: AgentType::Explore,
+                created_at: past,
+            },
+        );
+        store.insert(
+            "stale-b".to_string(),
+            StoredTranscript {
+                messages: vec![],
+                agent_type: AgentType::Plan,
+                // Slightly older still; ordering breakup needs unique keys.
+                created_at: past
+                    .checked_sub(Duration::from_micros(1))
+                    .expect("clock must permit TTL+1s+1us subtraction"),
+            },
+        );
+        store.insert(
+            "fresh".to_string(),
+            StoredTranscript {
+                messages: vec![],
+                agent_type: AgentType::GeneralPurpose,
+                created_at: now,
+            },
+        );
+
+        let removed = store.sweep(now);
+        assert_eq!(removed, 2, "exactly the two stale entries must be evicted");
+        assert!(store.get("stale-a").is_none());
+        assert!(store.get("stale-b").is_none());
+        assert!(
+            store.get("fresh").is_some(),
+            "fresh entry must survive the sweep"
+        );
+        assert_eq!(store.len(), 1);
+    }
+
+    /// #415 — Calling `spawn_transcript_sweeper` twice from inside a
+    /// tokio runtime must spawn exactly once. The second call returns
+    /// `false` because the `Once` guard has already fired.
+    #[tokio::test]
+    async fn issue415_background_sweep_does_not_double_spawn() {
+        // First call inside the runtime: may or may not spawn depending
+        // on whether some earlier test in this binary already tripped
+        // the global `Once`. Either way, the SECOND call from the
+        // same runtime must return `false` because the `Once` has
+        // fired by then.
+        let _first = spawn_transcript_sweeper();
+        let second = spawn_transcript_sweeper();
+        assert!(
+            !second,
+            "spawn_transcript_sweeper must be idempotent: second call must not spawn"
+        );
+
+        // Repeating doesn't drift either.
+        let third = spawn_transcript_sweeper();
+        assert!(!third, "third call must also be a no-op");
     }
 }
