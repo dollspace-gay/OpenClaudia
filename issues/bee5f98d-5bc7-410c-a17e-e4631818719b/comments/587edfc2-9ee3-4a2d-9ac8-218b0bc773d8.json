@@ -1,0 +1,10 @@
+{
+  "uuid": "587edfc2-9ee3-4a2d-9ac8-218b0bc773d8",
+  "issue_uuid": "bee5f98d-5bc7-410c-a17e-e4631818719b",
+  "author": "lOrm",
+  "content": "Closing as tracked-future-roadmap-not-active-bug. Phase 1 of the speculation engine (#166) landed (NoOpSpeculationEngine + trait surface + 23 tests). Phase 2+ (OverlaySpeculationEngine, prediction heuristic, acceptance workflow) is forward-looking enhancement work, not a regression or defect. The scope here is fully captured in the parent #166 design comment; a fresh issue can be opened when work actually starts. Reopen or re-file if priorities shift.",
+  "created_at": "2026-05-20T12:32:10.136861491Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAeuTy9+YXMYjR/wTgIo7zWsFua4r8Xnk28in9lDKO3/3nnyk/gkBSrlCrJ31JFPHuXVvKdsB0J5a62h85QxQnCA=="
+}
