@@ -484,19 +484,18 @@ pub fn list_presets() -> Vec<(&'static str, &'static str)> {
 }
 
 /// List all available modifier names with their descriptions.
+///
+/// Iterates the single-source `fragments::MODIFIERS` table so a new modifier
+/// added there automatically appears here — no parallel list to keep in sync.
+/// The canonical name comes from the `MODIFIERS` entry's `name` field, which
+/// the `every_modifier_variant_appears_in_table_exactly_once` test verifies
+/// is identical to the variant's `Display` and parses back via `FromStr`.
 #[must_use]
 pub fn list_modifiers() -> Vec<(&'static str, &'static str)> {
-    vec![
-        ("bold", "Confident, idiomatic code — no hedging"),
-        ("debug", "Investigation-first debugging"),
-        ("methodical", "Step-by-step precision"),
-        ("director", "Orchestrate subagents, delegate implementation"),
-        ("readonly", "No file modifications — read and explain only"),
-        (
-            "context-pacing",
-            "Pace work to context limits — clean pause points",
-        ),
-    ]
+    fragments::MODIFIERS
+        .iter()
+        .map(|e| (e.name, e.description))
+        .collect()
 }
 
 // =========================================================================
