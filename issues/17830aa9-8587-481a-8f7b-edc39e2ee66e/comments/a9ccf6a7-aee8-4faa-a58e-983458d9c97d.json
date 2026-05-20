@@ -1,0 +1,10 @@
+{
+  "uuid": "a9ccf6a7-aee8-4faa-a58e-983458d9c97d",
+  "issue_uuid": "17830aa9-8587-481a-8f7b-edc39e2ee66e",
+  "author": "lOrm",
+  "content": "Issue calls for /rewind slash command to restore prior conversation state — CC opens an interactive message-selector UI, restores conversation + code state. Not addressable in a cleanup pass: requires a TUI overlay (depends on #253 App refactor + #520 overlay framework), checkpoint storage schema, and code-state restoration semantics. Parent spec #539, Phase 2 #554.",
+  "created_at": "2026-05-20T14:42:49.314336518Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAuPV0dI1icRN9aYvXFeYLMj8+ib2WH6HQgAy4n8DohLWrF081X2OuIPbLheWXxD+NW2OOy8Aio0puoK9hc++WCg=="
+}
