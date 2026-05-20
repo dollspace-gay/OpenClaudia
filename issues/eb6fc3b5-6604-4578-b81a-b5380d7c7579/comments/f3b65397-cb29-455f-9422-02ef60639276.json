@@ -1,0 +1,10 @@
+{
+  "uuid": "f3b65397-cb29-455f-9422-02ef60639276",
+  "issue_uuid": "eb6fc3b5-6604-4578-b81a-b5380d7c7579",
+  "author": "lOrm",
+  "content": "#656 closed. Added ZipCache in src/plugins/zip_cache.rs: on-disk archive cache keyed by sha256, with put/get_verified/contains/read_index/write_index. SHA-256 integrity check runs on both write (rejects mismatched declared hash) and read (catches swap-on-disk tampering). Index file is JSON keyed by hex sha256; archives stored as <sha256>.zip alongside it. 7 unit tests cover round-trip, missing-archive error, wrong-sha rejection, tamper detection, empty-index read, index round-trip, lowercase-hex invariant. zip-extraction itself awaits a zip crate landing (workspace currently has none); the cache schema is stable so today's writes are readable by the extractor consumer.",
+  "created_at": "2026-05-20T20:36:39.563284492Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAEZyjt0dbAfa33+xZzgE6g/PccCCOOFPCQo3sjmrsWOAZDVfYgIpD47foRE4qZBnglgmViq6bX13yxy7C0F9YCw=="
+}
