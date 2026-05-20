@@ -1,0 +1,10 @@
+{
+  "uuid": "15caee5f-1fd3-41b2-891f-10b161e7cc15",
+  "issue_uuid": "17830aa9-8587-481a-8f7b-edc39e2ee66e",
+  "author": "lOrm",
+  "content": "#653 closed. Added /rewind to TIME_TRAVEL section of src/slash_commands.rs::SLASH_SECTIONS. Surfaces in /help and the TUI cheatsheet. Test time_travel_and_management_commands_present pins the entry. Implementation of the message-selector overlay (depends on #520 overlay framework + checkpoint storage) lives under #554; this issue tracked surface registration only.",
+  "created_at": "2026-05-20T20:36:05.961840887Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA3Yf+3v9caxzPHG0qMUWA+8I3LMSrK2Y400nIdmfZBUSNM2gyKF+LSyYy+pB/cQq0g6hC12GvBOMeyIhT4K66Cw=="
+}
