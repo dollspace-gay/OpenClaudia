@@ -2,13 +2,12 @@
   "uuid": "99c4e64b-8b3d-49a2-8730-5d39b0a08e99",
   "display_id": 612,
   "title": "Make skills model-callable via a skill tool (not just slash command)",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:02:01.927322149Z",
-  "updated_at": "2026-05-20T18:36:42.818732357Z",
-  "closed_at": "2026-05-20T18:36:42.818732357Z",
+  "updated_at": "2026-05-20T18:41:49.350259103Z",
   "labels": [
     "feature",
     "cc-parity"
