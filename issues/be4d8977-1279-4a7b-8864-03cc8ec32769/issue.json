@@ -3,12 +3,13 @@
   "display_id": 568,
   "title": "Add native GrepTool with regex + context lines (parity with CC tools/GrepTool/GrepTool.ts)",
   "description": "## Summary\n\nOpenClaudia has no native grep tool; regex search is described only in the bash tool prompt. Claude Code has a dedicated GrepTool at `tools/GrepTool/GrepTool.ts` (577 lines) backed by ripgrep.\n\n## CC Reference\n\n- CC source: `tools/GrepTool/GrepTool.ts:1-577`\n- Input: `pattern` (regex), optional `path`, `glob`, `output_mode` (content/files_with_matches/count), context flags (-A/-B/-C/context), case-insensitive flag (-i), `type` (file type filter), `head_limit`\n- Output: matching lines with file paths and line numbers; uses ripgrep internally\n\n## Gap\n\nOC: missing — no `src/tools/file/grep.rs` or equivalent. Regex file content search requires invoking bash with grep/rg.\n\n## Parent Spec Issue\n\nFiled from issue #525 (Phase 1 spec: tools — file operations).",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:43:56.036618806Z",
-  "updated_at": "2026-05-18T15:43:59.223984098Z",
+  "updated_at": "2026-05-20T14:36:29.346203833Z",
+  "closed_at": "2026-05-20T14:36:29.346203833Z",
   "labels": [
     "feature",
     "cc-parity"
