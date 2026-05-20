@@ -2,12 +2,13 @@
   "uuid": "aa53dd75-6079-4a5a-96b4-97accbf7e72b",
   "display_id": 587,
   "title": "Add configurable stop conditions at turn end (parity with CC query/stopHooks.ts)",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:53:37.901714135Z",
-  "updated_at": "2026-05-20T16:58:01.155227437Z",
+  "updated_at": "2026-05-20T18:18:27.918263885Z",
+  "closed_at": "2026-05-20T18:18:27.918263885Z",
   "labels": [
     "feature",
     "cc-parity"
