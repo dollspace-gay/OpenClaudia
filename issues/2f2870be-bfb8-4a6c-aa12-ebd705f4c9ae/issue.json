@@ -3,11 +3,12 @@
   "display_id": 733,
   "title": "subagent: hard-coded .openclaudia/permissions.json path couples PermissionManager to cwd",
   "description": "## Severity\nMinor\n## Dimension\ndecoupling\n## Location\nsrc/subagent.rs:789-793 (run_subagent)\n## Violation\n```rust\nlet permission_mgr = crate::permissions::PermissionManager::new(\n    std::path::PathBuf::from(\".openclaudia/permissions.json\"),\n    true,\n    app_config.permissions.default_allow.clone(),\n);\n```\n\nThe subagent constructs its own PermissionManager from a hard-coded relative path. Three problems:\n\n1. Temporal coupling to current working directory — a worktree-isolated subagent (which sets `cwd` indirectly via prompt injection at lines 709-715) will read/write the LEADER's permissions file, not its own.\n2. A fresh PermissionManager per subagent invocation can't see in-memory \"always allow\" decisions made by the parent — each agent rebuilds an empty cache and re-prompts the user.\n3. The choice of `true` for the second arg (presumably `enabled`) is not documented inline.\n\n`Coordinator` is being built precisely to own a single shared PermissionManager (see coordinator/mod.rs:46 LeaderPermissionBridge), but `run_subagent` ignores it.\n\n## Mandated refactor\nPass `&PermissionManager` into `run_subagent` as a parameter (either directly or as a field of `AppHandles`). Let the caller — eventually the Coordinator — supply the shared instance. Remove the hard-coded relative path entirely.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:51:50.915921093Z",
-  "updated_at": "2026-05-18T21:52:50.969521006Z",
+  "updated_at": "2026-05-20T14:11:26.292266687Z",
+  "closed_at": "2026-05-20T14:11:26.292266687Z",
   "labels": [
     "qa-review",
     "decoupling"
