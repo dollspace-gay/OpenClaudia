@@ -3,9 +3,10 @@
   "display_id": 792,
   "title": "QA: HookEngine get_entries_for_event is a god switch coupling every event type",
   "description": "## Severity\nMinor\n## Dimension\nsolid\n## Location\nsrc/hooks/mod.rs:456-481\n## Violation\n`get_entries_for_event` is a 25-line `match` returning `&[HookEntry]` for\neach of 16 event variants:\n```rust\nmatch event {\n    HookEvent::SessionStart => &self.config.session_start,\n    HookEvent::SessionEnd => &self.config.session_end,\n    HookEvent::PreToolUse => &self.config.pre_tool_use,\n    ...\n    HookEvent::VddConverged => &self.config.vdd_converged,\n}\n```\nAdding a new `HookEvent` requires editing six places: the enum, the\n`config_key` match (line 79), the `from_claude_code_name` match (line\n102), the `HooksConfig` struct (one Vec<HookEntry> field), the\n`HooksConfig::is_empty` check (line 129), and this dispatch match. SRP\nviolation (one reason to change becomes six) and OCP violation\n(modification required for every new event). The fallback logic at lines\n462-468 also conflates routing with policy.\n## Mandated refactor\nReplace `HooksConfig`'s 16 named fields with a\n`HashMap<HookEvent, Vec<HookEntry>>`. `get_entries_for_event` becomes\n`self.config.entries.get(&event).map(Vec::as_slice).unwrap_or(&[])`.\nThe PostToolUseFailure → PostToolUse fallback moves to a documented\n`resolve_event(event)` function. `is_empty` becomes\n`entries.values().all(Vec::is_empty)`. New events require only one\nchange: add the variant.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:57:59.651927651Z",
-  "updated_at": "2026-05-18T21:57:59.651927651Z"
+  "updated_at": "2026-05-20T14:12:11.664902348Z",
+  "closed_at": "2026-05-20T14:12:11.664902348Z"
 }
