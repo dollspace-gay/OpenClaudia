@@ -3,11 +3,12 @@
   "display_id": 948,
   "title": "transcript::append_entry chmod-after-create leaves brief world-readable window on JSONL files",
   "description": "## Severity\nMinor\n## Dimension\nsecurity\n## Location\nsrc/transcript.rs:160-187 (append_entry + set_secure_perms)\n## Violation\n```rust\nlet mut file = OpenOptions::new().create(true).append(true).open(&path)?;\nwriteln!(file, \"{line}\")?;\nset_secure_perms(&path, 0o600);\n```\n\nOn first creation, the file is opened with default umask permissions (typically 0o644) and written to BEFORE the chmod to 0o600 runs. Any session line that contains sensitive context (a tool result containing a token, a prompt with project secrets) is briefly world-readable. The window is short but exists for every NEW transcript file.\n\n`set_secure_perms` then reads the current mode (`perms.mode() & 0o777 != mode`) and only chmod's if it differs — sensible, but it also means a process running with a tighter umask never tightens further. And the call is unconditional on every append, costing a syscall pair per write to do nothing in steady state.\n\nThe directory creation has the same defect: `create_dir_all(parent)?; set_secure_perms(parent, 0o700);` opens the dir at 0o755 first, then tightens. Concurrent listers see 0o755 briefly.\n## Mandated refactor\nOn Unix, use `OpenOptions::new().mode(0o600).create(true).append(true).open(&path)` (with `std::os::unix::fs::OpenOptionsExt`) so the file is born with the correct mode. For the directory, use `std::os::unix::fs::DirBuilderExt` + `DirBuilder::new().mode(0o700).recursive(true).create(parent)`. Move the post-create chmod call behind a \"first-write\" flag so the syscall isn't paid on every append.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:19:33.729122887Z",
-  "updated_at": "2026-05-18T22:19:38.168121497Z",
+  "updated_at": "2026-05-20T04:34:08.019370408Z",
+  "closed_at": "2026-05-20T04:34:08.019370408Z",
   "labels": [
     "qa-review",
     "security"
