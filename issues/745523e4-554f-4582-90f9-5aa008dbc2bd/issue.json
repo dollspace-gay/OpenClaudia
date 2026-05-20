@@ -3,11 +3,12 @@
   "display_id": 852,
   "title": "coordinator/mod: Coordinator exposes queue_mut publicly, breaking encapsulation invariants",
   "description": "## Severity\nMinor\n## Dimension\nsolid\n## Location\nsrc/coordinator/mod.rs:69-73 (Coordinator::queue_mut)\n## Violation\n```rust\n/// Mutable access to the queue — used during Phase 1 tests and\n/// by the Phase 2 dispatch loop. Tighten the visibility to\n/// `pub(crate)` when a stable submit API lands.\npub const fn queue_mut(&mut self) -> &mut TaskQueue {\n    &mut self.queue\n}\n```\n\n`pub` on a \"leak the inner field\" accessor is the same anti-pattern as making the field itself `pub`. Any external caller can call `coord.queue_mut().tasks.clear()` (well, not literally — tasks is private — but they can call any other mutator including a future `forget_dependencies` or `clear`). The doc comment acknowledges it should be `pub(crate)` but doesn't follow through.\n\nThis blocks any future invariant the Coordinator might want to enforce (e.g., \"you can't submit while dispatch is running\"). Phase 2's dispatcher will have to either bypass the type entirely (`coord.queue_mut().submit(...)`) or duplicate the API surface.\n\n## Mandated refactor\nChange `pub` to `pub(crate)` immediately. Add `pub fn submit(&mut self, task: Task) -> Result<TaskId, ...>` as the stable external API that the Coordinator can defend invariants on. Tests inside the crate continue to use `queue_mut`.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:07:14.197795256Z",
-  "updated_at": "2026-05-18T22:07:38.239271119Z",
+  "updated_at": "2026-05-20T14:15:49.880805236Z",
+  "closed_at": "2026-05-20T14:15:49.880805236Z",
   "labels": [
     "qa-review",
     "solid"
