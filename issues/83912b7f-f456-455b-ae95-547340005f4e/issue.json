@@ -2,12 +2,13 @@
   "uuid": "83912b7f-f456-455b-ae95-547340005f4e",
   "display_id": 652,
   "title": "Add plugin auto-update mechanism (parity with CC pluginAutoupdate.ts)",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "parent_uuid": "21e13dad-6fac-4ae8-9f1c-62788c0392cb",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:09:44.679486593Z",
-  "updated_at": "2026-05-20T16:59:03.122445482Z",
+  "updated_at": "2026-05-20T20:35:56.868234043Z",
+  "closed_at": "2026-05-20T20:35:56.868234043Z",
   "labels": [
     "parity,cc-plugins-skills,autoupdate"
   ]
