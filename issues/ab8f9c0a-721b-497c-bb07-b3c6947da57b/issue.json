@@ -3,11 +3,12 @@
   "display_id": 739,
   "title": "subagent: BACKGROUND_AGENTS and TRANSCRIPT_STORE globals defeat testability and isolation",
   "description": "## Severity\nMinor\n## Dimension\ndecoupling\n## Location\nsrc/subagent.rs:365-366 (BACKGROUND_AGENTS) and src/subagent.rs:381-382 (TRANSCRIPT_STORE)\n## Violation\n```rust\npub static BACKGROUND_AGENTS: LazyLock<BackgroundAgentManager> =\n    LazyLock::new(BackgroundAgentManager::new);\n```\n\n```rust\npub(crate) static TRANSCRIPT_STORE: LazyLock<Mutex<HashMap<String, StoredTranscript>>> =\n    LazyLock::new(|| Mutex::new(HashMap::new()));\n```\n\nBoth are process-global mutable singletons. Consequences:\n\n1. Two tests that register agents share state and pollute each other (the test suite already works around this with random UUIDs).\n2. Coordinator agents and the top-level CLI agent share one BackgroundAgentManager — there is no per-leader isolation, breaking the \"always-allow per teammate\" guarantee the LeaderPermissionBridge is designed to enforce.\n3. Dependency Inversion violation: every caller depends on a concrete global instead of a `Arc<dyn AgentRegistry>` trait object.\n4. The transcripts global holds raw `Vec<Value>` cloning the full message history on every load — no test can swap it for an in-memory mock.\n\nThis is the classic Singleton anti-pattern (heuristic 3.1, \"Reject God Objects … force division into granular services\").\n\n## Mandated refactor\nDefine a `trait BackgroundAgentRegistry: Send + Sync` and a `trait TranscriptStore: Send + Sync`. Make `run_subagent` take `&dyn BackgroundAgentRegistry, &dyn TranscriptStore` (or an `AppHandles` bundle). Keep a single shared instance constructed in `main.rs` and inject it. Remove the globals or, if retained, mark them `#[cfg(not(test))]` and provide test-only constructor.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:53:07.030517992Z",
-  "updated_at": "2026-05-18T21:53:18.425354877Z",
+  "updated_at": "2026-05-20T14:11:36.621454313Z",
+  "closed_at": "2026-05-20T14:11:36.621454313Z",
   "labels": [
     "qa-review",
     "decoupling"
