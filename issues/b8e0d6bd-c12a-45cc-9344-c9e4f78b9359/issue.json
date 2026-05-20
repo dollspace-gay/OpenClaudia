@@ -3,11 +3,12 @@
   "display_id": 895,
   "title": "QA: parse_lsp_response Hover branch is 5-level-nested map_or_else (cognitive overload)",
   "description": "## Severity\nMinor\n## Dimension\ncomplexity\n## Location\nsrc/tools/lsp.rs:362-388\n## Violation\nThe Hover branch of `parse_lsp_response` chains five `map_or_else` calls in a single expression that mixes string extraction, object-field extraction, and array-join — all to handle the three LSP `MarkedString | MarkupContent | MarkedString[]` variants. The reader must hold the state of 3+ closures simultaneously.\n\nQuoted (lsp.rs:362-388):\n```\n        LspAction::Hover => {\n            let hover_text = result_data.and_then(|r| r.get(\"contents\")).map(|c| {\n                c.as_str().map_or_else(\n                    || {\n                        c.as_object().map_or_else(\n                            || {\n                                c.as_array().map_or_else(String::new, |arr| {\n                                    arr.iter()\n                                        .filter_map(|v| {\n                                            v.as_str()\n                                                .or_else(|| v.get(\"value\").and_then(|x| x.as_str()))\n                                        })\n                                        .collect::<Vec<_>>()\n                                        .join(\"\\n\")\n                                })\n                            },\n                            |obj| {\n                                obj.get(\"value\")\n                                    .and_then(|v| v.as_str())\n                                    .unwrap_or(\"\")\n                                    .to_string()\n                            },\n                        )\n                    },\n                    str::to_string,\n                )\n            });\n```\n\nCognitive complexity per SonarQube heuristic exceeds 10 in this expression alone.\n## Mandated refactor\n1. Define `enum HoverContents { Plain(String), Markup { kind: String, value: String }, Multi(Vec<String>) }` with `Deserialize`.\n2. Replace the chained `map_or_else` with a `match contents { ... }` against that enum.\n3. Each variant gets a one-line conversion to the rendered string.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:12:23.624781355Z",
-  "updated_at": "2026-05-18T22:13:10.492665438Z",
+  "updated_at": "2026-05-20T13:22:16.110383Z",
+  "closed_at": "2026-05-20T13:22:16.110383Z",
   "labels": [
     "qa-review",
     "complexity"
