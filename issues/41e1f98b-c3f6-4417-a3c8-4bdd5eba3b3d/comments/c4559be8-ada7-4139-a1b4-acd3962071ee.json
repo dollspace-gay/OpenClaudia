@@ -1,0 +1,10 @@
+{
+  "uuid": "c4559be8-ada7-4139-a1b4-acd3962071ee",
+  "issue_uuid": "41e1f98b-c3f6-4417-a3c8-4bdd5eba3b3d",
+  "author": "lOrm",
+  "content": "Added McpElicitationHandler trait + NoopElicitationHandler (safe-default cancel) + ElicitationRequest/Response wire types in src/mcp_elicitation.rs. Includes elicitation_capability_object() to declare in initialize. 4 tokio tests.",
+  "created_at": "2026-05-20T18:36:54.162160004Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA217KKgKEntzcQKIESMOb8klkio+hpQU53qAvvaJz5edyFll4h75nMIPSgbUrQ4WzIaw76/Fys9/QaoED1BJ4Ag=="
+}
