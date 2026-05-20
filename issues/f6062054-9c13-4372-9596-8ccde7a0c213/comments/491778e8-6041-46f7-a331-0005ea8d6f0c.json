@@ -1,0 +1,10 @@
+{
+  "uuid": "491778e8-6041-46f7-a331-0005ea8d6f0c",
+  "issue_uuid": "f6062054-9c13-4372-9596-8ccde7a0c213",
+  "author": "lOrm",
+  "content": "Deferred — owner-level architectural refactor (large surgery across src/memory.rs ~1337 lines).\n\n**Fix outline:** Decompose MemoryDb into trait + concrete role-focused stores: ArchivalMemoryStore (save/search/get/update/delete/list/stats/clear), CoreMemoryStore (get/get_section/update/format), MemoryMigrator (ensure_schema_on, run_migrations_on, migrate_v*_on), with the SQLite connection injected. The current god-impl block (impl MemoryDb spanning 30+ methods) becomes a thin facade or is removed in favor of consumers holding Arc<dyn ArchivalMemoryStore> / Arc<dyn CoreMemoryStore> as needed.\n\n**Partial progress already landed:**\n- #728 (closed) replaced .unwrap() on conn.lock() with lock_or_poison across every method — eliminating the cascade-poison failure mode.\n\n**Recommendation:** Architectural decisions of this scope (trait taxonomy, migration ownership, embedding-store boundary) are owner-level. Defer to a planned memory-subsystem revamp rather than ad-hoc agent work.",
+  "created_at": "2026-05-20T14:13:30.498764745Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA7MnaMGA/C3pRLklEFgyDyjg/bfSqsMRbA/SpjrEw7LVQKc1LRtRm99n7Gn8hNPO/c1XhZ388tO5vcrhkJoUCBA=="
+}
