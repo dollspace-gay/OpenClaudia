@@ -1,0 +1,10 @@
+{
+  "uuid": "1032725c-ec07-4e4b-8f9a-4df9c2bb7bf2",
+  "issue_uuid": "2e224da2-6312-4959-b478-43f8ec8b6bf1",
+  "author": "lOrm",
+  "content": "Re-verified after the 12:24 close: parse_mcp_json_file already honoured both wrapper and bare-map forms for the convention .mcp.json, but load_mcp_servers_from_path (used by manifest McpServersSpec::Path and Array(Path)) was still parsing bare-map only — the drift #919 describes was not fully resolved. Applied the tiny one-liner: load_mcp_servers_from_path now routes through parse_mcp_json_file, so all four file-loading branches (convention + manifest Path + manifest Array Path) accept identical shapes. Inline Map / Array Map branches stay as-is (they're already in-memory data, no parse). cargo build passes.",
+  "created_at": "2026-05-20T13:26:09.507811337Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAXZJ8d36bWSDqDiH1cJ8ppV/LG8VNMcBugX+r4SxgwEusA+R18sdtGohbE9sq+4jXaOUEEK/xyc8CZnpyod5dBQ=="
+}
