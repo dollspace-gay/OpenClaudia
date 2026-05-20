@@ -1,0 +1,10 @@
+{
+  "uuid": "195e9658-c00b-4e10-bcf0-d7f6776c79b9",
+  "issue_uuid": "1cf7de68-a133-41d1-b26d-7ba930ca26c0",
+  "author": "lOrm",
+  "content": "Skipped per instructions: src/subagent.rs is FORBIDDEN in this bulk pass.",
+  "created_at": "2026-05-20T12:01:52.012527825Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAgUdiU7fCsUbofafF1TNaPKz+6CrmQvo2Hw8vR/2gCeNrSOz9F97QSiELSPAdBnwHWLBI4hFESVPZD3/Wu+PiAg=="
+}
