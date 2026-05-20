@@ -1,0 +1,10 @@
+{
+  "uuid": "63cdd8b5-5ea7-4b3a-827e-78a7409e87dc",
+  "issue_uuid": "f12ffba4-e3aa-4ea2-82dd-8fc35466685c",
+  "author": "lOrm",
+  "content": "Implemented in src/tools/lsp.rs: 10 MiB (LSP_MAX_FILE_SIZE) guard in execute_lsp before server spawn. Parity with CC LSPTool.ts:53,264-269. 2 unit tests (fix648_*).",
+  "created_at": "2026-05-20T06:14:28.374781805Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAkUGTOqvi0/ZLBar2dbp0ZIG1r+sHwZRItWWtwg72HizUsuvalV+bZ9D9GNu1RBh5cvVqhgKk4nEIFZ0S3TY9Ag=="
+}
