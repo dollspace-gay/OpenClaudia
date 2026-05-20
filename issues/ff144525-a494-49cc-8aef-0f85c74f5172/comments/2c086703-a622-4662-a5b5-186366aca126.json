@@ -1,0 +1,10 @@
+{
+  "uuid": "2c086703-a622-4662-a5b5-186366aca126",
+  "issue_uuid": "ff144525-a494-49cc-8aef-0f85c74f5172",
+  "author": "lOrm",
+  "content": "Issue calls for token-budget-aware partial compaction (parity with CC microCompact.ts). Not addressable in a cleanup pass: requires partial-history selection algorithm, token-budget-driven cutoff, and integration with pipeline.rs compaction path (forbidden-files). Parent audit #523.",
+  "created_at": "2026-05-20T14:38:36.162988334Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA+3ZXX0bGG8tJl+DznN2ZbN34w3fw30ijciwNUJGeqEvaW9+m05JQlyAaD40SjMpVoC9QolS283z7ejUmwouGCw=="
+}
