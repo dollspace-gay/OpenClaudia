@@ -1,0 +1,10 @@
+{
+  "uuid": "87f84ab1-3ae0-4097-a186-8e3056993371",
+  "issue_uuid": "92e79643-9c27-4d0f-b5d7-f64a2e4a7153",
+  "author": "lOrm",
+  "content": "Landed config plumbing in src/config/bash.rs: BashConfig { sandbox: BashSandboxMode (None/Firejail/SandboxExec), excluded_commands: Vec<String> }. BashSandboxMode::detect_available() probes which to verify wrapper presence; wrap_unimplemented() returns Err for every non-None variant so attempts to use a sandbox before the launcher lands fail fast. BashConfig::is_command_excluded checks first-token basename match against excluded_commands (CC settings.sandbox.excludedCommands parity). Added bash: BashConfig field on AppConfig. 5 tests pin: default is None / detect_available / wrap_unimplemented errors / binary names / excluded_commands matching / YAML deserialization across all three variants. Phase 2 (actual sandbox launch) deferred.",
+  "created_at": "2026-05-20T18:18:15.420639897Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAFq60d2P9F30tUyjMqNlvlKjA/O8oCC/BZrM2l2fzKUCMlXvr2lJP3Jah0UIuXloZIplnq/7pp+e84fjwdUGwCg=="
+}
