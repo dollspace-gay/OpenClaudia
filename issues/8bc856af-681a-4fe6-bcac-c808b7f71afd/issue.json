@@ -3,11 +3,12 @@
   "display_id": 844,
   "title": "prompt::build_system_prompt_blocks injects untrusted custom_instructions verbatim without sanitization",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/prompt.rs:212-232 (hook_instructions + custom_instructions injection)\n## Violation\n```rust\nif let Some(instructions) = hook_instructions {\n    if !instructions.trim().is_empty() {\n        ...\n        suffix.push_str(\"## Active Instructions\\n\");\n        suffix.push_str(\"The following instructions come from the project's configured hooks. Follow them carefully:\\n\\n\");\n        suffix.push_str(instructions);\n    }\n}\nif let Some(custom) = custom_instructions {\n    if !custom.trim().is_empty() {\n        ...\n        suffix.push_str(\"## Custom Instructions\\n\");\n        suffix.push_str(custom);\n    }\n}\n```\n\nBoth `hook_instructions` and `custom_instructions` are appended directly to the SYSTEM prompt with no sanitization. The system prompt has more authority than the user message; `context.rs::neutralize_reminder_delimiters` exists explicitly because untrusted content reaching the system layer is a prompt-injection vector. Yet `build_system_prompt_blocks` does no equivalent neutralization — a hook output that contains the string `\\n\\n## Your Tools\\n### evil_tool ...` will reach the model as if it were a base section.\n\nThe test `hook_content_does_not_duplicate_base_sections` (line 517) explicitly accepts that the duplicate is \"inside Active Instructions\" but the prompt format gives the model no way to distinguish \"Active Instructions content\" from \"Base section\". The hint is structural — and structural hints are what prompt-injection breaks.\n\nCustom instructions sourced from CLI args (or worse, config-file YAML the user pasted from a tutorial) inherit the same trust as the harness's own identity.\n## Mandated refactor\nRun both `hook_instructions` and `custom_instructions` through the same `neutralize_reminder_delimiters`-style hardening before injection. Additionally: wrap each injected block in a clearly-named XML envelope (`<hook-instructions src=\"path/to/hook.sh\">...</hook-instructions>`) and instruct the model in the base prompt that envelope-attribute claims override naked markdown headings inside the envelope. Add a regression test: a hook returning `## Your Tools` content must NOT cause the model-visible prompt to have two `## Your Tools` headings — the second occurrence must be escaped or enveloped.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:06:07.306654145Z",
-  "updated_at": "2026-05-18T22:06:51.409537290Z",
+  "updated_at": "2026-05-20T14:04:26.171930461Z",
+  "closed_at": "2026-05-20T14:04:26.171930461Z",
   "labels": [
     "qa-review",
     "security"
