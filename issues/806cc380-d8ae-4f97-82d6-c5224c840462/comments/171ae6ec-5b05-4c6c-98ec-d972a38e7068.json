@@ -1,0 +1,10 @@
+{
+  "uuid": "171ae6ec-5b05-4c6c-98ec-d972a38e7068",
+  "issue_uuid": "806cc380-d8ae-4f97-82d6-c5224c840462",
+  "author": "lOrm",
+  "content": "Issue calls for per-server MCP permission scoping (channelPermissions relay racing permission dialogs against channel servers Telegram/iMessage/Discord). Not addressable in a cleanup pass: requires capabilities.experimental['claude/channel/permission'] handshake, notification subscription, request_id matching, and pending-permission resolution from channel replies. Substantial new MCP plumbing. Parent audit #523.",
+  "created_at": "2026-05-20T14:41:47.712909641Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAlDkowlb44Rx4mlhVaj8mkWvyXIAx8t7YaLUq1D3SP+mDgDL7zuQj3M5/8LtioV9UhWdeK12YmAWBdGUANiMCBg=="
+}
