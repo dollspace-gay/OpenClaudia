@@ -1,0 +1,10 @@
+{
+  "uuid": "874e09f9-ac23-4557-8533-ddda8b8af895",
+  "issue_uuid": "4e7e037e-aaf8-4b0b-a6ab-14bcb3625fa2",
+  "author": "lOrm",
+  "content": "FORBIDDEN: title says lsp.rs but the cited code (map_while(Result::ok) at lines 117-125 and 131-138) actually lives in src/tools/bash/mod.rs (reader threads inside the bash spawn path). src/tools/bash/* is on the locked file list for this bulk pass. Mandated refactor (read_until(b'\\n') into Vec<u8> with from_utf8_lossy on drain, or side-channel IoError capture) stands for a bash-focused worktree.",
+  "created_at": "2026-05-20T13:25:51.253926246Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAx/CjfAuVAkmshJka4CnKa8FGXO4i3fMVoLsILDuIs5NgdSAznAUBy0oaYa7FIfrYWG68ucyo2mw7ZbhzIYxiAQ=="
+}
