@@ -3,11 +3,12 @@
   "display_id": 950,
   "title": "VddEngine API takes builder_provider as &str throughout coupling to stringly-typed routing",
   "description": "## Severity\nTrivial\n## Dimension\nnaming\n## Location\nsrc/vdd/mod.rs (multiple): 209, 288, 348, 402, 803, 885, 995\n## Violation\nEvery public/internal method in VddEngine takes builder_provider: &str:\n\n```rust\npub async fn review_text(..., builder_provider: &str, builder_api_key: ...) -> ...\npub async fn process_response(..., builder_provider: &str, ...) -> ...\nasync fn advisory_review(..., builder_provider: &str, ...) -> ...\nasync fn blocking_loop(..., builder_provider: &str, ...) -> ...\nasync fn triage_findings(..., builder_provider: &str, ...) -> ...\nasync fn verify_findings(..., builder_provider: &str, ...) -> ...\nasync fn send_to_builder_for_verification(..., provider_name: &str, ...) -> ...\nasync fn send_to_builder(..., provider_name: &str, ...) -> ...\n```\n\nThis is stringly-typed routing through 8+ functions in the same module. A typo at any call site silently routes to the wrong provider (or fails downstream with a ConfigError that doesn't pinpoint the typo location). The framework's naming guideline mandates \"registered constants\" and \"enums over stringly-typed code.\"\n\nWorse, the parameter is paired with builder_api_key: Option<&ApiKey> at each callsite — these are conceptually one unit (a Provider handle) but passed as two parameters. The function-signature-mandate of 0-2 parameters is technically met but only by collapsing the unit into two coupled positional args.\n\n## Mandated refactor\nDefine a Provider handle (existing ProviderAdapter trait or a new struct), pass it as a single value, and remove the &str pairs:\n\n```rust\npub struct BuilderProvider<'a> {\n    name: &'a str,\n    api_key: Option<&'a ApiKey>,\n}\n\npub async fn review_text(..., builder: &BuilderProvider<'_>) -> ...\n```\n\nInternal methods take &BuilderProvider; the .name() and .api_key() accessors give controlled access. ConfigError messages can attach the BuilderProvider for richer diagnostics.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:19:38.506727327Z",
-  "updated_at": "2026-05-18T22:19:52.259448889Z",
+  "updated_at": "2026-05-20T14:04:39.975192136Z",
+  "closed_at": "2026-05-20T14:04:39.975192136Z",
   "labels": [
     "qa-review",
     "naming"
