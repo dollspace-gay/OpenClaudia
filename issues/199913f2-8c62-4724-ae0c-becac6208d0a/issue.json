@@ -3,9 +3,10 @@
   "display_id": 872,
   "title": "WorktreeState struct is dead YAGNI scaffolding never instantiated",
   "description": "## Severity\nTrivial\n\n## Dimension\nYAGNI / Documentation & Intent\n\n## Location\nsrc/tools/worktree.rs:48-54 (WorktreeState struct)\n\n## Violation\n```rust\n#[derive(Debug, Clone)]\npub struct WorktreeState {\n    pub path: PathBuf,\n    pub branch: String,\n    pub original_cwd: PathBuf,\n}\n```\n\n`grep -rn WorktreeState src/` returns only this definition — the struct is never instantiated or referenced. It violates YAGNI: speculative scaffolding kept \"for future use.\" Worse, its `original_cwd` field implies a restore-on-exit semantic that the actual exit_worktree implementation does not honor (exit_worktree changes cwd to `main_path = common_dir.parent()`, never to `original_cwd`).\n\n## Mandated refactor\nDelete the struct. If the future use becomes a present need, recreate it with fields that match actual behavior.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:08:54.638463784Z",
-  "updated_at": "2026-05-18T22:08:54.638463784Z"
+  "updated_at": "2026-05-20T13:22:04.598393841Z",
+  "closed_at": "2026-05-20T13:22:04.598393841Z"
 }
