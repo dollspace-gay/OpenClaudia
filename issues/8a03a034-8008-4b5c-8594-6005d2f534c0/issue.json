@@ -3,11 +3,12 @@
   "display_id": 976,
   "title": "read_notebook_file silently swallows non-string source cell items via filter_map",
   "description": "## Severity\nTrivial\n\n## Dimension\nPerimeter Defense / Functional Correctness\n\n## Location\nsrc/tools/file/read.rs:205-271 (read_notebook_file source/output extraction)\n\n## Violation\nThe function uses `filter_map(|v| v.as_str())` in four places (lines 208, 228, 244, 258) to collect source text or output text from the notebook JSON. If a cell's `source` array contains a non-string element (e.g. someone manually edited the .ipynb to include a number or object), that element is silently dropped — the displayed cell text is missing a line, but no error is raised. The model sees an incomplete cell and may edit based on the truncated content.\n\nAlso: line 232 falls into `=> continue,` for non-string non-array `text` field, returning the cell with no output shown but no warning. Read-then-edit cycles can produce diffs that surprise the model.\n\n## Mandated refactor\nReplace each filter_map with a fold that warns on non-string elements:\n```rust\nlet (text, skipped): (Vec<&str>, usize) = arr.iter().fold((Vec::new(), 0), |(mut v, n), e| {\n    match e.as_str() { Some(s) => { v.push(s); (v, n) } None => (v, n+1) }\n});\nif skipped > 0 { let _ = write!(output, \"[Warning: {} non-string elements in cell {i} source]\\n\", skipped); }\n```\n\nAlternatively, define a SourceCell deserialization type that errors on malformed shapes at parse time instead of silently coercing.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:24:32.578531274Z",
-  "updated_at": "2026-05-18T22:24:35.458807035Z",
+  "updated_at": "2026-05-20T04:53:23.815070929Z",
+  "closed_at": "2026-05-20T04:53:23.815070929Z",
   "labels": [
     "qa-review",
     "error-handling"
