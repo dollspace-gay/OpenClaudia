@@ -3,11 +3,12 @@
   "display_id": 907,
   "title": "Schedule id truncated to first 8 chars of UUIDv4 — collision risk at 50+ schedules",
   "description": "## Severity\nMinor\n\n## Dimension\nFunctional Correctness / KISS\n\n## Location\nsrc/tools/cron.rs:178 (Schedule.id assignment)\n\n## Violation\n```rust\nid: Uuid::new_v4().to_string()[..8].to_string(),\n```\n\nUUID v4 has 122 bits of randomness; truncating to 8 hex chars discards 90 of those bits, leaving 32 bits → birthday collision probability of 50% at ~77k schedules and ~1% at ~9k schedules. Worse, schedules are stored in a Vec and looked up by `id != id_or_name && name != id_or_name` (line 218) — a collision between an existing id and a newly truncated UUID is silently undetectable, and `cron_delete` would delete the wrong schedule. The original line is fragile (`[..8]` panics if the UUID string is shorter than 8 chars — it won't, but the invariant is implicit).\n\n## Mandated refactor\nStore the full UUID string. The id is opaque — there is no UX cost to using the 36-char canonical form. Display only the first 8 chars in cron_list output (where they currently appear) but store and key by the full id. Also add a uniqueness assertion in cron_create: `assert!(store.schedules.iter().all(|s| s.id != schedule.id))` to fail-fast on the (now astronomically rare) collision.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:14:54.759182500Z",
-  "updated_at": "2026-05-18T22:15:01.317686787Z",
+  "updated_at": "2026-05-20T12:23:44.561852881Z",
+  "closed_at": "2026-05-20T12:23:44.561852881Z",
   "labels": [
     "qa-review",
     "kiss"
