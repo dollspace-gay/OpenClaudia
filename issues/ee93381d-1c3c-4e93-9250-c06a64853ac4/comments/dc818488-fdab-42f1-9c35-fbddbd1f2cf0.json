@@ -1,0 +1,10 @@
+{
+  "uuid": "dc818488-fdab-42f1-9c35-fbddbd1f2cf0",
+  "issue_uuid": "ee93381d-1c3c-4e93-9250-c06a64853ac4",
+  "author": "lOrm",
+  "content": "Fixed in commit 3389b6b6 (src/hooks/mod.rs): added HookEvent::is_deny_intent() returning true for PreToolUse + PermissionRequest only. matches_entry now takes event: HookEvent and chooses default by intent — deny-intent fail CLOSED (return true so hook runs), observe-intent fail OPEN. Both paths emit tracing::warn! with structured event=, pattern=, error=, fail_closed= fields. 5 regression tests added. cargo test --lib hooks::: 65 passed; clippy -- -D warnings: exit 0.",
+  "created_at": "2026-05-20T00:05:09.242239543Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABALP72PmlxBzlRf50REO11caQjeU9tDnkcV6q6g86ibZeg2Zh8mm+6uoo46Zpvcjo4Yfzt23/Gd9VtaSGxrUmlAA=="
+}
