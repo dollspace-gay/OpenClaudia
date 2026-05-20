@@ -3,11 +3,12 @@
   "display_id": 944,
   "title": "ApiKey newtype implements Serialize that emits raw secret defeating redaction guarantees",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/providers/api_key.rs:173-177\n## Violation\nApiKey's Serialize impl writes the raw value:\n\n  impl Serialize for ApiKey {\n      fn serialize(&self, serializer) -> Result<S::Ok, S::Error> {\n          serializer.serialize_str(&self.0)\n      }\n  }\n\nThis defeats the redacting Debug/Display contract advertised by the module doc. Any code path that serializes a ProviderConfig (e.g., to a debug log, to a session-persist JSON, to a tracing field value) leaks the raw secret. The hash-not-implemented and copy-not-implemented design choices show real care, but Serialize is documented as the safe boundary while in practice it is the leakage point. The existing test serde_roundtrip_ok actually asserts the leak ('sk-ant-api03-valid-test-value' serializes verbatim).\n## Mandated refactor\nEither (a) Serialize emits the redacted form (breaks YAML config roundtrip — explicitly fine because config is loaded once and never written back by the application), or (b) gate raw Serialize behind a dedicated wrapper UnredactedApiKey<'a>(&'a ApiKey) that callers must opt in to. Add a regression test that asserts ANY serialization of a ProviderConfig containing an ApiKey does NOT contain the raw secret.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:19:12.867958985Z",
-  "updated_at": "2026-05-18T22:19:25.126987558Z",
+  "updated_at": "2026-05-20T13:22:20.703775154Z",
+  "closed_at": "2026-05-20T13:22:20.703775154Z",
   "labels": [
     "qa-review",
     "security"
