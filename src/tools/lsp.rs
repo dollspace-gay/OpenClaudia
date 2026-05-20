@@ -676,10 +676,9 @@ fn build_action_request(
             "textDocument/hover",
             json!({"textDocument": td(), "position": pos()}),
         ),
-        LspAction::DocumentSymbols => (
-            "textDocument/documentSymbol",
-            json!({"textDocument": td()}),
-        ),
+        LspAction::DocumentSymbols => {
+            ("textDocument/documentSymbol", json!({"textDocument": td()}))
+        }
         LspAction::WorkspaceSymbol => (
             "workspace/symbol",
             json!({"query": extras.query.as_deref().unwrap_or("")}),
@@ -756,8 +755,8 @@ fn run_lsp_request(
     // `workspace/configuration`) inline during init — several servers stall
     // until they receive a response. The legacy `read_lsp_response` silently
     // skipped these.
-    let _init_response = read_lsp_response_with_reverse(&mut reader, 1, Some(&mut stdin))
-        .map_err(|e| {
+    let _init_response =
+        read_lsp_response_with_reverse(&mut reader, 1, Some(&mut stdin)).map_err(|e| {
             let snip = stderr_snippet(&stderr_buf);
             format!("initialize failed: {e}{snip}")
         })?;
@@ -847,12 +846,12 @@ fn run_lsp_request(
     let _ = read_lsp_response(&mut reader, 3);
     let _ = send_lsp_notification(&mut stdin, "exit", json!(null));
     drop(stdin); // EOF signals server to exit
-    // crosslink #900: the unbounded `wait()` after `shutdown`/`exit`
-    // could block indefinitely if a misbehaving server ignored the
-    // exit notification (the `ChildGuard` Drop also calls `wait()` so
-    // we still avoid a zombie, but the request thread would be wedged
-    // until then). Bounded poll: if the server hasn't reaped in 2s,
-    // fall through to Drop, which kills + waits.
+                 // crosslink #900: the unbounded `wait()` after `shutdown`/`exit`
+                 // could block indefinitely if a misbehaving server ignored the
+                 // exit notification (the `ChildGuard` Drop also calls `wait()` so
+                 // we still avoid a zombie, but the request thread would be wedged
+                 // until then). Bounded poll: if the server hasn't reaped in 2s,
+                 // fall through to Drop, which kills + waits.
     wait_with_timeout(guard.child_mut(), std::time::Duration::from_secs(2));
 
     // Parse response into our types
@@ -1139,9 +1138,7 @@ fn parse_lsp_response(action: LspAction, file_path: &str, response: &Value) -> L
                 symbols: Vec::new(),
             }
         }
-        LspAction::GoToDefinition
-        | LspAction::FindReferences
-        | LspAction::GoToImplementation => {
+        LspAction::GoToDefinition | LspAction::FindReferences | LspAction::GoToImplementation => {
             // crosslink #643: parse_locations now normalises LocationLink →
             // Location internally, so the three position-pointing actions
             // share the same parsing path.
@@ -1193,16 +1190,14 @@ fn parse_lsp_response(action: LspAction, file_path: &str, response: &Value) -> L
             // `CallHierarchyItem[]` — each item has `uri` + `selectionRange`.
             // Render via parse_call_hierarchy by wrapping each item under a
             // synthetic `from` key so it shares the call-edge path.
-            let synthetic = result_data
-                .and_then(Value::as_array)
-                .map(|items| {
-                    Value::Array(
-                        items
-                            .iter()
-                            .map(|it| serde_json::json!({"from": it}))
-                            .collect(),
-                    )
-                });
+            let synthetic = result_data.and_then(Value::as_array).map(|items| {
+                Value::Array(
+                    items
+                        .iter()
+                        .map(|it| serde_json::json!({"from": it}))
+                        .collect(),
+                )
+            });
             let locations = parse_call_hierarchy(synthetic.as_ref(), "from");
             LspResult {
                 action: "prepareCallHierarchy".to_string(),
@@ -1493,10 +1488,7 @@ fn parse_call_hierarchy(data: Option<&Value>, key: &str) -> Vec<LspLocation> {
                     .and_then(|e| e.get("character"))
                     .and_then(serde_json::Value::as_u64)
                     .map(u64_to_u32_saturating),
-                preview: item
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
+                preview: item.get("name").and_then(Value::as_str).map(str::to_string),
             })
         })
         .collect()
@@ -2158,10 +2150,7 @@ mod tests {
             "incomingCalls",
             "outgoingCalls",
         ] {
-            assert!(
-                msg.contains(op),
-                "error should list `{op}`; got: {msg}"
-            );
+            assert!(msg.contains(op), "error should list `{op}`; got: {msg}");
         }
     }
 
@@ -2295,8 +2284,7 @@ mod tests {
                 }
             ]
         });
-        let result_out =
-            parse_lsp_response(LspAction::OutgoingCalls, "test.rs", &resp_out);
+        let result_out = parse_lsp_response(LspAction::OutgoingCalls, "test.rs", &resp_out);
         assert_eq!(result_out.action, "outgoingCalls");
         assert_eq!(result_out.results.len(), 1);
         assert_eq!(result_out.results[0].uri, "file:///callee.rs");

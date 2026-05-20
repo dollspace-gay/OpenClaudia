@@ -72,16 +72,12 @@ impl ParseErrorKind {
     }
 }
 
-
 /// Parse adversary response text into a discriminated outcome.
 ///
 /// Use this when the caller wants to distinguish "adversary said no findings"
 /// from "we couldn't read what the adversary said". Engine code path uses
 /// [`parse_findings`] for the legacy `Vec<Finding>` shape.
-pub fn parse_findings_detailed(
-    adversary_response: &str,
-    iteration: u32,
-) -> ParseFindingsOutcome {
+pub fn parse_findings_detailed(adversary_response: &str, iteration: u32) -> ParseFindingsOutcome {
     // Try to parse as JSON first
     let parsed: Option<AdversaryResponse> = serde_json::from_str(adversary_response)
         .ok()
@@ -97,7 +93,10 @@ pub fn parse_findings_detailed(
 
     let raw_findings = if let Some(response) = parsed {
         if response.assessment.as_deref() == Some("NO_FINDINGS") {
-            info!(outcome = "no_findings", "VDD: Adversary reported no findings");
+            info!(
+                outcome = "no_findings",
+                "VDD: Adversary reported no findings"
+            );
             return ParseFindingsOutcome::NoFindings;
         }
         if let Some(findings) = response.findings {

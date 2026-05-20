@@ -613,8 +613,7 @@ pub(crate) fn spawn_transcript_sweeper() -> bool {
     SWEEPER_INIT.call_once(|| {
         if let Ok(handle) = Handle::try_current() {
             handle.spawn(async {
-                let mut ticker =
-                    tokio::time::interval(Duration::from_secs(SWEEP_INTERVAL_SECS));
+                let mut ticker = tokio::time::interval(Duration::from_secs(SWEEP_INTERVAL_SECS));
                 // The first tick fires immediately; skip it so the
                 // first sweep happens after one full interval (avoids
                 // a thundering-herd sweep at process start).
@@ -687,14 +686,11 @@ fn load_transcript(agent_id: &str) -> Option<(Vec<Value>, AgentType)> {
     // the rest of the function body. The clippy
     // `significant_drop_tightening` lint flags holding a `MutexGuard`
     // longer than necessary.
-    let snapshot = TRANSCRIPT_STORE
-        .lock()
-        .ok()
-        .and_then(|store| {
-            store
-                .get(agent_id)
-                .map(|entry| (entry.messages.clone(), entry.agent_type, entry.created_at))
-        });
+    let snapshot = TRANSCRIPT_STORE.lock().ok().and_then(|store| {
+        store
+            .get(agent_id)
+            .map(|entry| (entry.messages.clone(), entry.agent_type, entry.created_at))
+    });
     let (messages, agent_type, created_at) = snapshot?;
     // Treat an expired entry as absent so resume fails cleanly even
     // if the background sweep is briefly behind.
@@ -969,11 +965,7 @@ pub async fn run_subagent(
     let (agent_id, mut messages) = if let Some(ref resume_id) = config.resume_agent_id {
         match load_transcript(resume_id) {
             Some((prev_messages, _prev_type)) => {
-                BACKGROUND_AGENTS.register_with_id(
-                    config.agent_type,
-                    &config.task,
-                    resume_id,
-                );
+                BACKGROUND_AGENTS.register_with_id(config.agent_type, &config.task, resume_id);
                 let mut msgs = prev_messages;
                 // Append the new prompt as a continuation
                 msgs.push(json!({
@@ -1329,9 +1321,8 @@ fn resolve_subagent_adapter(
             SUBAGENT_KNOWN_PROVIDERS.join(", ")
         ));
     }
-    crate::providers::get_adapter(&normalized).map_err(|e| {
-        format!("Subagent provider '{provider}' adapter lookup failed: {e}")
-    })
+    crate::providers::get_adapter(&normalized)
+        .map_err(|e| format!("Subagent provider '{provider}' adapter lookup failed: {e}"))
 }
 
 /// Decode the in-flight subagent `request_body` JSON into the typed
@@ -1396,23 +1387,22 @@ async fn make_api_call(
         .trim_end_matches('/')
         .trim_end_matches("/v1")
         .trim_end_matches('/');
-    let endpoint = format!("{normalized_base}{}", adapter.chat_endpoint(&typed_request.model));
+    let endpoint = format!(
+        "{normalized_base}{}",
+        adapter.chat_endpoint(&typed_request.model)
+    );
 
     // Headers come from the adapter when an api_key is present. We
     // ensure a content-type header is set in all cases so providers
     // without an explicit content-type contribution still receive
     // valid JSON.
-    let mut headers: Vec<(String, String)> = api_key
-        .map(|k| adapter.get_headers(k))
-        .unwrap_or_default();
+    let mut headers: Vec<(String, String)> =
+        api_key.map(|k| adapter.get_headers(k)).unwrap_or_default();
     if !headers
         .iter()
         .any(|(k, _)| k.eq_ignore_ascii_case("content-type"))
     {
-        headers.push((
-            "content-type".to_string(),
-            "application/json".to_string(),
-        ));
+        headers.push(("content-type".to_string(), "application/json".to_string()));
     }
 
     let mut req = client.post(&endpoint);
@@ -1894,7 +1884,10 @@ mod tests {
 
         let out = adapter.transform_request(&typed).expect("transform ok");
 
-        assert_eq!(out.get("model").and_then(|v| v.as_str()), Some("claude-sonnet-4-6"));
+        assert_eq!(
+            out.get("model").and_then(|v| v.as_str()),
+            Some("claude-sonnet-4-6")
+        );
         assert_eq!(out.get("max_tokens").and_then(Value::as_u64), Some(1000));
 
         // System is now the canonical Anthropic array shape with
@@ -1905,7 +1898,10 @@ mod tests {
             .and_then(|v| v.as_array())
             .expect("system must be array, not a bare string");
         assert_eq!(system_arr.len(), 1);
-        assert_eq!(system_arr[0].get("type").and_then(|v| v.as_str()), Some("text"));
+        assert_eq!(
+            system_arr[0].get("type").and_then(|v| v.as_str()),
+            Some("text")
+        );
         assert_eq!(
             system_arr[0].get("text").and_then(|v| v.as_str()),
             Some("System prompt")
@@ -1925,7 +1921,10 @@ mod tests {
             .and_then(|v| v.as_array())
             .expect("messages array");
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].get("role").and_then(|v| v.as_str()), Some("user"));
+        assert_eq!(
+            messages[0].get("role").and_then(|v| v.as_str()),
+            Some("user")
+        );
     }
 
     /// `OpenAI` subagent dispatch: produces a well-formed `OpenAI`-shape
@@ -1954,7 +1953,10 @@ mod tests {
             .and_then(|v| v.as_array())
             .expect("messages array");
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].get("role").and_then(|v| v.as_str()), Some("user"));
+        assert_eq!(
+            messages[0].get("role").and_then(|v| v.as_str()),
+            Some("user")
+        );
 
         // Endpoint is the OpenAI-shape chat completions path — the
         // adapter owns this string, not subagent.rs.
@@ -2266,8 +2268,7 @@ mod tests {
         // tracking side because we already registered, but the resume
         // path's load+append+re-store cycle must round-trip on the same key.
         BACKGROUND_AGENTS.register_with_id(AgentType::Explore, "chain task", &chain_id);
-        let (loaded1, t1) =
-            load_transcript(&chain_id).expect("turn-1 transcript must be loadable");
+        let (loaded1, t1) = load_transcript(&chain_id).expect("turn-1 transcript must be loadable");
         assert_eq!(loaded1.len(), turn1.len());
         assert_eq!(t1, AgentType::Explore);
 

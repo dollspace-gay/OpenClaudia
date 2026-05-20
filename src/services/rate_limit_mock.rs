@@ -180,7 +180,10 @@ mod tests {
         assert_eq!(reason, "test quota");
 
         // Second call also throttles.
-        assert!(matches!(mock.next_response(), MockResponse::Throttle { .. }));
+        assert!(matches!(
+            mock.next_response(),
+            MockResponse::Throttle { .. }
+        ));
 
         // Third call is back to Proceed because the counter exhausted.
         assert_eq!(mock.next_response(), MockResponse::Proceed);
@@ -202,7 +205,10 @@ mod tests {
         mock.set_enabled(false);
         assert_eq!(mock.next_response(), MockResponse::Proceed);
         mock.set_enabled(true);
-        assert!(matches!(mock.next_response(), MockResponse::Throttle { .. }));
+        assert!(matches!(
+            mock.next_response(),
+            MockResponse::Throttle { .. }
+        ));
     }
 
     #[test]

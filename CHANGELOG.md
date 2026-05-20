@@ -160,6 +160,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix missing `permissions` field in test AppConfig initializers after merge
 
 ### Changed
+- Keybindings: 22KB single-file config module is a God Module (#357)
+- cron_create_test invokes process-global cwd mutation poisoning sibling tests (#984)
+- PluginAction enum carries 11 variants — Tell-Don't-Ask violation forces handle_plugin_action match table to grow with every feature (#898)
+- coordinator/mod: Coordinator exposes queue_mut publicly, breaking encapsulation invariants (#852)
+- coordinator/teammate: TeammateState transitions are not enforced — bare field access permits Dead->Running (#834)
+- files_modified/issues_worked stored as newline-joined TEXT blobs — cannot be queried or indexed (#409)
+- App overlay.handle_key uses unwrap on Option that was just checked instead of if-let chain (#849)
 - thinking::has_ultrathink_keyword whole-string lowercase per scan; allocate-per-call hot path (#897)
 - PluginManager.install_from_marketplace: 160-line function violates SRP (#503)
 - modes/fragments.rs: accessor fns duplicate enum-match code across four variants — boilerplate registry (#500)

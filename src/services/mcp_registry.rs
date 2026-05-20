@@ -85,8 +85,7 @@ impl PluginMcpRegistry {
         if registrations.is_empty() {
             self.by_plugin.remove(plugin_id);
         } else {
-            self.by_plugin
-                .insert(plugin_id.to_string(), registrations);
+            self.by_plugin.insert(plugin_id.to_string(), registrations);
         }
     }
 
@@ -143,7 +142,11 @@ mod tests {
         assert_eq!(r.count(), 2);
 
         r.replace_plugin("p", vec![]);
-        assert_eq!(r.count(), 0, "empty registrations must drop the plugin entry");
+        assert_eq!(
+            r.count(),
+            0,
+            "empty registrations must drop the plugin entry"
+        );
     }
 
     #[test]

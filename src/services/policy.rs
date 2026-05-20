@@ -47,9 +47,7 @@ pub enum PolicyError {
         model: String,
     },
     /// Estimated tokens exceed the configured per-request cap.
-    #[error(
-        "request exceeds policy token cap: {estimated} > {cap} (per-{scope})"
-    )]
+    #[error("request exceeds policy token cap: {estimated} > {cap} (per-{scope})")]
     TokenCapExceeded {
         /// Estimated request size.
         estimated: usize,
@@ -60,9 +58,7 @@ pub enum PolicyError {
     },
     /// A tool has been called more times than its cap allows in this
     /// session.
-    #[error(
-        "tool `{tool}` exceeded per-session cap of {cap}; consumed={consumed}"
-    )]
+    #[error("tool `{tool}` exceeded per-session cap of {cap}; consumed={consumed}")]
     ToolCapExceeded {
         /// Canonical tool name.
         tool: String,
@@ -256,11 +252,7 @@ impl PolicyEnforcer {
     /// # Errors
     ///
     /// Returns [`PolicyError::ToolCapExceeded`] when the cap is hit.
-    pub fn check_and_record_tool(
-        &self,
-        session_id: &str,
-        tool: &str,
-    ) -> Result<(), PolicyError> {
+    pub fn check_and_record_tool(&self, session_id: &str, tool: &str) -> Result<(), PolicyError> {
         let consumed = self.counters.count(session_id, tool);
         if let Some(&cap) = self.policy.tool_caps.get(tool) {
             if consumed >= cap {
@@ -341,14 +333,26 @@ mod tests {
         };
         let enforcer = PolicyEnforcer::new(p);
 
-        assert_eq!(enforcer.evaluate_tool_call("s1", "bash"), PolicyDecision::Allow);
+        assert_eq!(
+            enforcer.evaluate_tool_call("s1", "bash"),
+            PolicyDecision::Allow
+        );
         enforcer.record_tool_invocation("s1", "bash");
-        assert_eq!(enforcer.evaluate_tool_call("s1", "bash"), PolicyDecision::Allow);
+        assert_eq!(
+            enforcer.evaluate_tool_call("s1", "bash"),
+            PolicyDecision::Allow
+        );
         enforcer.record_tool_invocation("s1", "bash");
-        assert_eq!(enforcer.evaluate_tool_call("s1", "bash"), PolicyDecision::Deny);
+        assert_eq!(
+            enforcer.evaluate_tool_call("s1", "bash"),
+            PolicyDecision::Deny
+        );
 
         // Different session has its own counter.
-        assert_eq!(enforcer.evaluate_tool_call("s2", "bash"), PolicyDecision::Allow);
+        assert_eq!(
+            enforcer.evaluate_tool_call("s2", "bash"),
+            PolicyDecision::Allow
+        );
     }
 
     #[test]
@@ -360,7 +364,9 @@ mod tests {
             ..Default::default()
         });
         assert!(enforcer.check_and_record_tool("s", "edit_file").is_ok());
-        let err = enforcer.check_and_record_tool("s", "edit_file").unwrap_err();
+        let err = enforcer
+            .check_and_record_tool("s", "edit_file")
+            .unwrap_err();
         assert!(matches!(err, PolicyError::ToolCapExceeded { .. }));
     }
 
@@ -373,9 +379,15 @@ mod tests {
             ..Default::default()
         });
         enforcer.record_tool_invocation("s", "bash");
-        assert_eq!(enforcer.evaluate_tool_call("s", "bash"), PolicyDecision::Deny);
+        assert_eq!(
+            enforcer.evaluate_tool_call("s", "bash"),
+            PolicyDecision::Deny
+        );
         enforcer.reset_session("s");
-        assert_eq!(enforcer.evaluate_tool_call("s", "bash"), PolicyDecision::Allow);
+        assert_eq!(
+            enforcer.evaluate_tool_call("s", "bash"),
+            PolicyDecision::Allow
+        );
     }
 
     #[test]

@@ -385,8 +385,7 @@ mod tests {
         let mut base = HooksConfig::default();
         base.pre_tool_use
             .push(cmd_entry(Some("Write"), "base-write"));
-        base.pre_tool_use
-            .push(cmd_entry(Some("Read"), "base-read"));
+        base.pre_tool_use.push(cmd_entry(Some("Read"), "base-read"));
 
         let mut other = HooksConfig::default();
         other

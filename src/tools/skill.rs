@@ -84,10 +84,7 @@ fn xml_attr_escape(s: &str) -> String {
 #[must_use]
 pub fn execute_skill<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String, bool) {
     let Some(name) = args.get("name").and_then(Value::as_str) else {
-        return (
-            "skill: missing required argument `name`".to_string(),
-            true,
-        );
+        return ("skill: missing required argument `name`".to_string(), true);
     };
 
     let trimmed = name.trim();

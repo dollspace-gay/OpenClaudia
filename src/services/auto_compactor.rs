@@ -94,12 +94,13 @@ impl AutoCompactor {
         actual_input_tokens: Option<usize>,
     ) -> bool {
         match self.policy {
-            AutoCompactPolicy::Auto => {
-                self.compactor.needs_compaction(request, actual_input_tokens)
-            }
+            AutoCompactPolicy::Auto => self
+                .compactor
+                .needs_compaction(request, actual_input_tokens),
             AutoCompactPolicy::AlwaysOverBudget => {
-                let analysis =
-                    self.compactor.analyze_with_hint(request, actual_input_tokens);
+                let analysis = self
+                    .compactor
+                    .analyze_with_hint(request, actual_input_tokens);
                 analysis.current_tokens >= analysis.max_tokens
             }
         }

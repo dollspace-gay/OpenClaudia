@@ -286,7 +286,10 @@ mod tests {
 
     #[test]
     fn severity_from_wire_invalid_defaults_information() {
-        assert_eq!(DiagnosticSeverity::from_wire(99), DiagnosticSeverity::Information);
+        assert_eq!(
+            DiagnosticSeverity::from_wire(99),
+            DiagnosticSeverity::Information
+        );
     }
 
     #[test]

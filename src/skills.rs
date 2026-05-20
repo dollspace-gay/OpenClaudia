@@ -105,7 +105,11 @@ pub struct SkillDefinition {
     /// CC parity: when `false`, the skill is library-only — the host UI
     /// must not surface it via `/skill <name>` invocation. Defaults to
     /// `true` so existing skills keep working.
-    #[serde(default = "default_user_invocable", rename = "user-invocable", alias = "user_invocable")]
+    #[serde(
+        default = "default_user_invocable",
+        rename = "user-invocable",
+        alias = "user_invocable"
+    )]
     pub user_invocable: bool,
     /// The prompt content (markdown body after frontmatter)
     #[serde(skip)]
@@ -138,20 +142,18 @@ pub fn skill_matches_path(skill: &SkillDefinition, touched: &Path) -> bool {
         return false;
     }
     let touched_str = touched.to_string_lossy();
-    patterns
-        .iter()
-        .any(|pat| match glob_to_regex(pat) {
-            Ok(re) => re.is_match(&touched_str),
-            Err(err) => {
-                tracing::warn!(
-                    skill = %skill.name,
-                    pattern = %pat,
-                    error = %err,
-                    "invalid glob in skill `paths` — entry ignored"
-                );
-                false
-            }
-        })
+    patterns.iter().any(|pat| match glob_to_regex(pat) {
+        Ok(re) => re.is_match(&touched_str),
+        Err(err) => {
+            tracing::warn!(
+                skill = %skill.name,
+                pattern = %pat,
+                error = %err,
+                "invalid glob in skill `paths` — entry ignored"
+            );
+            false
+        }
+    })
 }
 
 /// Translate a shell-style glob into an anchored regex.

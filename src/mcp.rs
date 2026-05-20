@@ -660,23 +660,20 @@ impl McpTransport for HttpTransport {
         if let Some(sid) = self.session_id() {
             builder = builder.header("Mcp-Session-Id", sid);
         }
-        let response = builder
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    // Per-request HTTP cap (`HTTP_REQUEST_TIMEOUT`)
-                    // fired. Phase reflects that this is a steady-state
-                    // request, not the connection-establishment
-                    // handshake (fix #628 — the latter is bounded by
-                    // `McpServer::new_with_config`).
-                    McpError::Timeout {
-                        phase: "http-request",
-                    }
-                } else {
-                    McpError::Transport(format!("HTTP request failed: {e}"))
+        let response = builder.send().await.map_err(|e| {
+            if e.is_timeout() {
+                // Per-request HTTP cap (`HTTP_REQUEST_TIMEOUT`)
+                // fired. Phase reflects that this is a steady-state
+                // request, not the connection-establishment
+                // handshake (fix #628 — the latter is bounded by
+                // `McpServer::new_with_config`).
+                McpError::Timeout {
+                    phase: "http-request",
                 }
-            })?;
+            } else {
+                McpError::Transport(format!("HTTP request failed: {e}"))
+            }
+        })?;
 
         if !response.status().is_success() {
             return Err(McpError::Transport(format!(

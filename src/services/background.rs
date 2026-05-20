@@ -337,10 +337,7 @@ impl BackgroundJob for AgentSummaryJob {
                 body.truncate(end);
                 body.push('…');
             }
-            let tags = vec![
-                "agent-summary".to_string(),
-                format!("subagent-task:{task}"),
-            ];
+            let tags = vec!["agent-summary".to_string(), format!("subagent-task:{task}")];
             match db.memory_save(&body, &tags) {
                 Ok(_) => summarised += 1,
                 Err(e) => tracing::warn!(
@@ -787,18 +784,12 @@ mod tests {
         // summary row tagged `agent-summary` + `subagent-task:T1`.
         db.memory_save(
             "step 1 — looked up the user",
-            &[
-                "subagent-task:T1".to_string(),
-                "tool-output".to_string(),
-            ],
+            &["subagent-task:T1".to_string(), "tool-output".to_string()],
         )
         .unwrap();
         db.memory_save(
             "step 2 — applied the patch",
-            &[
-                "subagent-task:T1".to_string(),
-                "tool-output".to_string(),
-            ],
+            &["subagent-task:T1".to_string(), "tool-output".to_string()],
         )
         .unwrap();
 
@@ -818,11 +809,8 @@ mod tests {
     fn agent_summary_job_is_idempotent() {
         let tmp = TempDir::new().unwrap();
         let db = make_db(&tmp);
-        db.memory_save(
-            "subagent step",
-            &["subagent-task:T2".to_string()],
-        )
-        .unwrap();
+        db.memory_save("subagent step", &["subagent-task:T2".to_string()])
+            .unwrap();
 
         let first = AgentSummaryJob.run(&db).unwrap();
         assert_eq!(first.records_deduped, 1);

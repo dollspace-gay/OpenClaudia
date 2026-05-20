@@ -133,10 +133,7 @@ impl ZipCache {
     /// Returns [`ZipCacheError::Io`] on any filesystem failure, or
     /// [`ZipCacheError::Index`] if serialization fails (which would
     /// indicate a logic error in `CacheEntry`'s derive).
-    pub fn write_index(
-        &self,
-        entries: &BTreeMap<String, CacheEntry>,
-    ) -> Result<(), ZipCacheError> {
+    pub fn write_index(&self, entries: &BTreeMap<String, CacheEntry>) -> Result<(), ZipCacheError> {
         std::fs::create_dir_all(&self.root)?;
         let body = serde_json::to_string_pretty(entries)?;
         std::fs::write(self.index_path(), body)?;
@@ -312,7 +309,9 @@ mod tests {
     fn sha256_hex_is_lowercase_64_chars() {
         let h = sha256_hex(b"");
         assert_eq!(h.len(), 64);
-        assert!(h.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(h
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
         // Spot-check against a well-known fixture: SHA-256 of "".
         assert_eq!(
             h,

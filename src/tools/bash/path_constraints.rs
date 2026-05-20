@@ -79,8 +79,7 @@ pub fn check_command_against_global(command: &str) -> Result<(), String> {
     let slot = GLOBAL_CONSTRAINTS
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    slot.as_ref()
-        .map_or(Ok(()), |pc| pc.check_command(command))
+    slot.as_ref().map_or(Ok(()), |pc| pc.check_command(command))
 }
 
 /// Allowlist of filesystem roots under which the bash tool may operate.
@@ -494,6 +493,7 @@ mod tests {
     /// `GLOBAL_CONSTRAINTS`, so they can run unsynchronised.
     fn global_test_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        LOCK.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }

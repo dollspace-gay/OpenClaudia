@@ -2395,13 +2395,9 @@ mod tests {
         let engine = HookEngine::new(config);
 
         // Case A: prompt contains "rm" ⇒ blocks.
-        let hit = HookInput::new(HookEvent::UserPromptSubmit)
-            .with_prompt("please rm -rf /tmp/foo");
+        let hit = HookInput::new(HookEvent::UserPromptSubmit).with_prompt("please rm -rf /tmp/foo");
         let result_a = engine.run(HookEvent::UserPromptSubmit, &hit).await;
-        assert!(
-            !result_a.allowed,
-            "matcher must hit the prompt slot"
-        );
+        assert!(!result_a.allowed, "matcher must hit the prompt slot");
 
         // Case B: prompt is benign, but tool_name happens to be "rm"
         // (would have falsely matched under the old heuristic).

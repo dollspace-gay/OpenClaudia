@@ -1068,8 +1068,7 @@ impl ContextCompactor {
         for (idx, &msg_idx) in analysis.messages_to_summarize.iter().enumerate() {
             keep = idx + 1;
             if let Some(msg) = request.messages.get(msg_idx) {
-                freed_estimate =
-                    freed_estimate.saturating_add(estimate_message_tokens(msg));
+                freed_estimate = freed_estimate.saturating_add(estimate_message_tokens(msg));
             }
             if freed_estimate >= must_free {
                 break;
@@ -1300,10 +1299,7 @@ pub fn extract_and_persist_memories(
         let Some(snippet) = distil_memory_snippet(&msg.role, &text) else {
             continue;
         };
-        let mut tags = vec![
-            "extracted-memory".to_string(),
-            format!("role:{}", msg.role),
-        ];
+        let mut tags = vec!["extracted-memory".to_string(), format!("role:{}", msg.role)];
         if let Some(sid) = session_id {
             tags.push(format!("session:{sid}"));
         }
@@ -3291,10 +3287,7 @@ mod tests {
             "Here is the explanation.\n\nIn summary: ownership ensures memory safety.",
         )
         .unwrap();
-        assert_eq!(
-            snippet,
-            "In summary: ownership ensures memory safety."
-        );
+        assert_eq!(snippet, "In summary: ownership ensures memory safety.");
     }
 
     /// Distillation skips non-user / non-assistant roles.

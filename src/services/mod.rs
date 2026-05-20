@@ -22,9 +22,9 @@ pub mod background;
 pub mod feature_flags;
 pub mod lsp_diagnostics;
 pub mod lsp_pool;
+pub mod mcp_registry;
 pub mod policy;
 pub mod rate_limit_mock;
-pub mod mcp_registry;
 
 pub use analytics::{AnalyticsEvent, AnalyticsSink, NoopAnalytics, TracingAnalytics};
 pub use auto_compactor::{AutoCompactPolicy, AutoCompactor};
@@ -38,9 +38,9 @@ pub use lsp_diagnostics::{
     DiagnosticSeverity, NoopDiagnosticInjector,
 };
 pub use lsp_pool::{ChildHandle, LspServerManager, LspSpawner};
+pub use mcp_registry::{McpRegistration, McpServerSpec, PluginMcpRegistry};
 pub use policy::{EnterprisePolicy, PolicyDecision, PolicyError};
 pub use rate_limit_mock::{MockRateLimit, RateLimitMock};
-pub use mcp_registry::{McpRegistration, McpServerSpec, PluginMcpRegistry};
 
 use std::sync::{Arc, RwLock};
 

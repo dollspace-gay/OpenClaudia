@@ -129,9 +129,7 @@ impl TokenBundle {
     #[must_use]
     pub fn needs_refresh(&self, safety_window: Duration) -> bool {
         let now = Self::now_epoch();
-        self.expires_at()
-            .saturating_sub(safety_window.as_secs())
-            <= now
+        self.expires_at().saturating_sub(safety_window.as_secs()) <= now
     }
 }
 
@@ -230,11 +228,7 @@ impl OAuthFlow {
     /// those values lives in the (forthcoming) transport submodule because
     /// it needs a CSPRNG. Keeping it out of this layer lets the state-
     /// machine tests use deterministic stub values.
-    pub fn start_authorization(
-        self,
-        state: String,
-        pkce: PkcePair,
-    ) -> Result<Self, OAuthError> {
+    pub fn start_authorization(self, state: String, pkce: PkcePair) -> Result<Self, OAuthError> {
         let Self::Idle { config } = self else {
             return Err(OAuthError::InvalidTransition {
                 from: self.state_name(),
@@ -261,11 +255,7 @@ impl OAuthFlow {
     /// `AwaitingAuthorization` state, or [`OAuthError::StateMismatch`]
     /// when `returned_state` does not match the value issued at
     /// [`Self::start_authorization`].
-    pub fn accept_redirect(
-        self,
-        returned_state: &str,
-        code: String,
-    ) -> Result<Self, OAuthError> {
+    pub fn accept_redirect(self, returned_state: &str, code: String) -> Result<Self, OAuthError> {
         let Self::AwaitingAuthorization {
             config,
             state,
@@ -283,11 +273,7 @@ impl OAuthFlow {
                 actual: returned_state.to_string(),
             });
         }
-        Ok(Self::Exchanging {
-            config,
-            pkce,
-            code,
-        })
+        Ok(Self::Exchanging { config, pkce, code })
     }
 
     /// Transition `Exchanging` → `Authorized`.
@@ -311,9 +297,7 @@ impl OAuthFlow {
             });
         };
         if token.access_token.is_empty() {
-            return Err(OAuthError::Malformed(
-                "access_token was empty".to_string(),
-            ));
+            return Err(OAuthError::Malformed("access_token was empty".to_string()));
         }
         if !token.token_type.eq_ignore_ascii_case("Bearer") {
             return Err(OAuthError::Malformed(format!(
@@ -407,7 +391,9 @@ mod tests {
         let flow = OAuthFlow::new(cfg())
             .start_authorization("nonce".into(), pkce())
             .unwrap();
-        let err = flow.accept_redirect("DIFFERENT", "code".into()).unwrap_err();
+        let err = flow
+            .accept_redirect("DIFFERENT", "code".into())
+            .unwrap_err();
         assert!(matches!(err, OAuthError::StateMismatch { .. }));
     }
 

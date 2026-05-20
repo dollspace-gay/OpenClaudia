@@ -170,9 +170,7 @@ fn resolve_keyword(query: &str, max_results: usize) -> Vec<&'static dyn ToolHand
 /// Required argument: `query` (string). Optional: `max_results` (integer,
 /// capped at [`MAX_RESULTS_CEILING`]). Returns `(text, is_error)`.
 #[must_use]
-pub fn execute_tool_search<S: BuildHasher>(
-    args: &HashMap<String, Value, S>,
-) -> (String, bool) {
+pub fn execute_tool_search<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String, bool) {
     let Some(query) = args.get("query").and_then(Value::as_str) else {
         return (
             "tool_search: missing required argument `query`".to_string(),
@@ -188,10 +186,9 @@ pub fn execute_tool_search<S: BuildHasher>(
         })
         .clamp(1, MAX_RESULTS_CEILING);
 
-    let matches = query.strip_prefix("select:").map_or_else(
-        || resolve_keyword(query, max_results),
-        resolve_select,
-    );
+    let matches = query
+        .strip_prefix("select:")
+        .map_or_else(|| resolve_keyword(query, max_results), resolve_select);
 
     if matches.is_empty() {
         return (

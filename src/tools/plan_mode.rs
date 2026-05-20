@@ -241,7 +241,12 @@ mod tests {
     /// successful empty-array path.
     #[test]
     fn exit_plan_mode_rejects_non_array_allowed_prompts_933() {
-        for bad in [json!("Bash"), json!(42), json!({"tool": "Bash"}), json!(true)] {
+        for bad in [
+            json!("Bash"),
+            json!(42),
+            json!({"tool": "Bash"}),
+            json!(true),
+        ] {
             let mut args = HashMap::new();
             args.insert("allowed_prompts".to_string(), bad.clone());
             let (msg, is_err) = execute_exit_plan_mode(&args);

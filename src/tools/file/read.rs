@@ -157,7 +157,9 @@ pub fn read_image_file(path: &str, kind: ImageKind) -> (String, bool) {
     // crosslink #942.
     if bytes.is_empty() {
         return (
-            format!("Image file '{path}' is empty (0 bytes); refusing to send empty base64 payload"),
+            format!(
+                "Image file '{path}' is empty (0 bytes); refusing to send empty base64 payload"
+            ),
             true,
         );
     }

@@ -345,10 +345,7 @@ pub const MAX_API_RETRIES: u32 = 10;
 ///   * 529 — Anthropic-specific "service overloaded"
 #[must_use]
 pub const fn is_retryable_status(status: u16) -> bool {
-    matches!(
-        status,
-        408 | 409 | 429 | 500 | 502 | 503 | 504 | 529
-    )
+    matches!(status, 408 | 409 | 429 | 500 | 502 | 503 | 504 | 529)
 }
 
 /// Transport-layer errors that warrant a retry.
@@ -396,10 +393,10 @@ fn backoff_with_jitter(attempt: u32) -> u64 {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| u64::from(d.subsec_nanos()));
     let jitter = nanos % (max_jitter * 2 + 1); // 0..=2*max_jitter
-    // Apply jitter as an unsigned offset around the base. Adding
-    // `jitter` then subtracting `max_jitter` keeps everything unsigned
-    // and saturates at 1 (we never want a 0-second sleep on a stuck
-    // transient).
+                                               // Apply jitter as an unsigned offset around the base. Adding
+                                               // `jitter` then subtracting `max_jitter` keeps everything unsigned
+                                               // and saturates at 1 (we never want a 0-second sleep on a stuck
+                                               // transient).
     let raw = base.saturating_add(jitter).saturating_sub(max_jitter);
     raw.max(1)
 }
@@ -2315,8 +2312,14 @@ mod tests {
     /// Pins the descent through the Claude tiers.
     #[test]
     fn issue_598_claude_family_downgrade_path() {
-        assert_eq!(overload_fallback_for("claude-opus-4-5"), "claude-sonnet-4-5");
-        assert_eq!(overload_fallback_for("claude-sonnet-4-5"), "claude-haiku-4-5");
+        assert_eq!(
+            overload_fallback_for("claude-opus-4-5"),
+            "claude-sonnet-4-5"
+        );
+        assert_eq!(
+            overload_fallback_for("claude-sonnet-4-5"),
+            "claude-haiku-4-5"
+        );
         // Haiku has no further downgrade — empty hint, but the event
         // is still emitted by send_with_retry so log consumers see it.
         assert_eq!(overload_fallback_for("claude-haiku-4-5"), "");
@@ -2352,7 +2355,10 @@ mod tests {
             AppEvent::OverloadFallback { model_hint } => {
                 assert_eq!(model_hint, "claude-haiku-4-5");
             }
-            other => panic!("expected OverloadFallback, got {}", describe_app_event(&other)),
+            other => panic!(
+                "expected OverloadFallback, got {}",
+                describe_app_event(&other)
+            ),
         }
     }
 

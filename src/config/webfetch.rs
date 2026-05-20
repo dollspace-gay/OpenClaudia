@@ -153,7 +153,6 @@ mod tests {
     }
 }
 
-
 /// Default preapproved-domain list shipped with `OpenClaudia`.
 ///
 /// Mirrors CC's bundled allowlist: documentation sites for the major
@@ -349,9 +348,6 @@ mod preapproved_tests {
     fn is_preapproved_handles_www_prefix() {
         let list = vec!["wikipedia.org".to_string()];
         assert!(is_preapproved("https://www.wikipedia.org/wiki/X", &list));
-        assert!(is_preapproved(
-            "https://en.wikipedia.org/wiki/Rust",
-            &list
-        ));
+        assert!(is_preapproved("https://en.wikipedia.org/wiki/Rust", &list));
     }
 }
