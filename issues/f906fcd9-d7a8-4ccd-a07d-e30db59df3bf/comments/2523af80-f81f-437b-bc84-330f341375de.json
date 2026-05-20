@@ -1,0 +1,10 @@
+{
+  "uuid": "2523af80-f81f-437b-bc84-330f341375de",
+  "issue_uuid": "f906fcd9-d7a8-4ccd-a07d-e30db59df3bf",
+  "author": "lOrm",
+  "content": "Duplicate of #285 (closed 2026-05-19). Session.turn_metrics is now bounded by MAX_TURN_METRICS=1000 in src/session/mod.rs (verified at HEAD f0c5612b — grep shows the const at L72, eviction at L381-382, and the regression test issue_285_turn_metrics_stays_bounded_under_push_pressure pushing 10000 turns and asserting len <= 1000). cumulative_usage is the archived counter of evicted entries, matching the refactor #865 mandated.",
+  "created_at": "2026-05-20T12:03:42.334318718Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAXdXtcEJQ7tI3xSCavybOPN/+yrtbwdJVd6mq/2GPB6q1nrVnjtZpUy2Z/WUhdpfy327YUw6wWFJfV/GTj6qVBQ=="
+}
