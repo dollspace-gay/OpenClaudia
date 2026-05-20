@@ -1,0 +1,10 @@
+{
+  "uuid": "87ac0262-60e0-444b-8c42-51a0bde1b7c9",
+  "issue_uuid": "2ed72ee7-8105-49db-833f-85fe1f49e397",
+  "author": "lOrm",
+  "content": "Verified-fixed. get_adapter at src/providers/mod.rs:349-368 returns Result<&'static dyn ProviderAdapter, ProviderError> and explicitly errors on unknown providers with ProviderError::UnknownProvider { name, supported }. No more silent OpenAI fallback. The fallback arm cited in the QA report (warn-and-return-OpenAIAdapter) no longer exists. Fixed by commit a698afd4 — closing as duplicate of #433.",
+  "created_at": "2026-05-20T04:33:34.711312847Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA2W5T521odW9n1VzV5S/Bq0fDKcZdPWdTFrL9Ou5wbY441v0E/xYmRkXnYalFS+Wlr1AYjtwjLrHUFV7S6x3uBw=="
+}
