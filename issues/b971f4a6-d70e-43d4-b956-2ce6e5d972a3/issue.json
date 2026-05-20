@@ -3,11 +3,12 @@
   "display_id": 901,
   "title": "validate_cron does not handle step+range combinations like 0-30/5 (incomplete parser)",
   "description": "## Severity\nMinor\n\n## Dimension\nFunctional Correctness / KISS (the parser is custom when a library exists)\n\n## Location\nsrc/tools/cron.rs:59-140 (validate_cron)\n\n## Violation\nThe hand-rolled validator handles:\n- \"*\" (line 82)\n- \"*/N\" step-from-zero (lines 85-103)\n- \"A-B\" ranges (lines 105-125)\n- \"A,B,C\" comma lists (lines 127-138)\n\nIt does NOT handle the common combination \"A-B/N\" (e.g. \"0-30/5 * * * *\" meaning every 5 minutes from 0 to 30). It also rejects field \"1,3-5,8\" because the comma branch parses each piece as a flat integer (line 128: `val_str.parse::<u32>()`) — \"3-5\" fails to parse and is reported as \"Invalid value '3-5'.\" Test test_validate_cron_valid only exercises the simple cases; the parser is incomplete by construction.\n\nWorse, the validator is custom and incomplete when the cron crate (already on crates.io, MIT-licensed, ~50 LOC import) handles the full POSIX cron grammar.\n\n## Mandated refactor\nReplace the entire validate_cron function with a dependency on the cron crate: `cron::Schedule::from_str(expr).map_err(|e| e.to_string())?;`. The crate validates field count, ranges, steps, ranges-with-steps, comma lists, and named months/weekdays. Delete the ~80 lines of hand-rolled parser and its incomplete test cases.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:13:39.694284281Z",
-  "updated_at": "2026-05-18T22:13:58.103843295Z",
+  "updated_at": "2026-05-20T12:23:20.884196595Z",
+  "closed_at": "2026-05-20T12:23:20.884196595Z",
   "labels": [
     "qa-review",
     "kiss"
