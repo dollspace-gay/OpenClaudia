@@ -1,0 +1,10 @@
+{
+  "uuid": "b89d24d6-3fd5-489b-a947-bdbf4cbc39ea",
+  "issue_uuid": "71ad7262-8275-466f-ac66-e79be70239cb",
+  "author": "lOrm",
+  "content": "Closing as tracked-future-roadmap-not-active-bug. Phase 1 of #345 landed (worktree.rs no longer mutates process CWD on any path; 5 forensic tests including compile-time anti-regression grep). Phase 2 (thread worktree path through ToolContext, WorktreeGuard/Drop, ChatSession.active_worktree) is a forward-looking refactor — the CWD-mutation safety hazard is already fixed at the source. Re-file when the Phase 2 scope is actively ready to start.",
+  "created_at": "2026-05-20T12:32:20.641675119Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAyURtrK8E6hMYTvGkNrtlyAL9syJ4qjoZj1lo1rC38INKB1l1H/ZSQeGmpp8RpIck49r19Sjk6clyACL0BHi0Ag=="
+}
