@@ -1,0 +1,10 @@
+{
+  "uuid": "f1b1cf53-b63c-4d53-b610-c2154b1139ce",
+  "issue_uuid": "62403f03-075f-434e-ab12-46788de19975",
+  "author": "lOrm",
+  "content": "Phase 1 behavioral spec for slash commands (model/compact/resume/rewind/mcp/hooks/permissions/agents/skills/cost/plan/thinkback/teleport/effort/fast). Body shows partial spec was started. Not addressable in this cleanup session: external-source research. Phase 2 code work is #554. Per-command Phase 2 implementations tracked under #653 (/rewind), #657 (/teleport stub), #659 (/thinkback), #662 (/fast), #663 (/mcp expansion), #666 (/hooks + /permissions UIs). Owner-level external research.",
+  "created_at": "2026-05-20T14:34:16.838233695Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA0y/YfEa83STr//ny6V8kMF2mDNO0cijKN8qJFamCIayvdo89z/IPgKLGzxpQBejllK+DAxsymfg/KWGuIcUqBw=="
+}
