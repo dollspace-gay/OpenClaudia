@@ -3,12 +3,13 @@
   "display_id": 576,
   "title": "OC glob single-star (* vs .*) diverges from CC shell rule matching — broken rule portability",
   "description": "## Summary\n\nCC's matchWildcardPattern (utils/permissions/shellRuleMatching.ts:129) converts * to .* (matches any character including / and newlines). OC's glob_to_regex (src/permissions.rs:363-364) converts * to [^/]* (stops at path separators).\n\nAlso: CC pattern 'git *' with a single trailing wildcard compiles to 'git( .*)?' making the space+args optional (line 143-145), so bare 'git' matches 'git *'. OC does not have this optional-trailing-space behavior.\n\n## Behavioral divergences\n- CC 'rm *' matches 'rm -rf /' (/ matched by .*); OC does not match (blocked by [^/]*)\n- CC 'git *' matches bare 'git'; OC requires a space after 'git'\n- CC legacy 'git:*' prefix syntax matches 'git status'; OC treats : as literal, never matches shell commands\n\n## Security relevance (medium)\nOC is MORE restrictive for single-star rules involving path separators. Users copying CC rules to OC get unexpectedly restrictive behavior without any error. The OC rules silently do not match what the user intends. Conversely, an OC 'git *' rule that a user adds to allow git will fail to allow bare 'git', creating UX friction.\n\n## Behaviors to align\n- Option A: change OC * to .* for bash command matching only (match CC semantics)\n- Option B: document the divergence and add test cases that assert OC's stricter behavior\n- Option C: add CC-style prefix (:*) syntax to OC rule parser\n\n## Parent issue\n#531\n\n## References\n- CC: utils/permissions/shellRuleMatching.ts:90-154\n- CC: utils/permissions/shellRuleMatching.ts:43-48 (permissionRuleExtractPrefix)\n- OC: src/permissions.rs:353-394 (glob_to_regex)",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:52:45.637192273Z",
-  "updated_at": "2026-05-18T15:52:51.092461558Z",
+  "updated_at": "2026-05-20T03:58:50.626416676Z",
+  "closed_at": "2026-05-20T03:58:50.626416676Z",
   "labels": [
     "feature",
     "cc-parity"
