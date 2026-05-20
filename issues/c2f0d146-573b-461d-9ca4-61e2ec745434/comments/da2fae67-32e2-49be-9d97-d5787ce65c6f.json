@@ -1,0 +1,10 @@
+{
+  "uuid": "da2fae67-32e2-49be-9d97-d5787ce65c6f",
+  "issue_uuid": "c2f0d146-573b-461d-9ca4-61e2ec745434",
+  "author": "lOrm",
+  "content": "Issue calls for a SystemGateway trait abstracting std::process::Command, std::fs, and config::load_config calls currently embedded in TUI slash-command branches (/diff, /init, /doctor, /review, /files, /export, /load) so the render thread doesn't block on git/shell/filesystem I/O. Not addressable in a cleanup pass: tightly coupled to #253 (App decomposition) and #259 (slash registry) — the gateway is owned by App.Services per #253. Should land as part of the larger TUI architectural refactor wave, not as a point change. Owner-level scope.",
+  "created_at": "2026-05-20T14:33:04.915340954Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABATWO6JDGRMuuXQ71y5zIkSmMxp0g6aCAwGKUVsh+1R8XFflt/szaMcsEnNcBh8deGQhGh2uJOjgHTsWoR58Y5Dw=="
+}
