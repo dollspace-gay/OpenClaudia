@@ -1,0 +1,10 @@
+{
+  "uuid": "12b99e67-a66a-42f2-84c0-899de5cc8e91",
+  "issue_uuid": "64bf17a2-e9ba-4679-9cb1-6bec93678e79",
+  "author": "lOrm",
+  "content": "#666 closed. Added /permissions and /hooks to MANAGEMENT section of src/slash_commands.rs. Surface registration is in place — both entries appear in /help and the TUI cheatsheet. PermissionRuleList overlay + parallel HooksSettings overlay depend on #520 overlay framework + #253 App refactor; this issue tracked surface registration only.",
+  "created_at": "2026-05-20T20:37:59.723211410Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAtJnGyv6WRqJGvjQVwOCjD1DK6pbfhBAhHOJb07QAEMtemo7xXdytVsLVo4Pm2Ir9KQtMXM0Ltxm8NfYPruvAAg=="
+}
