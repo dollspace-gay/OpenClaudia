@@ -3,11 +3,12 @@
   "display_id": 670,
   "title": "Tool result type uses (String, bool) primitive pair instead of Result<T, E>",
   "description": "## Severity\nCritical\n\n## Dimension\nError Orchestration / Decoupling / SOLID-I (ISP)\n\n## Location\nsrc/tools/file/read.rs:40, src/tools/file/write.rs:9, src/tools/file/edit.rs:9, src/tools/file/notebook.rs:49, src/tools/file/list.rs:7, src/tools/file/mod.rs:188, src/tools/plan_mode.rs:8, src/tools/worktree.rs:59, src/tools/cron.rs:142, src/tools/todo.rs:76 (every public executor)\n\n## Violation\nEvery tool executor in this subsystem returns `(String, bool)` where `bool` means is_error. Quoting `read_text_file` (read.rs:273):\n\n```rust\npub fn read_text_file(path: &str, args: &HashMap<String, Value>) -> (String, bool) {\n    ...\n    Err(e) => (format!(\"Failed to read file '{path}': {e}\"), true),\n```\n\nThis is a textbook boolean-flag-return anti-pattern (Section 3.3 — \"Reject boolean flag arguments immediately\"). It throws away typed error information, conflates the success and error channels in one type, prevents `?` propagation, forces every caller to remember which slot is which, and obstructs structured logging (no error kind, source, or context). Callers cannot pattern-match on error variants; they can only grep the message string.\n\n## Mandated refactor\nIntroduce a typed `ToolError` enum (with `thiserror`) and change every executor signature to `Result<ToolOutput, ToolError>` where `ToolOutput` is a struct carrying `payload: String` plus typed metadata (warnings, diff blocks). Replace the `(message, true)` returns with `Err(ToolError::MissingArg(\"path\"))`, `Err(ToolError::PathTraversal(p))`, `Err(ToolError::ReadBeforeEditViolation)`, etc. Have a single boundary adapter convert `Result<ToolOutput, ToolError>` into the wire format at the dispatch layer, not at every executor.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:46:10.770547874Z",
-  "updated_at": "2026-05-18T21:46:20.268347077Z",
+  "updated_at": "2026-05-20T13:26:22.836216642Z",
+  "closed_at": "2026-05-20T13:26:22.836216642Z",
   "labels": [
     "qa-review",
     "error-handling"
