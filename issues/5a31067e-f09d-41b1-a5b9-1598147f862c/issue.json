@@ -3,11 +3,12 @@
   "display_id": 932,
   "title": "slash_login uses tokio::runtime::Handle::current() unwrap-style — panics outside a runtime",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/cli/repl/slash.rs:569-587, src/cli/repl/slash.rs:443-456\n## Violation\nslash_login calls Handle::current() without try_current() inside a synchronous slash handler. Quoted lines:\n\n    if let Ok(creds) = tokio::runtime::Handle::current().block_on(openclaudia::claude_credentials::load_credentials()) {\n        println!(\"  Type: {}\", creds.subscription_type.as_deref().unwrap_or(\"unknown\"));\n        ...\n    }\n\n`Handle::current()` panics when called outside a runtime — and the slash dispatcher does not guarantee one is present (the function lives in a sync REPL handler). slash_model at line 446-455 correctly uses `Handle::try_current()` then if-lets — the asymmetry inside the same file shows the author knew the safer pattern but did not apply it uniformly. Calling `Handle::current().block_on(...)` from inside an async runtime ALSO panics (cannot block_on the current runtime from a worker thread).\n## Mandated refactor\nReplace with `if let Ok(handle) = tokio::runtime::Handle::try_current() { handle.block_on(...) }` matching slash_model's pattern. Better: make the whole slash dispatcher async (it already returns through into a tokio context) so block_on disappears entirely and the credentials fetch awaits naturally.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:17:43.986864926Z",
-  "updated_at": "2026-05-18T22:18:03.399985924Z",
+  "updated_at": "2026-05-20T12:57:46.626546842Z",
+  "closed_at": "2026-05-20T12:57:46.626546842Z",
   "labels": [
     "qa-review",
     "error-handling"
