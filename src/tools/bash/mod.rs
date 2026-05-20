@@ -4,7 +4,10 @@ mod policy;
 
 pub use kill::{execute_kill_shell, terminate_process_tree};
 pub use output::execute_bash_output;
-pub use policy::{apply_env_scrub, is_sensitive_env, validate_command};
+pub use policy::{
+    apply_env_scrub, dangerous_shell_construct, is_safe_for_auto_allow, is_sensitive_env,
+    validate_command,
+};
 
 use crate::tools::safe_truncate;
 use serde_json::Value;
@@ -412,6 +415,25 @@ pub fn execute_bash(args: &HashMap<String, Value>) -> (String, bool) {
 
     if let Err(msg) = validate_command(command) {
         return (msg, true);
+    }
+
+    // Diagnostic: log whether the command would qualify for auto-allow under
+    // the CC-parity safety check (`bashCommandIsSafe_DEPRECATED`). This does
+    // NOT gate execution — the permissions layer owns the actual prompt
+    // decision — but exposes a structured signal for the permissions wire-up
+    // (crosslink #589) and for ops-side audit of which commands the model is
+    // running unprompted.
+    if is_safe_for_auto_allow(command) {
+        tracing::debug!(
+            command = %command,
+            "#589: bash command eligible for safety auto-allow (read-only + no dangerous constructs)"
+        );
+    } else if let Some(reason) = dangerous_shell_construct(command) {
+        tracing::debug!(
+            command = %command,
+            reason = reason,
+            "#589: bash command contains dangerous shell construct — auto-allow refused"
+        );
     }
 
     // Check if this should run in background
@@ -1018,8 +1040,10 @@ mod tests {
             }));
         }
 
-        let results: Vec<Result<String, String>> =
-            handles.into_iter().map(|h| h.join().expect("join")).collect();
+        let results: Vec<Result<String, String>> = handles
+            .into_iter()
+            .map(|h| h.join().expect("join"))
+            .collect();
         let successes = results.iter().filter(|r| r.is_ok()).count();
         let cap_errors = count_capacity_errors(&results);
 
@@ -1084,8 +1108,10 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_micros(200));
         }
 
-        let results: Vec<Result<String, String>> =
-            handles.into_iter().map(|h| h.join().expect("join")).collect();
+        let results: Vec<Result<String, String>> = handles
+            .into_iter()
+            .map(|h| h.join().expect("join"))
+            .collect();
 
         // Teardown
         for id in results.iter().flatten() {
