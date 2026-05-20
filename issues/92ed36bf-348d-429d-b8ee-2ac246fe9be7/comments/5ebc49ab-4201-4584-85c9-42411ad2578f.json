@@ -1,0 +1,10 @@
+{
+  "uuid": "5ebc49ab-4201-4584-85c9-42411ad2578f",
+  "issue_uuid": "92ed36bf-348d-429d-b8ee-2ac246fe9be7",
+  "author": "lOrm",
+  "content": "Issue calls for fixing the retry loop in src/pipeline.rs:330-367: bound iterations as 0..max_retries (not 0..=max_retries), decouple retry decision from message emission so 'Retrying in Xs' isn't printed on an attempt that won't retry, add jitter to avoid lockstep retries on concurrent 429s, and cap total elapsed retry time. Per the 2026-05-20 result comment, src/pipeline.rs is in the forbidden-files list for the recent bulk fix; grep confirmed no parallel retry implementation outside pipeline.rs. Real bug — should be revisited in a future change-set that includes pipeline.rs in scope.",
+  "created_at": "2026-05-20T14:41:12.580010194Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAKXRek+9g+2E0gCS+iYEEWrGhwVsS47EXnyY5mfZhKkSnO3Lj4/dKU/wCXZdtewt7OlJUhOIJwYFz9/96S3NqCQ=="
+}
