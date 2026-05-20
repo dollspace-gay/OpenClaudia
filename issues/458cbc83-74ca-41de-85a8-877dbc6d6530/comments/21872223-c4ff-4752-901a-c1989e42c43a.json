@@ -1,0 +1,10 @@
+{
+  "uuid": "21872223-c4ff-4752-901a-c1989e42c43a",
+  "issue_uuid": "458cbc83-74ca-41de-85a8-877dbc6d6530",
+  "author": "lOrm",
+  "content": "Issue calls for a secondary Haiku model distillation step on web_fetch (parity with CC applyPromptToMarkdown — tool input becomes {url, prompt}, output is model-distilled answer not raw page). Not addressable in a cleanup pass: requires a configurable secondary-model dispatch, tool schema change (add prompt field), and answer extraction. Multi-day feature. Parent audit #523.",
+  "created_at": "2026-05-20T14:37:42.187369925Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA8zhG9FvrO7Yc8JVL1kndTJ7hnjjUKf2xY9U+GO7B58WPR5jBEnrOMO6GPoZHvX5X3H7oGZrtWP4M+wYObec9BA=="
+}
