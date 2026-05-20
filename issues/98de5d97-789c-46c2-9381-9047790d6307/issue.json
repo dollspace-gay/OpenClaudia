@@ -3,12 +3,13 @@
   "display_id": 569,
   "title": "FileEditTool: replace_all parameter unsupported in OC (silent flag drop)",
   "description": "## Summary\n\nCC's FileEditTool supports a `replace_all: boolean` parameter that, when true, replaces every occurrence of `old_string` with `new_string`. OC's `execute_edit_file` (`src/tools/file/edit.rs:84-95`) unconditionally rejects multi-occurrence matches regardless of `replace_all`. The flag is silently dropped: callers passing `replace_all=true` get the same multi-occurrence rejection as if they passed it false or omitted it.\n\n## CC Reference\n\n- `tools/FileEditTool/FileEditTool.ts:329-343` (validateInput, counts matches and gates on `replace_all`)\n- `tools/FileEditTool/FileEditTool.ts:482-488` (`getPatchForEdit({ replaceAll: replace_all })` → `file.replaceAll(actualOldString, new_string)`)\n\n## Gap\n\n`src/tools/file/edit.rs:84-95` — count > 1 always errors; `replace_all` field is not threaded into the multi-occurrence path. Single-occurrence with `replace_all=true` silently ignores the flag (works only because count=1 already uses `replacen(_,_,1)`).\n\n## Parent Spec Issue\n\nDiscovered during Phase 1 spec extraction for #525.",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:47:23.739463043Z",
-  "updated_at": "2026-05-18T15:47:26.912454823Z",
+  "updated_at": "2026-05-20T03:58:55.940643249Z",
+  "closed_at": "2026-05-20T03:58:55.940643249Z",
   "labels": [
     "feature",
     "cc-parity"
