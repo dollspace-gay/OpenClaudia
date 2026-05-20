@@ -1,0 +1,10 @@
+{
+  "uuid": "87b5a3da-7a6e-4d8e-b581-56a6bbf6c4f1",
+  "issue_uuid": "fc394543-2a7c-4674-b416-6981c2fd99fa",
+  "author": "lOrm",
+  "content": "Verified still present at src/tui/app.rs:906-911 (HEAD 3c860e85, was cited as :659-664 before the file grew). The is_some()-then-unwrap pattern is unchanged. Tiny fix: collapse to 'if let Some(overlay) = self.overlay.as_mut() { let action = match overlay { ... }; ... }'. Leaving open for a future code-dispatch pass — this is a 3-line mechanical edit that does not need architectural triage.",
+  "created_at": "2026-05-20T14:15:40.773609659Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAnclKij465ki+8NHD2GrzqaA9niTGGSckRBIMpP997O/o0opiK84bWG5K3/RJHERzsEwrQ6fcSbvuovAT1GaBDA=="
+}
