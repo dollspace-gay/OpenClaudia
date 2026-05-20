@@ -3,9 +3,10 @@
   "display_id": 748,
   "title": "install_from_marketplace TOCTOU — dest.exists() check is racy and there is no atomic create-or-fail",
   "description": "## Severity\nMinor\n## Dimension\nsecurity\n## Location\nsrc/plugins/manager.rs:557-571, src/plugins/manager.rs:629-672, src/plugins/manager.rs:731-769\n## Violation\nThe install path checks `dest.exists()` then later calls `fs::create_dir_all` followed by `git_clone` or `copy_dir_recursive`. The window between the existence check and the create allows a concurrent install (or a malicious symlink swap) to repurpose dest. Quoted lines:\n\n    let dest = plugins_dir.join(plugin_name);\n    if dest.exists() {\n        return Err(PluginError::InvalidManifest(format!(\n            \"Plugin '{}' already exists at {}\",\n            plugin_name,\n            dest.display()\n        )));\n    }\n    ...\n    fs::create_dir_all(&plugins_dir).map_err(...)?;\n    git_clone(url, &dest, git_ref)?;\n\nA second concurrent `/plugin install foo` can pass the check before either has materialised dest; the loser's `git clone` is into the winner's tree. A symlink at .openclaudia/plugins/foo → /tmp pointed at it before the check evaluates can also cause data to land outside the jail (git clone refuses, but copy_dir_recursive on the PluginSource::Path branch does not — it writes through the symlink).\n## Mandated refactor\nReplace `dest.exists()` + later create with a single atomic mkdir-then-rename: clone/copy into a temp dir under .openclaudia/plugins/.tmp-<uuid>/, then atomically `fs::rename` into the final name. The rename fails if the destination already exists (or is a symlink), giving an atomic create-or-fail. Hold an advisory lock (fs2 / fcntl) on .openclaudia/plugins/ during install to serialise concurrent installs.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:53:45.340328542Z",
-  "updated_at": "2026-05-18T21:53:45.340328542Z"
+  "updated_at": "2026-05-20T07:13:17.589017920Z",
+  "closed_at": "2026-05-20T07:13:17.589017920Z"
 }
