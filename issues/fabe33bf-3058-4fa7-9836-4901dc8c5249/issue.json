@@ -3,12 +3,13 @@
   "display_id": 630,
   "title": "Add SSE, WebSocket, and Streamable-HTTP MCP transports",
   "description": "CC connectToServer (client.ts:619-960) supports 8 transport types: stdio, sse (SSEClientTransport), sse-ide, ws (WebSocketTransport), ws-ide, http (StreamableHTTPClientTransport), sdk, claudeai-proxy. OC src/mcp.rs implements only StdioTransport (line 139) and HttpTransport (plain JSON-RPC POST, line 276) — neither SSE nor WebSocket nor the MCP Streamable HTTP spec (application/json, text/event-stream multiplexed). SSE is the most common remote transport in the MCP ecosystem; its absence blocks connecting to any cloud-hosted MCP server. Required: implement SseTransport and/or StreamableHttpTransport conforming to MCP 2025-03-26 transport spec.",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:04:14.865688403Z",
-  "updated_at": "2026-05-20T16:58:36.247620717Z",
+  "updated_at": "2026-05-20T19:54:55.132692294Z",
+  "closed_at": "2026-05-20T19:54:55.132692294Z",
   "labels": [
     "feature",
     "cc-parity"
