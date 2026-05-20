@@ -2,13 +2,12 @@
   "uuid": "eb6fc3b5-6604-4578-b81a-b5380d7c7579",
   "display_id": 656,
   "title": "Add offline plugin distribution via zip cache (parity with CC zipCache.ts)",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "21e13dad-6fac-4ae8-9f1c-62788c0392cb",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:10:12.449080679Z",
-  "updated_at": "2026-05-20T14:43:00.363193658Z",
-  "closed_at": "2026-05-20T14:43:00.363193658Z",
+  "updated_at": "2026-05-20T16:59:09.460571612Z",
   "labels": [
     "parity,cc-plugins-skills"
   ]
