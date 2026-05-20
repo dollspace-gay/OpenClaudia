@@ -3,11 +3,12 @@
   "display_id": 674,
   "title": "QA: race between stdout-EOF and process-wait when setting finished flag",
   "description": "## Severity\nMajor\n## Dimension\nconcurrency\n## Location\nsrc/tools/bash/mod.rs:117-152\n## Violation\n`finished` is set to `true` from TWO independent threads — the stdout reader (line 124) and the wait thread (line 150). The stdout reader sets `finished=true` on stdout EOF, which can fire BEFORE `child.wait()` reaps the child and populates `exit_status`. Consumers observe `is_running=false` with `exit_code=None` — an impossible state per the public contract.\n\nQuoted source (mod.rs:117-152):\n```\n            thread::spawn(move || {\n                let reader = BufReader::new(stdout);\n                for line in reader.lines().map_while(Result::ok) {\n                    if let Ok(mut buf) = buffer.lock() {\n                        buf.push(line);\n                    }\n                }\n                finished_clone.store(true, Ordering::SeqCst);\n            });\n...\n        thread::spawn(move || {\n            if let Ok(status) = child_for_wait.wait() {\n                if let Ok(mut es) = exit_status_clone.lock() {\n                    *es = status.code();\n                }\n                finished_clone.store(true, Ordering::SeqCst);\n            }\n        });\n```\n\nThe test `b3_get_output_finished_shell_is_running_false` already hides this race with a 400ms sleep.\n## Mandated refactor\n1. Remove the `finished.store(true)` from the stdout reader; only the wait thread is authoritative for process lifecycle.\n2. Introduce separate flags: `stdout_closed`, `stderr_closed`, `reaped` if any consumer truly cares about stream EOF.\n3. Make `get_output` only return `is_running=false` after the wait thread has populated `exit_status`, so the (is_running=false, exit_code=None) state cannot be observed.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:46:25.690313027Z",
-  "updated_at": "2026-05-19T20:39:39.334158298Z",
+  "updated_at": "2026-05-20T00:07:49.699961207Z",
+  "closed_at": "2026-05-20T00:07:49.699961207Z",
   "labels": [
     "qa-review",
     "concurrency"
