@@ -3,11 +3,12 @@
   "display_id": 859,
   "title": "auto_learn::compute_file_relationships is O(N²) in modified-file set without cap",
   "description": "## Severity\nMinor\n## Dimension\ncomplexity\n## Location\nsrc/auto_learn.rs:319-338 (compute_file_relationships)\n## Violation\n```rust\nfn compute_file_relationships(&self) {\n    let files: Vec<&String> = self.session_files_modified.iter().collect();\n    if files.len() < 2 { return; }\n    for i in 0..files.len() {\n        for j in (i + 1)..files.len() {\n            if let Err(e) = self.db.save_file_relationship(files[i], files[j]) { ... }\n        }\n    }\n}\n```\n\n`session_files_modified` is a `HashSet<String>` with no cap. A long-running session that edits 1000 distinct files triggers ~500K `save_file_relationship` calls at `on_session_end`. Each call is a SQLite INSERT — at typical 100 µs per write, that's 50 seconds of synchronous DB work on session close, with the user waiting at the terminal.\n\nCombined with `prune_old_data`'s cap of `MAX_FILE_RELATIONSHIPS = 500`, the pruning thereafter throws away ~99.9% of the work just performed. The two functions silently contradict each other: pair generation is O(N²), prune is O(N) keeping K rows, and the net useful output is bounded by K regardless of how much work was paid.\n## Mandated refactor\nCap `session_files_modified` at e.g. 50 entries (LRU eviction in `handle_file_write_success`). Or: batch the INSERTs into a single transaction (`self.db.batch_save_file_relationships(&pairs)` with `BEGIN..COMMIT`). Or — best — replace pairwise edges with a per-session relationship \"session_id, file_path, modified_at\" log and compute co-edit similarity at query time via a JOIN, sidestepping the N² blow-up entirely.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:08:18.604856380Z",
-  "updated_at": "2026-05-18T22:08:55.237966528Z",
+  "updated_at": "2026-05-20T12:21:56.591325392Z",
+  "closed_at": "2026-05-20T12:21:56.591325392Z",
   "labels": [
     "qa-review",
     "complexity"
