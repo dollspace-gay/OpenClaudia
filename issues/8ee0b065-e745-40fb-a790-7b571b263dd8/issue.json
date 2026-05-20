@@ -3,11 +3,12 @@
   "display_id": 795,
   "title": "QA: dangerously_disable_sandbox in tool args only logs, doesn't deny (permissions.rs)",
   "description": "## Severity\nMinor\n## Dimension\nsecurity\n## Location\nsrc/permissions.rs:155-169\n## Violation\nWhen the model tries to inject `dangerously_disable_sandbox: true` into a\nBash tool call, the permission manager only logs a warning and falls\nthrough to normal rule processing:\n```rust\nif canonical_tool == \"Bash\" {\n    if let Some(disable) = tool_args.get(\"dangerously_disable_sandbox\") {\n        if disable.as_bool().unwrap_or(false) {\n            warn!(\n                tool = %canonical_tool,\n                target = %target,\n                \"Model attempted dangerously_disable_sandbox=true in tool args — IGNORED. \\\n                 This flag is only honored from user-level configuration.\"\n            );\n        }\n    }\n}\n```\nThe flag is \"ignored\" — but the call still proceeds through the normal\nchecks. If `default_allow` matches the command, it runs. A clear prompt\ninjection attempt by the model results in zero defensive action beyond a\nlog line that may or may not be audited. The test\n`test_dangerously_disable_sandbox_in_tool_args_is_ignored` confirms the\ncall still falls through to `NeedsPrompt` in the no-rules case but does\nNOT test the `default_allow=[\"*\"]` case.\n## Mandated refactor\nReturn `CheckResult::Denied(\"Model attempted to disable sandbox via tool\nargs; refusing\")` instead of warn-and-continue. A model attempting this\ninjection is hostile and should not get any further permission\nevaluation. Add a counter / metric for \"sandbox bypass attempts\" so\noperators can detect compromised sessions. Add a test that proves the\ncall is denied even with `default_allow=[\"**\"]`.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:59:33.282130980Z",
-  "updated_at": "2026-05-18T21:59:40.819145160Z",
+  "updated_at": "2026-05-20T14:12:21.684143960Z",
+  "closed_at": "2026-05-20T14:12:21.684143960Z",
   "labels": [
     "qa-review"
   ]
