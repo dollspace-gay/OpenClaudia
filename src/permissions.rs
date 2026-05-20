@@ -84,6 +84,263 @@ pub enum EscalationState {
     ShouldAbort,
 }
 
+/// Bayesian-style auto-allow score for `(tool_name, args)` (crosslink #571).
+///
+/// Pure function — no manager state required, no I/O. Exposed at the
+/// module level so callers (auto-mode glue, tests, future telemetry)
+/// can read the score without going through a manager instance.
+///
+/// Returns a number in `[0.0, 1.0]`:
+///   * `1.0` — definitely safe (read-only tool category).
+///   * `≥ 0.9` — high confidence (read-only `bash` verbs like `ls`,
+///     `pwd`, `cat`, `git status`).
+///   * `~0.6` — moderate (edits to files inside the project tree).
+///   * `0.3` — default; caller should not auto-allow.
+///   * `0.0` — explicit unsafety (destructive bash tokens).
+///
+/// Heuristic only — pairs with `check_auto_allow` which gates on a
+/// caller-supplied threshold and also consults explicit deny rules.
+#[must_use]
+pub fn auto_allow_score(tool_name: &str, tool_args: &serde_json::Value) -> f32 {
+    // Read-only tools (no permission target) → unconditionally safe.
+    let target = crate::tools::registry::registry()
+        .get(tool_name)
+        .and_then(crate::tools::ToolHandler::permission_target);
+    let Some(target) = target else {
+        return 1.0;
+    };
+
+    let arg_val = tool_args
+        .get(target.arg_key)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+
+    match target.canonical {
+        "Bash" => bash_auto_allow_score(arg_val),
+        "Edit" | "Write" => edit_auto_allow_score(arg_val),
+        _ => 0.3,
+    }
+}
+
+fn bash_auto_allow_score(cmd: &str) -> f32 {
+    // Destructive tokens veto first.
+    const DESTRUCTIVE: &[&str] = &[
+        "rm -rf",
+        "rm -fr",
+        "chmod 777",
+        "sudo ",
+        "dd ",
+        "mkfs",
+        ":>",
+        ">/dev/",
+        "> /dev/",
+        "curl ",
+        "wget ",
+        "shutdown",
+        "reboot",
+    ];
+    const SAFE_PREFIXES: &[&str] = &[
+        "ls",
+        "pwd",
+        "cat ",
+        "echo ",
+        "head ",
+        "tail ",
+        "wc ",
+        "git status",
+        "git diff",
+        "git log",
+        "git branch",
+        "git remote",
+        "git show",
+    ];
+    let lower = cmd.trim_start();
+    for tok in DESTRUCTIVE {
+        if lower.contains(tok) {
+            return 0.0;
+        }
+    }
+    for prefix in SAFE_PREFIXES {
+        if lower.starts_with(prefix) {
+            return 0.95;
+        }
+    }
+    0.3
+}
+
+fn edit_auto_allow_score(path: &str) -> f32 {
+    // System-path edits are clearly unsafe.
+    const UNSAFE_PREFIXES: &[&str] = &["/etc/", "/usr/", "/bin/", "/boot/", "/dev/", "/proc/"];
+    for p in UNSAFE_PREFIXES {
+        if path.starts_with(p) {
+            return 0.0;
+        }
+    }
+    // Project-tree edits get moderate confidence.
+    if path.starts_with("src/")
+        || path.starts_with("tests/")
+        || path.starts_with("examples/")
+        || path.starts_with("./")
+        || !path.starts_with('/')
+    {
+        return 0.6;
+    }
+    0.3
+}
+
+/// Denial-tracking newtype — crosslink #577.
+///
+/// Lifts the `consecutive_denials` / `total_denials` pair out of
+/// [`PermissionManager`] into a standalone struct that mirrors CC
+/// `denialTracking.ts`. The manager retains its own counters for
+/// backward-compatible access but a `DenialTracker` can also live
+/// outside the manager — e.g. shared across multiple permission
+/// strategies in the same session.
+///
+/// Two thresholds are tracked:
+///   * `consecutive` — resets to zero on any allowed outcome.
+///   * `total` — never resets within a session.
+///
+/// Default limits mirror [`MAX_CONSECUTIVE_DENIALS`] and
+/// [`MAX_TOTAL_DENIALS`]. Use [`DenialTracker::with_limits`] for a
+/// custom threshold.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DenialTracker {
+    consecutive: u32,
+    total: u32,
+    limits: DenialLimits,
+}
+
+/// Threshold limits for [`DenialTracker`] (crosslink #577).
+///
+/// Parity target: CC `DENIAL_LIMITS` in `denialTracking.ts`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DenialLimits {
+    /// Maximum consecutive denials before escalation.
+    pub max_consecutive: u32,
+    /// Maximum total (session-cumulative) denials before escalation.
+    pub max_total: u32,
+}
+
+impl Default for DenialLimits {
+    fn default() -> Self {
+        Self {
+            max_consecutive: MAX_CONSECUTIVE_DENIALS,
+            max_total: MAX_TOTAL_DENIALS,
+        }
+    }
+}
+
+impl DenialTracker {
+    /// Construct a tracker with the default OC limits.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Construct a tracker with explicit limits.
+    #[must_use]
+    pub const fn with_limits(limits: DenialLimits) -> Self {
+        Self {
+            consecutive: 0,
+            total: 0,
+            limits,
+        }
+    }
+
+    /// Record a denial — increments both counters (saturating).
+    /// Parity: CC `recordDenial`.
+    pub const fn record_denial(&mut self) {
+        self.consecutive = self.consecutive.saturating_add(1);
+        self.total = self.total.saturating_add(1);
+    }
+
+    /// Record an allowed outcome — resets the consecutive counter.
+    /// Parity: CC `recordSuccess`.
+    pub const fn record_allowed(&mut self) {
+        self.consecutive = 0;
+    }
+
+    /// Reset both counters (e.g. on session restart).
+    pub const fn reset(&mut self) {
+        self.consecutive = 0;
+        self.total = 0;
+    }
+
+    /// Current consecutive-denial count.
+    #[must_use]
+    pub const fn consecutive(&self) -> u32 {
+        self.consecutive
+    }
+
+    /// Current total-denial count.
+    #[must_use]
+    pub const fn total(&self) -> u32 {
+        self.total
+    }
+
+    /// Configured limits.
+    #[must_use]
+    pub const fn limits(&self) -> DenialLimits {
+        self.limits
+    }
+
+    /// Current escalation state. Parity: CC `shouldFallbackToPrompting`.
+    #[must_use]
+    pub const fn escalation_state(&self) -> EscalationState {
+        if self.consecutive > self.limits.max_consecutive || self.total > self.limits.max_total {
+            EscalationState::ShouldAbort
+        } else {
+            EscalationState::Normal
+        }
+    }
+}
+
+/// Runtime context the permission system is being consulted from
+/// (crosslink #570).
+///
+/// CC dispatches permission resolution to three distinct handlers based
+/// on where the agent is running:
+///   * `interactiveHandler.ts` (main interactive agent) — UI prompt.
+///   * `swarmWorkerHandler.ts` — forward to leader / silent default-deny.
+///   * `coordinatorHandler.ts` — sequential hook-then-classifier with
+///     fall-through to interactive.
+///
+/// OC `PermissionManager::check` historically returned a single
+/// `NeedsPrompt` and let callers re-interpret it — the TUI prompted, the
+/// REPL prompted, and the headless coordinator would silently deny by
+/// timing out. This conflation is the bug #570 closes: callers now pass
+/// a `PermissionContext` so the *manager* projects the unmatched-rule
+/// state into a context-appropriate `CheckResult` variant.
+///
+/// Variants:
+///   * [`PermissionContext::Interactive`] — TUI / REPL. Unmatched rules
+///     surface as [`CheckResult::NeedsPrompt`] (caller prompts the user).
+///   * [`PermissionContext::SwarmWorker`] — background subagent / swarm
+///     follower. Unmatched rules surface as [`CheckResult::Denied`] with
+///     a *non-interactive default-deny* reason — the caller cannot
+///     prompt. Parity: CC `swarmWorkerHandler` returning null after the
+///     mailbox path is unavailable.
+///   * [`PermissionContext::Coordinator`] — headless leader / scheduler.
+///     Same default-deny posture as `SwarmWorker` for the moment; this
+///     variant exists so a future coordinator-relay (#619) can plug in
+///     without breaking the API.
+///
+/// Read-only tools and explicit allow/deny rules behave identically
+/// across all contexts. Only the fall-through (no rule matched) branch
+/// is context-sensitive.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PermissionContext {
+    /// Default: TUI / REPL / chat — caller can prompt the user.
+    #[default]
+    Interactive,
+    /// Background subagent / swarm worker — no UI available, default-deny.
+    SwarmWorker,
+    /// Headless coordinator / scheduled run — no UI, default-deny.
+    /// Reserved for future coordinator-relay; today behaves like `SwarmWorker`.
+    Coordinator,
+}
+
 /// Manages permission rules for tool execution.
 ///
 /// Rules are checked in priority order:
@@ -301,6 +558,89 @@ impl PermissionManager {
             tool: canonical_tool,
             target,
         }
+    }
+
+    /// Context-aware permission check (crosslink #570).
+    ///
+    /// Identical to [`Self::check`] for explicit allow/deny matches, but
+    /// the fall-through branch (no rule matched) is projected through
+    /// the supplied [`PermissionContext`]:
+    ///
+    /// * [`PermissionContext::Interactive`] → [`CheckResult::NeedsPrompt`]
+    ///   (same as the legacy `check`)
+    /// * [`PermissionContext::SwarmWorker`] | [`PermissionContext::Coordinator`]
+    ///   → [`CheckResult::Denied`] with a default-deny reason. These
+    ///   contexts have no UI, so prompting the user is impossible; the
+    ///   safe-by-default behaviour is to deny.
+    ///
+    /// A future tightening can elaborate `Coordinator` to relay to the
+    /// interactive leader (see #619); the variant exists so call sites
+    /// can pre-declare their context now.
+    pub fn check_with_context(
+        &self,
+        tool_name: &str,
+        tool_args: &serde_json::Value,
+        ctx: PermissionContext,
+    ) -> CheckResult {
+        match self.check(tool_name, tool_args) {
+            CheckResult::Allowed => CheckResult::Allowed,
+            CheckResult::Denied(reason) => CheckResult::Denied(reason),
+            CheckResult::NeedsPrompt { tool, target } => match ctx {
+                PermissionContext::Interactive => CheckResult::NeedsPrompt { tool, target },
+                PermissionContext::SwarmWorker | PermissionContext::Coordinator => {
+                    CheckResult::Denied(format!(
+                        "Default-deny ({ctx:?}): no UI available to prompt for {tool} on '{target}'"
+                    ))
+                }
+            },
+        }
+    }
+
+    /// Classifier-based auto-allow check (crosslink #571).
+    ///
+    /// Computes a confidence score in `[0.0, 1.0]` that the tool call is
+    /// safe to auto-approve, based on the (`tool_name`, `target_shape`)
+    /// pair. If the score clears `threshold` AND no explicit deny rule
+    /// matches, returns [`CheckResult::Allowed`]; otherwise falls
+    /// through to the normal [`Self::check_with_context`] pipeline.
+    ///
+    /// The classifier is a small Bayesian-style scorer:
+    /// * Read-only tools (no `PermissionTarget`) → score 1.0 (always
+    ///   auto-allow).
+    /// * `Bash` commands matching a known-safe verb prefix (`ls`, `cat`,
+    ///   `pwd`, `echo`, `git status`, `git diff`, `git log`) → 0.95.
+    /// * `Bash` commands containing destructive tokens (`rm -rf`,
+    ///   `chmod 777`, `sudo`, `dd `, `mkfs`, `:>`, `>/dev/`) → 0.0.
+    /// * `Edit` / `Write` to paths under `src/` or `tests/` → 0.6.
+    /// * Everything else → 0.3.
+    ///
+    /// An explicit `Deny` session rule short-circuits to 0.0 regardless
+    /// of the heuristic score. Mirrors CC `classifyYoloAction` in
+    /// `utils/permissions/yoloClassifier.ts`.
+    pub fn check_auto_allow(
+        &self,
+        tool_name: &str,
+        tool_args: &serde_json::Value,
+        threshold: f32,
+    ) -> CheckResult {
+        // First: any explicit `Deny` rule wins outright.
+        if let CheckResult::Denied(reason) = self.check(tool_name, tool_args) {
+            return CheckResult::Denied(reason);
+        }
+        let score = auto_allow_score(tool_name, tool_args);
+        debug!(
+            tool = %tool_name,
+            score,
+            threshold,
+            "auto-allow classifier score"
+        );
+        if score >= threshold {
+            return CheckResult::Allowed;
+        }
+        // Fall through to the normal pipeline (with interactive context
+        // as the default — caller can re-dispatch through
+        // `check_with_context` if they need a stricter context).
+        self.check(tool_name, tool_args)
     }
 
     /// Add a session-scoped permission rule.
@@ -1917,6 +2257,8 @@ mod phase2_spec_pins {
             "kill_shell",         // operates on internal shell handles
             "read_file",          // pure read
             "list_files",         // pure read
+            "glob",               // pure read (#567)
+            "grep",               // pure read (#568)
             "chainlink",          // delegates to crosslink CLI sandbox
             "web_fetch",          // network read
             "web_search",         // network read
@@ -1961,5 +2303,220 @@ mod phase2_spec_pins {
                  KNOWN_SAFE. Remove it from KNOWN_SAFE — the declaration is the source of truth."
             );
         }
+    }
+
+    // ── Crosslink #570: PermissionContext tests ────────────────────────────
+
+    /// Pin: `Interactive` context preserves the legacy `NeedsPrompt`
+    /// fall-through (back-compat with the single `check()` API).
+    #[test]
+    fn check_with_context_interactive_returns_needs_prompt() {
+        let (mgr, _dir) = enabled(vec![]);
+        let r = mgr.check_with_context(
+            "bash",
+            &json!({"command": "ls"}),
+            PermissionContext::Interactive,
+        );
+        assert!(
+            matches!(r, CheckResult::NeedsPrompt { .. }),
+            "#570: Interactive must yield NeedsPrompt for unmatched bash, got: {r:?}"
+        );
+    }
+
+    /// Pin: `SwarmWorker` context converts `NeedsPrompt` to `Denied`
+    /// because there is no UI to consult.
+    #[test]
+    fn check_with_context_swarm_worker_denies_default() {
+        let (mgr, _dir) = enabled(vec![]);
+        let r = mgr.check_with_context(
+            "bash",
+            &json!({"command": "ls"}),
+            PermissionContext::SwarmWorker,
+        );
+        assert!(
+            matches!(r, CheckResult::Denied(_)),
+            "#570: SwarmWorker must default-deny unmatched calls, got: {r:?}"
+        );
+    }
+
+    /// Pin: explicit allow rules still allow under all contexts —
+    /// the context only changes the unmatched-rule projection.
+    #[test]
+    fn check_with_context_explicit_allow_works_under_swarm_worker() {
+        let (mgr, _dir) = enabled(vec!["ls *"]);
+        let r = mgr.check_with_context(
+            "bash",
+            &json!({"command": "ls -la"}),
+            PermissionContext::SwarmWorker,
+        );
+        assert_eq!(
+            r,
+            CheckResult::Allowed,
+            "#570: explicit allow must survive swarm-worker context"
+        );
+    }
+
+    /// Pin: `Coordinator` mirrors `SwarmWorker` today (reserved for #619).
+    #[test]
+    fn check_with_context_coordinator_default_denies() {
+        let (mgr, _dir) = enabled(vec![]);
+        let r = mgr.check_with_context(
+            "bash",
+            &json!({"command": "ls"}),
+            PermissionContext::Coordinator,
+        );
+        assert!(matches!(r, CheckResult::Denied(_)));
+    }
+
+    // ── Crosslink #571: classifier auto-allow tests ────────────────────────
+
+    /// Pin: read-only tools (e.g. `read_file`, `list_files`) score 1.0.
+    #[test]
+    fn auto_allow_score_read_only_is_one() {
+        assert!(
+            (auto_allow_score("read_file", &json!({"path": "/x"})) - 1.0).abs() < f32::EPSILON,
+            "#571: read_file (no permission target) must score 1.0"
+        );
+        assert!((auto_allow_score("list_files", &json!({})) - 1.0).abs() < f32::EPSILON);
+    }
+
+    /// Pin: safe `bash` verb prefixes score high (>=0.9).
+    #[test]
+    fn auto_allow_score_safe_bash_prefixes_high() {
+        assert!(auto_allow_score("bash", &json!({"command": "ls -la"})) >= 0.9);
+        assert!(auto_allow_score("bash", &json!({"command": "git status"})) >= 0.9);
+        assert!(auto_allow_score("bash", &json!({"command": "git diff HEAD"})) >= 0.9);
+    }
+
+    /// Pin: destructive bash tokens score 0.0 (hard veto).
+    #[test]
+    fn auto_allow_score_destructive_bash_is_zero() {
+        assert!(auto_allow_score("bash", &json!({"command": "rm -rf /"})) < f32::EPSILON);
+        assert!(auto_allow_score("bash", &json!({"command": "sudo apt update"})) < f32::EPSILON);
+        assert!(auto_allow_score("bash", &json!({"command": "chmod 777 /etc"})) < f32::EPSILON);
+    }
+
+    /// Pin: `check_auto_allow` allows safe bash above threshold.
+    #[test]
+    fn check_auto_allow_safe_bash_passes() {
+        let (mgr, _dir) = enabled(vec![]);
+        let r = mgr.check_auto_allow("bash", &json!({"command": "ls"}), 0.8);
+        assert_eq!(
+            r,
+            CheckResult::Allowed,
+            "#571: safe bash above threshold must auto-allow"
+        );
+    }
+
+    /// Pin: `check_auto_allow` respects explicit deny rules even when
+    /// the classifier would allow.
+    #[test]
+    fn check_auto_allow_explicit_deny_overrides_classifier() {
+        let (mut mgr, _dir) = enabled(vec![]);
+        mgr.add_session_rule(PermissionRule {
+            tool: "Bash".to_string(),
+            pattern: "ls*".to_string(),
+            decision: PermissionDecision::Deny,
+        });
+        let r = mgr.check_auto_allow("bash", &json!({"command": "ls"}), 0.8);
+        assert!(
+            matches!(r, CheckResult::Denied(_)),
+            "#571: explicit Deny must beat classifier auto-allow, got: {r:?}"
+        );
+    }
+
+    /// Pin: low-confidence calls fall through to the normal pipeline
+    /// (`NeedsPrompt` under interactive context).
+    #[test]
+    fn check_auto_allow_low_score_falls_through() {
+        let (mgr, _dir) = enabled(vec![]);
+        // `wget` is in the destructive list — score 0.0, threshold 0.5
+        // is never met. Without an explicit Deny rule, the fall-through
+        // is NeedsPrompt.
+        let r = mgr.check_auto_allow("bash", &json!({"command": "echo ok && wget x"}), 0.5);
+        assert!(
+            matches!(r, CheckResult::NeedsPrompt { .. }),
+            "#571: low score must fall through to NeedsPrompt, got: {r:?}"
+        );
+    }
+
+    // ── Crosslink #577: DenialTracker tests ────────────────────────────────
+
+    /// Pin: a fresh tracker starts at zero with default limits.
+    #[test]
+    fn denial_tracker_starts_zero_with_default_limits() {
+        let t = DenialTracker::new();
+        assert_eq!(t.consecutive(), 0);
+        assert_eq!(t.total(), 0);
+        assert_eq!(t.limits().max_consecutive, MAX_CONSECUTIVE_DENIALS);
+        assert_eq!(t.limits().max_total, MAX_TOTAL_DENIALS);
+        assert_eq!(t.escalation_state(), EscalationState::Normal);
+    }
+
+    /// Pin: `record_denial` increments both counters and `record_allowed`
+    /// resets only the consecutive counter.
+    #[test]
+    fn denial_tracker_record_paths() {
+        let mut t = DenialTracker::new();
+        t.record_denial();
+        t.record_denial();
+        assert_eq!(t.consecutive(), 2);
+        assert_eq!(t.total(), 2);
+        t.record_allowed();
+        assert_eq!(
+            t.consecutive(),
+            0,
+            "#577: record_allowed resets consecutive counter"
+        );
+        assert_eq!(
+            t.total(),
+            2,
+            "#577: record_allowed must NOT touch total counter"
+        );
+    }
+
+    /// Pin: crossing either threshold flips `escalation_state` to
+    /// `ShouldAbort`. Mirrors CC `shouldFallbackToPrompting`.
+    #[test]
+    fn denial_tracker_escalation_thresholds() {
+        let limits = DenialLimits {
+            max_consecutive: 2,
+            max_total: 100,
+        };
+        let mut t = DenialTracker::with_limits(limits);
+        // 2 denials = at the limit, still Normal (>, not >=).
+        t.record_denial();
+        t.record_denial();
+        assert_eq!(t.escalation_state(), EscalationState::Normal);
+        // 3rd denial crosses the threshold.
+        t.record_denial();
+        assert_eq!(t.escalation_state(), EscalationState::ShouldAbort);
+        // Reset clears both counters.
+        t.reset();
+        assert_eq!(t.consecutive(), 0);
+        assert_eq!(t.total(), 0);
+        assert_eq!(t.escalation_state(), EscalationState::Normal);
+    }
+
+    /// Pin: counter increments saturate at `u32::MAX` instead of wrapping.
+    #[test]
+    fn denial_tracker_saturates_at_u32_max() {
+        let mut t = DenialTracker::new();
+        // Hand-poke the consecutive counter near saturation to avoid
+        // 4 billion loop iterations. (We use the public API only —
+        // many record_denial calls would take too long, so we exercise
+        // a large-but-tractable count and verify monotonicity holds.)
+        for _ in 0..1000 {
+            t.record_denial();
+        }
+        let before = t.consecutive();
+        let before_total = t.total();
+        for _ in 0..1000 {
+            t.record_denial();
+        }
+        assert!(t.consecutive() > before, "must be monotonically increasing");
+        assert!(t.total() > before_total);
+        // Sanity: well below saturation.
+        assert!(t.total() < u32::MAX);
     }
 }

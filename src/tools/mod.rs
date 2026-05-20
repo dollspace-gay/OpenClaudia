@@ -808,6 +808,8 @@ mod tests {
             "write_file",
             "edit_file",
             "list_files",
+            "glob",
+            "grep",
             "chainlink",
             "web_fetch",
             "web_search",

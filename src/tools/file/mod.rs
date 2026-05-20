@@ -1,10 +1,14 @@
 mod edit;
+mod glob;
+mod grep;
 mod list;
 mod notebook;
 mod read;
 mod write;
 
 pub use edit::execute_edit_file;
+pub use glob::execute_glob;
+pub use grep::execute_grep;
 pub use list::execute_list_files;
 #[allow(unused_imports)] // used by tests in tools::mod
 pub use notebook::{execute_notebook_edit, source_to_line_array};

@@ -452,6 +452,80 @@ impl ToolHandler for ListFilesHandler {
     }
 }
 
+struct GlobHandler;
+impl ToolHandler for GlobHandler {
+    fn name(&self) -> &'static str {
+        "glob"
+    }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "glob",
+                "description": "Find files by glob pattern. Supports `*` (any non-/), `**` (any including /), and `?`. Returns up to 100 paths sorted lexicographically. Vendor directories (.git, node_modules, target, dist, build) are skipped by default. Crosslink #567.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {
+                            "type": "string",
+                            "description": "Glob pattern matched against paths relative to `path`. Examples: '*.rs', 'src/**/*.rs', '**/Cargo.toml'."
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "Directory to walk (defaults to current working directory). Must lie within the project root."
+                        }
+                    },
+                    "required": ["pattern"]
+                }
+            }
+        })
+    }
+    fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
+        file::execute_glob(args)
+    }
+}
+
+struct GrepHandler;
+impl ToolHandler for GrepHandler {
+    fn name(&self) -> &'static str {
+        "grep"
+    }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "grep",
+                "description": "Search file contents by regex. Returns matching lines as `file:line:text` with optional ±N context lines emitted as `file-N-text`. Vendor dirs are skipped. Capped at 200 matches. Crosslink #568.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {
+                            "type": "string",
+                            "description": "Regex pattern (Rust `regex` crate dialect)."
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "Directory to search (defaults to current working directory)."
+                        },
+                        "context_lines": {
+                            "type": "integer",
+                            "description": "Number of ±N context lines to include around each match (default 0)."
+                        },
+                        "case_insensitive": {
+                            "type": "boolean",
+                            "description": "If true, prepend `(?i)` to the pattern (default false)."
+                        }
+                    },
+                    "required": ["pattern"]
+                }
+            }
+        })
+    }
+    fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
+        file::execute_grep(args)
+    }
+}
+
 // ── chainlink ─────────────────────────────────────────────────────────────────
 
 struct ChainlinkHandler;
@@ -1322,6 +1396,8 @@ static HANDLERS: &[&dyn ToolHandler] = &[
     &WriteFileHandler,
     &EditFileHandler,
     &ListFilesHandler,
+    &GlobHandler,
+    &GrepHandler,
     // chainlink
     &ChainlinkHandler,
     // web
