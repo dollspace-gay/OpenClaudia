@@ -1,0 +1,10 @@
+{
+  "uuid": "26d57812-33d1-4da1-9ec6-751b2459ef78",
+  "issue_uuid": "73cf3f0d-747e-4d22-9e97-5fef1973dd15",
+  "author": "lOrm",
+  "content": "Issue calls for InProcessTeammateTask (same-process teammate task type). Not addressable in a cleanup pass: depends on #507 coordinator subsystem and teammate concept. Parent audit #523.",
+  "created_at": "2026-05-20T14:41:14.069075471Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAWUUIg+Kg+xK5yruhzmRLTcIEVCHb6tzijoj4vW2Ss8/k+8OlMg7P9Isa3claad4ycZsUG3WZk+HnN6qTZo4hDw=="
+}
