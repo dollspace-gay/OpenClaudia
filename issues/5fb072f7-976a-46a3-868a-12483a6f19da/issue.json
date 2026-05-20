@@ -3,11 +3,12 @@
   "display_id": 881,
   "title": "Plugin::load_legacy_manifest defaults silently fabricate plugin metadata from raw JSON",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/plugins/mod.rs:321-380\n## Violation\nEvery field is extracted with `.as_str().unwrap_or(\"unknown\")` or `.map(String::from)`. A legacy manifest with a missing/typo'd name silently loads as \"unknown\". Quoted lines:\n\n    let name = legacy[\"name\"].as_str().unwrap_or(\"unknown\").to_string();\n    ...\n    let server_name = server[\"name\"].as_str().unwrap_or(\"unknown\").to_string();\n    let transport = server[\"transport\"].as_str().unwrap_or(\"stdio\").to_string();\n    map.insert(\n        server_name,\n        McpServerConfig {\n            command: server[\"command\"].as_str().map(String::from),\n\nIf two legacy plugins drop their `name`, both load with `id = \"unknown\"` and the second clobbers the first in the manager's HashMap. Same for \"unknown\" MCP servers. The \"unknown\" sentinel is a stringly-typed sentinel — a classic defensive-programming smell that hides upstream input bugs.\n## Mandated refactor\nReplace each `.unwrap_or(\"unknown\")` with `.ok_or_else(|| PluginError::InvalidManifest(\"legacy manifest missing required field: name\"))?`. Surface InvalidManifest to the manager so the broken plugin is reported, not silently shadowed. Add a dedicated `LegacyManifest` typed struct deserialised with serde + #[serde(deny_unknown_fields)] so typos surface explicitly.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:11:11.528923316Z",
-  "updated_at": "2026-05-18T22:11:28.548916336Z",
+  "updated_at": "2026-05-20T12:22:53.838975665Z",
+  "closed_at": "2026-05-20T12:22:53.838975665Z",
   "labels": [
     "qa-review",
     "error-handling"
