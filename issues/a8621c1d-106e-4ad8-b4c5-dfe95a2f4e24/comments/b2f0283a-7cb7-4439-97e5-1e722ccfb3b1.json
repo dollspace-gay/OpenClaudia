@@ -1,0 +1,10 @@
+{
+  "uuid": "b2f0283a-7cb7-4439-97e5-1e722ccfb3b1",
+  "issue_uuid": "a8621c1d-106e-4ad8-b4c5-dfe95a2f4e24",
+  "author": "lOrm",
+  "content": "Fixed in src/state/categories.rs: SessionId::from_raw now validates input as UUID via uuid::Uuid::parse and returns Result<Self, uuid::Error>. Added from_raw_unchecked for legacy test-fixture path with explicit unsafe-by-contract doc. New session_id_from_raw_validates_uuid test asserts UUID round-trip works and that empty / abcd-1234 / ../../etc/passwd / not-a-uuid / malformed UUIDs all fail. Existing round-trip test renamed to session_id_round_trips_from_raw_unchecked.",
+  "created_at": "2026-05-20T07:00:39.578905914Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAe93FgcH8rFwEdl6RZOz+0XR9vZCsdR46TXa9qiXLl/v2IF42AEZSdhF0FxE9ljvEfGxfUOH7sNemKeX1SnmuDg=="
+}
