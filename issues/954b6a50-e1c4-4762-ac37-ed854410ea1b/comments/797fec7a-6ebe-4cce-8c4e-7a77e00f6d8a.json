@@ -1,0 +1,10 @@
+{
+  "uuid": "797fec7a-6ebe-4cce-8c4e-7a77e00f6d8a",
+  "issue_uuid": "954b6a50-e1c4-4762-ac37-ed854410ea1b",
+  "author": "lOrm",
+  "content": "Documented the DDG -> Tavily -> Brave cascade rotation policy in src/web.rs::search_web rustdoc. Captures: fixed order, no per-call rotation (process-lifetime keys), DDG-first to avoid paid usage, and the divergence from CC native-tool routing.",
+  "created_at": "2026-05-20T18:36:06.907133512Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAUKmq21GcK1ILZxPPxumM/G+azULJO8oGpVET2cL8VYDuFDwJNWXTeLzUso0mCA3fmiA+lXoTmxSvFkpoSD9ZAQ=="
+}
