@@ -1,0 +1,10 @@
+{
+  "uuid": "9fcb2cee-4e10-4faf-833d-3552b928e4b5",
+  "issue_uuid": "6aacb774-1cfe-4361-9949-bf7787202213",
+  "author": "lOrm",
+  "content": "Duplicate of #852 (same Coordinator::queue_mut encapsulation defect at src/coordinator/mod.rs:69-73, same mandated refactor to pub(crate) + stable submit() API). Closing #857 as the higher-numbered duplicate; #852 is the canonical open report.",
+  "created_at": "2026-05-20T12:31:36.042680556Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAJB+Y9Fwe4cHIqNUgpYyzhXOl5E7/Ni8AOryl/N/PhlfxSpC9T2ZqX7BafqUG4AUIKqQ1ySqccHlIucsKVq4JCg=="
+}
