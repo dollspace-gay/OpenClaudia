@@ -3,13 +3,12 @@
   "display_id": 635,
   "title": "AgentSummary: periodic background summarization for sub-agents (parity with CC agentSummary.ts)",
   "description": "## Goal\nImplement periodic background summarization for coordinator-mode sub-agents, matching CC services/AgentSummary/agentSummary.ts (~179 lines).\n\n## CC behavior (agentSummary.ts)\n- startAgentSummarization(taskId, agentId, cacheSafeParams, setAppState): starts a timer, returns {stop}\n- SUMMARY_INTERVAL_MS = 30_000 ms between summaries\n- buildSummaryPrompt(previousSummary): 3-5 word present-tense action prompt, includes Previous hint when set\n- runSummary(): reads current transcript via getAgentTranscript(agentId), skips if <3 messages; filters incomplete tool calls; forks agent with canUseTool=deny (no tools list change to avoid cache miss); extracts text block from result; calls updateAgentSummary(taskId, text, setAppState)\n- Timer resets on completion (not initiation) to prevent overlapping summaries\n- AbortController per summary tick; outer stop() cancels current tick and clears timer\n- forkContextMessages rebuilt from transcript each tick (not pinned from closure)\n- toolUseSummary service (toolUseSummaryGenerator.ts): separate Haiku-based tool-batch labeling for SDK clients; OC has no equivalent\n\n## OC counterpart\nNone. OC has no agent progress summarization.\n\n## Parent\n#523. Phase 1 spec tracked in #534.",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:08:16.336849476Z",
-  "updated_at": "2026-05-20T14:42:15.934773237Z",
-  "closed_at": "2026-05-20T14:42:15.934773237Z",
+  "updated_at": "2026-05-20T16:58:44.180036613Z",
   "labels": [
     "feature",
     "cc-parity"
