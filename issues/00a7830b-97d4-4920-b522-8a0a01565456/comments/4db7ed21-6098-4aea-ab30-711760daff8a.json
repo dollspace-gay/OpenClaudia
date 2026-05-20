@@ -1,0 +1,10 @@
+{
+  "uuid": "4db7ed21-6098-4aea-ab30-711760daff8a",
+  "issue_uuid": "00a7830b-97d4-4920-b522-8a0a01565456",
+  "author": "lOrm",
+  "content": "Fixed in src/providers/google.rs::convert_messages: a ContentPart with neither .text nor .image_url is now dropped via filter_map after emitting tracing::warn naming content_type. Pre-fix code coerced unknown parts to empty text, silently losing video / audio / file payloads. Test unknown_content_part_is_dropped_not_emitted_as_empty_text pins new behavior.",
+  "created_at": "2026-05-20T07:00:46.876647750Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABADp919xVE4Fqk1FYqRjPYBoJJIAw2I6ZklAlFbgzOsMNI6HHvflA5xHvrpETsvv4l5GL/DX+Jt63Hf0kvacsiDw=="
+}
