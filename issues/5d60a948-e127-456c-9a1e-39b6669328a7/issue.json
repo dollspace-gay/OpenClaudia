@@ -3,11 +3,12 @@
   "display_id": 971,
   "title": "edit.rs DIFF marker uses serialize-into-format-string instead of structured event",
   "description": "## Severity\nTrivial\n\n## Dimension\nDecoupling / Naming\n\n## Location\nsrc/tools/file/edit.rs:104-115 (DIFF_START/DIFF_END marker embedded in result string)\n\n## Violation\n```rust\nlet diff_json = serde_json::json!({\"path\": path, \"old\": old_string, \"new\": new_string});\nlet mut result = format!(\n    \"Successfully edited '{}'. Replaced {} chars with {} chars.\\n@@DIFF_START@@\\n{}\\n@@DIFF_END@@\",\n    path, old_string.len(), new_string.len(), diff_json,\n);\n```\n\nThis couples the tool to an out-of-band display protocol via in-band string markers. The downstream renderer must scan EVERY tool result for `@@DIFF_START@@` and `@@DIFF_END@@`, parse the JSON between them, and route to a color renderer. This is precisely the architectural anti-pattern Slack calls \"stringly-typed events\" — semantic data embedded as substrings inside a free-form text payload. The `(String, bool)` return type forces this hack (see broader issue #670 — Result-typed returns would carry structured diff data alongside the message).\n\nIf a model ever generates the literal string \"@@DIFF_START@@\" inside `new_string` (entirely possible in code comments or test fixtures), it breaks the renderer's parser and may inject arbitrary JSON into the diff pane.\n\n## Mandated refactor\nAfter the Result<ToolOutput, ToolError> refactor (issue #670), make ToolOutput carry an optional `diff: Option<DiffData>` field. The dispatcher renders the diff via its own type-safe code path. Delete the @@DIFF_START@@ markers entirely. Until then: at minimum, base64-encode or sentinel-escape the JSON payload between markers.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:22:40.949177533Z",
-  "updated_at": "2026-05-18T22:22:43.677892307Z",
+  "updated_at": "2026-05-20T12:57:59.589961543Z",
+  "closed_at": "2026-05-20T12:57:59.589961543Z",
   "labels": [
     "qa-review",
     "decoupling"
