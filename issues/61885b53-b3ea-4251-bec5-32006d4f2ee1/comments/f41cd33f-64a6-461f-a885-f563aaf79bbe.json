@@ -1,0 +1,10 @@
+{
+  "uuid": "f41cd33f-64a6-461f-a885-f563aaf79bbe",
+  "issue_uuid": "61885b53-b3ea-4251-bec5-32006d4f2ee1",
+  "author": "lOrm",
+  "content": "Implemented bash path-allowlist in src/tools/bash/path_constraints.rs. PathConstraints type + check fn cover cd target validation, redirect targets, path-modifying programs (mv/cp/rm/etc), process-substitution refusal, UNC-path rejection. Activated via OPENCLAUDIA_BASH_ALLOWED_ROOTS env var. 14 unit tests.",
+  "created_at": "2026-05-20T18:35:31.777995860Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAwBIUUnKEeDHWU9hf6PNbKcNjZzhAIpKB4tFEIa9U3V3LFyvyKu3GbWmtG5bQuLEqJPnpSzu5McOgg1YRc353DA=="
+}
