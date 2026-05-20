@@ -3,11 +3,12 @@
   "display_id": 987,
   "title": "execute_cron_create UUID-based id is exposed in output but used for delete — bad UX coupling",
   "description": "## Severity\nTrivial\n\n## Dimension\nNaming / API Design\n\n## Location\nsrc/tools/cron.rs:195-200 (cron_create result) and 203-228 (cron_delete)\n\n## Violation\ncron_create returns \"Created schedule '{name}' (id: {id})\" with an opaque 8-char hex id. cron_delete then accepts EITHER id OR name (via `args.get(\"id\").or_else(|| args.get(\"name\"))` on line 207-209). The model is given two identifiers for one entity, with no guidance on which to use. Worse, the name is user-supplied and human-readable; the id is system-generated and easy to mistype. The \"id\" exists only because someone thought \"names might collide\" — but cron_create already enforces unique names (line 170). So the id is YAGNI duplication of the unique name.\n\n## Mandated refactor\nMake `name` the sole identifier. Delete the `id` field from Schedule entirely. cron_delete takes only `name`. cron_list displays only the name, the cron expression, and a creation timestamp. (If a stable id is needed for some external integration, expose `created_at` — it's already an RFC3339 timestamp which is unique-enough for human-scale schedule counts.)\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:28:05.948253800Z",
-  "updated_at": "2026-05-18T22:28:08.687273634Z",
+  "updated_at": "2026-05-20T12:58:05.054728415Z",
+  "closed_at": "2026-05-20T12:58:05.054728415Z",
   "labels": [
     "qa-review",
     "naming"
