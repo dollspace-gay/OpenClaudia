@@ -1,0 +1,10 @@
+{
+  "uuid": "9a37bb49-95d7-4ac6-8528-f75fd9729431",
+  "issue_uuid": "ee995444-43e0-4318-b1be-4d225f977fde",
+  "author": "lOrm",
+  "content": "Duplicate of #911 (identical: BACKGROUND_SHELLS process-global LazyLock singleton in src/tools/bash/mod.rs:271-272). Canonical: #911.",
+  "created_at": "2026-05-20T12:04:41.798853459Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAFawpH6gRrQiQ8VZ8olkVHULNUEMInnyrTTl50HuNfVZGc/OmrQH8/mROpZEyc2YAAHqQh457DdzU+e1BlWwPDg=="
+}
