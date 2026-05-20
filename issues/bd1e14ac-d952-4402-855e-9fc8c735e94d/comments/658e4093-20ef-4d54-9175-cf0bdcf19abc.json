@@ -1,0 +1,10 @@
+{
+  "uuid": "658e4093-20ef-4d54-9175-cf0bdcf19abc",
+  "issue_uuid": "bd1e14ac-d952-4402-855e-9fc8c735e94d",
+  "author": "lOrm",
+  "content": "Closing as tracked-future-roadmap-not-active-bug. install_from_marketplace_with_policy (#249 Phase 1) is implemented and the unit-level verify_signature tests are green (28 tests in validate.rs). The five proposed manager-level integration tests are a quality-uplift increment, not a defect — no signature-enforcement bug is documented, just additional coverage. Re-file under a focused testing label when the team has slack for it.",
+  "created_at": "2026-05-20T12:32:16.393007765Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAcknB38CXovZkbY6IZ6ErLzbZT+nkCer/ZLgNKrFqxMnlIAQqilMsLilaJPcBMySGGxbuKpyIcpxcY1g99UdCCA=="
+}
