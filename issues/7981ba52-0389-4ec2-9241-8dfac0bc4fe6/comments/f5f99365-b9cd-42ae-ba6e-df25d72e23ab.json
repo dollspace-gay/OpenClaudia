@@ -1,0 +1,10 @@
+{
+  "uuid": "f5f99365-b9cd-42ae-ba6e-df25d72e23ab",
+  "issue_uuid": "7981ba52-0389-4ec2-9241-8dfac0bc4fe6",
+  "author": "lOrm",
+  "content": "Exact duplicate of #966 (same title, same description, same Location/Violation/Mandated refactor). Closing as duplicate; fix delivered against #966.",
+  "created_at": "2026-05-20T04:50:06.011907593Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAPFk3kbvmCfAT/57JDBKhYmFNWRzU2pG2+AMlEczvo7zeei2F1e9k6lAdmcOkJhQgWc7l/jfBOVHwg3RmFIpOAg=="
+}
