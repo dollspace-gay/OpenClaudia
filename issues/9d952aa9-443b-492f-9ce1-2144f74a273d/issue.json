@@ -3,11 +3,12 @@
   "display_id": 982,
   "title": "OPENCLAUDIA_ALLOW_OUT_OF_ROOT env var allows model to escape jail via prompt injection on env",
   "description": "## Severity\nMajor\n\n## Dimension\nSecurity and Access / Least Privilege\n\n## Location\nsrc/tools/file/mod.rs:95-97 (strict_mode function)\n\n## Violation\n```rust\nfn strict_mode() -> bool {\n    !matches!(std::env::var(\"OPENCLAUDIA_ALLOW_OUT_OF_ROOT\"), Ok(ref v) if v == \"1\")\n}\n```\n\nThe jail can be entirely disabled by setting one env var. There is NO logging when the jail is disabled — strict_mode() is called per-resolve_path silently. An operator who set the var \"just for one test\" and forgot leaves the agent with no path containment. The function is called by all read/write/edit operations.\n\nWorse: the bash tool (separate from this review scope) can `export OPENCLAUDIA_ALLOW_OUT_OF_ROOT=1`. The model itself can then disable its own jail by running a shell command. The jail is theoretical, not enforced.\n\nThe CLI flag check is also misnamed: \"ALLOW_OUT_OF_ROOT=1\" is the only value that disables; any other value (including \"true\", \"yes\", \"on\") leaves strict mode on. The check `if v == \"1\"` is right-shaped but undocumented at the use site.\n\n## Mandated refactor\n1. Cache the env var value at startup in PROJECT_ROOT's LazyLock (once), not per-call. Subsequent bash exports cannot disable the jail.\n2. Emit a tracing::warn! once at startup if the jail is disabled.\n3. Refuse to honor the env var when the process is launched from a non-interactive context (e.g. when ENV \"OPENCLAUDIA_AGENT_MODE=1\" or similar), so prompt-injection cannot weaponize an operator's debug setting.\n4. Accept the documented set of truthy values (\"1\", \"true\", \"yes\", case-insensitive) — current check is brittle.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:26:27.076071717Z",
-  "updated_at": "2026-05-18T22:26:29.767619928Z",
+  "updated_at": "2026-05-20T04:53:35.757531226Z",
+  "closed_at": "2026-05-20T04:53:35.757531226Z",
   "labels": [
     "qa-review",
     "security"
