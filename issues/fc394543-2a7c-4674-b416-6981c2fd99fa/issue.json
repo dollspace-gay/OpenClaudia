@@ -3,9 +3,10 @@
   "display_id": 849,
   "title": "App overlay.handle_key uses unwrap on Option that was just checked instead of if-let chain",
   "description": "## Severity\nTrivial\n## Dimension\nkiss\n## Location\nsrc/tui/app.rs:659-664\n## Violation\nThe overlay dispatch uses `is_some()` then `as_mut().unwrap()`, leaving an unwrap that has no protection against future code re-ordering or short-circuit removal.\n\n```rust\nif self.overlay.is_some() {\n    use super::components::{Overlay as _, OverlayAction};\n    let action = match self.overlay.as_mut().unwrap() {\n        ActiveOverlay::Help(o) => o.handle_key(key),\n        ActiveOverlay::LogSelector(o) => o.handle_key(key),\n    };\n    ...\n}\n```\n\nIf a refactor adds an `if X { self.overlay = None; }` step between the `is_some()` check and the unwrap, the unwrap panics. The Rust idiom is to bind once.\n\n## Mandated refactor\nUse if-let to bind the &mut once and eliminate the unwrap:\n\n```rust\nif let Some(overlay) = self.overlay.as_mut() {\n    use super::components::{Overlay as _, OverlayAction};\n    let action = match overlay {\n        ActiveOverlay::Help(o) => o.handle_key(key),\n        ActiveOverlay::LogSelector(o) => o.handle_key(key),\n    };\n    match action {\n        OverlayAction::Consumed => {}\n        OverlayAction::Close => self.overlay = None,\n        OverlayAction::ResumeSession(id) => {\n            self.overlay = None;\n            self.resume_session_by_id(&id);\n        }\n    }\n    return;\n}\n```\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:06:08.442522646Z",
-  "updated_at": "2026-05-18T22:06:08.442522646Z"
+  "updated_at": "2026-05-20T14:26:23.770677802Z",
+  "closed_at": "2026-05-20T14:26:23.770677802Z"
 }
