@@ -1,0 +1,10 @@
+{
+  "uuid": "13706cbb-dadc-4680-b3c2-8aeea02ccf0c",
+  "issue_uuid": "9bb46d83-2d75-4be3-8b9d-33242c1b5365",
+  "author": "lOrm",
+  "content": "Duplicate of #924 (same extract_system silent-drop defect in Anthropic + Google adapters; #924 already closed 2026-05-20 with fix landed: both adapters now iterate every system-role message and concatenate texts with '\\n\\n' separators, non-text parts surface a tracing::warn!). Closing #936; the fix is already in tree.",
+  "created_at": "2026-05-20T12:31:51.827236588Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAwf7OLDvJJfTRlfspqgakex0RODMDbDjuZRfRks3NiAav1WX4pjjTXV8oKM+oq7kCeT1jtIzRNSwLuZbHJaFkCw=="
+}
