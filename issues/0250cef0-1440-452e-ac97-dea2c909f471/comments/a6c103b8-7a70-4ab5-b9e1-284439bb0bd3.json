@@ -1,0 +1,10 @@
+{
+  "uuid": "a6c103b8-7a70-4ab5-b9e1-284439bb0bd3",
+  "issue_uuid": "0250cef0-1440-452e-ac97-dea2c909f471",
+  "author": "lOrm",
+  "content": "FORBIDDEN: src/tools/bash/* is on the locked file list for this bulk pass. BackgroundShell at mod.rs:24-35 packs ProcessHandle + OutputBuffers + GcState concerns. Mandated refactor (split into 3 sub-structs and a thin wrapper) stands for a bash-focused worktree.",
+  "created_at": "2026-05-20T13:25:42.114144649Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAu/LLSdkn7m0C2oFSdrWGzO6HzxV/p4XbJN77oT9m1t71SJSYiXmNKx3KAFV+E0EfMFngqxP26JWPWozMoA/xDg=="
+}
