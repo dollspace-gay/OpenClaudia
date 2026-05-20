@@ -1,0 +1,10 @@
+{
+  "uuid": "38e4f1dc-1a9d-4531-885f-bf05700acdc9",
+  "issue_uuid": "6286612a-8a0c-498c-b4fe-814f4ad920fe",
+  "author": "lOrm",
+  "content": "Resolved via shared single-source-of-truth slash command table.\n\nBoth seams now iterate src/slash_commands.rs::SLASH_SECTIONS:\n- TUI overlay (src/tui/components/help.rs) renders KEYBIND_SECTIONS (TUI-only) then iterates SLASH_SECTIONS for the slash-command sections.\n- CLI printer (src/cli/repl/slash.rs::slash_help) iterates SLASH_SECTIONS for the slash-command sections; CLI-only affordances (shell !cmd, notes #text, @path, multiline) remain inline.\n\nDrift is no longer possible by construction: adding a command is one edit in src/slash_commands.rs and both seams pick it up. The TUI overlay previously listed ~13 commands; it now lists the same ~57 the CLI exposes (CORE 41 + MEMORY 6 + ACTIVITY 4 + PLUGIN 5 + SKILLS 2).\n\nTests: 1661 lib pass (+3 vs 1658 baseline: 2 in slash_commands, 1 in help overlay). cargo clippy --all-targets --all-features exit 0. No #[allow], no clippy.toml, no #[ignore]. Forbidden modules untouched.",
+  "created_at": "2026-05-20T03:48:49.342531281Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAHVtxAh+MXQiReKaujoB3vbRL9W5le2ubG8WfBrdw8QxULgSl2w5uQX3wWrWrAAviKnIdRMLyulqkvbeNHDiiCQ=="
+}
