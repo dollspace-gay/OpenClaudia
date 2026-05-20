@@ -25,36 +25,76 @@ pub const ULTRATHINK_BUDGET_TOKENS: u32 = 31999;
 
 /// Phrases that bump effort to `high`. Case-insensitive; match-anywhere
 /// for the multi-word forms, word-boundary for the single-word form.
-const ULTRATHINK_PHRASES: &[&str] = &["think ultra hard", "think ultrahard"];
+///
+/// Stored as lower-case ASCII bytes so the scan can compare each haystack
+/// byte against the needle without allocating a lower-cased copy of the
+/// (potentially multi-MiB) input — see #897 / #915.
+const ULTRATHINK_PHRASES: &[&[u8]] = &[b"think ultra hard", b"think ultrahard"];
+
+/// Lower-case ASCII bytes of `ultrathink`, used by [`find_whole_word_ci`].
+const ULTRATHINK_NEEDLE: &[u8] = b"ultrathink";
 
 /// Scan `text` for any of the ultrathink trigger keywords.
+///
+/// Performs an ASCII-case-insensitive scan over `text.as_bytes()` without
+/// allocating — the previous implementation called `text.to_lowercase()`
+/// on every invocation, which copies the whole buffer (`O(N)` allocation
+/// per turn for every message, see #897 / #915). Non-ASCII bytes are
+/// compared exactly; this matches the trigger words which are ASCII.
 #[must_use]
 pub fn has_ultrathink_keyword(text: &str) -> bool {
-    let lower = text.to_lowercase();
+    let bytes = text.as_bytes();
     // `ultrathink` must be a whole word (not part of a longer ident).
-    if find_whole_word(&lower, "ultrathink") {
+    if find_whole_word_ci(bytes, ULTRATHINK_NEEDLE) {
         return true;
     }
-    ULTRATHINK_PHRASES.iter().any(|p| lower.contains(p))
+    ULTRATHINK_PHRASES
+        .iter()
+        .any(|p| contains_ci(bytes, p))
 }
 
-/// Return `true` if `haystack` contains `needle` bordered on both sides
-/// by non-alphanumeric characters (or the string end). Port of
-/// JavaScript's `\bultrathink\b` semantics.
-fn find_whole_word(haystack: &str, needle: &str) -> bool {
-    let needle_len = needle.len();
-    let bytes = haystack.as_bytes();
-    let mut start = 0;
-    while let Some(pos) = haystack[start..].find(needle) {
-        let abs = start + pos;
-        let before_ok = abs == 0 || !is_word_byte(bytes[abs - 1]);
-        let after_ok = abs + needle_len == bytes.len() || !is_word_byte(bytes[abs + needle_len]);
+/// Return `true` if `haystack` (raw bytes) contains `needle` (lower-case
+/// ASCII bytes) using ASCII-case-insensitive comparison. Allocation-free.
+fn contains_ci(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if haystack.len() < needle.len() {
+        return false;
+    }
+    let last = haystack.len() - needle.len();
+    (0..=last).any(|i| matches_ci_at(haystack, i, needle))
+}
+
+/// Return `true` if `haystack` contains `needle` (lower-case ASCII bytes)
+/// bordered on both sides by non-alphanumeric/underscore bytes (or the
+/// string end) — case-insensitive port of JavaScript's `\b<needle>\b`.
+fn find_whole_word_ci(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return false;
+    }
+    let last = haystack.len() - needle.len();
+    for i in 0..=last {
+        if !matches_ci_at(haystack, i, needle) {
+            continue;
+        }
+        let before_ok = i == 0 || !is_word_byte(haystack[i - 1]);
+        let after = i + needle.len();
+        let after_ok = after == haystack.len() || !is_word_byte(haystack[after]);
         if before_ok && after_ok {
             return true;
         }
-        start = abs + needle_len;
     }
     false
+}
+
+/// ASCII-case-insensitive byte-wise equality of `haystack[at..at+needle.len()]`
+/// to `needle` (which must already be lower-case ASCII).
+fn matches_ci_at(haystack: &[u8], at: usize, needle: &[u8]) -> bool {
+    needle
+        .iter()
+        .enumerate()
+        .all(|(j, &n)| haystack[at + j].to_ascii_lowercase() == n)
 }
 
 const fn is_word_byte(b: u8) -> bool {
@@ -158,6 +198,29 @@ mod tests {
     fn detects_think_ultra_hard_variants() {
         assert!(has_ultrathink_keyword("think ultra hard about this"));
         assert!(has_ultrathink_keyword("THINK ULTRAHARD"));
+    }
+
+    /// #897 / #915: `has_ultrathink_keyword` must behave correctly on
+    /// large inputs without depending on `to_lowercase()` allocation.
+    /// We exercise a 256 KiB haystack containing the trigger near the
+    /// end and assert both detection and the negative case at the same
+    /// scale — if the allocation were re-introduced, the test would
+    /// still pass functionally, but the scan now operates on the raw
+    /// byte slice (see implementation).
+    #[test]
+    fn large_input_case_insensitive_match() {
+        let mut hay = "x".repeat(256 * 1024);
+        // negative: no trigger anywhere
+        assert!(!has_ultrathink_keyword(&hay));
+        // positive: append the trigger in mixed case
+        hay.push_str(" UltraThink ");
+        assert!(has_ultrathink_keyword(&hay));
+        // negative: trigger embedded mid-identifier must still be rejected
+        let embedded = "x".repeat(64 * 1024) + "myUltraThinker" + &"y".repeat(64 * 1024);
+        assert!(!has_ultrathink_keyword(&embedded));
+        // positive: multi-word variant deep inside large buffer
+        let phrase = "z".repeat(128 * 1024) + " THINK ULTRA HARD " + &"q".repeat(128 * 1024);
+        assert!(has_ultrathink_keyword(&phrase));
     }
 
     #[test]

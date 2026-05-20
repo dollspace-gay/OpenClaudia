@@ -160,6 +160,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fix missing `permissions` field in test AppConfig initializers after merge
 
 ### Changed
+- thinking::has_ultrathink_keyword whole-string lowercase per scan; allocate-per-call hot path (#897)
 - PluginManager.install_from_marketplace: 160-line function violates SRP (#503)
 - modes/fragments.rs: accessor fns duplicate enum-match code across four variants — boilerplate registry (#500)
 - TUI /help text maintained manually in two places with drift (#499)
