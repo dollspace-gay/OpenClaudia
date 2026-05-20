@@ -1,0 +1,10 @@
+{
+  "uuid": "5c768ec9-cb72-406c-a816-7db4475c96e0",
+  "issue_uuid": "bfbb8f4b-a4f4-4b1d-871d-cec84a8ec41a",
+  "author": "lOrm",
+  "content": "Already addressed by #481 (commit a01144b7 \"fix: bulk tiny — #478 #481 #491 #493 #494\"). src/tools/file/list.rs:21-44 replaces entries.flatten() with an explicit Ok/Err match emitting tracing::warn! for every unreadable DirEntry. Regression test list_files_logs_unreadable_entries_instead_of_dropping pins the behavior. Closing as duplicate-of-already-fixed.",
+  "created_at": "2026-05-20T04:50:08.980408623Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAKYsZ+4JVze+Ej4htP1bTPbTuxK3/cpLJvgFGt/DOt99kENuWOgKyTvrLZ9cbQ/uh2Xccs6K2ohdHYAXDL3rvAQ=="
+}
