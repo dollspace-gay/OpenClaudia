@@ -2,12 +2,13 @@
   "uuid": "1dfc54e3-2756-418a-ba57-0701319e001d",
   "display_id": 590,
   "title": "Track token spend against configurable budget; abort on exceed (parity with CC query/tokenBudget.ts)",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:53:48.744794355Z",
-  "updated_at": "2026-05-20T16:58:02.659547096Z",
+  "updated_at": "2026-05-20T20:35:10.377184581Z",
+  "closed_at": "2026-05-20T20:35:10.377184581Z",
   "labels": [
     "feature",
     "cc-parity"
