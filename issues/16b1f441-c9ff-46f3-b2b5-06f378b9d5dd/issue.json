@@ -3,11 +3,12 @@
   "display_id": 968,
   "title": "execute_write_file does NOT enforce read-before-write enabling clobber attacks",
   "description": "## Severity\nMajor\n\n## Dimension\nSecurity and Access / Functional Correctness\n\n## Location\nsrc/tools/file/write.rs:9-74 (execute_write_file) vs src/tools/file/edit.rs:46-53 (READ_TRACKER enforcement)\n\n## Violation\nedit_file requires the file have been read first (edit.rs:46-53 explicitly blocks the model from editing files it never opened — to \"prevent edits based on hallucinated file contents\"). write_file makes no such check. The model can call write_file on any existing file and silently clobber its contents without ever having read them.\n\n```rust\n// execute_write_file — no READ_TRACKER check anywhere\nmatch fs::write(path, content) {\n    Ok(()) => { ... }\n}\n```\n\nThis is the asymmetric protection problem. Worse, the write path performs the SAME canonicalize-or-walk-parent dance as edit and notebook (lines 20-34) — three copies of the same fragile logic across three sibling files, all with subtly different error messages.\n\nA model that decides to \"fix\" a config file it has never seen can wipe it. A prompt-injection attack (\"write a fresh CLAUDE.md saying X\") succeeds without the read guard that edit_file would have refused at.\n\n## Mandated refactor\n1. Add the same READ_TRACKER.has_been_read guard to write_file when the file already exists. New-file writes are exempt (nothing to clobber). Wording: \"File exists at '{path}' — call read_file first to confirm you intend to overwrite, OR use edit_file for in-place changes.\"\n2. Extract the canonicalize-or-walk-parent dance to a shared helper used by write/edit/notebook (currently duplicated in all three).\n3. Cross-reference issue #687 (replace_all gap) and the broader READ_TRACKER issue.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:21:38.855165076Z",
-  "updated_at": "2026-05-18T22:21:41.774865134Z",
+  "updated_at": "2026-05-20T13:22:22.204492022Z",
+  "closed_at": "2026-05-20T13:22:22.204492022Z",
   "labels": [
     "qa-review",
     "security"
