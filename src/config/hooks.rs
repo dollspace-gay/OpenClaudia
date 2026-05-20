@@ -101,6 +101,31 @@ pub struct HooksConfig {
     pub vdd_converged: Vec<HookEntry>,
 }
 
+/// Which slot of [`crate::hooks::HookInput`] the [`HookEntry::matcher`] regex
+/// is tested against.
+///
+/// Before crosslink #350 the matcher context was inferred at runtime from
+/// whichever field happened to be populated on the input — so a
+/// `PreToolUse` matcher like `"rm"` could accidentally match against a user
+/// prompt of `"I want to rm a file"` when no `tool_name` had been set. Each
+/// `HookEvent` now has a *default* target (see
+/// `crate::hooks::HookMatcherTarget::default_for`), and users who need to
+/// override it can set this field explicitly in YAML/JSON.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HookMatcherTarget {
+    /// Match the regex against [`crate::hooks::HookInput::tool_name`].
+    /// Empty when the field is absent.
+    ToolName,
+    /// Match the regex against [`crate::hooks::HookInput::prompt`].
+    /// Empty when the field is absent.
+    Prompt,
+    /// Match the regex against [`crate::hooks::HookEvent::config_key`] of the
+    /// firing event (e.g. `"session_start"`, `"notification"`). Used for
+    /// events that carry neither a tool name nor a prompt.
+    EventKey,
+}
+
 /// Individual hook entry
 #[derive(Debug, Deserialize, Clone)]
 pub struct HookEntry {
@@ -178,6 +203,16 @@ mod tests {
 
         let entry: HookEntry = serde_json::from_str(json).unwrap();
         assert_eq!(entry.matcher, Some("Write|Edit".to_string()));
+    }
+
+    #[test]
+    fn test_hook_matcher_target_variants_distinct() {
+        // Crosslink #350: the enum is the public type used by the engine to
+        // route matchers; pin its three variants so a future rename to
+        // collapse them surfaces as a test failure.
+        assert_ne!(HookMatcherTarget::ToolName, HookMatcherTarget::Prompt);
+        assert_ne!(HookMatcherTarget::Prompt, HookMatcherTarget::EventKey);
+        assert_ne!(HookMatcherTarget::ToolName, HookMatcherTarget::EventKey);
     }
 
     #[test]

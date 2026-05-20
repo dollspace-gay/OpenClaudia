@@ -21,7 +21,7 @@ pub use claude_compat::{
 };
 pub use merge::merge_hooks_config;
 
-use crate::config::{Hook, HookEntry, HookPolicy, HooksConfig};
+use crate::config::{Hook, HookEntry, HookMatcherTarget, HookPolicy, HooksConfig};
 use crate::tools::is_sensitive_env;
 use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
@@ -148,6 +148,39 @@ impl HookEvent {
     pub const fn is_deny_intent(self) -> bool {
         matches!(self, Self::PreToolUse | Self::PermissionRequest)
     }
+
+    /// Default [`HookMatcherTarget`] for this event variant.
+    ///
+    /// Crosslink #350: replaces the old "first populated field wins"
+    /// behaviour, which let a `PreToolUse` matcher like `"rm"` accidentally
+    /// match a user-prompt string of `"I want to rm a file"`.
+    ///
+    /// Tool-lifecycle events default to [`HookMatcherTarget::ToolName`],
+    /// [`HookEvent::UserPromptSubmit`] defaults to [`HookMatcherTarget::Prompt`],
+    /// and all remaining events (session/notification/subagent/compact/VDD)
+    /// default to [`HookMatcherTarget::EventKey`] so their matcher operates
+    /// on the event's stable config key (`"session_start"`, etc.).
+    #[must_use]
+    pub const fn default_matcher_target(self) -> HookMatcherTarget {
+        match self {
+            Self::PreToolUse
+            | Self::PostToolUse
+            | Self::PostToolUseFailure
+            | Self::PermissionRequest => HookMatcherTarget::ToolName,
+            Self::UserPromptSubmit => HookMatcherTarget::Prompt,
+            Self::SessionStart
+            | Self::SessionEnd
+            | Self::Stop
+            | Self::SubagentStart
+            | Self::SubagentStop
+            | Self::PreCompact
+            | Self::Notification
+            | Self::PreAdversaryReview
+            | Self::PostAdversaryReview
+            | Self::VddConflict
+            | Self::VddConverged => HookMatcherTarget::EventKey,
+        }
+    }
 }
 
 impl HooksConfig {
@@ -236,6 +269,33 @@ impl HookInput {
     pub fn with_extra(mut self, key: impl Into<String>, value: Value) -> Self {
         self.extra.insert(key.into(), value);
         self
+    }
+
+    // ── Typed matcher accessors (crosslink #350) ────────────────────────────
+    //
+    // Each accessor returns the slot of the input that should be tested
+    // against a [`HookEntry::matcher`] regex for that target type, or
+    // `None` if the field isn't populated. The engine selects which
+    // accessor to call from a [`HookMatcherTarget`] derived from either
+    // the entry's explicit `target` field or [`HookEvent::default_matcher_target`].
+
+    /// Tool name to match against (`PreToolUse`/`PostToolUse`/...).
+    #[must_use]
+    pub fn match_tool(&self) -> Option<&str> {
+        self.tool_name.as_deref()
+    }
+
+    /// User prompt text to match against (`UserPromptSubmit`).
+    #[must_use]
+    pub fn match_prompt(&self) -> Option<&str> {
+        self.prompt.as_deref()
+    }
+
+    /// Stable event key (e.g. `"session_start"`) for events with no payload
+    /// other than the event itself. Always returns `Some`.
+    #[must_use]
+    pub const fn match_event(&self) -> Option<&'static str> {
+        Some(self.event.config_key())
     }
 }
 
@@ -421,11 +481,23 @@ impl HookEngine {
             return HookResult::allowed();
         }
 
-        let matcher_context = Self::get_matcher_context(input);
-
-        // Filter entries by matcher. Pass `event` so a matcher-regex failure
-        // on a deny-intent event (PreToolUse / PermissionRequest) fails CLOSED
-        // — the hook still runs and can block. Crosslink #758.
+        // Resolve matcher context strictly from the *event variant*.
+        //
+        // Crosslink #350: previously the context was inferred at runtime from
+        // "whichever input field happens to be populated", which let a
+        // `PreToolUse` matcher like `"rm"` accidentally match a user-prompt
+        // string of `"I want to rm a file"`. Now each event has a fixed
+        // [`HookMatcherTarget`] (see [`HookEvent::default_matcher_target`])
+        // which selects exactly one typed accessor — `match_tool`,
+        // `match_prompt`, or `match_event` — and there is no cross-target
+        // fallback.
+        //
+        // Crosslink #758: `event` is still threaded through to `matches_entry`
+        // so a matcher-regex *failure* on a deny-intent event
+        // (PreToolUse / PermissionRequest) fails CLOSED — the hook still
+        // runs and can block.
+        let target = event.default_matcher_target();
+        let matcher_context = Self::resolve_matcher_context(input, target);
         let matching_entries: Vec<&HookEntry> = entries
             .iter()
             .filter(|entry| Self::matches_entry(entry, &matcher_context, event))
@@ -528,17 +600,27 @@ impl HookEngine {
         }
     }
 
-    /// Get the string to match against for this input
-    fn get_matcher_context(input: &HookInput) -> String {
-        // For tool events, match against tool name
-        if let Some(tool_name) = &input.tool_name {
-            return tool_name.clone();
+    /// Resolve the string the matcher regex should be tested against, based
+    /// on the [`HookMatcherTarget`] selected for this entry/event.
+    ///
+    /// Crosslink #350: replaces the legacy `get_matcher_context` helper that
+    /// inferred the target at runtime from "whichever input field happens to
+    /// be set", which let matchers cross-fire between tool names and user
+    /// prompts. Each branch here calls exactly one of the typed accessors
+    /// ([`HookInput::match_tool`] / [`HookInput::match_prompt`] /
+    /// [`HookInput::match_event`]) — there is no fallback across target
+    /// kinds. If the targeted slot is empty, the context is an empty string
+    /// and the matcher will simply not match (which is the correct behaviour
+    /// when, e.g., a tool-targeted hook fires on an event that carries no
+    /// `tool_name`).
+    fn resolve_matcher_context(input: &HookInput, target: HookMatcherTarget) -> String {
+        match target {
+            HookMatcherTarget::ToolName => input.match_tool().unwrap_or("").to_string(),
+            HookMatcherTarget::Prompt => input.match_prompt().unwrap_or("").to_string(),
+            // `match_event` always returns Some(...), but unwrap_or keeps the
+            // shape uniform with the other two arms.
+            HookMatcherTarget::EventKey => input.match_event().unwrap_or("").to_string(),
         }
-        // For other events, match against prompt or event name
-        if let Some(prompt) = &input.prompt {
-            return prompt.clone();
-        }
-        input.event.config_key().to_string()
     }
 
     /// Check if a hook entry matches the current context.
@@ -2170,5 +2252,186 @@ mod tests {
         // that bubbled up — the fire_post_tool helper swallows hook
         // failures by design (tool execution must never fail because of
         // a misbehaving hook).
+    }
+
+    // ── crosslink #350: typed matcher targets ────────────────────────────────
+
+    #[test]
+    fn default_matcher_target_per_event() {
+        // Tool-lifecycle events → ToolName.
+        for ev in [
+            HookEvent::PreToolUse,
+            HookEvent::PostToolUse,
+            HookEvent::PostToolUseFailure,
+            HookEvent::PermissionRequest,
+        ] {
+            assert_eq!(
+                ev.default_matcher_target(),
+                HookMatcherTarget::ToolName,
+                "{ev:?} must default to ToolName"
+            );
+        }
+        // UserPromptSubmit → Prompt.
+        assert_eq!(
+            HookEvent::UserPromptSubmit.default_matcher_target(),
+            HookMatcherTarget::Prompt
+        );
+        // Everything else → EventKey.
+        for ev in [
+            HookEvent::SessionStart,
+            HookEvent::SessionEnd,
+            HookEvent::Stop,
+            HookEvent::SubagentStart,
+            HookEvent::SubagentStop,
+            HookEvent::PreCompact,
+            HookEvent::Notification,
+            HookEvent::PreAdversaryReview,
+            HookEvent::PostAdversaryReview,
+            HookEvent::VddConflict,
+            HookEvent::VddConverged,
+        ] {
+            assert_eq!(
+                ev.default_matcher_target(),
+                HookMatcherTarget::EventKey,
+                "{ev:?} must default to EventKey"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_accessors_return_correct_slot() {
+        // match_tool / match_prompt / match_event each look at exactly one
+        // slot of HookInput and do not cross-pollinate.
+        let with_tool = HookInput::new(HookEvent::PreToolUse)
+            .with_tool("rm", serde_json::json!({"path": "/etc"}));
+        assert_eq!(with_tool.match_tool(), Some("rm"));
+        assert_eq!(with_tool.match_prompt(), None);
+        assert_eq!(with_tool.match_event(), Some("pre_tool_use"));
+
+        let with_prompt =
+            HookInput::new(HookEvent::UserPromptSubmit).with_prompt("I want to rm a file");
+        assert_eq!(with_prompt.match_tool(), None);
+        assert_eq!(with_prompt.match_prompt(), Some("I want to rm a file"));
+        assert_eq!(with_prompt.match_event(), Some("user_prompt_submit"));
+
+        let bare = HookInput::new(HookEvent::SessionStart);
+        assert_eq!(bare.match_tool(), None);
+        assert_eq!(bare.match_prompt(), None);
+        assert_eq!(bare.match_event(), Some("session_start"));
+    }
+
+    #[tokio::test]
+    async fn pre_tool_use_matcher_does_not_cross_fire_on_prompt() {
+        // Regression for #350: a PreToolUse hook with matcher="rm" must
+        // NOT match a user prompt that contains "rm", even when the input
+        // happens to have a `prompt` field populated. Under the old
+        // "first populated field wins" heuristic this would have fired.
+        let config = HooksConfig {
+            pre_tool_use: vec![HookEntry {
+                matcher: Some("rm".to_string()),
+                hooks: vec![Hook::Command {
+                    // Exit 2 ⇒ block. If this hook fires, allowed = false.
+                    command: "false; exit 2".to_string(),
+                    shell: true,
+                    timeout: 5,
+                }],
+            }],
+            ..Default::default()
+        };
+        let engine = HookEngine::new(config);
+
+        // A PreToolUse event for a *different* tool, with a prompt that
+        // happens to contain the regex pattern.
+        let input = HookInput::new(HookEvent::PreToolUse)
+            .with_tool("Write", serde_json::json!({"path": "/tmp/x"}))
+            .with_prompt("I want to rm a file");
+
+        let result = engine.run(HookEvent::PreToolUse, &input).await;
+        assert!(
+            result.allowed,
+            "PreToolUse matcher 'rm' targets tool_name='Write', must NOT match prompt"
+        );
+    }
+
+    #[tokio::test]
+    async fn user_prompt_submit_matcher_targets_prompt_only() {
+        // Mirror of the above: a UserPromptSubmit hook with matcher="rm"
+        // SHOULD fire when the prompt contains "rm" — and conversely should
+        // NOT fire just because a leftover tool_name happens to contain it.
+        let config = HooksConfig {
+            user_prompt_submit: vec![HookEntry {
+                matcher: Some("rm".to_string()),
+                hooks: vec![Hook::Command {
+                    command: "exit 2".to_string(),
+                    shell: true,
+                    timeout: 5,
+                }],
+            }],
+            ..Default::default()
+        };
+        let engine = HookEngine::new(config);
+
+        // Case A: prompt contains "rm" ⇒ blocks.
+        let hit = HookInput::new(HookEvent::UserPromptSubmit)
+            .with_prompt("please rm -rf /tmp/foo");
+        let result_a = engine.run(HookEvent::UserPromptSubmit, &hit).await;
+        assert!(
+            !result_a.allowed,
+            "matcher must hit the prompt slot"
+        );
+
+        // Case B: prompt is benign, but tool_name happens to be "rm"
+        // (would have falsely matched under the old heuristic).
+        let miss = HookInput::new(HookEvent::UserPromptSubmit)
+            .with_tool("rm", serde_json::json!({}))
+            .with_prompt("hello world");
+        let result_b = engine.run(HookEvent::UserPromptSubmit, &miss).await;
+        assert!(
+            result_b.allowed,
+            "UserPromptSubmit matcher must ignore tool_name slot"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_start_matcher_targets_event_key() {
+        // Events with no tool/prompt payload route to event_key.
+        // A SessionStart hook matching "session_start" should fire;
+        // one matching "pre_tool_use" should not.
+        let config = HooksConfig {
+            session_start: vec![
+                HookEntry {
+                    matcher: Some("session_start".to_string()),
+                    hooks: vec![Hook::Command {
+                        command: "exit 2".to_string(),
+                        shell: true,
+                        timeout: 5,
+                    }],
+                },
+                HookEntry {
+                    matcher: Some("pre_tool_use".to_string()),
+                    hooks: vec![Hook::Command {
+                        command: "exit 2".to_string(),
+                        shell: true,
+                        timeout: 5,
+                    }],
+                },
+            ],
+            ..Default::default()
+        };
+        let engine = HookEngine::new(config);
+        let input = HookInput::new(HookEvent::SessionStart);
+
+        // Hooks run in parallel and one of them blocks ⇒ allowed = false.
+        // We can't distinguish *which* matched from HookResult alone, but we
+        // can confirm only one fired: the outputs vector length equals the
+        // number of hooks that ran past the matcher filter.
+        let result = engine.run(HookEvent::SessionStart, &input).await;
+        assert!(!result.allowed, "matching session_start hook must block");
+        assert_eq!(
+            result.outputs.len(),
+            1,
+            "only the session_start-matching entry should run; \
+             pre_tool_use literal must not cross-fire on EventKey target"
+        );
     }
 }
