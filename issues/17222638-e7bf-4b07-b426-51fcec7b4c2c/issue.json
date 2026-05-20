@@ -3,13 +3,12 @@
   "display_id": 567,
   "title": "Add native GlobTool (parity with CC tools/GlobTool/GlobTool.ts)",
   "description": "## Summary\n\nOpenClaudia currently has no native glob tool. File discovery falls through to bash. Claude Code has a dedicated GlobTool at `tools/GlobTool/GlobTool.ts` (198 lines) that accepts a `pattern` (required) and optional `path` parameter and returns a list of matching file paths (capped at 100 results, with a `truncated` flag).\n\n## CC Reference\n\n- CC source: `tools/GlobTool/GlobTool.ts:1-198`\n- Output schema: `{ durationMs, numFiles, filenames: string[], truncated: bool }`\n- Permissions: uses `checkReadPermissionForTool`\n\n## Gap\n\nOC: missing — no `src/tools/file/glob.rs` or equivalent. File pattern search requires invoking bash.\n\n## Parent Spec Issue\n\nFiled from issue #525 (Phase 1 spec: tools — file operations).",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:43:51.461293270Z",
-  "updated_at": "2026-05-20T14:38:54.295249882Z",
-  "closed_at": "2026-05-20T14:38:54.295249882Z",
+  "updated_at": "2026-05-20T16:57:40.911470025Z",
   "labels": [
     "feature",
     "cc-parity"
