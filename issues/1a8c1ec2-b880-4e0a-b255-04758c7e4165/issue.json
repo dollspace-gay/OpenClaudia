@@ -3,9 +3,10 @@
   "display_id": 905,
   "title": "tool_intercept: ToolInterceptor::clear inconsistent with extract_all_tool_calls (in_function_calls leak)",
   "description": "## Severity\nTrivial\n## Dimension\nkiss\n## Location\nsrc/tool_intercept.rs:111-114 (clear) vs src/tool_intercept.rs:243-272 (extract_all_tool_calls)\n## Violation\n```rust\npub fn clear(&mut self) {\n    self.buffer.clear();\n    self.in_function_calls = false;\n}\n```\n\n```rust\npub fn extract_all_tool_calls(&mut self) -> (...) {\n    ...\n    self.buffer.clear();   // does NOT touch in_function_calls\n    (all_tools, text_parts)\n}\n```\n\n`extract_all_tool_calls` clears the buffer but not the `in_function_calls` flag. After extraction, `has_pending_tool_calls` still returns `true` because `self.in_function_calls` is honored at the end of that check (line 148):\n\n```rust\nself.in_function_calls\n```\n\nSo a subsequent push that contains no tool calls is reported as having pending tool calls forever. The flag is also never SET by any code path inside this module (search the file), so today the bug is dormant — but the dead flag plus the inconsistent reset is a latent bug waiting for someone to introduce a `self.in_function_calls = true` line.\n\n## Mandated refactor\nEither remove the `in_function_calls` field entirely (it has no writer) or have `extract_all_tool_calls` end with `self.clear()` instead of `self.buffer.clear()`. Document the invariant in a comment.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:14:14.428829785Z",
-  "updated_at": "2026-05-18T22:14:14.428829785Z"
+  "updated_at": "2026-05-20T12:29:05.147147800Z",
+  "closed_at": "2026-05-20T12:29:05.147147800Z"
 }
