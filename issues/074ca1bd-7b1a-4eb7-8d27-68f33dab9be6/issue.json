@@ -3,11 +3,12 @@
   "display_id": 820,
   "title": "QA: lsp.rs execute_lsp reads arbitrary file paths with no sandbox boundary (path traversal)",
   "description": "## Severity\nCritical\n## Dimension\nsecurity\n## Location\nsrc/tools/lsp.rs:79-152\n## Violation\n`execute_lsp` accepts a model-supplied `file_path`, canonicalizes it, reads its full contents into memory, then hands them to a language-server binary chosen by extension. There is NO check that the path is within a project root, NO denylist for system paths (`/etc/shadow`, `/proc/*/environ`, `~/.ssh/id_rsa`, `~/.aws/credentials`), and the read happens before the LSP server's `which` check.\n\nQuoted (lsp.rs:79-152):\n```\n    let Some(file_path) = args.get(\"file_path\").and_then(|v| v.as_str()) else {\n        return (\"Error: file_path is required\".to_string(), true);\n    };\n...\n    let abs_path =\n        std::fs::canonicalize(file_path).map_err(|e| format!(\"Cannot resolve path: {e}\"))?;\n    let root_uri = find_project_root(&abs_path);\n    let file_uri = format!(\"file://{}\", abs_path.display());\n\n    // Read file content for textDocument/didOpen\n    let content =\n        std::fs::read_to_string(&abs_path).map_err(|e| format!(\"Cannot read file: {e}\"))?;\n```\n\nThe contents are sent over LSP to a child process; any LSP server can leak them via diagnostics, hover text, or its own telemetry. OWASP A01 (Broken Access Control).\n## Mandated refactor\n1. Require that `file_path` resolves under a configured project root (canonicalize both, then `starts_with`).\n2. Add a hard denylist for known credential paths (`~/.ssh`, `~/.aws`, `~/.config/gcloud`, `/etc/shadow`, `/etc/sudoers`, `/proc/*/environ`).\n3. Cap the file size before reading (`fs::metadata().len()` < threshold).\n4. Apply the same `apply_env_scrub` to the LSP child as bash gets — see related security issue on LSP env leak.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:02:20.843744394Z",
-  "updated_at": "2026-05-18T22:03:03.220189922Z",
+  "updated_at": "2026-05-20T07:13:21.031100958Z",
+  "closed_at": "2026-05-20T07:13:21.031100958Z",
   "labels": [
     "qa-review"
   ]
