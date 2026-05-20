@@ -3,9 +3,10 @@
   "display_id": 752,
   "title": "tool_intercept: unwrap on Option after is_none check is brittle and uses anti-pattern",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/tool_intercept.rs:316-326 (try_extract_shorthand_format)\n## Violation\n```rust\nif let Some(idx) = self.buffer.find(&open_tag) {\n    if earliest_match.is_none() || idx < earliest_match.unwrap().0 {\n        earliest_match = Some((idx, *tool));\n    }\n}\nif let Some(idx) = self.buffer.find(&open_tag_attr) {\n    if earliest_match.is_none() || idx < earliest_match.unwrap().0 {\n        earliest_match = Some((idx, *tool));\n    }\n}\n```\n\nThe `earliest_match.is_none() || idx < earliest_match.unwrap().0` pattern relies on short-circuit evaluation to avoid a panic on `unwrap()`. Two issues:\n\n1. Readability: future refactors that swap the boolean ordering (e.g., `idx < earliest_match.unwrap().0 || earliest_match.is_none()`) introduce an unconditional panic. The compiler cannot warn.\n2. KISS / pattern-matching: Rust's `Option` has `map_or` / pattern matching specifically for this case.\n\n## Mandated refactor\nReplace each branch with:\n\n```rust\nlet should_replace = earliest_match.map_or(true, |(prev, _)| idx < prev);\nif should_replace { earliest_match = Some((idx, *tool)); }\n```\n\nOr fold both scans into a single `.iter().filter_map(...).min_by_key(|(idx, _)| *idx)`.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:53:58.109606562Z",
-  "updated_at": "2026-05-18T21:53:58.109606562Z"
+  "updated_at": "2026-05-20T13:26:36.283671114Z",
+  "closed_at": "2026-05-20T13:26:36.283671114Z"
 }
