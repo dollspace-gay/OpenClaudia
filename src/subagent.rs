@@ -1312,9 +1312,9 @@ fn build_chat_completion_request(
 ///
 /// Provider transformation is delegated to the canonical
 /// [`crate::providers::ProviderAdapter`] trait so subagent dispatch
-/// supports every provider the proxy supports (Anthropic, OpenAI,
-/// Google/Gemini, DeepSeek, Qwen, Z.AI/GLM, Ollama,
-/// OpenAI-compatible) instead of a hardcoded Anthropic-vs-OpenAI
+/// supports every provider the proxy supports (Anthropic, `OpenAI`,
+/// `Google`/`Gemini`, `DeepSeek`, Qwen, Z.AI/GLM, Ollama,
+/// `OpenAI`-compatible) instead of a hardcoded Anthropic-vs-`OpenAI`
 /// branch. The previous implementation duplicated provider
 /// transformation logic from `src/providers/` and only handled two
 /// out of seven formats — see crosslink #407.
@@ -1795,7 +1795,7 @@ mod tests {
     }
 
     /// Snapshot the adapter-produced Anthropic body so it matches the
-    /// canonical AnthropicAdapter contract: `system` is an array of
+    /// canonical `AnthropicAdapter` contract: `system` is an array of
     /// content blocks with `cache_control`, messages exclude system,
     /// `max_tokens` and `model` round-trip verbatim.
     #[test]
@@ -1840,7 +1840,7 @@ mod tests {
         assert_eq!(messages[0].get("role").and_then(|v| v.as_str()), Some("user"));
     }
 
-    /// OpenAI subagent dispatch: produces a well-formed OpenAI-shape
+    /// `OpenAI` subagent dispatch: produces a well-formed `OpenAI`-shape
     /// body via the canonical adapter. The duplicate code path used to
     /// rely on the literal `request_body.clone()` (no transformation);
     /// going through the adapter is now uniform with every other
@@ -1927,17 +1927,16 @@ mod tests {
 
     /// Negative test — an unknown provider name must surface as a
     /// clean typed error at the dispatch boundary, NOT silently fall
-    /// back to OpenAI. The crate-level `get_adapter` is typo-tolerant
+    /// back to `OpenAI`. The crate-level `get_adapter` is typo-tolerant
     /// by design (the proxy treats unknown providers as
-    /// OpenAI-compatible local servers); subagent dispatch has the
+    /// `OpenAI`-compatible local servers); subagent dispatch has the
     /// opposite preference because a wrongly-routed Anthropic agent
     /// would issue malformed HTTP requests upstream. See crosslink
     /// #407.
     #[test]
     fn crosslink407_unknown_provider_returns_clean_error() {
-        let err = match resolve_subagent_adapter("not-a-real-provider") {
-            Ok(_) => panic!("unknown provider must error, not silently fall back"),
-            Err(e) => e,
+        let Err(err) = resolve_subagent_adapter("not-a-real-provider") else {
+            panic!("unknown provider must error, not silently fall back")
         };
         assert!(
             err.contains("Unknown subagent provider"),
