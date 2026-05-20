@@ -3,11 +3,12 @@
   "display_id": 796,
   "title": "rules.rs Glob extension extraction is naive and accepts non-extension tails",
   "description": "## Severity\nMinor\n## Dimension\nkiss\n## Location\nsrc/rules.rs:295-310 (extract_extensions_from_tool_input, Glob branch)\n## Violation\n```rust\n\"Glob\" => {\n    if let Some(pattern) = input.get(\"pattern\").and_then(|v| v.as_str()) {\n        if let Some(ext_part) = pattern.rsplit('.').next() {\n            let ext = ext_part.trim_end_matches(&['*', '?', ']', ')'][..]);\n            if !ext.is_empty() && ext.len() < 10 {\n                extensions.push(ext.to_string());\n            }\n        }\n    }\n}\n```\n\n`rsplit('.').next()` for a pattern like `*.tar.gz` returns `\"gz\"` — fine — but for `src/util` returns the entire string, treating `util` as an extension. The 10-character cutoff catches some of these false positives but not others (e.g. `foo`). The trim list `&['*', '?', ']', ')']` is incomplete: braces (`{html,htm}`) are not handled, so `*.{rs,toml}` returns `\"toml}\"` minus nothing. The whole branch is a regex masquerading as imperative code.\n## Mandated refactor\nUse a single compiled regex `\\.([A-Za-z0-9]{1,8})(?:[\\*\\?\\]\\}\\)]*)?$` (compiled once via `OnceLock<Regex>`), capture group 1 = extension. Reject patterns with no embedded `.`. Add tests for `*.tar.gz`, `*.{rs,toml}`, `src/util`, `**/*.rs`, and `*`.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:59:43.989885715Z",
-  "updated_at": "2026-05-18T22:00:25.159329521Z",
+  "updated_at": "2026-05-20T07:32:47.964486464Z",
+  "closed_at": "2026-05-20T07:32:47.964486464Z",
   "labels": [
     "qa-review",
     "kiss"
