@@ -1,0 +1,10 @@
+{
+  "uuid": "d5d3f160-4a35-499a-8e1a-b50e7bb9c560",
+  "issue_uuid": "05b8284c-263a-4e0c-95fc-7f879a27b46d",
+  "author": "lOrm",
+  "content": "Issue calls for a hardcoded domain allowlist for web_fetch bypass (parity with CC preapproved.ts ~130 docs domains). Not addressable in a cleanup pass: requires an allowlist data file (~130 entries), bypass-permission logic in the web_fetch tool path, GET-only restriction enforcement, and config-override surface. Parent audit #523.",
+  "created_at": "2026-05-20T14:40:56.778423387Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAASACMVXFCpytJb3r2Nyl+G3fS6ouiXz5RCIztjSm1cNkSN0TuuLKQ8cwszDC/5sT+B8MG5PtwgWWe8tXlHO6CA=="
+}
