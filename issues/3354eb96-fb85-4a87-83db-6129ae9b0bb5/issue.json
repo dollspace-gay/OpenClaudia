@@ -3,9 +3,10 @@
   "display_id": 835,
   "title": "QA: hook input serialization failure silently sends empty stdin (run)",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/hooks/mod.rs:411\n## Violation\nThe hook input passed to every command hook is serialized with a\nswallowed error:\n```rust\nlet input_json = serde_json::to_string(input).unwrap_or_default();\n```\nIf `HookInput` ever fails to serialize (custom serializer panic, locale\nissue, etc.), `unwrap_or_default()` produces `String::default()` =\nempty string. Hooks then receive `\"\"` on stdin and have no way to know\nthe input was lost — they may default-allow on missing fields or hang\nwaiting for data. The actual error is silently discarded; no `tracing`\nentry, no metric, no audit-log row.\n## Mandated refactor\nReplace with explicit error handling: on serialization failure, log\n`error!(error = %e, \"Failed to serialize HookInput; refusing to run\nhook\")` and return `HookResult::denied(...)` for pre-tool-use hooks (or\nemit a dedicated error variant for post-tool hooks). Better: change the\nhook contract so serialization happens once at HookEngine startup or\nconstruct-time, and serialization errors propagate up at config-load\ntime rather than per-call.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:05:04.560398357Z",
-  "updated_at": "2026-05-18T22:05:04.560398357Z"
+  "updated_at": "2026-05-20T14:12:40.228049945Z",
+  "closed_at": "2026-05-20T14:12:40.228049945Z"
 }
