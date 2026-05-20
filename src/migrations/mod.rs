@@ -23,6 +23,8 @@
 //! full per-migration result via [`run_all`]'s return value if they
 //! want to surface it.
 
+use anyhow::Context as _;
+use std::io;
 use std::path::{Path, PathBuf};
 
 mod ledger;
@@ -194,14 +196,25 @@ pub fn run_all_count_applied(ctx: &MigrationContext) -> usize {
 }
 
 /// Convenience for migrations that just need to read a JSON file into
-/// a `serde_json::Value`. Returns `Ok(None)` when the file doesn't
-/// exist — a missing file is a valid skip case, not an error.
-#[allow(dead_code)] // first real migration will use this
+/// a `serde_json::Value`. Returns `Ok(None)` only when the file is
+/// genuinely absent (`io::ErrorKind::NotFound`) — every other I/O
+/// failure (permission denied, I/O error, busy device, etc.) is
+/// propagated as `Err`.
+///
+/// This distinction matters for migrations that use the marker-file
+/// fast-path: silently treating "can't read the marker" as "marker
+/// is absent" would either re-run a destructive migration or — worse,
+/// per crosslink #734 — silently skip a needed migration when the
+/// caller pattern-matched on `Ok(_)` only.
 pub(crate) fn read_json_if_exists(path: &Path) -> anyhow::Result<Option<serde_json::Value>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let text = std::fs::read_to_string(path)?;
-    let value = serde_json::from_str(&text)?;
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(anyhow::Error::new(err).context(format!("reading {}", path.display())));
+        }
+    };
+    let value = serde_json::from_str(&text)
+        .with_context(|| format!("parsing JSON from {}", path.display()))?;
     Ok(Some(value))
 }

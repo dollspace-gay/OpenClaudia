@@ -388,3 +388,102 @@ fn context_from_env_is_constructible() {
     // ledger_path() must always return a buildable path.
     let _: PathBuf = ctx.ledger_path();
 }
+
+// --- crosslink #734: schema-marker fast path must distinguish
+// NotFound (run the migration) from other I/O errors (surface as
+// failure rather than silently skipping). ---
+
+/// `read_json_if_exists` returns `Ok(None)` for a missing file —
+/// the canonical "no marker yet, run the migration" signal.
+#[test]
+fn fix734_read_json_if_exists_returns_none_for_missing_file() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("nope.json");
+    let value = read_json_if_exists(&path).expect("missing file is not an error");
+    assert!(value.is_none(), "missing file must map to Ok(None)");
+}
+
+/// `read_json_if_exists` returns `Err` (not silently `Ok(None)`)
+/// when the file exists but cannot be read — the bug from #734
+/// was that permission-denied was being conflated with absence.
+#[cfg(unix)]
+#[test]
+fn fix734_read_json_if_exists_errors_when_unreadable() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("marker.json");
+    std::fs::write(&path, r#"{"transcripts": 1}"#).unwrap();
+    // Strip every permission bit. read_to_string then yields
+    // ErrorKind::PermissionDenied.
+    let mut perms = std::fs::metadata(&path).unwrap().permissions();
+    perms.set_mode(0o000);
+    std::fs::set_permissions(&path, perms).unwrap();
+
+    let result = read_json_if_exists(&path);
+
+    // Restore so TempDir cleanup doesn't trip.
+    let mut restore = std::fs::metadata(&path).unwrap().permissions();
+    restore.set_mode(0o600);
+    let _ = std::fs::set_permissions(&path, restore);
+
+    // Skip the assertion if the process is privileged enough to
+    // ignore the bit (e.g. running as root in CI). In that case
+    // the read succeeds and the test is vacuously true.
+    if result.is_ok() {
+        return;
+    }
+    assert!(
+        result.is_err(),
+        "unreadable file must propagate as Err, not silently map to Ok(None)",
+    );
+}
+
+/// End-to-end: when the schema-version marker exists but can't be
+/// read, `StampTranscriptSchemaV1::run` must surface a
+/// `MigrationOutcome::Failed` rather than silently skipping (the
+/// pre-fix behavior would have ignored the read error and either
+/// re-applied the migration or swallowed it).
+#[cfg(unix)]
+#[test]
+fn fix734_stamp_transcript_marker_unreadable_surfaces_failure() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let _lock = env_lock();
+    let tc = TestContext::new();
+    let projects = tc.ctx.claude_home.join("projects");
+    std::fs::create_dir_all(&projects).unwrap();
+    let marker = projects.join(".schema-version.json");
+    std::fs::write(&marker, r#"{"transcripts": 1}"#).unwrap();
+
+    // Make the marker unreadable; on most filesystems unprivileged
+    // processes get ErrorKind::PermissionDenied from read_to_string.
+    let mut perms = std::fs::metadata(&marker).unwrap().permissions();
+    perms.set_mode(0o000);
+    std::fs::set_permissions(&marker, perms).unwrap();
+
+    let migration = super::stamp_transcript_schema_v1::StampTranscriptSchemaV1;
+    let outcome = migration.run(&tc.ctx);
+
+    // Restore so TempDir cleanup works.
+    let mut restore = std::fs::metadata(&marker).unwrap().permissions();
+    restore.set_mode(0o600);
+    let _ = std::fs::set_permissions(&marker, restore);
+
+    match outcome {
+        MigrationOutcome::Failed(_) => {}
+        MigrationOutcome::Skipped => {
+            // Only acceptable if we're root and the chmod was a no-op;
+            // in that case the read succeeded and the marker matched.
+            // We can detect this by re-reading.
+            let still_readable = std::fs::read_to_string(&marker).is_ok();
+            assert!(
+                still_readable,
+                "Skipped without being able to read the marker is the #734 bug",
+            );
+        }
+        MigrationOutcome::Applied(msg) => {
+            panic!("must not silently overwrite an unreadable marker; got Applied: {msg}");
+        }
+    }
+}

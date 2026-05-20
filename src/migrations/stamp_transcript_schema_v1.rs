@@ -62,11 +62,28 @@ impl Migration for StampTranscriptSchemaV1 {
         // current version → nothing to do. We treat a higher version as
         // "newer build wrote it, don't clobber" — this keeps downgrades
         // safe for users who pin to an older release after upgrading.
-        if let Ok(Some(value)) = super::read_json_if_exists(&path) {
-            if let Ok(marker) = serde_json::from_value::<SchemaMarker>(value) {
-                if marker.transcripts.unwrap_or(0) >= CURRENT_TRANSCRIPT_SCHEMA {
-                    return MigrationOutcome::Skipped;
+        //
+        // crosslink #734: distinguish "no marker" (Ok(None) → run
+        // migration) from "marker is unreadable" (Err → surface as
+        // failure). Treating the latter as "absent" would silently
+        // overwrite a marker we couldn't even inspect, and the previous
+        // `if let Ok(Some(_))` swallowed permission-denied errors so the
+        // operator never saw the underlying problem.
+        match super::read_json_if_exists(&path) {
+            Ok(Some(value)) => {
+                if let Ok(marker) = serde_json::from_value::<SchemaMarker>(value) {
+                    if marker.transcripts.unwrap_or(0) >= CURRENT_TRANSCRIPT_SCHEMA {
+                        return MigrationOutcome::Skipped;
+                    }
                 }
+                // Marker present but malformed/older → fall through to
+                // (re)write it with the current version.
+            }
+            Ok(None) => {
+                // No marker yet — first run on this machine; fall through.
+            }
+            Err(err) => {
+                return MigrationOutcome::Failed(err);
             }
         }
 
