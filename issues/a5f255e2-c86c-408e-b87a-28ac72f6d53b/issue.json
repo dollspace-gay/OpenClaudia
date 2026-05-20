@@ -3,11 +3,12 @@
   "display_id": 804,
   "title": "InstalledPlugins::load silently resets on parse failure — data-loss-on-corruption",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/plugins/install.rs:110-135\n## Violation\nA corrupt or unparseable installed_plugins.json is treated identically to \"file missing\": both fall back to Default. Quoted lines:\n\n    Err(e) => {\n        warn!(error = %e, \"Failed to parse installed_plugins.json, starting fresh\");\n        Self::default()\n    }\n    ...\n    Err(e) => {\n        warn!(error = %e, \"Failed to read installed_plugins.json\");\n        Self::default()\n    }\n\nThe next save() then overwrites the corrupt file with an empty registry — every prior install record is gone. The user gets a single `warn!` line and loses their plugin inventory.\n## Mandated refactor\nOn parse failure, rename the bad file to installed_plugins.json.broken-<timestamp> (or .bak) BEFORE returning Default. Surface a top-level error (or `Result<Self, PluginError>`) so the CLI can prompt the user instead of silently losing data. Add a schema version check that refuses to overwrite a file whose `version` field is newer than the deserialiser supports.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:00:56.695883232Z",
-  "updated_at": "2026-05-18T22:01:32.051468411Z",
+  "updated_at": "2026-05-20T07:36:46.792650606Z",
+  "closed_at": "2026-05-20T07:36:46.792650606Z",
   "labels": [
     "qa-review",
     "error-handling"
