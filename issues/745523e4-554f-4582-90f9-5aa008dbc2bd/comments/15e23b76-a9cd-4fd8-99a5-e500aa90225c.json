@@ -1,0 +1,10 @@
+{
+  "uuid": "15e23b76-a9cd-4fd8-99a5-e500aa90225c",
+  "issue_uuid": "745523e4-554f-4582-90f9-5aa008dbc2bd",
+  "author": "lOrm",
+  "content": "Deferred — owner-level encapsulation decision (Coordinator API surface).\n\n**Fix outline:** Change Coordinator::queue_mut (src/coordinator/mod.rs:71) from pub to pub(crate). The doc comment already acknowledges this is the desired visibility; landing the tightening is the fix. External callers should drive the queue through Coordinator's own typed submit/cancel methods rather than borrowing the inner TaskQueue mutably.\n\n**Recommendation:** Owner-level call on whether external Coordinator users currently rely on queue_mut (audit needed). The doc comment says 'tighten when a stable submit API lands' — that submit API is the prerequisite. Defer until the submit API is designed.",
+  "created_at": "2026-05-20T14:15:48.273934911Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAXb3nj85CpP5moa5nSLcPgZE1erp+2vqVBMqxUewJ/rnYZdJPlB43wc3bzqqm9Vot8QBNnJx8++c7g2PmeTJ4Dg=="
+}
