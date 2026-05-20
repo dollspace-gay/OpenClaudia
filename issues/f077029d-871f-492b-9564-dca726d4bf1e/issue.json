@@ -3,11 +3,12 @@
   "display_id": 886,
   "title": "QA: read_lsp_response hard-codes 100-message scan limit and conflates errors",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/tools/lsp.rs:276-322\n## Violation\n`read_lsp_response` loops \"up to 100 messages\" looking for the matching id. After exhausting it returns a single string error; the legitimate \"server hangs\" path and the \"server is chatty with diagnostics\" path are conflated. Servers like clangd routinely emit dozens of diagnostics before completing — 100 is an unprincipled magic number.\n\nQuoted (lsp.rs:280-322):\n```\n    for _attempt in 0..100 {\n        // Read headers\n        let mut content_length: usize = 0;\n        loop {\n            let mut line = String::new();\n            reader\n                .read_line(&mut line)\n                .map_err(|e| format!(\"Read error: {e}\"))?;\n...\n    Err(format!(\n        \"LSP server did not respond to request {expected_id} after 100 messages\"\n    ))\n```\n\nAlso: the inner header-parsing loop is tightly coupled to the outer id-matching loop. SRP violation; the function does 3 jobs (frame parsing, message routing, timeout enforcement).\n## Mandated refactor\n1. Split into `read_lsp_frame(reader) -> Result<Value, FrameError>` and `wait_for_response(reader, id, deadline) -> Result<Value, WaitError>`.\n2. Replace the 100-message cap with a wall-clock deadline (`Instant`-based) configurable per-request.\n3. Distinguish error types via `thiserror` — `BadFrame`, `ServerClosed`, `Timeout`, `ProtocolError` — not stringly-typed `Result<_, String>`.\n4. Route notifications (`$/progress`, `textDocument/publishDiagnostics`) into an explicit notification handler instead of silently discarding them.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:11:29.349389014Z",
-  "updated_at": "2026-05-18T22:12:06.977528521Z",
+  "updated_at": "2026-05-20T12:23:03.071269695Z",
+  "closed_at": "2026-05-20T12:23:03.071269695Z",
   "labels": [
     "qa-review",
     "error-handling"
