@@ -3,11 +3,12 @@
   "display_id": 937,
   "title": "subagent: run_subagent ignores memory_db, breaking memory_* tools for spawned agents",
   "description": "## Severity\nMajor\n## Dimension\ndecoupling\n## Location\nsrc/subagent.rs:936 (run_subagent tool dispatch)\n## Violation\n```rust\nlet _session_guard = crate::tools::SessionIdGuard::set(&agent_id);\nlet result = crate::tools::execute_tool_with_memory(&tc, None, Some(&permission_mgr));\n```\n\nThe subagent unconditionally passes `None` for memory_db. Every memory_* tool invoked by the agent receives None and either no-ops or errors. The session id is bound via SessionIdGuard above — clearly intent was to scope memory operations per agent — but the actual memory_db handle is dropped.\n\n## Mandated refactor\nThread `&MemoryDb` (or `Option<&MemoryDb>` if the agent type opts out) through SubagentConfig into run_subagent. At the call site, pass memory_db instead of None. If the policy is \"no memory access for subagents\", document that and remove the dead SessionIdGuard above.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:18:19.791282341Z",
-  "updated_at": "2026-05-18T22:18:30.066970242Z",
+  "updated_at": "2026-05-20T13:26:31.547599707Z",
+  "closed_at": "2026-05-20T13:26:31.547599707Z",
   "labels": [
     "qa-review",
     "decoupling"
