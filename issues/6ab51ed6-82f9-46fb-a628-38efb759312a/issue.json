@@ -3,9 +3,10 @@
   "display_id": 737,
   "title": "Duplicated ArchivalMemory row→struct decode across 3 sites + 5 other entity types",
   "description": "## Severity\nMinor\n## Dimension\ndry\n## Location\nsrc/memory.rs:412-424 (memory_search), 447-461 (memory_get), 519-532 (memory_list); plus identical pattern for RecentSession (734-754), RecentActivity (802-812), CodingPattern (968-980), ErrorPattern (1091-1102), LearnedPreference (1181-1192).\n## Violation\nThe exact same six-field decode closure is duplicated three times for `ArchivalMemory`:\n\n```rust\nOk(ArchivalMemory {\n    id: row.get(0)?,\n    content: row.get(1)?,\n    tags: row.get::<_, String>(2)?.split(',').filter(|s| !s.is_empty()).map(String::from).collect(),\n    created_at: row.get(3)?,\n    updated_at: row.get(4)?,\n})\n```\n\nIf `archival_memory` ever gets a new column or the tag-storage scheme changes (see #464), three call sites must change in lockstep. The same anti-pattern repeats for every entity type — five more × 1-3 sites each. Total: ~12 duplicated decode blocks.\n## Mandated refactor\n1. Implement a free function `archival_memory_from_row(row: &Row) -> rusqlite::Result<ArchivalMemory>` and call it from all three query_map closures. Same for each other entity type — one helper each.\n2. Or introduce a `TryFrom<&Row>` trait impl per type (more idiomatic Rust).\n3. The tag-split logic is itself duplicated 3x — extract `fn parse_tags(s: &str) -> Vec<String>`.\n4. After consolidation, the column-ordering knowledge lives in exactly one place per type, satisfying SSOT.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:52:56.328692221Z",
-  "updated_at": "2026-05-18T21:52:56.328692221Z"
+  "updated_at": "2026-05-20T06:45:54.241814646Z",
+  "closed_at": "2026-05-20T06:45:54.241814646Z"
 }
