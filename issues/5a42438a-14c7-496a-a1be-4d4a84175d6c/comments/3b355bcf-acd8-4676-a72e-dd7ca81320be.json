@@ -1,0 +1,10 @@
+{
+  "uuid": "3b355bcf-acd8-4676-a72e-dd7ca81320be",
+  "issue_uuid": "5a42438a-14c7-496a-a1be-4d4a84175d6c",
+  "author": "lOrm",
+  "content": "#665 closed. Added paths frontmatter field to SkillDefinition (#660 covers schema) and skill_matches_path() public matcher in src/skills.rs. Implements shell-style glob semantics: * matches single path segment, ** matches across segments, ? matches one non-slash char, **/ matches zero-or-more intermediate dirs. Invalid patterns log warn and skip without panicking. Inline regex translator avoids pulling a new glob crate dependency. 2 unit tests pin: glob semantics across nested + bare-toml + non-match cases, and invalid-glob graceful failure. Touched-file event integration (the activation trigger) is a separate concern owned by the event-dispatch layer.",
+  "created_at": "2026-05-20T20:37:56.793302394Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAMxaeGQw4T+C5jF92m87+hpKJIPGAfEJ59h7K3riI/DltW0WhRVv25T7XqIHHLOPBfStCdU2Ad9/VCcB+tLNsBg=="
+}
