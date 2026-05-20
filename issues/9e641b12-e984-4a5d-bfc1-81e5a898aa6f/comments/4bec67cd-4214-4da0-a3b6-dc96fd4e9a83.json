@@ -1,0 +1,10 @@
+{
+  "uuid": "4bec67cd-4214-4da0-a3b6-dc96fd4e9a83",
+  "issue_uuid": "9e641b12-e984-4a5d-bfc1-81e5a898aa6f",
+  "author": "lOrm",
+  "content": "Issue calls for ask_user_question annotations pass-through and preview rendering (parity with CC). Not addressable in a cleanup pass: requires extending the USER_QUESTION_MARKER payload schema, TUI rendering for annotations, and depends on #520 (AskUserQuestion overlay). Parent audit #523.",
+  "created_at": "2026-05-20T14:40:28.889752168Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAcp4eXbNPgKK7GwBfBWUuXBRZ1TjzreePFiiSbUldpEVUmaQEwDUXcTUhZWRWURbYzsKHlVarcV3CQ0WePlUMAA=="
+}
