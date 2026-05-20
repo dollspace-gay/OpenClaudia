@@ -1,0 +1,10 @@
+{
+  "uuid": "3f75aacd-496a-48e7-9ee7-92eaf7e67954",
+  "issue_uuid": "3e47380f-5d0f-41a5-944f-1fc94e0584ea",
+  "author": "lOrm",
+  "content": "Issue calls for handling workspace/configuration reverse-request from language servers (parity with CC LSPServerManager.ts:123-135). Not addressable in a cleanup pass: depends on #636 LSP server pool; protocol-level reverse-request plumbing. Parent audit #523.",
+  "created_at": "2026-05-20T14:39:22.918254700Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA4U1Iy1HzO6QMdjUVu7K/G4O4ifaJS2k8K5AEv5tXeExmuiwurEUhWoVMIVl1UfUN8zeOeuJXwobT9CfHJTxABA=="
+}
