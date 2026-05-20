@@ -1402,6 +1402,73 @@ impl MemoryDb {
         Ok(())
     }
 
+    /// Record many co-edit relationships in a single SQL transaction
+    /// using one prepared statement (crosslink #457).
+    ///
+    /// `pairs` is canonicalized (smaller path first) and de-duplicated
+    /// before insert, so callers passing N files with `N*(N-1)/2` ordered
+    /// candidates do not pay for both `(a, b)` and `(b, a)`.  Self-pairs
+    /// (`a == b`) are silently skipped.
+    ///
+    /// Returns the number of distinct pairs upserted.  An empty input
+    /// returns `Ok(0)` without opening a transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transaction cannot be opened, any insert
+    /// fails, or the final commit fails.  On error the transaction is
+    /// rolled back automatically when the `Transaction` is dropped.
+    pub fn save_file_relationships_batch<S: AsRef<str>>(&self, pairs: &[(S, S)]) -> Result<usize> {
+        if pairs.is_empty() {
+            return Ok(0);
+        }
+        Self::save_file_relationships_batch_on(&mut *self.lock_conn()?, pairs)
+    }
+
+    /// Inner helper for [`save_file_relationships_batch`] — runs the
+    /// transactional upsert on a `Connection`.  Extracted so the mutex
+    /// guard in the public method has no lifetime overlap with the
+    /// returned count.
+    fn save_file_relationships_batch_on<S: AsRef<str>>(
+        conn: &mut Connection,
+        pairs: &[(S, S)],
+    ) -> Result<usize> {
+        let mut canonical: std::collections::HashSet<(&str, &str)> =
+            std::collections::HashSet::with_capacity(pairs.len());
+        for (a, b) in pairs {
+            let (a, b) = (a.as_ref(), b.as_ref());
+            if a == b {
+                continue;
+            }
+            let pair = if a <= b { (a, b) } else { (b, a) };
+            canonical.insert(pair);
+        }
+        if canonical.is_empty() {
+            return Ok(0);
+        }
+
+        let tx = conn
+            .transaction()
+            .context("save_file_relationships_batch: failed to begin transaction")?;
+        {
+            let mut stmt = tx
+                .prepare(
+                    r"INSERT INTO file_relationships (file_a, file_b) VALUES (?1, ?2)
+                       ON CONFLICT(file_a, file_b) DO UPDATE SET
+                           co_edit_count = co_edit_count + 1,
+                           last_seen = datetime('now')",
+                )
+                .context("save_file_relationships_batch: failed to prepare insert")?;
+            for (fa, fb) in &canonical {
+                stmt.execute(params![fa, fb])
+                    .context("save_file_relationships_batch: insert failed")?;
+            }
+        }
+        tx.commit()
+            .context("save_file_relationships_batch: commit failed")?;
+        Ok(canonical.len())
+    }
+
     /// Get files frequently co-edited with the given file.
     ///
     ///

@@ -411,25 +411,38 @@ impl<'a> AutoLearner<'a> {
 
     // === Internal: Session End ===
 
+    /// Compute pairwise co-edit relationships for files modified in this
+    /// session and persist them in a **single SQL transaction** using one
+    /// prepared statement (crosslink #457).
+    ///
+    /// Previously this issued `N*(N-1)/2` separate `INSERT` calls — each
+    /// taking the connection mutex, allocating a fresh statement, and
+    /// committing an implicit transaction.  For `N=200` files that is
+    /// 19 900 individual transactions at session end.  We now build the
+    /// canonical pair set once and hand it to
+    /// [`MemoryDb::save_file_relationships_batch`], which opens exactly
+    /// one transaction regardless of `N`.
     fn compute_file_relationships(&self) {
         let files: Vec<&String> = self.session_files_modified.iter().collect();
         if files.len() < 2 {
             return;
         }
 
-        // Record pairwise co-edit relationships
+        // Build the canonical (smaller, larger) pair set up front.  The
+        // batch helper also de-duplicates, but doing it here means we
+        // allocate the `Vec` exactly the right size and the debug log
+        // reflects the post-canonicalization count.
+        let mut pairs: Vec<(&str, &str)> = Vec::with_capacity(files.len() * (files.len() - 1) / 2);
         for i in 0..files.len() {
             for j in (i + 1)..files.len() {
-                if let Err(e) = self.db.save_file_relationship(files[i], files[j]) {
-                    self.log_db_error("save_file_relationship", &e);
-                }
+                pairs.push((files[i].as_str(), files[j].as_str()));
             }
         }
 
-        debug!(
-            "Recorded {} file co-edit relationships",
-            files.len() * (files.len() - 1) / 2
-        );
+        match self.db.save_file_relationships_batch(&pairs) {
+            Ok(written) => debug!("Recorded {} file co-edit relationships", written),
+            Err(e) => self.log_db_error("save_file_relationships_batch", &e),
+        }
     }
 }
 
@@ -1182,5 +1195,175 @@ mod tests {
         assert_eq!(stats.error_patterns, 2);
         assert_eq!(stats.learned_preferences, 2);
         assert_eq!(stats.file_relationships, 2);
+    }
+
+    // === Crosslink #457 regression coverage =================================
+    //
+    // The previous `compute_file_relationships` issued one separate INSERT
+    // per pair, each taking the mutex and committing an implicit
+    // transaction.  For N=200 files that is 19 900 transactions at session
+    // end.  The tests below pin three behavioural contracts of the new
+    // batched implementation:
+    //
+    //   1. Exactly one commit reaches the database (observed via
+    //      `PRAGMA data_version` from a *second* connection — that pragma
+    //      increments once per commit performed on any other connection).
+    //   2. The whole flow stays well under a generous wall-clock budget
+    //      for N=200 files (19 900 pairs) on the test runner.
+    //   3. The observable relationship graph (counts and neighbours) is
+    //      identical to the pre-batch per-pair loop.
+
+    /// Read `PRAGMA data_version` on the supplied observer connection.
+    /// `SQLite` increments this counter on a given connection whenever
+    /// it observes a commit performed on any *other* connection to the
+    /// same database, so a before/after delta of `1` against a single
+    /// long-lived observer proves the writer opened exactly one
+    /// transaction.  The observer must be kept open across both reads —
+    /// a fresh connection always sees `data_version = 1`.
+    fn read_data_version(observer: &rusqlite::Connection) -> i64 {
+        observer
+            .query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0))
+            .expect("read data_version")
+    }
+
+    #[test]
+    fn fix457_compute_file_relationships_opens_single_transaction() {
+        let (dir, db) = create_test_db();
+        let db_path = dir.path().join("test.db");
+
+        // Long-lived observer connection — kept open across all the
+        // pragma reads below so `data_version` increments are visible.
+        let observer = rusqlite::Connection::open(&db_path).expect("observer");
+
+        let mut learner = AutoLearner::new(&db);
+        for i in 0..10 {
+            learner
+                .session_files_modified
+                .insert(format!("src/file_{i:02}.rs"));
+        }
+
+        // Measure prune cost in isolation first (on the empty tables) so
+        // we can subtract it from the on_session_end total.
+        let prune_before = read_data_version(&observer);
+        learner.prune_old_data();
+        let prune_after = read_data_version(&observer);
+        let prune_commits = prune_after - prune_before;
+
+        let before = read_data_version(&observer);
+        learner.on_session_end();
+        let after = read_data_version(&observer);
+
+        let total = after - before;
+        let insert_commits = total - prune_commits;
+        assert_eq!(
+            insert_commits, 1,
+            "compute_file_relationships must open exactly one transaction \
+             (saw {insert_commits} commits attributable to the insert; \
+              total={total}, prune={prune_commits})"
+        );
+    }
+
+    #[test]
+    fn fix457_batch_insert_dedupes_symmetric_pairs() {
+        let (_dir, db) = create_test_db();
+
+        // Feed the batch helper both (a, b) and (b, a) plus a self-pair.
+        // The HashSet de-dup means only one row should land in the table.
+        let pairs: Vec<(String, String)> = vec![
+            ("src/a.rs".to_string(), "src/b.rs".to_string()),
+            ("src/b.rs".to_string(), "src/a.rs".to_string()), // symmetric duplicate
+            ("src/a.rs".to_string(), "src/a.rs".to_string()), // self-pair, skipped
+        ];
+
+        let written = db.save_file_relationships_batch(&pairs).unwrap();
+        assert_eq!(
+            written, 1,
+            "symmetric duplicates and self-pairs must collapse"
+        );
+
+        let related = db.get_related_files("src/a.rs").unwrap();
+        assert_eq!(related, vec![("src/b.rs".to_string(), 1)]);
+    }
+
+    #[test]
+    fn fix457_compute_file_relationships_n200_under_500ms() {
+        let (_dir, db) = create_test_db();
+        let mut learner = AutoLearner::new(&db);
+
+        // 200 files → 19 900 pair upserts.  Under the old per-pair-INSERT
+        // implementation this took multiple seconds on a warm runner;
+        // batched it must finish in well under half a second.
+        for i in 0..200 {
+            learner
+                .session_files_modified
+                .insert(format!("src/perf/file_{i:03}.rs"));
+        }
+
+        let start = std::time::Instant::now();
+        learner.compute_file_relationships();
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "batched compute_file_relationships took {elapsed:?} for N=200 \
+             (expected < 500ms)"
+        );
+
+        // Sanity-check the workload actually ran: 200 choose 2 = 19 900 rows.
+        let stats = db.auto_learn_stats().unwrap();
+        assert_eq!(stats.file_relationships, 200 * 199 / 2);
+    }
+
+    #[test]
+    fn fix457_batched_relationships_match_per_pair_baseline() {
+        // Snapshot: the observable relationship graph after the new
+        // batched write must equal what the previous per-pair loop
+        // produced.  We compute the baseline by hand using the public
+        // `save_file_relationship` (still available) on one db, then
+        // compute the same workload via the batch path on a second db,
+        // and assert both `get_related_files` outputs are identical.
+        let (_dir_a, db_a) = create_test_db();
+        let (_dir_b, db_b) = create_test_db();
+
+        let files: Vec<String> = (0..6).map(|i| format!("src/snap_{i}.rs")).collect();
+
+        // Baseline path: original per-pair loop, mirroring the
+        // pre-#457 implementation of compute_file_relationships.
+        for i in 0..files.len() {
+            for j in (i + 1)..files.len() {
+                db_a.save_file_relationship(&files[i], &files[j]).unwrap();
+            }
+        }
+
+        // Batched path: drive the new AutoLearner.on_session_end flow.
+        let mut learner = AutoLearner::new(&db_b);
+        for f in &files {
+            learner.session_files_modified.insert(f.clone());
+        }
+        learner.compute_file_relationships();
+
+        // Per-file related-file lists must match byte-for-byte across the
+        // two implementations.  `get_related_files` returns
+        // `(neighbour, co_edit_count)` ordered by count DESC; for a
+        // single co-edit pass every count is 1, so the underlying SQLite
+        // tie-break determines ordering.  Comparing as sorted sets
+        // captures the contract that matters: same neighbours, same
+        // counts.
+        for f in &files {
+            let mut a = db_a.get_related_files(f).unwrap();
+            let mut b = db_b.get_related_files(f).unwrap();
+            a.sort();
+            b.sort();
+            assert_eq!(a, b, "neighbour set for {f} diverged from baseline");
+        }
+
+        // And the row totals match exactly.
+        let stats_a = db_a.auto_learn_stats().unwrap();
+        let stats_b = db_b.auto_learn_stats().unwrap();
+        assert_eq!(stats_a.file_relationships, stats_b.file_relationships);
+        assert_eq!(
+            stats_a.file_relationships,
+            files.len() * (files.len() - 1) / 2
+        );
     }
 }
