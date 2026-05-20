@@ -3,9 +3,10 @@
   "display_id": 925,
   "title": "modes::Modifier::Debug variant overlap with std::fmt::Debug + Display tested to match but Display omits modifier markers",
   "description": "## Severity\nTrivial\n## Dimension\nnaming\n## Location\nsrc/modes/mod.rs:402-404 (display_name) and 372-377 (matching_preset linear scan)\n## Violation\ndisplay_name returns the preset name (`\"create\"`) for a matching mode but the AXIS STRING (`\"surgical/architect/unrestricted\"`) for a custom one — and never includes the modifiers in either case. `matching_preset()` performs a linear scan of all 8 presets per call (with full BehaviorMode equality compares including the modifier Vec) to determine which to return. This is called every time anything wants a human label.\n\nHot-path callers that render the mode for status (TUI/CLI) pay this scan on every status redraw. For an idle session that's wasted work; for an active session it's also wasted work because the result almost never changes.\n## Mandated refactor\nCache matching_preset on the BehaviorMode struct as a private OnceLock<Option<Preset>>. Or — simpler — pre-compute a `const PRESET_TABLE: &[(BehaviorMode, Preset)]` and binary-search by axis triple. Have display_name include modifiers when present (`\"create [bold, debug]\"`) so the rendered label round-trips with the actual configuration.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:17:14.812671638Z",
-  "updated_at": "2026-05-18T22:17:14.812671638Z"
+  "updated_at": "2026-05-20T12:24:51.194973069Z",
+  "closed_at": "2026-05-20T12:24:51.194973069Z"
 }
