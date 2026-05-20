@@ -1,0 +1,10 @@
+{
+  "uuid": "96a191c6-5af9-40a3-820e-fb4ff3e0d2ad",
+  "issue_uuid": "ee540af1-1471-4b64-8ef8-5dc42ba27632",
+  "author": "lOrm",
+  "content": "FORBIDDEN: src/tools/bash/mod.rs is on the locked file list for this bulk pass. The De Morgan'd retain predicate at mod.rs:88-94 still wants the BackgroundShell::is_collectable() helper inversion + rename to was_output_drained_post_exit. Mandated refactor stands for a bash-focused worktree.",
+  "created_at": "2026-05-20T13:25:48.353331620Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAG3a625oVrP6BR4OzPlA0mY6H6eWbNVW14x8d8tR2kSgwZdHCJJMpZ/xM6eWPE51Jq5WLMMFt+OgEZiRo2Po7BQ=="
+}
