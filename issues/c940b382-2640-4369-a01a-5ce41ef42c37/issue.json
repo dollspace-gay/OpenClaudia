@@ -3,11 +3,12 @@
   "display_id": 728,
   "title": "MemoryDb mutex poison panics across all paths — single bad row kills the subsystem",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/memory.rs — every public method, e.g. lines 180, 379, 400, 442, 477, 514, 549, 583, 611, 638, 673, 703, 726, 777, 796, 829, 852, 873, 935, 963, 1005, 1024, 1053, 1085, 1123, 1147, 1176, 1280, 1319\n## Violation\nEvery method funnels through `self.conn.lock().unwrap()`. If any handler panics while holding the lock (e.g. a malformed UTF-8 row coming back from query_map's row.get::<_, String>), the Mutex is poisoned and every subsequent MemoryDb call panics. The `# Panics` docstring acknowledges this but the project policy in CLAUDE.md (`Prefer ? operator over .unwrap() in production code`) is explicitly violated, and these are not internal contracts — they are the system boundary between async axum handlers and SQLite.\n\nSample (line 180):\n\n```rust\npub fn execute_raw(&self, sql: &str) -> Result<()> {\n    let conn = self.conn.lock().unwrap();\n    conn.execute_batch(sql).with_context(|| { ... })\n}\n```\n\nA single poisoned lock means the entire learning + chat-history feature stops working for the lifetime of the process — there is no recovery code anywhere.\n## Mandated refactor\n1. Introduce `fn lock_conn(&self) -> Result<MutexGuard<'_, Connection>>` that recovers via `PoisonError::into_inner` (the connection is unaffected by a logic panic in a closure) and converts errors to `anyhow::Error`.\n2. Replace all `.lock().unwrap()` with `self.lock_conn()?` (single helper, single change point).\n3. Add a regression test that intentionally panics inside a query_map closure and asserts the next call still succeeds.\n4. Remove the `# Panics` clauses from the docstrings once the behavior is gone.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:51:45.350464446Z",
-  "updated_at": "2026-05-18T21:52:39.910020737Z",
+  "updated_at": "2026-05-20T06:38:25.254271919Z",
+  "closed_at": "2026-05-20T06:38:25.254271919Z",
   "labels": [
     "qa-review",
     "error-handling"
