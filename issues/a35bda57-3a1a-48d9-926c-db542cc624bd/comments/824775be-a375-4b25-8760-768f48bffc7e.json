@@ -1,0 +1,10 @@
+{
+  "uuid": "824775be-a375-4b25-8760-768f48bffc7e",
+  "issue_uuid": "a35bda57-3a1a-48d9-926c-db542cc624bd",
+  "author": "lOrm",
+  "content": "Fixed in worktree-agent-aa1a347bab1bd604d. See git commit for details (crosslink #950). 1886 lib tests pass, cargo clippy --all-targets --all-features clean.",
+  "created_at": "2026-05-20T14:04:38.490291206Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAq8AqYXBTNZE1aj/voP20UhWEfLHFRa9m7DmcxdC0Orfiy02qC2p6cz06O58+9TdUHLsa/5FP0tcwy+dm9xZOAA=="
+}
