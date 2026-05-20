@@ -1,0 +1,10 @@
+{
+  "uuid": "47f190a1-097c-465e-a268-0ca388fc6448",
+  "issue_uuid": "d540a4ac-154d-41a4-99c2-806571971163",
+  "author": "lOrm",
+  "content": "Issue calls for persisting extracted memories during compaction (parity with CC sessionMemoryCompact.ts). Not addressable in a cleanup pass: depends on #508/#533 memdir infrastructure, requires extracted-memory schema and compaction-time persistence hook. Parent audit #523.",
+  "created_at": "2026-05-20T14:38:32.755243310Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABADqltUmnJDJZELANVbLIS/mfZgHtWFNX9y7v060TLszoejQtQxbjUAFCMfOIRCK2A/1po9WzahBDFY8w0ESdWAg=="
+}
