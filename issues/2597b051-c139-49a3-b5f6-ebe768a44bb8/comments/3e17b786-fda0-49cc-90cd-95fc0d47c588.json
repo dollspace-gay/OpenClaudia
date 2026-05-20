@@ -1,0 +1,10 @@
+{
+  "uuid": "3e17b786-fda0-49cc-90cd-95fc0d47c588",
+  "issue_uuid": "2597b051-c139-49a3-b5f6-ebe768a44bb8",
+  "author": "lOrm",
+  "content": "FORBIDDEN: src/subagent.rs is on the locked file list for this bulk pass. The three concurrency hazards (Handle::try_current silent skip, dropped JoinHandle, missing finish() on the outer registration) all live in execute_task_tool's background branch and cannot be reached without editing subagent.rs. Mandated refactor stands for a subagent-focused worktree.",
+  "created_at": "2026-05-20T13:25:36.265897715Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAbTduhOwiZT93FWXF0ECY/5nQKMkcqlNk5UP6Gxow0FnbgWoIkmdFudUZqQXgSmajs/LPIwcjWhkz+xX6L97bBA=="
+}
