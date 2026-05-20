@@ -3,11 +3,12 @@
   "display_id": 877,
   "title": "cron.rs SCHEDULES_FILE is a relative path producing cwd-dependent silent state",
   "description": "## Severity\nMajor\n\n## Dimension\nSecurity and Access / Functional Correctness\n\n## Location\nsrc/tools/cron.rs:14 (const SCHEDULES_FILE) plus 35-55 (load/save)\n\n## Violation\n```rust\nconst SCHEDULES_FILE: &str = \".openclaudia/schedules.json\";\n```\n\nScheduleStore::load and save use the relative path verbatim:\n\n```rust\nfn load() -> Self {\n    let path = PathBuf::from(SCHEDULES_FILE);\n    if path.exists() { ... }\n}\n```\n\nThis couples the cron subsystem to whatever the process cwd happens to be at call time. Combined with worktree.rs mutating cwd (see separate issue), every cron operation can resolve to a DIFFERENT schedules.json depending on which worktree the agent is currently in. Worse, load() returns Default on any parse failure (line 39: `.unwrap_or_default()`) — corruption silently wipes the schedule list and save() then commits the empty store.\n\nTest cron_create_then_list_round_trip changes cwd to a temp dir for this exact reason — the function is unsafe outside that pattern.\n\n## Mandated refactor\n1. Anchor schedules.json to PROJECT_ROOT (the canonical static in src/tools/file/mod.rs:78). Make load/save take a base PathBuf or read PROJECT_ROOT to construct the absolute path once.\n2. On parse failure, do NOT return Default — return an error so the caller can refuse to clobber the existing (corrupt-but-recoverable) file. Move the corrupt file aside with a .corrupt timestamp suffix before recreating.\n3. Consider injecting a ScheduleStore::Provider trait so tests do not need to mutate process cwd to redirect storage.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:10:28.257315888Z",
-  "updated_at": "2026-05-18T22:10:58.231749116Z",
+  "updated_at": "2026-05-20T12:22:35.690962974Z",
+  "closed_at": "2026-05-20T12:22:35.690962974Z",
   "labels": [
     "qa-review",
     "security"
