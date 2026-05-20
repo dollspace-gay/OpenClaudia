@@ -1,0 +1,10 @@
+{
+  "uuid": "4dcdd383-317c-42ec-aff9-4afe2a15b788",
+  "issue_uuid": "0bb5c68e-6cb6-419e-883a-9a7f74df78a9",
+  "author": "lOrm",
+  "content": "Deleted the sentinel test b4_cost_tracked_variant_not_yet_present_gap649. Compile-time coverage of new AnalyticsEvent variants is already enforced by the exhaustive match in TracingAnalytics::record.",
+  "created_at": "2026-05-20T12:24:06.188924183Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA/4Gs3+xTmspKEYO+Rr/xMLJzzUaCUHO7kcOksQWJ+2sigU2ic+c8QCAwkiJ3O85V8J6faFjBi6aHFBrH7qKmBQ=="
+}
