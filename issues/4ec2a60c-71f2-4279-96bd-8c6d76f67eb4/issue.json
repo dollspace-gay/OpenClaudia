@@ -3,11 +3,12 @@
   "display_id": 978,
   "title": "cron field_names/field_ranges parallel constants and indexed lookups are fragile coupling",
   "description": "## Severity\nTrivial\n\n## Dimension\nType Safety / Data Modeling\n\n## Location\nsrc/tools/cron.rs:60-69 (FIELD_NAMES and FIELD_RANGES) and 78-138 (use sites)\n\n## Violation\n```rust\nconst FIELD_NAMES: [&str; 5] = [\"minute (0-59)\", \"hour (0-23)\", \"day (1-31)\", \"month (1-12)\", \"weekday (0-6)\"];\nconst FIELD_RANGES: [(u32, u32); 5] = [(0, 59), (0, 23), (1, 31), (1, 12), (0, 6)];\nconst _: () = assert!(FIELD_NAMES.len() == FIELD_RANGES.len());\n```\n\nThe compile-time assert is acknowledgement that the two parallel arrays need to stay in sync — but it only guards the length, not the *meaning* of paired entries. Swapping `(0, 23)` and `(1, 31)` (hour vs day) would compile and pass the assert; cron expressions for hour 30 would then incorrectly validate while hour 12 of \"day\" field would not.\n\nThe 5-element duplication exists because both lookups happen in the same loop with the same index `i` (lines 81-138). One struct per field would carry both pieces of information together.\n\n## Mandated refactor\n```rust\nstruct CronField { name: &'static str, min: u32, max: u32 }\nconst FIELDS: [CronField; 5] = [\n    CronField { name: \"minute (0-59)\", min: 0, max: 59 },\n    CronField { name: \"hour (0-23)\", min: 0, max: 23 },\n    CronField { name: \"day (1-31)\", min: 1, max: 31 },\n    CronField { name: \"month (1-12)\", min: 1, max: 12 },\n    CronField { name: \"weekday (0-6)\", min: 0, max: 6 },\n];\n```\n\n(This also disappears entirely when the parser is replaced with the cron crate per the separate issue.)\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:25:08.344595123Z",
-  "updated_at": "2026-05-18T22:25:12.319290752Z",
+  "updated_at": "2026-05-20T04:53:26.810607930Z",
+  "closed_at": "2026-05-20T04:53:26.810607930Z",
   "labels": [
     "qa-review",
     "solid"
