@@ -3,9 +3,10 @@
   "display_id": 791,
   "title": "slash_commit / slash_commit_push_pr are 70+ line god-functions blocking on stdin from inside the REPL handler",
   "description": "## Severity\nMajor\n## Dimension\ncomplexity\n## Location\nsrc/cli/repl/slash.rs:290-345, src/cli/repl/slash.rs:347-398\n## Violation\nBoth functions mix git-status probing, prompt formatting, blocking stdin reads, branching commit flows, push handling, and gh-PR creation in a single linear stretch. Quoted lines:\n\n    if line.trim().to_lowercase().starts_with('y') {\n        let _ = Command::new(\"git\").args([\"add\", \"-A\"]).output();\n        println!(\"All changes staged.\");\n    } else { println!(\"Commit cancelled.\"); return SlashCommandResult::Handled; }\n    ...\n    let msg = if file_list.len() == 1 { format!(\"Update {}\", file_list[0]) } else { format!(\"Update {} files\", file_list.len()) };\n\nslash_commit's V(G) >= 15 (is_inside_work_tree, has_staged, has_unstaged, multi-arm prompt over y/yes/empty/e/edit/default, nested Ok/Err arms). Functions are >50 lines, block stdin (no TUI/scripted reuse), and silently `git add -A` (contradicts project commit-quality and safety guidance).\n## Mandated refactor\nExtract a Commit struct/builder: `Commit::new().prompt_for_staging(&prompt)?.synthesise_message()?.commit()?`. Hoist all stdin behind `trait Prompt { fn confirm(&self, q: &str) -> bool; fn read_line(&self, q: &str) -> String; }` so tests + TUI can drive the same code. Compose slash_commit_push_pr into a Pipeline of Commit/Push/GhPr stages. Replace `git add -A` with an explicit list from `git status --porcelain`, opt-in for untracked files.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:59:06.274439808Z",
-  "updated_at": "2026-05-18T21:59:06.274439808Z"
+  "updated_at": "2026-05-20T07:32:46.487052343Z",
+  "closed_at": "2026-05-20T07:32:46.487052343Z"
 }
