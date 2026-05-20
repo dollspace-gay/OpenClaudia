@@ -1,0 +1,10 @@
+{
+  "uuid": "6e5c9b38-e420-44bf-9fd8-309433e2c483",
+  "issue_uuid": "d2ae5629-db0b-49f2-903c-4a79b7fbf012",
+  "author": "lOrm",
+  "content": "Fixed in src/tools/file/notebook.rs::apply_replace: a code-cell replace now resets outputs to [] and execution_count to null, computed from the effective cell type (existing cell_type or override). Markdown/raw replaces still strip those fields entirely (nbformat). Updated the previously-pinned test notebook_replace_code_cell_does_not_reset_outputs (now ..._resets_execution_count_and_outputs) plus a new markdown-cell guard. 1821/1821 lib tests pass; clippy clean.",
+  "created_at": "2026-05-20T06:42:05.908193805Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAf30GZAaXYHBycq/79GbtTDnl4wd5hx8FzsnzaEW4c9N1ArPWMyqPDhJFNRJ9Zl/5lcuQTe5GzQzcGeWc0/hYBg=="
+}
