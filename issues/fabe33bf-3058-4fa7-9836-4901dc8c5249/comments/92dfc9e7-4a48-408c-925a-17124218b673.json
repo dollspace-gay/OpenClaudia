@@ -1,0 +1,10 @@
+{
+  "uuid": "92dfc9e7-4a48-408c-925a-17124218b673",
+  "issue_uuid": "fabe33bf-3058-4fa7-9836-4901dc8c5249",
+  "author": "lOrm",
+  "content": "Issue calls for SSE, WebSocket, and Streamable-HTTP MCP transports (CC supports 8 transport types — stdio/sse/sse-ide/ws/ws-ide/http/sdk/claudeai-proxy). OC has only stdio + plain HTTP. Not addressable in a cleanup pass: requires SseTransport + WebSocketTransport + StreamableHTTPClientTransport implementations conforming to MCP 2025-03-26 transport spec. Multi-day protocol work; blocks connecting to any cloud-hosted MCP server. Parent audit #523.",
+  "created_at": "2026-05-20T14:38:21.434189113Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAlO1qE1+8/1bdMsJJtuiYu8gsICjp8HdugYhig26uEMDVbIoap+upcVN1AIUHa4Y75aXECQMuiR2+wKZFW5CbAQ=="
+}
