@@ -3,12 +3,13 @@
   "display_id": 613,
   "title": "Add MCP elicitation handler (server prompts user mid-tool-call)",
   "description": "CC declares `elicitation:{}` in initialize capabilities (client.ts:999) and registers an ElicitRequestSchema handler (elicitationHandler.ts:68-313, client.ts:1191-1197). OC does not declare elicitation in the initialize params (src/mcp.rs:382-389) and has no elicitation handler. Servers that send elicitation requests receive no response from OC — effectively a silent hang or cancel. Required: declare capability, register handler, pipe request to UI or hook system.",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:02:06.064590094Z",
-  "updated_at": "2026-05-20T18:41:50.848448437Z",
+  "updated_at": "2026-05-20T19:54:53.542917277Z",
+  "closed_at": "2026-05-20T19:54:53.542917277Z",
   "labels": [
     "feature",
     "cc-parity"
