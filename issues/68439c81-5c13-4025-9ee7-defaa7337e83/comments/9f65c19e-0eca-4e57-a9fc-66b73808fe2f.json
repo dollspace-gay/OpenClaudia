@@ -1,0 +1,10 @@
+{
+  "uuid": "9f65c19e-0eca-4e57-a9fc-66b73808fe2f",
+  "issue_uuid": "68439c81-5c13-4025-9ee7-defaa7337e83",
+  "author": "lOrm",
+  "content": "Duplicate of #830 (already closed 2026-05-20 07:00). Same defect (Modifier::Debug / Preset::Debug serde collision + Display ambiguity), same location (src/modes/mod.rs:67-104), same mandated refactor. Verified fix in place at HEAD 80439851: src/modes/mod.rs:80,83,86 has #[serde(rename = \"modifier-debug\")] / modifier-methodical / modifier-director, and lines 125,128,131 mirror the preset-* renames. serde_roundtrip_all_presets and serde_roundtrip_all_modifiers pass. Closing as duplicate.",
+  "created_at": "2026-05-20T13:25:40.599369526Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA1ZTo6p7vpqCcWpXOnkJ1yeBphWibPhi+Rax3hae+BOnswSRtXzxh9EIyYGHwI8Vbj2mMLE9O8WRxhfpEGj56BQ=="
+}
