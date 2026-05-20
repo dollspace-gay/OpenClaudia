@@ -1,0 +1,10 @@
+{
+  "uuid": "c3f122cc-20f0-4417-abb7-9b0c7d49f5e7",
+  "issue_uuid": "9e641b12-e984-4a5d-bfc1-81e5a898aa6f",
+  "author": "lOrm",
+  "content": "Landed annotations passthrough in src/tools/ask_user.rs. extract_annotations() reads optional top-level 'annotations' field, validates it's a JSON object (else errors with the offending JSON type name), and threads it verbatim into the user_question marker payload alongside questions. Missing field emitted as null so renderers see a stable shape. Added parse_user_question_annotations() helper for downstream consumers, re-exported at tools:: top level. 3 tests pin: round-trip with preview_url/severity/tags / missing annotations emits null / non-object annotations rejected.",
+  "created_at": "2026-05-20T18:18:56.456856141Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABATaVSWvlkbe+zJEzYOl/tGmp0gdvsNXRfgVOSfLmsU68JcVeA7az6WqzS3zOAL0CIwezDz+QhPAGtOvAnSGcJAQ=="
+}
