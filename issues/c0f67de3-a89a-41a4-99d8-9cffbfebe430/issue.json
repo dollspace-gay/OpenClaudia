@@ -3,11 +3,12 @@
   "display_id": 775,
   "title": "search_duckduckgo uses fixed 500ms sleep as page-load synchronization",
   "description": "## Severity\nMinor\n## Dimension\nconcurrency\n## Location\nsrc/web.rs:475-583 (search_duckduckgo), line 501\n## Violation\nAfter `wait_until_navigated()`, the function calls `std::thread::sleep(Duration::from_millis(500))` to \"wait for page to load\" before reading content. This is a race condition: on slow machines or under heavy load the page may not be ready; on fast loads the 500ms is wasted latency. Inside a tokio runtime this is also a hard block on the executor thread because the function is `pub fn`, not async, and is invoked via `block_in_place(handle.block_on(...))` from `execute_web_search`.\n\n```rust\n// Wait for page to load\nstd::thread::sleep(Duration::from_millis(500));\n```\n\nA similar 2-second blocking sleep exists in `fetch_with_browser` at line 622.\n## Mandated refactor\nUse a polling wait with timeout: `tab.wait_for_element_with_custom_timeout(\".result\", Duration::from_secs(5))` (chromiumoxide / headless_chrome both expose this). For the `fetch_with_browser` path, wait for `document.readyState === 'complete'` via `tab.evaluate(...)` polled with a timeout. If a true wall-clock delay is needed, use `tokio::time::sleep` from an async context.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:55:34.607819279Z",
-  "updated_at": "2026-05-18T22:05:21.487587360Z",
+  "updated_at": "2026-05-20T07:06:37.055360537Z",
+  "closed_at": "2026-05-20T07:06:37.055360537Z",
   "labels": [
     "concurrency"
   ]
