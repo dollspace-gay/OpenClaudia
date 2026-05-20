@@ -2,11 +2,12 @@
   "uuid": "a95e7c46-fefa-417d-8d8a-450481b615fa",
   "display_id": 645,
   "title": "Add 5 missing LSP operations: workspaceSymbol, goToImplementation, prepareCallHierarchy, incomingCalls, outgoingCalls (parity with CC LSPTool.ts:62-73)",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:08:58.563438867Z",
-  "updated_at": "2026-05-20T16:58:57.736471929Z",
+  "updated_at": "2026-05-20T19:55:15.422404928Z",
+  "closed_at": "2026-05-20T19:55:15.422404928Z",
   "labels": [
     "parity,cc-lsp"
   ]
