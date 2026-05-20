@@ -1,0 +1,10 @@
+{
+  "uuid": "844d7473-4b8d-4952-8160-c81448447296",
+  "issue_uuid": "882c2f29-e7b5-4142-a8e3-17033d947244",
+  "author": "lOrm",
+  "content": "Added send_or_warn() helper that detects channel-closed (Esc pressed / app shutting down) on SyncMessages/ResponseDone/ApiError sends. On failure: (a) tracing::warn! with event descriptor + session_id, (b) for SyncMessages persists the orphaned session_messages vector to {data_dir}/openclaudia/orphan-turns/{session_id}-{ts}.json so the next run can recover. Wired through run_api_turn_async (extracted handle_turn_result helper to stay under 100-line lint) and run_agentic_loop.",
+  "created_at": "2026-05-20T07:04:55.433225064Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAZEAFHNfFgIzWhIawGx1yPDw/wAM5j5DzFgDTUTGoMySdym8Lz9yHLIOpSG9/pDp1Q9AmnoXue0AGPvgI+JgbDg=="
+}
