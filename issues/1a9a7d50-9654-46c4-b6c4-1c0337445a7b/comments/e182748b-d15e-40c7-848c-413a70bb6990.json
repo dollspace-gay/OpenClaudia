@@ -1,0 +1,10 @@
+{
+  "uuid": "e182748b-d15e-40c7-848c-413a70bb6990",
+  "issue_uuid": "1a9a7d50-9654-46c4-b6c4-1c0337445a7b",
+  "author": "lOrm",
+  "content": "Issue calls for standardizing tool error returns: tools/ uses (String, bool) tuples, web.rs uses Result<T,String>, others use anyhow. Root cause is the stringly-typed return convention diagnosed in #376 — the same finding from a different angle. This is not addressable in a cleanup pass: every tool file, every caller (tool_intercept.rs check_tool_result_marker, format_tool_results_xml_with_names), and the marker plumbing (USER_QUESTION_MARKER, ENTER_PLAN_MODE_MARKER) must move in lockstep. Original blocker #209 is itself closed but the cross-module refactor never landed. Re-opening would be a duplicate of #376; tracking continues there.",
+  "created_at": "2026-05-20T14:31:13.609166785Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAC9UZewIsRf9XnjJCnLMFdBoGpdCqamZD3/zBVcO3h50SsEvw5JqQ28X4dTiZ3Lji6eDyfm/0JxuKja1STRI4AA=="
+}
