@@ -3,11 +3,12 @@
   "display_id": 980,
   "title": "ENTER/EXIT_PLAN_MODE_MARKER protocol uses string markers via super:: instead of typed control plane",
   "description": "## Severity\nMinor\n\n## Dimension\nDecoupling / Architectural Alignment\n\n## Location\nsrc/tools/plan_mode.rs:4-13 (imports + execute_enter_plan_mode) and 17-39 (execute_exit_plan_mode)\n\n## Violation\n```rust\nuse super::{ENTER_PLAN_MODE_MARKER, EXIT_PLAN_MODE_MARKER};\n...\nlet result = json!({\"type\": ENTER_PLAN_MODE_MARKER});\n(result.to_string(), false)\n```\n\nThe tool returns a JSON-serialized object containing a magic string marker that the calling main loop must parse to know \"the model entered plan mode.\" This is in-band signalling via the tool result channel that was designed for \"return text to the model.\" The dispatcher must:\n1. String-parse every tool result.\n2. Check if it parses as JSON.\n3. Check if the JSON has a `type` field matching one of two magic strings.\n4. If so, intercept and route to a control-flow handler instead of forwarding to the model.\n\nThis is the Big Ball of Mud in miniature: tool results carry side-channel control commands. Every other tool's result text is data; these two tools' result texts are control messages. The naming (returning \"(String, bool)\" but actually meaning \"(ControlMessage | UserText, isError)\") is misleading.\n\n## Mandated refactor\nReplace `(String, bool)` return with an enum:\n```rust\npub enum ToolResult {\n    Text { content: String, is_error: bool },\n    EnterPlanMode,\n    ExitPlanMode { allowed_prompts: Vec<AllowedPrompt> },\n    ...\n}\n```\nThe dispatcher matches the enum explicitly; the model never sees the marker strings. This makes the control plane and data plane separate — the architectural boundary the markers currently violate. Cross-references issue #670.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:25:44.122407485Z",
-  "updated_at": "2026-05-18T22:25:46.915016529Z",
+  "updated_at": "2026-05-20T12:58:03.406214707Z",
+  "closed_at": "2026-05-20T12:58:03.406214707Z",
   "labels": [
     "qa-review",
     "decoupling"
