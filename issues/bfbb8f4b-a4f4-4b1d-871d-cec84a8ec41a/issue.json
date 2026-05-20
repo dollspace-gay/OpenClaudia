@@ -3,11 +3,12 @@
   "display_id": 977,
   "title": "list_files entries.flatten silently swallows per-entry errors",
   "description": "## Severity\nMinor\n\n## Dimension\nPerimeter Defense / Error Orchestration\n\n## Location\nsrc/tools/file/list.rs:17-24 (execute_list_files iteration)\n\n## Violation\n```rust\nfor entry in entries.flatten() {\n    ...\n}\n```\n\n`flatten()` on a `Result` iterator silently drops every error, returning only successful items. A directory containing a symlink the process cannot stat returns a partial listing with no indication that an entry was skipped. The model believes it has the complete directory contents and may decide a file does not exist when in fact stat failed for that file.\n\nSame pattern is used in file_index.rs:55 with the same defect — but that one is for a recursive index where the cost is even higher (entire subtrees silently dropped).\n\n## Mandated refactor\nReplace with explicit loop and tracing::warn! on errors:\n```rust\nfor entry in entries {\n    match entry {\n        Ok(e) => { ... items.push ... },\n        Err(e) => { tracing::warn!(path=%path.display(), error=%e, \"list_files: failed to read entry\"); skipped += 1; }\n    }\n}\nif skipped > 0 { items.push(format!(\"[{} entries skipped due to errors — see logs]\", skipped)); }\n```\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:24:46.771432334Z",
-  "updated_at": "2026-05-18T22:24:49.495627617Z",
+  "updated_at": "2026-05-20T04:50:10.562307891Z",
+  "closed_at": "2026-05-20T04:50:10.562307891Z",
   "labels": [
     "qa-review",
     "error-handling"
