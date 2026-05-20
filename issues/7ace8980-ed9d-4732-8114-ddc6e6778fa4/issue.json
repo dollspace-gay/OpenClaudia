@@ -3,11 +3,12 @@
   "display_id": 744,
   "title": "truncate_content rewrites line endings (CRLF→LF) and drops trailing newlines silently",
   "description": "## Severity\nTrivial\n## Dimension\nkiss\n## Location\nsrc/memdir/entrypoint.rs:137-148 (truncate_content)\n## Violation\nLine-truncation path rebuilds content via `lines().take(N).collect::<Vec<_>>().join(\"\\n\")`:\n\n```rust\nlet mut truncated = if line_count > MAX_ENTRYPOINT_LINES {\n    lines_triggered = true;\n    let kept: Vec<&str> = raw.lines().take(MAX_ENTRYPOINT_LINES).collect();\n    kept.join(\"\\n\")\n} else {\n    raw.to_string()\n};\n```\n\nSide effects the caller does not expect:\n1. CRLF line endings in the source file become bare LF in the truncated output. Windows-authored MEMORY.md files are silently rewritten.\n2. A trailing newline on the original file (very common — git diff trims trailing-newline-less files) is dropped, because `lines()` does not yield a final empty item for a terminal `\\n`.\n3. The suffix `\\n\\n[truncated — …]` is appended unconditionally, so when only the byte limit fires (line_count ≤ MAX_ENTRYPOINT_LINES), the leading line endings of the original are preserved but the tail gets the same LF-only suffix — inconsistent line-ending style within one file.\n\nNone of these is a security issue but they violate the round-trip invariant and make it surprising when an exact-match comparison against a CC-canonical MEMORY.md fails on Windows checkouts.\n## Mandated refactor\n1. Track line offsets into the original slice and emit `&raw[..end_offset]` rather than re-joining — preserves the original line endings and any trailing newline.\n2. Emit the suffix with the same line-ending style detected in the body (sniff `\\r\\n` vs `\\n` from the first line break).\n3. Test: feed `b\"a\\r\\nb\\r\\nc\\r\\n\"` × 201 and assert the output still contains `\\r\\n`.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:53:38.643477415Z",
-  "updated_at": "2026-05-18T21:53:41.241596526Z",
+  "updated_at": "2026-05-20T14:03:47.825688166Z",
+  "closed_at": "2026-05-20T14:03:47.825688166Z",
   "labels": [
     "qa-review",
     "kiss"
