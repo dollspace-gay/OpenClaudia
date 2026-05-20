@@ -1,0 +1,10 @@
+{
+  "uuid": "c83970b6-6906-4d23-962a-d76951886476",
+  "issue_uuid": "10c2bf7d-b5c3-4907-83b1-41c194fbd771",
+  "author": "lOrm",
+  "content": "Added in-process MCP transport in src/mcp_inprocess.rs with McpServerCallable trait, InProcessTransport (implements McpTransport), and linked_transport_pair() helper. 3 tokio tests covering JSON-RPC round-trip + close-rejects-requests.",
+  "created_at": "2026-05-20T18:37:32.369361432Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABABBNcYPCFad2XH7qZxNBNOAxi7qlXRNKiftNNMry/uqBd1qYkbusbNvraN0++g2QqLDBkRTfMN/8bMzO1PUIeBQ=="
+}
