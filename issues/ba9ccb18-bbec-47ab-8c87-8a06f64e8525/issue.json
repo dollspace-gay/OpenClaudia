@@ -3,11 +3,12 @@
   "display_id": 789,
   "title": "tool_intercept: extract_all_tool_calls performs O(N^2) buffer clones in driving loop",
   "description": "## Severity\nMinor\n## Dimension\ncomplexity\n## Location\nsrc/tool_intercept.rs:243-272 and src/tool_intercept.rs:295-302\n## Violation\n```rust\nwhile self.has_complete_block() {\n    let (tools, before, _after) = self.extract_tool_calls();\n    ...\n}\n```\n\n`try_extract_invoke_format` performs each iteration:\n\n```rust\nlet before = self.buffer[..start_idx].to_string();\nlet after = self.buffer[result_end..].to_string();\nself.buffer.clone_from(&after);\n```\n\nFor a buffer of N bytes containing K tool calls, total allocation is O(N*K) — quadratic. `has_complete_block` re-scans end-to-end on every loop iteration on top of that.\n\n## Mandated refactor\nSingle-pass parser: walk the buffer once with a cursor and slice views. At minimum, replace `self.buffer.clone_from(&after)` with `self.buffer.drain(..result_end);` which is O(N) total instead of O(N*K).\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:57:59.359275840Z",
-  "updated_at": "2026-05-18T21:58:57.473710029Z",
+  "updated_at": "2026-05-20T08:19:44.045636328Z",
+  "closed_at": "2026-05-20T08:19:44.045636328Z",
   "labels": [
     "qa-review",
     "complexity"
