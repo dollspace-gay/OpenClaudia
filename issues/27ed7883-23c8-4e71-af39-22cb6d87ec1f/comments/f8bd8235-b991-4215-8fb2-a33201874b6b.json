@@ -1,0 +1,10 @@
+{
+  "uuid": "f8bd8235-b991-4215-8fb2-a33201874b6b",
+  "issue_uuid": "27ed7883-23c8-4e71-af39-22cb6d87ec1f",
+  "author": "lOrm",
+  "content": "Issue calls for a task_output tool to poll incremental output of background agents (parity with CC TaskOutputTool). Not addressable in a cleanup pass: requires background-agent output buffer with poll semantics, depends on #507 coordinator subsystem and #580 task_stop tool for symmetry. Parent audit #523.",
+  "created_at": "2026-05-20T14:36:41.047205407Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAkZKZr/Ts2z23HM9XVTVEY1Awu5r+u4ruLV+yiPQMmIgNg5gnc8QJGoIg/rjfwreMJ+qsA1mtqvKN2u1xzaDIBg=="
+}
