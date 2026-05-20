@@ -2,12 +2,13 @@
   "uuid": "8091626a-0b9f-4486-93a1-00052b3475fa",
   "display_id": 599,
   "title": "Enable adaptive thinking by default for medium/default effort (parity with CC QueryEngine.ts:278-282, claude.ts:1606-1613)",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "5e625118-78a2-470d-b9fd-644b77070cb7",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:54:41.939435501Z",
-  "updated_at": "2026-05-18T15:54:43.428482402Z",
+  "updated_at": "2026-05-20T14:37:23.668153188Z",
+  "closed_at": "2026-05-20T14:37:23.668153188Z",
   "labels": [
     "cc-parity"
   ]
