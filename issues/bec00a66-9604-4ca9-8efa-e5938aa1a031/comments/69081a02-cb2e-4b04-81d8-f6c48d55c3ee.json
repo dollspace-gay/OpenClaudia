@@ -1,0 +1,10 @@
+{
+  "uuid": "69081a02-cb2e-4b04-81d8-f6c48d55c3ee",
+  "issue_uuid": "bec00a66-9604-4ca9-8efa-e5938aa1a031",
+  "author": "lOrm",
+  "content": "Wired the orphan src/tools/args.rs trait into src/tools/mod.rs in d4168fab and ported 7 worst-offender sites (cron create+delete, task_create, web_fetch+search+browser+domain_list, list_files, edit_file path/old/new/replace_all, chainlink). 1797 tests pass (baseline 1770 + 27 new), clippy clean, no #[allow], no clippy.toml, no #[ignore]. Removed unused arg_i64_or to keep dead_code clean. Remaining sites (write.rs, notebook.rs, worktree.rs, lsp.rs, todo.rs, bash/*) deferred to follow-up; helpers are now available.",
+  "created_at": "2026-05-20T06:20:54.097098238Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA/vO9hEBMGrxIRPMX/Pg2p/Aiz1WEnPIvi5ZI1jjeAvI3A68HZXUhVi0dYEwX4W6TZfPJfj63WG37v8cfDI8GDA=="
+}
