@@ -1,0 +1,10 @@
+{
+  "uuid": "2d430fc4-12a4-4139-9a1b-7558e04fc067",
+  "issue_uuid": "5ee57911-6336-4a5b-baa6-220d25e364a0",
+  "author": "lOrm",
+  "content": "Partial fix applied: dirs-before-files sort. execute_list_files now collects (is_dir, name) tuples and sorts so all directories appear before all files, with alphabetical order preserved within each bucket (the standard ls layout). The wider scope items in the QA report (pagination, glob filter, metadata-rich output, recursive flag, hidden-file toggle) are deferred — they'd reshape the tool API and the on-wire contract with the model. Filing those separately if needed; this issue closes on the sort-order piece since that was the concrete actionable defect.",
+  "created_at": "2026-05-20T04:34:32.992842630Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABASgrM2WcZB2OxtMJGLvlaflqPvXP4msUGWGm9pIFdyo29eF/PD11qFkg3xmCGSOaa+V2mDNiQlyIHQvbWgDm7BA=="
+}
