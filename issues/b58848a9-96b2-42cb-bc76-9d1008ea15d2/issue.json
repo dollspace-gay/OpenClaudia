@@ -3,11 +3,12 @@
   "display_id": 979,
   "title": "todo_write content length cap is 2000 chars magic number with no constant",
   "description": "## Severity\nTrivial\n\n## Dimension\nNaming / Documentation & Intent\n\n## Location\nsrc/tools/todo.rs:89-95 (content length check)\n\n## Violation\n```rust\nSome(c) if c.len() > 2000 => {\n    return (format!(\"Todo {i} content exceeds maximum length of 2000 characters\"), true);\n}\n```\n\nThe 2000 appears twice as a magic literal. CLAUDE.md (Naming section) requires constants to be UPPER_SNAKE_CASE. The value is meaningful (CC parity) but undocumented at the call site — a maintainer changing it would have to update two literals and risk drift.\n\nAlso note `c.len()` counts bytes, not characters. A todo item containing 1000 emoji (4 bytes each in UTF-8) would fail the check at 4000 bytes but only 1000 visible glyphs. The error message says \"characters\" — wrong unit.\n\n## Mandated refactor\n```rust\nconst TODO_CONTENT_MAX_CHARS: usize = 2000;\n...\nSome(c) if c.chars().count() > TODO_CONTENT_MAX_CHARS => {\n    return (format!(\"Todo {i} content exceeds maximum length of {TODO_CONTENT_MAX_CHARS} characters (got {})\", c.chars().count()), true);\n}\n```\n\nOr document explicitly that the limit is bytes-not-chars and rename the constant `TODO_CONTENT_MAX_BYTES`.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:25:23.441158872Z",
-  "updated_at": "2026-05-18T22:25:26.061979616Z",
+  "updated_at": "2026-05-20T04:53:29.832612131Z",
+  "closed_at": "2026-05-20T04:53:29.832612131Z",
   "labels": [
     "qa-review",
     "naming"
