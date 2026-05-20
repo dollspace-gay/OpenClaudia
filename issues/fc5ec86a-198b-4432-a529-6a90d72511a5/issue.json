@@ -3,9 +3,10 @@
   "display_id": 742,
   "title": "install_from_git omits the no-silent-HEAD rule that install_from_marketplace enforces",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/plugins/manager.rs:714-783, src/plugins/manager.rs:619-628\n## Violation\ninstall_from_marketplace's PluginSourceDef::Url arm correctly refuses to clone when git_ref is None (preventing silent HEAD-tracking) — but install_from_git accepts `git_ref: Option<&str>` and passes it straight to git_clone without that guard. Quoted lines:\n\n    // install_from_marketplace — guarded:\n    if git_ref.is_none() {\n        return Err(PluginError::InvalidManifest(format!(\n            \"Plugin source URL '{url}' has no `ref`; \\\n             refusing to track upstream HEAD...\"\n        )));\n    }\n    ...\n    // install_from_git — UNguarded:\n    pub fn install_from_git(\n        &mut self,\n        url: &str,\n        git_ref: Option<&str>,\n    ) -> Result<String, PluginError> {\n        ...\n        let commit_sha = git_clone(url, &dest, git_ref)?;\n\n`/plugin install <git-url>` from the REPL (slash.rs:1201-1206) calls install_from_git with `None`, meaning the user CLI path silently tracks upstream HEAD — exactly the case the marketplace path was hardened against in crosslink #249.\n## Mandated refactor\nMove the git_ref.is_none() guard into git_clone itself (or a higher-level helper that both installers call), with an explicit `allow_head: bool` parameter that defaults to false. Update slash.rs:1201-1206 to prompt the user for a tag/branch/SHA when bare `/plugin install <git-url>` is given, rather than passing None.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:53:29.131966158Z",
-  "updated_at": "2026-05-18T21:53:29.131966158Z"
+  "updated_at": "2026-05-20T14:03:44.966296321Z",
+  "closed_at": "2026-05-20T14:03:44.966296321Z"
 }
