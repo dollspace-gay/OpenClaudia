@@ -1,0 +1,10 @@
+{
+  "uuid": "eb64a1bd-1d5a-4263-ad76-ba8124d4efd9",
+  "issue_uuid": "f46ad288-8b6a-4f6c-91a3-c45453b2091d",
+  "author": "lOrm",
+  "content": "Superseded by #275: DisplayMessage::system/error/user/assistant constructors are defined in src/tui/messages.rs:264-291 and used at 30+ call sites in src/tui/app.rs. Only 3 raw struct literals remain — they dispatch by runtime Role variant and cannot collapse to a single named constructor. The reported '30+ boilerplate occurrences' is gone.",
+  "created_at": "2026-05-20T00:17:29.891562223Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAi2Oc8sdKVemdRu97BYVR4GCb2dZlKZvQiiqiyDRtewy6PJd/NU1BL0RsGjJKjssFVba52JOnxWyh79W+0ZbyDA=="
+}
