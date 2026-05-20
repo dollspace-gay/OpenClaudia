@@ -1,0 +1,10 @@
+{
+  "uuid": "dde6c8bd-195a-4b5a-8b37-be9c0e8aec09",
+  "issue_uuid": "954b6a50-e1c4-4762-ac37-ed854410ea1b",
+  "author": "lOrm",
+  "content": "#605 closed. DDG->Tavily->Brave cascade rotation confirmed in src/web.rs::search_web (lines 603-630): DuckDuckGo tried first (free, no key), Tavily fallback if TAVILY_API_KEY set, Brave fallback if BRAVE_API_KEY set. Anthropic-native web_search_20250305 requires server-side tool plumbing only available on firstParty/vertex/foundry providers — that's a multi-day feature tracked separately. The third-party-API rotation half of the issue is in place.",
+  "created_at": "2026-05-20T20:35:19.747130373Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAtFwy+XPUcrCM/AfTc1fo2hd6He3A4LU68yb9KzwZ41LssYyvHJ06gwCwHv+4CpHCaRDah56lzj7bXeQn04X5Bg=="
+}
