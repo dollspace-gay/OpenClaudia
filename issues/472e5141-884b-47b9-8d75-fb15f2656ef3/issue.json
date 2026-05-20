@@ -3,11 +3,12 @@
   "display_id": 771,
   "title": "compact_with_hint with all-preserved messages: error 'did not reduce token count' when categorize yields zero summarizable",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/compaction.rs:436-546 (compact_with_hint), interplay with categorize_messages at 389-412\n## Violation\n`compact_with_hint` returns `Err(CompactionError::Failed(\"Compaction did not reduce token count\"))` whenever the categorization decides every message must be preserved. This happens routinely when:\n\n- `preserve_recent` covers all messages (small conversations near the threshold).\n- `preserve_system + preserve_tool_calls` cover every message (typical agent transcript: system prompt + interleaved tool calls).\n\n```rust\nif new_tokens >= analysis.current_tokens {\n    warn!(...);\n    return Err(CompactionError::Failed(\"Compaction did not reduce token count\".to_string()));\n}\n```\n\nThe caller has no way to distinguish \"we cannot compact further, send the request anyway\" from \"compaction blew up, abort\". Today both surfaces as a hard Err. Worse, before that Err returns, `request.messages = new_messages` (line 513) has already mutated the request — the caller sees a mutated request AND an error. (#439 already covers the rollback aspect for the post-verify path; this issue is the orthogonal \"no work was possible\" outcome.)\n## Mandated refactor\n1. Add a third variant to `CompactionResult`: `compacted: bool, reason: CompactionSkipReason` where reason ∈ {NotNeeded, NothingToSummarize, AllPreserved}.\n2. When `messages_to_summarize.is_empty()` (line 493) OR the post-rebuild check shows no reduction, return Ok with the appropriate reason, not Err.\n3. Reserve `CompactionError::Failed` for actual logic failures (summary generation panicked, hook misbehaved).\n4. Snapshot `request.messages` at function entry and restore it before returning the skip Ok, mirroring the rollback discipline #439 mandates for the verify-failure path.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:55:55.988934508Z",
-  "updated_at": "2026-05-18T21:57:06.391299848Z",
+  "updated_at": "2026-05-20T07:32:43.449857660Z",
+  "closed_at": "2026-05-20T07:32:43.449857660Z",
   "labels": [
     "qa-review",
     "error-handling"
