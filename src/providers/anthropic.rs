@@ -19,19 +19,48 @@ impl AnthropicAdapter {
         Self
     }
 
-    /// Extract system message from messages array
+    /// Extract system message from messages array.
+    ///
+    /// Crosslink #924: previously `.iter().find(...)` returned only the
+    /// FIRST `system` role message; any subsequent system messages were
+    /// silently dropped. Anthropic's API takes a single `system` field, so
+    /// we now concatenate every system-role text with `\n\n` separators
+    /// so callers that route multiple system blocks (e.g. injected prompt
+    /// plus project rules) see all of them. Non-text parts (e.g. `image_url`)
+    /// are still dropped but with a `warn!` so the dropping is visible.
     fn extract_system(messages: &[ChatMessage]) -> Option<String> {
-        messages
-            .iter()
-            .find(|m| m.role == "system")
-            .map(|m| match &m.content {
-                MessageContent::Text(t) => t.clone(),
-                MessageContent::Parts(parts) => parts
-                    .iter()
-                    .filter_map(|p| p.text.clone())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            })
+        let mut pieces: Vec<String> = Vec::new();
+        let mut non_text_seen = false;
+        for m in messages.iter().filter(|m| m.role == "system") {
+            match &m.content {
+                MessageContent::Text(t) => {
+                    if !t.is_empty() {
+                        pieces.push(t.clone());
+                    }
+                }
+                MessageContent::Parts(parts) => {
+                    for p in parts {
+                        if let Some(text) = &p.text {
+                            if !text.is_empty() {
+                                pieces.push(text.clone());
+                            }
+                        } else {
+                            non_text_seen = true;
+                        }
+                    }
+                }
+            }
+        }
+        if non_text_seen {
+            tracing::warn!(
+                "anthropic::extract_system dropped non-text parts from a system message"
+            );
+        }
+        if pieces.is_empty() {
+            None
+        } else {
+            Some(pieces.join("\n\n"))
+        }
     }
 
     /// Convert `ChatMessage`s to the shape [`convert_messages_to_anthropic`]

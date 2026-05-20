@@ -98,19 +98,47 @@ impl GoogleAdapter {
         json!([{"functionDeclarations": functions}])
     }
 
-    /// Extract system instruction
+    /// Extract system instruction.
+    ///
+    /// Crosslink #924: previously `.iter().find(...)` returned only the
+    /// FIRST `system` role message. Gemini accepts a single
+    /// `systemInstruction.parts[]`, so we concatenate every system-role
+    /// text with `\n\n` separators rather than silently dropping later
+    /// ones. Non-text parts surface a `warn!`.
     fn extract_system(messages: &[ChatMessage]) -> Option<Value> {
-        messages.iter().find(|m| m.role == "system").map(|m| {
-            let text = match &m.content {
-                MessageContent::Text(t) => t.clone(),
-                MessageContent::Parts(parts) => parts
-                    .iter()
-                    .filter_map(|p| p.text.clone())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            };
-            json!({"parts": [{"text": text}]})
-        })
+        let mut pieces: Vec<String> = Vec::new();
+        let mut non_text_seen = false;
+        for m in messages.iter().filter(|m| m.role == "system") {
+            match &m.content {
+                MessageContent::Text(t) => {
+                    if !t.is_empty() {
+                        pieces.push(t.clone());
+                    }
+                }
+                MessageContent::Parts(parts) => {
+                    for p in parts {
+                        if let Some(text) = &p.text {
+                            if !text.is_empty() {
+                                pieces.push(text.clone());
+                            }
+                        } else {
+                            non_text_seen = true;
+                        }
+                    }
+                }
+            }
+        }
+        if non_text_seen {
+            tracing::warn!(
+                "google::extract_system dropped non-text parts from a system message"
+            );
+        }
+        if pieces.is_empty() {
+            None
+        } else {
+            let text = pieces.join("\n\n");
+            Some(json!({"parts": [{"text": text}]}))
+        }
     }
 }
 

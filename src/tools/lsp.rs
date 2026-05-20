@@ -693,13 +693,41 @@ fn send_lsp_notification(
     Ok(())
 }
 
+/// Default cap for the number of intermediate LSP messages skipped while
+/// waiting for a matching response id. Servers like clangd routinely emit
+/// dozens of diagnostics before completing — 100 is a reasonable starting
+/// point but is overridable via the `OPENCLAUDIA_LSP_MAX_MESSAGES`
+/// environment variable for noisy servers (crosslink #886).
+const LSP_DEFAULT_MAX_MESSAGES: u32 = 100;
+
+/// Resolve the per-call maximum response-scan budget.
+///
+/// Crosslink #886: previously a hard-coded `100`. We now respect the
+/// `OPENCLAUDIA_LSP_MAX_MESSAGES` env var so an operator can crank the
+/// budget up for chatty servers without recompiling, or down for tests
+/// that want to exercise the cap path quickly. Invalid / zero values
+/// fall back to the default rather than silently disabling the cap.
+fn lsp_max_messages() -> u32 {
+    std::env::var("OPENCLAUDIA_LSP_MAX_MESSAGES")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(LSP_DEFAULT_MAX_MESSAGES)
+}
+
 /// Read an LSP response, skipping server-initiated notifications until we find
 /// the response matching `expected_id`.
+///
+/// Crosslink #886: the scan budget is configurable via
+/// `OPENCLAUDIA_LSP_MAX_MESSAGES`, and the exhaustion error names the
+/// cap so an operator can tell "chatty server → raise the cap" from
+/// "hung server → different remedy".
 fn read_lsp_response(
     reader: &mut BufReader<impl std::io::Read>,
     expected_id: u32,
 ) -> Result<Value, String> {
-    for _attempt in 0..100 {
+    let max_messages = lsp_max_messages();
+    for _attempt in 0..max_messages {
         // Read headers
         let mut content_length: usize = 0;
         loop {
@@ -739,7 +767,8 @@ fn read_lsp_response(
         // skip it and read the next message.
     }
     Err(format!(
-        "LSP server did not respond to request {expected_id} after 100 messages"
+        "LSP scan budget exhausted: did not see response id={expected_id} after \
+         {max_messages} messages (raise OPENCLAUDIA_LSP_MAX_MESSAGES to relax)"
     ))
 }
 

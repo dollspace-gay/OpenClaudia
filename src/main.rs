@@ -1004,6 +1004,132 @@ async fn run_vdd_review(
     }
 }
 
+/// Build the Anthropic-direct request body. Crosslink #918: extracted so
+/// `build_chat_request_body` no longer carries the full cyclomatic load.
+fn build_chat_body_anthropic(
+    messages: &[serde_json::Value],
+    model: &str,
+    prompt_blocks: &openclaudia::prompt::SystemPromptBlocks,
+) -> serde_json::Value {
+    use openclaudia::providers::{convert_messages_to_anthropic, convert_tools_to_anthropic};
+    let anthropic_messages = convert_messages_to_anthropic(messages);
+    let openai_tools = tools::get_all_tool_definitions(true);
+    let anthropic_tools =
+        convert_tools_to_anthropic(openai_tools.as_array().unwrap_or(&vec![]));
+
+    let mut req = serde_json::json!({
+        "model": model,
+        "messages": anthropic_messages,
+        "max_tokens": openclaudia::DEFAULT_MAX_TOKENS,
+        "stream": true,
+        "tools": anthropic_tools
+    });
+    // Multi-block system prompt: stable prefix cached, dynamic suffix reprocessed.
+    req["system"] = openclaudia::providers::build_system_blocks(prompt_blocks);
+    req
+}
+
+/// Translate `OpenAI`-format tool definitions into Gemini function declarations.
+fn build_gemini_functions() -> Vec<serde_json::Value> {
+    let openai_tools = tools::get_all_tool_definitions(true);
+    let tools_vec = openai_tools.as_array().cloned().unwrap_or_default();
+    tools_vec
+        .iter()
+        .filter_map(|tool| {
+            let func = tool.get("function")?;
+            let description = func
+                .get("description")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!(""));
+            let parameters = func
+                .get("parameters")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            Some(serde_json::json!({
+                "name": func.get("name")?,
+                "description": description,
+                "parameters": parameters
+            }))
+        })
+        .collect()
+}
+
+/// Split messages into (`gemini_contents`, `system_text`) for Gemini's
+/// distinct `contents` / `systemInstruction` shape.
+fn split_messages_for_gemini(
+    messages: &[serde_json::Value],
+) -> (Vec<serde_json::Value>, Option<String>) {
+    let mut contents = Vec::new();
+    let mut system_text: Option<String> = None;
+    for msg in messages {
+        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+        let text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
+        if role == "system" {
+            system_text = Some(text.to_string());
+            continue;
+        }
+        let gemini_role = if role == "assistant" { "model" } else { "user" };
+        contents.push(serde_json::json!({
+            "role": gemini_role,
+            "parts": [{"text": text}]
+        }));
+    }
+    (contents, system_text)
+}
+
+/// Build the Gemini request body.
+fn build_chat_body_google(messages: &[serde_json::Value]) -> serde_json::Value {
+    let functions = build_gemini_functions();
+    let (contents, system_text) = split_messages_for_gemini(messages);
+    let mut req = serde_json::json!({
+        "contents": contents,
+        "generationConfig": {"maxOutputTokens": 4096},
+        "tools": [{"functionDeclarations": functions}]
+    });
+    if let Some(sys) = system_text {
+        req["systemInstruction"] = serde_json::json!({"parts": [{"text": sys}]});
+    }
+    req
+}
+
+/// Build the generic OpenAI-compatible request body.
+fn build_chat_body_openai_like(
+    messages: &[serde_json::Value],
+    model: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "model": model,
+        "messages": messages,
+        "max_tokens": openclaudia::DEFAULT_MAX_TOKENS,
+        "stream": true,
+        "tools": tools::get_all_tool_definitions(true)
+    })
+}
+
+/// Apply Anthropic-specific `effort_level` mapping in place.
+fn apply_anthropic_effort_level(request_body: &mut serde_json::Value, effort_level: &str) {
+    match effort_level {
+        "high" => {
+            request_body["thinking"] =
+                serde_json::json!({"type": "enabled", "budget_tokens": 10000});
+            request_body["max_tokens"] = serde_json::json!(16000);
+        }
+        "low" => {
+            request_body["max_tokens"] = serde_json::json!(2048);
+        }
+        _ => {} // medium = default
+    }
+}
+
+/// Build a per-turn chat request body for the configured target provider.
+///
+/// Crosslink #918: the original 100-line function had three deeply nested
+/// provider branches plus two cross-cutting mutations and a cyclomatic
+/// complexity > 15. It has been decomposed into per-provider helpers
+/// (`build_chat_body_{anthropic,google,openai_like}`) plus
+/// `apply_anthropic_effort_level` and the cross-cutting OAuth prefix
+/// injection. Each helper handles a single provider's shape; this
+/// function is now a thin orchestrator.
 fn build_chat_request_body(
     target: &str,
     messages: &[serde_json::Value],
@@ -1012,103 +1138,20 @@ fn build_chat_request_body(
     effort_level: &str,
     claude_code_token: Option<&str>,
 ) -> serde_json::Value {
-    use openclaudia::providers::{convert_messages_to_anthropic, convert_tools_to_anthropic};
-
-    let mut request_body = if target == "anthropic" {
-        // Anthropic direct API mode — convert to Anthropic message/tool format
-        let anthropic_messages = convert_messages_to_anthropic(messages);
-        let openai_tools = tools::get_all_tool_definitions(true);
-        let anthropic_tools =
-            convert_tools_to_anthropic(openai_tools.as_array().unwrap_or(&vec![]));
-
-        let mut req = serde_json::json!({
-            "model": model,
-            "messages": anthropic_messages,
-            "max_tokens": openclaudia::DEFAULT_MAX_TOKENS,
-            "stream": true,
-            "tools": anthropic_tools
-        });
-        // Multi-block system prompt: stable prefix cached, dynamic suffix reprocessed.
-        req["system"] = openclaudia::providers::build_system_blocks(prompt_blocks);
-        req
-    } else if target == "google" {
-        // Google Gemini — native contents/generationConfig format
-        let openai_tools = tools::get_all_tool_definitions(true);
-        let tools_vec = openai_tools.as_array().cloned().unwrap_or_default();
-        let functions: Vec<serde_json::Value> = tools_vec
-            .iter()
-            .filter_map(|tool| {
-                let func = tool.get("function")?;
-                let description = func
-                    .get("description")
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!(""));
-                let parameters = func
-                    .get("parameters")
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!({}));
-                Some(serde_json::json!({
-                    "name": func.get("name")?,
-                    "description": description,
-                    "parameters": parameters
-                }))
-            })
-            .collect();
-
-        let mut contents = Vec::new();
-        let mut system_text: Option<String> = None;
-        for msg in messages {
-            let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
-            let text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
-            if role == "system" {
-                system_text = Some(text.to_string());
-                continue;
-            }
-            let gemini_role = if role == "assistant" { "model" } else { "user" };
-            contents.push(serde_json::json!({
-                "role": gemini_role,
-                "parts": [{"text": text}]
-            }));
-        }
-
-        let mut req = serde_json::json!({
-            "contents": contents,
-            "generationConfig": {"maxOutputTokens": 4096},
-            "tools": [{"functionDeclarations": functions}]
-        });
-        if let Some(sys) = system_text {
-            req["systemInstruction"] = serde_json::json!({"parts": [{"text": sys}]});
-        }
-        req
-    } else {
-        // OpenAI-compatible format for all other providers
-        serde_json::json!({
-            "model": model,
-            "messages": messages,
-            "max_tokens": openclaudia::DEFAULT_MAX_TOKENS,
-            "stream": true,
-            "tools": tools::get_all_tool_definitions(true)
-        })
+    let mut request_body = match target {
+        "anthropic" => build_chat_body_anthropic(messages, model, prompt_blocks),
+        "google" => build_chat_body_google(messages),
+        _ => build_chat_body_openai_like(messages, model),
     };
 
-    // Inject Claude Code OAuth system prompt when using OAuth auth
+    // Inject Claude Code OAuth system prompt when using OAuth auth.
     if claude_code_token.is_some() {
         openclaudia::claude_credentials::inject_system_prompt(&mut request_body);
     }
 
-    // Apply effort-level thinking parameters (Anthropic only)
+    // Effort-level thinking parameters are Anthropic-only today.
     if target == "anthropic" {
-        match effort_level {
-            "high" => {
-                request_body["thinking"] =
-                    serde_json::json!({"type": "enabled", "budget_tokens": 10000});
-                request_body["max_tokens"] = serde_json::json!(16000);
-            }
-            "low" => {
-                request_body["max_tokens"] = serde_json::json!(2048);
-            }
-            _ => {} // medium = default
-        }
+        apply_anthropic_effort_level(&mut request_body, effort_level);
     }
 
     request_body

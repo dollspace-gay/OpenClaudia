@@ -201,12 +201,53 @@ fn wild_match_opt(candidate: Option<&String>, rule: Option<&String>) -> bool {
     }
 }
 
-/// Drop a trailing `.git` so `https://…/foo` and `https://…/foo.git`
-/// compare equal. No other canonicalization — we don't want to
-/// collapse `http://` and `https://` since the scheme is security-
-/// relevant for the policy.
+/// Canonicalize a git URL for identity comparison.
+///
+/// Crosslink #861: the prior implementation only stripped a trailing
+/// `.git`. Trailing slashes, mixed-case hostnames, default ports, and
+/// percent-encoding all defeated the allowlist match, pushing
+/// administrators to widen their allowlists.
+///
+/// The current implementation parses with `url::Url`, lowercases the
+/// host, drops the default port for the scheme, normalizes the path
+/// (trim trailing `/`, trim trailing `.git`), and emits a stable
+/// `scheme://host[:port]/path` form. The scheme is preserved (not
+/// collapsed) — http vs. https is security-relevant.
+///
+/// Falls back to a string-level cleanup (trailing slash + `.git`)
+/// when the URL fails to parse, so SCP-style URLs (`git@github.com:owner/repo`)
+/// continue to compare correctly.
 fn canonical_git(url: &str) -> String {
-    url.strip_suffix(".git").unwrap_or(url).to_string()
+    if let Ok(parsed) = ::url::Url::parse(url) {
+        let scheme = parsed.scheme().to_ascii_lowercase();
+        let host = parsed.host_str().map(str::to_ascii_lowercase);
+        // Default ports: 22 ssh, 80 http, 443 https, 9418 git. `port_or_known_default`
+        // returns the explicit port if it differs from the default; otherwise None.
+        let port = parsed.port();
+        let port_suffix = match (port, scheme.as_str()) {
+            (Some(443), "https")
+            | (Some(80), "http")
+            | (Some(22), "ssh")
+            | (Some(9418), "git")
+            | (None, _) => String::new(),
+            (Some(p), _) => format!(":{p}"),
+        };
+        let mut path = parsed.path().to_string();
+        // Collapse trailing slashes.
+        while path.ends_with('/') && path.len() > 1 {
+            path.pop();
+        }
+        // Strip a single trailing `.git`.
+        if let Some(stripped) = path.strip_suffix(".git") {
+            path = stripped.to_string();
+        }
+        if let Some(h) = host {
+            return format!("{scheme}://{h}{port_suffix}{path}");
+        }
+    }
+    // Fallback: trim trailing slash + `.git`.
+    let trimmed = url.trim_end_matches('/');
+    trimmed.strip_suffix(".git").unwrap_or(trimmed).to_string()
 }
 
 #[cfg(test)]
@@ -302,6 +343,53 @@ mod tests {
         };
         // Same upstream, different spelling.
         assert!(check_marketplace_allowed(&git("https://example.com/foo"), &policy).is_ok());
+    }
+
+    /// Crosslink #861: trailing slash variants must compare equal.
+    #[test]
+    fn canonical_git_handles_trailing_slash() {
+        let policy = PluginPolicy {
+            strict_known_marketplaces: Some(vec![git("https://example.com/foo")]),
+            ..PluginPolicy::default()
+        };
+        assert!(check_marketplace_allowed(&git("https://example.com/foo/"), &policy).is_ok());
+        assert!(check_marketplace_allowed(&git("https://example.com/foo.git/"), &policy).is_ok());
+    }
+
+    /// Crosslink #861: host comparison is case-insensitive.
+    #[test]
+    fn canonical_git_handles_mixed_case_host() {
+        let policy = PluginPolicy {
+            strict_known_marketplaces: Some(vec![git("https://example.com/foo")]),
+            ..PluginPolicy::default()
+        };
+        assert!(check_marketplace_allowed(&git("https://Example.com/foo"), &policy).is_ok());
+        assert!(check_marketplace_allowed(&git("https://EXAMPLE.COM/foo"), &policy).is_ok());
+    }
+
+    /// Crosslink #861: default ports are dropped before comparison.
+    #[test]
+    fn canonical_git_drops_default_ports() {
+        let policy = PluginPolicy {
+            strict_known_marketplaces: Some(vec![git("https://example.com/foo")]),
+            ..PluginPolicy::default()
+        };
+        assert!(check_marketplace_allowed(&git("https://example.com:443/foo"), &policy).is_ok());
+    }
+
+    /// Crosslink #861: an attacker URL embedding the allowed prefix in
+    /// its path must NOT match — `attacker.com/example.com/foo` should
+    /// remain distinct from `example.com/foo` after canonicalization.
+    #[test]
+    fn canonical_git_rejects_host_in_path_attack() {
+        let policy = PluginPolicy {
+            strict_known_marketplaces: Some(vec![git("https://example.com/foo")]),
+            ..PluginPolicy::default()
+        };
+        assert_eq!(
+            check_marketplace_allowed(&git("https://attacker.com/example.com/foo"), &policy),
+            Err(PolicyRejection::NotInAllowlist),
+        );
     }
 
     #[test]

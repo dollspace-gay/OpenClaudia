@@ -154,9 +154,30 @@ impl ScheduleStore {
     }
 }
 
-/// Resolve the schedules path from the current working directory.
+/// Resolve the schedules path to an absolute location.
+///
+/// Crosslink #877: the prior implementation returned a bare relative
+/// `PathBuf::from(SCHEDULES_FILE)`, so every cron operation resolved
+/// against whatever the process cwd happened to be at call time. When
+/// the worktree adapter mutated cwd between operations, schedule
+/// load/save silently targeted different files. We now anchor the
+/// path against `std::env::current_dir()` once, producing an absolute
+/// path the caller can rely on for the duration of one tool call.
+///
+/// If `current_dir` itself fails (deleted cwd, FUSE EIO, …) we fall
+/// back to the original relative path rather than panic — surfacing
+/// a `warn!` so the operator can see what happened.
 fn schedules_path() -> PathBuf {
-    PathBuf::from(SCHEDULES_FILE)
+    match std::env::current_dir() {
+        Ok(cwd) => cwd.join(SCHEDULES_FILE),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "schedules_path: current_dir() failed; falling back to relative {SCHEDULES_FILE}"
+            );
+            PathBuf::from(SCHEDULES_FILE)
+        }
+    }
 }
 
 /// One cron field's display name and accepted value range.
@@ -201,7 +222,82 @@ const FIELDS: [CronField; 5] = [
     },
 ];
 
-/// Validate a cron expression (basic check for 5-field format)
+/// Validate one atomic piece of a cron field (no commas).
+///
+/// Accepts:
+///   * `"*"`                   – wildcard
+///   * `"N"`                   – single integer in range
+///   * `"A-B"`                 – range
+///   * `"*/S"`                 – step from zero
+///   * `"A-B/S"`               – step over a range (crosslink #901)
+///
+/// Steps must be non-zero. Ranges must have A ≤ B and both within the
+/// field's accepted bounds.
+fn validate_cron_atom(atom: &str, spec: &CronField) -> Result<(), String> {
+    // Split off optional step suffix: "<head>/<step>".
+    let (head, step_opt) = match atom.split_once('/') {
+        Some((h, s)) => (h, Some(s)),
+        None => (atom, None),
+    };
+
+    if let Some(step) = step_opt {
+        match step.parse::<u32>() {
+            Ok(0) => return Err(format!("Step value cannot be 0 in {} field", spec.name)),
+            Err(_) => {
+                return Err(format!(
+                    "Invalid step value '{}' in {} field",
+                    step, spec.name
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    if head == "*" {
+        return Ok(());
+    }
+
+    if let Some((a, b)) = head.split_once('-') {
+        let lo: u32 = a
+            .parse()
+            .map_err(|_| format!("Invalid value '{}' in {} field", a, spec.name))?;
+        let hi: u32 = b
+            .parse()
+            .map_err(|_| format!("Invalid value '{}' in {} field", b, spec.name))?;
+        if lo > hi {
+            return Err(format!(
+                "Range {}-{} is reversed in {} field",
+                lo, hi, spec.name
+            ));
+        }
+        if lo < spec.min || hi > spec.max {
+            return Err(format!(
+                "Range {}-{} out of bounds for {} field",
+                lo, hi, spec.name
+            ));
+        }
+        return Ok(());
+    }
+
+    let val: u32 = head
+        .parse()
+        .map_err(|_| format!("Invalid value '{}' in {} field", head, spec.name))?;
+    if val < spec.min || val > spec.max {
+        return Err(format!(
+            "Value {} out of range for {} field",
+            val, spec.name
+        ));
+    }
+    Ok(())
+}
+
+/// Validate a cron expression (basic check for 5-field format).
+///
+/// Crosslink #901: the field parser now treats `*`, single values,
+/// ranges, steps, and range+step as composable atoms, applied to each
+/// comma-separated piece. Previously `0-30/5 * * * *` and `1,3-5,8 * * * *`
+/// were both rejected because the comma branch parsed each piece as a
+/// flat integer.
 fn validate_cron(expr: &str) -> Result<(), String> {
     let fields: Vec<&str> = expr.split_whitespace().collect();
     if fields.len() != FIELDS.len() {
@@ -213,53 +309,11 @@ fn validate_cron(expr: &str) -> Result<(), String> {
 
     for (i, field) in fields.iter().enumerate() {
         let spec = &FIELDS[i];
-        if *field == "*" {
-            continue;
-        }
-        // Handle */N step values
-        if let Some(step) = field.strip_prefix("*/") {
-            match step.parse::<u32>() {
-                Ok(0) => return Err(format!("Step value cannot be 0 in {} field", spec.name)),
-                Err(_) => {
-                    return Err(format!(
-                        "Invalid step value '{}' in {} field",
-                        step, spec.name
-                    ))
-                }
-                _ => {}
+        for atom in field.split(',') {
+            if atom.is_empty() {
+                return Err(format!("Empty value in {} field", spec.name));
             }
-            continue;
-        }
-        // Handle ranges like 1-5
-        if field.contains('-') {
-            let parts: Vec<&str> = field.split('-').collect();
-            if parts.len() != 2 {
-                return Err(format!("Invalid range '{}' in {} field", field, spec.name));
-            }
-            for part in parts {
-                let val: u32 = part
-                    .parse()
-                    .map_err(|_| format!("Invalid value '{}' in {} field", part, spec.name))?;
-                if val < spec.min || val > spec.max {
-                    return Err(format!(
-                        "Value {} out of range for {} field",
-                        val, spec.name
-                    ));
-                }
-            }
-            continue;
-        }
-        // Handle comma-separated values
-        for val_str in field.split(',') {
-            let val: u32 = val_str
-                .parse()
-                .map_err(|_| format!("Invalid value '{}' in {} field", val_str, spec.name))?;
-            if val < spec.min || val > spec.max {
-                return Err(format!(
-                    "Value {} out of range for {} field",
-                    val, spec.name
-                ));
-            }
+            validate_cron_atom(atom, spec)?;
         }
     }
     Ok(())
@@ -308,8 +362,27 @@ pub fn execute_cron_create(args: &HashMap<String, Value>) -> (String, bool) {
         );
     }
 
+    // Crosslink #907: previously truncated to 8 hex chars (32 bits of
+    // entropy → 50% collision at ~77k schedules). Use 16 hex chars
+    // (64 bits) for a vanishingly small collision probability while
+    // staying short enough that id-based UX (cron_delete by id) is
+    // still ergonomic. cron_list still renders the id verbatim.
+    let new_id = {
+        let uuid_str = Uuid::new_v4().to_string().replace('-', "");
+        // uuid v4 to_string() is 32 hex chars + 4 dashes; after stripping
+        // dashes we always have ≥16 hex chars, so the slice is safe.
+        uuid_str[..16].to_string()
+    };
+    // Fail-fast on the astronomically rare collision rather than silently
+    // letting cron_delete pick the wrong record.
+    if store.schedules.iter().any(|s| s.id == new_id) {
+        return (
+            format!("Generated schedule id '{new_id}' collides with an existing schedule"),
+            true,
+        );
+    }
     let schedule = Schedule {
-        id: Uuid::new_v4().to_string()[..8].to_string(),
+        id: new_id,
         name: name.clone(),
         cron_expression: cron_expression.clone(),
         prompt,
@@ -768,6 +841,76 @@ mod tests {
     #[test]
     fn validate_cron_accepts_comma_list() {
         assert!(validate_cron("0,30 9 * * 1,5").is_ok());
+    }
+
+    /// Crosslink #901: step+range like `0-30/5` is now accepted.
+    #[test]
+    fn validate_cron_accepts_step_range() {
+        assert!(
+            validate_cron("0-30/5 * * * *").is_ok(),
+            "step+range 0-30/5 must be accepted"
+        );
+        assert!(
+            validate_cron("*/15 0-12/2 * * *").is_ok(),
+            "step over a range must be accepted in any field"
+        );
+    }
+
+    /// Crosslink #901: mixed comma-list with a range element like `1,3-5,8`.
+    #[test]
+    fn validate_cron_accepts_mixed_comma_with_range() {
+        assert!(
+            validate_cron("1,3-5,8 * * * *").is_ok(),
+            "comma-separated list containing a range must be accepted"
+        );
+    }
+
+    /// Crosslink #901: reversed range is rejected.
+    #[test]
+    fn validate_cron_rejects_reversed_range() {
+        assert!(
+            validate_cron("30-10 * * * *").is_err(),
+            "reversed range must be rejected"
+        );
+    }
+
+    /// Crosslink #907: schedule id is no longer truncated to 8 hex chars.
+    /// After creation the id must be 16 hex chars (64 bits of entropy).
+    #[test]
+    fn schedule_id_is_16_hex_chars() {
+        use tempfile::TempDir;
+        let _lock = cwd_lock();
+        let tmp = TempDir::new().unwrap();
+        let original = std::env::current_dir().ok();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let mut args = HashMap::new();
+        args.insert("name".to_string(), Value::String("idtest".to_string()));
+        args.insert(
+            "schedule".to_string(),
+            Value::String("0 * * * *".to_string()),
+        );
+        args.insert("prompt".to_string(), Value::String("p".to_string()));
+        let (_, is_err) = execute_cron_create(&args);
+        assert!(!is_err);
+
+        let path = schedules_path();
+        let store = ScheduleStore::load_locked(&path);
+        let s = store
+            .schedules
+            .iter()
+            .find(|s| s.name == "idtest")
+            .expect("created schedule missing");
+        assert_eq!(s.id.len(), 16, "schedule id must be 16 hex chars, got {}", s.id);
+        assert!(
+            s.id.chars().all(|c| c.is_ascii_hexdigit()),
+            "schedule id must be hex; got {}",
+            s.id
+        );
+
+        if let Some(orig) = original {
+            let _ = std::env::set_current_dir(orig);
+        }
     }
 
     // ─── #403: file-locked load-modify-save preserves writes ────────────────

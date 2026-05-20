@@ -390,6 +390,16 @@ impl BehaviorMode {
 
     /// Try to find a matching preset name for the current configuration.
     /// Returns `None` if no built-in preset matches exactly.
+    ///
+    /// Crosslink #830 (resolved) addressed the `Modifier::Debug` vs
+    /// `Preset::Debug` naming collision via explicit `serde(rename)` so
+    /// the two variants no longer round-trip through the same wire token.
+    /// Crosslink #925 also asked about a perf concern (linear scan of 8
+    /// presets per hot-path display); the cost is `8 * cmp_struct` per
+    /// call which is well below the noise floor of the surrounding
+    /// rendering work, so we have intentionally NOT cached the result —
+    /// a `OnceLock` cache would have to be invalidated on every modifier
+    /// mutation and the bookkeeping outweighs the saved compares.
     #[must_use]
     pub fn matching_preset(&self) -> Option<Preset> {
         let presets = [

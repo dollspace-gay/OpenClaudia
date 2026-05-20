@@ -578,10 +578,43 @@ pub fn slash_model(
     }
 }
 
+/// Split a slash-command argument string into shell-style tokens.
+///
+/// Crosslink #906: `args.splitn(2, ' ')` chopped quoted paths and URLs
+/// at the first whitespace, so `/plugin marketplace add "/Users/me/My Plugins/mp"`
+/// resolved as `target="/Users/me/My`. We now use `shlex::split` which
+/// honours single and double quotes plus backslash escapes. The function
+/// returns the (subcommand, remaining-args-string) pair; the remaining
+/// args are re-joined with single spaces so downstream parsers that
+/// still want to split further can do so without re-quoting concerns.
+///
+/// Falls back to the legacy whitespace split when `shlex` rejects the
+/// input (typically an unbalanced quote): we keep the original text
+/// rather than refuse the command outright, matching the prior UX.
+fn split_slash_args(args: &str) -> (String, String) {
+    let tokens: Option<Vec<String>> = ::shlex::split(args);
+    let tokens = match tokens {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            // Either an empty input or an unbalanced quote — fall back to
+            // the legacy first-word split so behaviour is no worse than
+            // before for these inputs.
+            let parts: Vec<&str> = args.splitn(2, ' ').collect();
+            return (
+                parts.first().copied().unwrap_or("").to_string(),
+                parts.get(1).copied().unwrap_or("").trim().to_string(),
+            );
+        }
+    };
+    let subcmd = tokens[0].clone();
+    let rest = tokens[1..].join(" ");
+    (subcmd, rest)
+}
+
 pub fn slash_plugin(args: &str) -> SlashCommandResult {
-    let sub_parts: Vec<&str> = args.splitn(2, ' ').collect();
-    let subcmd = sub_parts.first().copied().unwrap_or("").to_lowercase();
-    let sub_args = sub_parts.get(1).copied().unwrap_or("").trim();
+    let (subcmd_raw, sub_args_owned) = split_slash_args(args);
+    let subcmd = subcmd_raw.to_lowercase();
+    let sub_args = sub_args_owned.trim();
     let action = match subcmd.as_str() {
         "" => PluginAction::Menu,
         "help" | "?" => PluginAction::Help,
@@ -640,14 +673,15 @@ pub fn slash_plugin(args: &str) -> SlashCommandResult {
             },
         },
         "marketplace" | "market" => {
-            let market_parts: Vec<&str> = sub_args.splitn(2, ' ').collect();
-            let market_cmd = market_parts.first().copied().unwrap_or("");
-            let market_target = market_parts.get(1).copied().unwrap_or("").trim();
+            // Crosslink #906: use shell-style tokenisation so a quoted
+            // target (`add "path with spaces"`) survives intact.
+            let (market_cmd, market_target_owned) = split_slash_args(sub_args);
+            let market_target = market_target_owned.trim();
             PluginAction::Marketplace {
                 action: if market_cmd.is_empty() {
                     None
                 } else {
-                    Some(market_cmd.to_string())
+                    Some(market_cmd)
                 },
                 target: if market_target.is_empty() {
                     None

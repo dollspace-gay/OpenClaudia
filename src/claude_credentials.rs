@@ -453,6 +453,37 @@ pub fn get_oauth_endpoint(_model: &str) -> String {
 ///
 /// The Anthropic API validates this exact string. Must be in its own system
 /// block — do NOT append to this.
+///
+/// # Crosslink #923 — why this constant lives here (deliberate coupling)
+///
+/// The QA review flagged this constant as a decoupling violation: a
+/// `claude_credentials` module injects content into the system prompt the
+/// prompt-builder is unaware of, and the literal string couples
+/// `OpenClaudia`'s identity attestation to a specific Anthropic policy.
+///
+/// We have accepted the feedback but kept the current shape, for the
+/// following reasons:
+///
+/// 1. **The string IS an OAuth credential.** The Anthropic OAuth endpoint
+///    refuses requests whose first system block does not contain exactly
+///    this literal. The string is therefore part of the OAuth contract
+///    (alongside the bearer token and `anthropic-beta` header), not a
+///    free-form prompt fragment, and so belongs in the credentials module
+///    that owns the rest of that contract.
+/// 2. **Single source of truth.** Both `inject_system_prompt` (full chat
+///    mode) and `inject_oauth_prefix_only` (proxy mode) reference the same
+///    constant; moving the literal into `prompt.rs` would split the OAuth
+///    contract across two crates with no compile-time link between them.
+/// 3. **Operational risk is bounded.** If Anthropic changes the literal,
+///    the failure mode is a 401 from `/v1/messages` with a clear server
+///    message ("invalid system prefix") — not a silent degradation.
+///    Updating the constant is a one-line fix in one file.
+///
+/// The follow-up work to move OAuth prefix-block construction into
+/// `build_system_prompt_blocks(..., oauth_prefix: Option<&str>)` is
+/// tracked in the same issue thread but is deferred because it would
+/// require threading the credential state through every prompt-builder
+/// callsite without changing what the wire actually carries.
 pub const CLAUDE_CODE_SYSTEM_PROMPT: &str =
     "You are Claude Code, Anthropic's official CLI for Claude.";
 

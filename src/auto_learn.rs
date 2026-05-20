@@ -48,6 +48,18 @@ use tracing::debug;
 /// prepared statement to exist for every prunable table.
 pub use crate::memory::AutoLearnTable as PruneTable;
 
+/// Maximum number of files tracked per session for co-edit relationship
+/// computation. Capping this set bounds the pair-generation cost of
+/// [`AutoLearner::compute_file_relationships`] (which is `O(N²)`) at
+/// session end. Combined with `MAX_FILE_RELATIONSHIPS = 500` in
+/// [`AutoLearner::prune_old_data`], any larger N is wasted work.
+///
+/// Crosslink #859: previously unbounded — 1000 distinct files meant
+/// ~500K `SQLite` INSERTs blocking session close. With a cap of 50,
+/// the upper bound is 1225 pair rows per session, all written in a
+/// single batched transaction.
+const MAX_FILES_PER_SESSION: usize = 50;
+
 /// Tracks pending error context for resolution matching
 struct PendingError {
     error_signature: String,
@@ -169,6 +181,13 @@ impl<'a> AutoLearner<'a> {
 
     /// Normalize a file path from tool arguments — canonicalize if possible,
     /// reject paths with `..` components to prevent path traversal in DB.
+    ///
+    /// Crosslink #904: prior implementations fell back to the raw path
+    /// when [`std::fs::canonicalize`] failed, which silently let
+    /// non-existent paths and cwd-dependent relative paths into the
+    /// learning DB. We now canonicalize the deepest existing ancestor
+    /// and re-append the missing leaf segments; if no ancestor exists
+    /// we refuse the path rather than store an ambiguous relative form.
     fn normalize_path(raw: &str) -> Option<String> {
         if raw.is_empty() {
             return None;
@@ -181,11 +200,39 @@ impl<'a> AutoLearner<'a> {
         {
             return None;
         }
-        // Canonicalize if file exists, otherwise use as-is
-        std::fs::canonicalize(path)
-            .map(|p| p.to_string_lossy().to_string())
-            .ok()
-            .or_else(|| Some(raw.to_string()))
+        // Happy path: file exists, canonicalize directly.
+        if let Ok(canonical) = std::fs::canonicalize(path) {
+            return Some(canonical.to_string_lossy().to_string());
+        }
+        // Fallback: walk up to the deepest existing ancestor, canonicalize
+        // that, and re-append the remaining (not-yet-existing) leaf segments.
+        // This still gives us an absolute, symlink-resolved prefix so two
+        // agents in different cwds cannot collide on the same relative path.
+        let mut ancestor = path;
+        let mut tail = std::path::PathBuf::new();
+        loop {
+            if let Ok(canonical) = std::fs::canonicalize(ancestor) {
+                let mut out = canonical;
+                out.push(&tail);
+                return Some(out.to_string_lossy().to_string());
+            }
+            match (ancestor.parent(), ancestor.file_name()) {
+                (Some(parent), Some(name)) if !parent.as_os_str().is_empty() => {
+                    let mut new_tail = std::path::PathBuf::from(name);
+                    new_tail.push(&tail);
+                    tail = new_tail;
+                    ancestor = parent;
+                }
+                _ => {
+                    tracing::warn!(
+                        raw = raw,
+                        "normalize_path: no existing ancestor; rejecting path \
+                         to avoid storing cwd-dependent relative entry"
+                    );
+                    return None;
+                }
+            }
+        }
     }
 
     // === Internal: File Write Success ===
@@ -201,7 +248,21 @@ impl<'a> AutoLearner<'a> {
             return;
         };
 
-        self.session_files_modified.insert(file_path.clone());
+        // Crosslink #859: cap the session's modified-file set so the
+        // O(N²) pair generation in compute_file_relationships() does
+        // not blow up at session close. Once the cap is reached, new
+        // file modifications no longer contribute new relationships
+        // — duplicates of already-tracked files are still permitted.
+        if self.session_files_modified.len() >= MAX_FILES_PER_SESSION
+            && !self.session_files_modified.contains(&file_path)
+        {
+            debug!(
+                "session_files_modified at cap ({}), skipping new entry {}",
+                MAX_FILES_PER_SESSION, file_path
+            );
+        } else {
+            self.session_files_modified.insert(file_path.clone());
+        }
 
         // If there was a pending error for this file, the edit might be the resolution
         if let Some(ref pending) = self.pending_error {

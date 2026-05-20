@@ -265,26 +265,13 @@ mod tests {
         sink.record(AnalyticsEvent::ThinkingEmitted { budget: 0 });
     }
 
-    /// B4 / gap #649: pin that `AnalyticsEvent` does NOT have a `CostTracked`
-    /// variant yet. CC fires per-request cost metrics via `getCostCounter().add()`
-    /// (`cost-tracker.ts` line 291); OC has no equivalent (filed as #649).
-    ///
-    /// The exhaustive match below compiles only while the 7 known variants are
-    /// the only ones. Adding `CostTracked` without updating the match causes a
-    /// compile error — the intended sentinel behaviour.
-    #[test]
-    fn b4_cost_tracked_variant_not_yet_present_gap649() {
-        let event = AnalyticsEvent::ThinkingEmitted { budget: 1 };
-        let _ = match event {
-            AnalyticsEvent::SessionStart { .. }
-            | AnalyticsEvent::SessionEnd { .. }
-            | AnalyticsEvent::ToolUsed { .. }
-            | AnalyticsEvent::PromptSubmitted { .. }
-            | AnalyticsEvent::ContextCompacted { .. }
-            | AnalyticsEvent::ApiRequest { .. }
-            | AnalyticsEvent::ThinkingEmitted { .. } => "no CostTracked yet — see gap #649",
-        };
-    }
+    // Crosslink #914: removed `b4_cost_tracked_variant_not_yet_present_gap649`.
+    // The sentinel test pinned the *absence* of an `AnalyticsEvent::CostTracked`
+    // variant via an exhaustive match. Once #649 actually adds the variant the
+    // test would be silently easy to forget to delete, leaving production test
+    // code that intentionally invites a compile error. The exhaustive match in
+    // `TracingAnalytics::record` already enforces compile-time coverage when a
+    // new variant is added — the dedicated sentinel was redundant.
 
     /// B4: `Arc<dyn AnalyticsSink>` can be cloned and sent across a thread.
     /// Confirms that `Send + Sync` is sufficient for the `ServiceRegistry`

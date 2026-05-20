@@ -244,15 +244,25 @@ pub const ALLOWED_URL_SCHEMES: &[&str] = &["https", "ssh"];
 /// * missing or empty host
 /// * includes userinfo for non-ssh schemes, or a password for any scheme
 pub fn validate_source_url(raw: &str) -> Result<(), PluginError> {
-    // SCP-style `git@host:path` is *not* a standard URL and is commonly used
-    // for git over SSH. Accept it by treating it as implicit ssh:// — but
-    // only when it matches the exact `user@host:path` shape with no scheme.
-    if looks_like_scp_ssh(raw) {
-        return Ok(());
-    }
+    // Crosslink #866: SCP-style `git@host:path` URLs previously short-circuited
+    // every scheme/host/userinfo check, so `git@attacker.invalid:owner/repo.git`
+    // was accepted alongside `git@github.com:owner/repo.git`. We now normalise
+    // SCP form into an implicit `ssh://` URL and run it through the same checks.
+    // The bare-username rule for SSH still applies (any non-`git` user is
+    // rejected unless it would also be rejected by the URL parser).
+    let normalised: String = if looks_like_scp_ssh(raw) {
+        scp_to_ssh_url(raw).ok_or_else(|| {
+            PluginError::InvalidManifest(format!(
+                "SCP-style source URL '{raw}' could not be normalised to ssh://"
+            ))
+        })?
+    } else {
+        raw.to_string()
+    };
 
-    let url = Url::parse(raw)
-        .map_err(|e| PluginError::InvalidManifest(format!("Invalid source URL '{raw}': {e}")))?;
+    let url = Url::parse(&normalised).map_err(|e| {
+        PluginError::InvalidManifest(format!("Invalid source URL '{raw}': {e}"))
+    })?;
 
     if !ALLOWED_URL_SCHEMES.contains(&url.scheme()) {
         return Err(PluginError::InvalidManifest(format!(
@@ -272,7 +282,8 @@ pub fn validate_source_url(raw: &str) -> Result<(), PluginError> {
     // Embedded credentials rule:
     //  * `ssh://` is allowed to carry a bare username (`ssh://git@host/...`)
     //    because that is literally the standard way to address a git SSH
-    //    endpoint. A PASSWORD is still rejected on ssh.
+    //    endpoint. A PASSWORD is still rejected on ssh, and only the
+    //    canonical `git` username is permitted (see #866).
     //  * Every other scheme (https) forbids both username and password —
     //    credentials belong in a git credential helper, never in a URL that
     //    will be logged or checked into a marketplace manifest.
@@ -281,7 +292,18 @@ pub fn validate_source_url(raw: &str) -> Result<(), PluginError> {
             "Source URL must not carry an inline password (use git credential helpers): {raw}"
         )));
     }
-    if url.scheme() != "ssh" && !url.username().is_empty() {
+    if url.scheme() == "ssh" {
+        // Username "" is allowed (caller's ssh config handles it); "git" is
+        // the canonical git-over-ssh username. Anything else is rejected
+        // because it lets a hostile manifest exfiltrate a per-user identity
+        // via the URL — see #866.
+        let user = url.username();
+        if !user.is_empty() && user != "git" {
+            return Err(PluginError::InvalidManifest(format!(
+                "ssh:// source URL must use the 'git' username (got '{user}'): {raw}"
+            )));
+        }
+    } else if !url.username().is_empty() {
         return Err(PluginError::InvalidManifest(format!(
             "Source URL must not carry an inline username for {} (use git credential helpers): {raw}",
             url.scheme()
@@ -293,6 +315,11 @@ pub fn validate_source_url(raw: &str) -> Result<(), PluginError> {
 
 /// True for the `git@github.com:owner/repo.git` SSH shorthand.
 fn looks_like_scp_ssh(s: &str) -> bool {
+    // Reject anything that already declares a scheme (`https://...`,
+    // `ssh://...`) — those go through Url::parse directly.
+    if s.contains("://") {
+        return false;
+    }
     let Some(at_idx) = s.find('@') else {
         return false;
     };
@@ -309,6 +336,35 @@ fn looks_like_scp_ssh(s: &str) -> bool {
     let rest = &s[colon_idx + 1..];
     !rest.is_empty() && !rest.starts_with('/')
 }
+
+/// Rewrite `user@host:path` into `ssh://user@host/path` so the standard
+/// URL parser can apply scheme + host + userinfo checks. Returns `None`
+/// if the SCP form is malformed (e.g. `:` before `@`).
+fn scp_to_ssh_url(s: &str) -> Option<String> {
+    let at_idx = s.find('@')?;
+    let colon_idx = s.find(':')?;
+    if at_idx == 0 || at_idx >= colon_idx {
+        return None;
+    }
+    let user = &s[..at_idx];
+    let host = &s[at_idx + 1..colon_idx];
+    let path = &s[colon_idx + 1..];
+    if host.is_empty() || path.is_empty() {
+        return None;
+    }
+    Some(format!("ssh://{user}@{host}/{path}"))
+}
+
+/// Windows reserved device names that may not be used as directory or
+/// file stems. Crosslink #875: declared at module scope (not inside
+/// `validate_plugin_dir_name`) so clippy's `items_after_statements`
+/// lint is happy and the list can be shared with future call-sites
+/// that need the same check.
+const WINDOWS_RESERVED_NAMES: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
 
 /// Validate a directory name that was derived from a URL (the trailing
 /// path segment after stripping `.git`). Rejects any component that would
@@ -334,6 +390,17 @@ pub fn validate_plugin_dir_name(name: &str) -> Result<(), PluginError> {
             "Derived directory name '{name}' begins with a dot; refusing to create hidden dir"
         )));
     }
+    // Crosslink #875: the forbidden-char set is intentionally cross-platform.
+    //   * `/` — POSIX path separator.
+    //   * `\\` — Windows path separator. While the URL-derived segment will
+    //     not normally contain a backslash, the same `validate_plugin_dir_name`
+    //     is also called from `derive_dir_name_from_path` and from inline
+    //     manifest fields (`name`, `dir`) that DO accept arbitrary user
+    //     input. Keeping the backslash rejection makes the validator
+    //     reusable from every callsite without per-caller exceptions.
+    //   * `\0` — NUL terminates C strings; lets a hostile name truncate
+    //     downstream tool args (git, fs::canonicalize) at the boundary.
+    //   * `:` — Windows drive separator (`C:`) and macOS HFS path separator.
     let forbidden: &[char] = &['/', '\\', '\0', ':'];
     if name
         .chars()
@@ -346,6 +413,26 @@ pub fn validate_plugin_dir_name(name: &str) -> Result<(), PluginError> {
     if name.contains("..") {
         return Err(PluginError::InvalidManifest(format!(
             "Derived directory name '{name}' contains '..'"
+        )));
+    }
+    // Crosslink #875: reject Windows reserved device names (CON, PRN, AUX,
+    // NUL, COM1-9, LPT1-9) case-insensitively. A repository named `con.git`
+    // would otherwise derive `con` and either collide with the device or
+    // fail opaquely on Windows. Comparison is case-insensitive against the
+    // documented Microsoft set; we also reject the bare stem followed by an
+    // extension (`con.txt` → still reserved on Windows). Trailing dot or
+    // space is also rejected because Windows strips them on creation,
+    // enabling collisions between `foo` and `foo.`.
+    if name.ends_with('.') || name.ends_with(' ') {
+        return Err(PluginError::InvalidManifest(format!(
+            "Derived directory name '{name}' has a trailing dot or space (Windows strips these on creation)"
+        )));
+    }
+    let stem = name.split('.').next().unwrap_or("");
+    let stem_upper = stem.to_ascii_uppercase();
+    if WINDOWS_RESERVED_NAMES.contains(&stem_upper.as_str()) {
+        return Err(PluginError::InvalidManifest(format!(
+            "Derived directory name '{name}' is a Windows reserved device name"
         )));
     }
     Ok(())
@@ -572,6 +659,27 @@ mod tests {
     #[test]
     fn allows_scp_ssh_shorthand() {
         assert!(validate_source_url("git@github.com:owner/repo.git").is_ok());
+    }
+
+    /// Crosslink #866: SCP URLs with a non-`git` username are rejected.
+    /// Pre-fix this slipped through because SCP form short-circuited every
+    /// downstream check.
+    #[test]
+    fn rejects_scp_with_non_git_username() {
+        let result = validate_source_url("attacker@evil.example.invalid:owner/repo.git");
+        assert!(
+            result.is_err(),
+            "non-git username must be rejected in SCP form (got Ok)"
+        );
+    }
+
+    /// Crosslink #866: SCP URLs route through the same scheme/host/userinfo
+    /// pipeline as `ssh://` URLs, so a malformed SCP form is rejected with
+    /// a clear error rather than silently accepted.
+    #[test]
+    fn rejects_scp_with_empty_host() {
+        let result = validate_source_url("git@:owner/repo.git");
+        assert!(result.is_err(), "SCP with empty host must be rejected");
     }
 
     #[test]

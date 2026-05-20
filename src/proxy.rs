@@ -338,19 +338,12 @@ async fn auth_device_submit(
 
 /// Check authentication status
 async fn auth_status(State(state): State<ProxyState>, headers: HeaderMap) -> impl IntoResponse {
-    // Check for session from cookie first
-    let session = headers
-        .get(header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|cookie| {
-                let cookie = cookie.trim();
-                cookie
-                    .strip_prefix("anthropic_session=")
-                    .map(std::string::ToString::to_string)
-            })
-        })
-        .and_then(|session_id| state.oauth_store.get_session(&session_id));
+    // Crosslink #908: cookie-parsing chain was duplicated between this
+    // route and `proxy_anthropic_messages`. Both now share
+    // `lookup_oauth_session_from_cookie` so any future cookie-parsing
+    // change (e.g. moving to the `cookie` crate for proper RFC-6265
+    // handling) only needs to land in one place.
+    let session = lookup_oauth_session_from_cookie(&headers, &state.oauth_store);
 
     // No "any valid session" fallback — an absent cookie returns
     // `authenticated: false`. The previous fallback let any unauth
