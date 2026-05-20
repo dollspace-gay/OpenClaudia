@@ -3,11 +3,12 @@
   "display_id": 918,
   "title": "build_chat_request_body cyclomatic complexity exceeds 15 with three provider branches",
   "description": "## Severity\nMajor\n## Dimension\ncomplexity\n## Location\nsrc/main.rs:912-1020\n## Violation\nbuild_chat_request_body has 100+ lines, three provider branches each with complex JSON construction, two suffix mutations (claude_code_token injection, effort_level thinking), and inline filter_map. Cyclomatic complexity exceeds 15.\n\nThis is a Stovepipe Systems anti-pattern — every provider re-implements its own message-shape translation instead of delegating to the ProviderAdapter trait that already exists.\n\n## Mandated refactor\nAdd to ProviderAdapter: build_chat_request_body method. Each provider implements its own — the trait owns the shape. main.rs collapses to adapter.build_chat_request_body plus the cross-cutting injection.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:16:12.035377457Z",
-  "updated_at": "2026-05-18T22:16:18.050706583Z",
+  "updated_at": "2026-05-20T12:24:16.746280632Z",
+  "closed_at": "2026-05-20T12:24:16.746280632Z",
   "labels": [
     "qa-review",
     "complexity"
