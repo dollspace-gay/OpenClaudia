@@ -3,11 +3,12 @@
   "display_id": 972,
   "title": "todo_write validation builds entire Vec before locking — non-atomic with concurrent writers",
   "description": "## Severity\nMinor\n\n## Dimension\nConcurrency / Functional Correctness\n\n## Location\nsrc/tools/todo.rs:76-162 (execute_todo_write)\n\n## Violation\nThe function does ALL validation first (lines 85-128, building new_todos: Vec<TodoItem>), then takes the Mutex (line 153) to write. The intent is \"validate before mutating\" — fine. But the comment at line 139 says \"Claude Code parity: when every item is completed, clear the list\" and that decision is computed BEFORE the lock is taken — based on the new input only. If two threads concurrently call todo_write for the same session:\n\n- Thread A computes `all_done = true` from its inputs and races to remove the bucket.\n- Thread B computes `all_done = false` from its inputs and races to insert.\n\nThe order of map.remove vs map.insert is non-deterministic; A's \"all done\" can erase B's pending tasks (or vice versa). The validation-before-lock pattern is fine, but the lock should hold the \"decide what to do AND do it\" pair atomically.\n\nAlso: `new_todos.clone()` (line 147) is unnecessary work — `stored_todos` only needs to exist OR not. Use `mem::take` or restructure as an Option<Vec<_>>.\n\n## Mandated refactor\n1. Move the all_done decision INSIDE the locked block so the \"compute and write\" is one critical section.\n2. Replace `let stored_todos = if all_done { Vec::new() } else { new_todos.clone() };` with `let stored_todos: Option<Vec<TodoItem>> = if all_done { None } else { Some(new_todos.clone()) };` and use match inside the lock.\n3. Better: use a transactional Mutex helper like `map.entry(key).and_modify(...).or_insert_with(...)` to keep the entire decision/write inside one critical section.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:23:03.905702761Z",
-  "updated_at": "2026-05-18T22:23:06.620276743Z",
+  "updated_at": "2026-05-20T12:58:01.668193009Z",
+  "closed_at": "2026-05-20T12:58:01.668193009Z",
   "labels": [
     "qa-review",
     "concurrency"
