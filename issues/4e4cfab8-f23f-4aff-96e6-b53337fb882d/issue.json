@@ -3,11 +3,12 @@
   "display_id": 981,
   "title": "PROJECT_ROOT and TEMP_ROOT LazyLocks silently fall back to '.' if cwd canonicalize fails",
   "description": "## Severity\nMajor\n\n## Dimension\nPerimeter Defense / Functional Correctness\n\n## Location\nsrc/tools/file/mod.rs:78-88 (PROJECT_ROOT and TEMP_ROOT static initializers)\n\n## Violation\n```rust\nstatic PROJECT_ROOT: LazyLock<PathBuf> = LazyLock::new(|| {\n    std::env::current_dir()\n        .and_then(|cwd| cwd.canonicalize())\n        .unwrap_or_else(|_| PathBuf::from(\".\"))\n});\n```\n\nIf `current_dir` or `canonicalize` fails (e.g. the process was started in a deleted directory, or the cwd is mounted via FUSE that returns EIO), PROJECT_ROOT silently falls back to `PathBuf::from(\".\")` — a *relative* path. Every subsequent jail check using `path_is_within(&canonical, &PROJECT_ROOT)` compares a fully-canonicalized absolute path against `.`. `Path::starts_with` is byte-prefix matching: `\"/etc/passwd\".starts_with(\".\")` is false BUT also `\"/home/user/file\"`.starts_with(\".\") is false — so EVERY path is rejected, breaking the entire tool subsystem silently.\n\nWorse, even if canonicalize succeeds, no startup-time check verifies that PROJECT_ROOT actually exists OR that it's a directory (a path that resolves to a regular file would still pass the canonicalize check). The \"jail\" is built on assumptions that aren't enforced.\n\n## Mandated refactor\n1. Make PROJECT_ROOT and TEMP_ROOT typed as `Result<PathBuf, anyhow::Error>` (or wrap in LazyLock<Result<...>>). At first use, propagate the error to the caller rather than substituting `.`.\n2. In main.rs startup, eagerly access both statics and PANIC with a clear error message (\"could not determine project root: ...\"). Fail fast at process start, not silently per-tool-call.\n3. Reject PROJECT_ROOT that is not a directory: `assert!(canonical.is_dir())`.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:26:02.878556730Z",
-  "updated_at": "2026-05-18T22:26:05.761953258Z",
+  "updated_at": "2026-05-20T04:53:32.730858611Z",
+  "closed_at": "2026-05-20T04:53:32.730858611Z",
   "labels": [
     "qa-review",
     "error-handling"
