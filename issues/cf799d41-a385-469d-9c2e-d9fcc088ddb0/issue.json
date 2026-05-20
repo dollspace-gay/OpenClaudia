@@ -2,12 +2,13 @@
   "uuid": "cf799d41-a385-469d-9c2e-d9fcc088ddb0",
   "display_id": 641,
   "title": "Add web_search_requests pricing to calculate_cost — CC prices at $0.01/req via server_tool_use.web_search_requests (cost-tracker.ts:294, modelCost.ts:139)",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:08:43.835176380Z",
-  "updated_at": "2026-05-18T16:08:46.714105082Z",
+  "updated_at": "2026-05-20T06:24:36.423372048Z",
+  "closed_at": "2026-05-20T06:24:36.423372048Z",
   "labels": [
     "feature",
     "cc-parity"
