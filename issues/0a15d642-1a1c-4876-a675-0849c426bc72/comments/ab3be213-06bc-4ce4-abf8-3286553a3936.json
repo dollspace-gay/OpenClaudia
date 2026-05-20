@@ -1,0 +1,10 @@
+{
+  "uuid": "ab3be213-06bc-4ce4-abf8-3286553a3936",
+  "issue_uuid": "0a15d642-1a1c-4876-a675-0849c426bc72",
+  "author": "lOrm",
+  "content": "Issue calls for centralized SessionState (Arc<RwLock<>>) with ~98 categorized fields and tokio::sync::broadcast on_session_switch listeners, plus migration of fields off App into SessionState. Not addressable in a cleanup pass: foundational state refactor that intersects #253 (App decomposition) — both must be designed together. Phase 1 spec materials referenced in /home/doll/claude-code-design-documents/.design/state-management.md (external). Owner-level multi-day architectural work.",
+  "created_at": "2026-05-20T14:33:31.047047952Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAMckDNr0oWWhhA1iZ6jPOBPR+ljdZd4jQ/a3+8e2ZFcIPh/sKbHY6hui4JNf1la9VDeDkL71Q2y9nIuE2VhwtDw=="
+}
