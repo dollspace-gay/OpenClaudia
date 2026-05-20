@@ -3,11 +3,12 @@
   "display_id": 906,
   "title": "slash_plugin / plugin_marketplace use raw  — quoted args containing spaces break silently",
   "description": "## Severity\nMinor\n## Dimension\nkiss\n## Location\nsrc/cli/repl/slash.rs:470-511, src/cli/repl/slash.rs:1277-1294\n## Violation\nEvery sub-command parser splits on a single space. Arguments containing spaces — paths, URLs with query strings, marketplace names with hyphens-but-also-spaces — get truncated. Quoted lines:\n\n    fn slash_plugin(args: &str) -> SlashCommandResult {\n        let sub_parts: Vec<&str> = args.splitn(2, ' ').collect();\n        ...\n        let market_parts: Vec<&str> = sub_args.splitn(2, ' ').collect();\n        let market_cmd = market_parts.first().copied().unwrap_or(\"\");\n        let market_target = market_parts.get(1).copied().unwrap_or(\"\").trim();\n\n`/plugin marketplace add \"/Users/me/My Plugins/mp\"` becomes target=`\"/Users/me/My`. The user is informed only by a generic \"Could not resolve\" error. The same problem exists in slash_commit / slash_commit_push_pr and slash_continue.\n## Mandated refactor\nAdopt `shell_words::split` (or `shellwords` / `winsplit` for the cross-platform case) to honour quoted args. Better: model each slash command's args using `clap`'s low-level parser so we get the same UX as the project's own CLI (already a clap consumer per CLAUDE.md). Add a regression test for `/plugin install \"path with spaces\"`.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:14:18.379445993Z",
-  "updated_at": "2026-05-18T22:14:57.077916264Z",
+  "updated_at": "2026-05-20T12:23:36.764171229Z",
+  "closed_at": "2026-05-20T12:23:36.764171229Z",
   "labels": [
     "qa-review",
     "kiss"
