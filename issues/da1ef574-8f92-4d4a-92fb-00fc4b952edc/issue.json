@@ -3,11 +3,12 @@
   "display_id": 939,
   "title": "read_text_file silently truncates at 100_000 chars instead of paginating or erroring",
   "description": "## Severity\nMinor\n\n## Dimension\nFunctional Correctness / Perimeter Defense\n\n## Location\nsrc/tools/file/read.rs:319-331 (read_text_file truncation branch)\n\n## Violation\n```rust\nif result.len() > 100_000 {\n    (\n        format!(\"{}...\\n(file truncated, {} total chars){}\", safe_truncate(&result, 100_000), result.len(), suffix),\n        false,    // <-- is_error = false\n    )\n}\n```\n\nThe 100_000-char limit triggers silent (non-error) truncation. The test read_text_large_file_truncated_as_non_error (line 593) explicitly pins this as \"OC truncation is NOT an error (CC parity gap).\" Two problems:\n\n1. The model cannot programmatically detect truncation — the text appended is informational only. It must read the message string to know the read was incomplete.\n2. The truncation point is byte-based on `result`, which already contains the line-number prefixes (`\"   N| \"`). Truncating in the middle of a line-number prefix produces malformed output and breaks downstream edit_file lookups by line number.\n\n## Mandated refactor\n1. Truncate at a line boundary, not a byte boundary: `numbered.iter().scan(0, |bytes, line| { *bytes += line.len()+1; if *bytes > 100_000 { None } else { Some(line.clone()) } }).collect::<Vec<_>>()`.\n2. Return is_error=true with a structured message instructing the model to retry with `offset`/`limit`. Or add a sentinel field in the typed ToolOutput (per the broader (String, bool) refactor) so the dispatcher can distinguish \"incomplete success\" from \"complete success.\"\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:18:27.878238204Z",
-  "updated_at": "2026-05-18T22:18:35.864296198Z",
+  "updated_at": "2026-05-20T12:57:51.381672390Z",
+  "closed_at": "2026-05-20T12:57:51.381672390Z",
   "labels": [
     "qa-review",
     "kiss"
