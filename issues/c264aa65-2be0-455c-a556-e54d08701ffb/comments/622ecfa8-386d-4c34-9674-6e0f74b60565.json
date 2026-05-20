@@ -1,0 +1,10 @@
+{
+  "uuid": "622ecfa8-386d-4c34-9674-6e0f74b60565",
+  "issue_uuid": "c264aa65-2be0-455c-a556-e54d08701ffb",
+  "author": "lOrm",
+  "content": "SKIPPED — src/subagent.rs is in this project's FORBIDDEN file list for this dispatch. The PoisonError-swallowing pattern is real (per the original report) but cannot be addressed without editing src/subagent.rs. Filing as known-deferred so the issue is not silently dropped; the fix should be picked up by a future dispatch with permission to modify src/subagent.rs. Sibling fixes landed: #869 #899 #909 #920.",
+  "created_at": "2026-05-20T12:13:06.297463462Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABApdcLq+GjquJcxb4zEFz4hbfdIOkP8zE/XehphsY4y+zAmMhhEAifs0HlPx+gnrWEDemWOXyM2fXdWb1nmKbCAg=="
+}
