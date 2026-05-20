@@ -2,13 +2,12 @@
   "uuid": "277e3ab4-cebf-46b4-91d0-7c45cf94857f",
   "display_id": 660,
   "title": "Expand skill frontmatter parity: when_to_use, argument-hint, model, effort, paths, hooks, user-invocable (CC loadSkillsDir.ts)",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "21e13dad-6fac-4ae8-9f1c-62788c0392cb",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:10:30.922017814Z",
-  "updated_at": "2026-05-20T14:43:12.947461532Z",
-  "closed_at": "2026-05-20T14:43:12.947461532Z",
+  "updated_at": "2026-05-20T16:59:15.482541967Z",
   "labels": [
     "parity,cc-plugins-skills,skills"
   ]
