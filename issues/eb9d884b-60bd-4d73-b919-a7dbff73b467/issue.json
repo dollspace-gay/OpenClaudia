@@ -3,11 +3,12 @@
   "display_id": 942,
   "title": "read_image_file returns 0-byte base64 on empty file as success (perimeter defense)",
   "description": "## Severity\nTrivial\n\n## Dimension\nPerimeter Defense / Functional Correctness\n\n## Location\nsrc/tools/file/read.rs:40-56 (read_image_file)\n\n## Violation\nOn a 0-byte image file, the function returns a successful result with a base64-empty payload (test read_image_empty_file_returns_ok_with_empty_base64 pins this as a CC parity gap). The downstream Anthropic vision API will reject the empty base64 with an opaque 400 — but only after the request leaves the client and consumes a turn. The classic perimeter-defense violation: fail fast at the boundary, not after the API call.\n\nAlso, the function always allocates a String the size of (1.33 × file bytes) for the base64 output even when the file is huge. There is no cap on file size before encoding.\n\n## Mandated refactor\n1. Reject 0-byte image files at this boundary with an error message: \"Image file '{path}' is empty (0 bytes).\"\n2. Add an upper cap (e.g. 10 MB) — anything larger should error or be downscaled, not base64-bloated by 33% into the prompt.\n3. Probe the magic bytes (`infer` or `image::guess_format`) to verify the file actually is the claimed mime type — currently `mime_type` is decided purely by extension in detect_file_type, so a renamed binary will be encoded as image/png.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:18:58.529330493Z",
-  "updated_at": "2026-05-18T22:19:09.005858360Z",
+  "updated_at": "2026-05-20T12:57:56.568757781Z",
+  "closed_at": "2026-05-20T12:57:56.568757781Z",
   "labels": [
     "qa-review",
     "error-handling"
