@@ -357,133 +357,44 @@ pub fn slash_debug(provider: &str, current_model: &str, msg_count: usize) {
 }
 
 pub fn slash_commit() -> SlashCommandResult {
-    use std::io::Write;
-    use std::process::Command;
-    if !Command::new("git")
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .output()
-        .is_ok_and(|o| o.status.success())
-    {
-        println!("\nNot inside a git repository.\n");
-        return SlashCommandResult::Handled;
-    }
-    let staged = Command::new("git")
-        .args(["diff", "--cached", "--stat"])
-        .output();
-    let unstaged = Command::new("git").args(["diff", "--stat"]).output();
-    let has_staged = staged.as_ref().is_ok_and(|o| !o.stdout.is_empty());
-    let has_unstaged = unstaged.as_ref().is_ok_and(|o| !o.stdout.is_empty());
-    if !has_staged && !has_unstaged {
-        println!("\nNo changes to commit.\n");
-        return SlashCommandResult::Handled;
-    }
-    if !has_staged {
-        println!("\nUnstaged changes:");
-        if let Ok(ref o) = unstaged {
-            println!("{}", String::from_utf8_lossy(&o.stdout));
-        }
-        print!("Stage all changes? [y/n] ");
-        std::io::stdout().flush().ok();
-        let mut line = String::new();
-        std::io::stdin().read_line(&mut line).ok();
-        if line.trim().to_lowercase().starts_with('y') {
-            let _ = Command::new("git").args(["add", "-A"]).output();
-            println!("All changes staged.");
-        } else {
-            println!("Commit cancelled.");
-            return SlashCommandResult::Handled;
-        }
-    }
-    let files = Command::new("git")
-        .args(["diff", "--cached", "--name-only"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-        .unwrap_or_default();
-    let file_list: Vec<&str> = files.trim().lines().collect();
-    let msg = if file_list.len() == 1 {
-        format!("Update {}", file_list[0])
-    } else {
-        format!("Update {} files", file_list.len())
+    use crate::cli::commit_pipeline::{
+        execute_commit_pipeline, CommitError, CommitOptions, CommitOutcome, RealGitRunner,
+        StdioPrompt,
     };
-    println!("\nFiles: {}", files.trim());
-    print!("\nCommit message: \x1b[36m{msg}\x1b[0m\n[y/e(dit)/n] ");
-    std::io::stdout().flush().ok();
-    let mut line = String::new();
-    std::io::stdin().read_line(&mut line).ok();
-    match line.trim().to_lowercase().as_str() {
-        "y" | "yes" | "" => match Command::new("git").args(["commit", "-m", &msg]).output() {
-            Ok(o) if o.status.success() => {
-                println!("\n✓ {}", String::from_utf8_lossy(&o.stdout).trim());
-            }
-            Ok(o) => println!("\n✗ {}", String::from_utf8_lossy(&o.stderr).trim()),
-            Err(e) => println!("\n✗ {e}"),
-        },
-        "e" | "edit" => {
-            print!("Enter commit message: ");
-            std::io::stdout().flush().ok();
-            let mut custom = String::new();
-            std::io::stdin().read_line(&mut custom).ok();
-            if !custom.trim().is_empty() {
-                match Command::new("git")
-                    .args(["commit", "-m", custom.trim()])
-                    .output()
-                {
-                    Ok(o) if o.status.success() => {
-                        println!("\n✓ {}", String::from_utf8_lossy(&o.stdout).trim());
-                    }
-                    Ok(o) => println!("\n✗ {}", String::from_utf8_lossy(&o.stderr).trim()),
-                    Err(e) => println!("\n✗ {e}"),
-                }
-            }
-        }
-        _ => println!("Commit cancelled."),
+    let mut git = RealGitRunner;
+    let mut prompt = StdioPrompt;
+    match execute_commit_pipeline(&mut git, &mut prompt, CommitOptions::interactive()) {
+        Ok(CommitOutcome::Committed { message }) => println!("\n✓ Committed: {message}"),
+        Ok(CommitOutcome::NothingToCommit) => println!("\nNo changes to commit.\n"),
+        Ok(CommitOutcome::Cancelled) => println!("Commit cancelled."),
+        Err(CommitError::NotARepo) => println!("\nNot inside a git repository.\n"),
+        Err(CommitError::CommitFailed(stderr)) => println!("\n✗ {stderr}"),
     }
     SlashCommandResult::Handled
 }
 
-/// Stage any unstaged changes and commit them. Returns `false` if the commit
-/// step fails and the caller should bail out early.
+/// Auto-stage + auto-commit step for `/commit-push-pr`. Returns `false` when
+/// the caller should bail out (commit failed). `NothingToCommit` is treated
+/// as success so the push step can still run.
 fn commit_push_pr_stage_and_commit() -> bool {
-    use std::process::Command;
-    let has_staged = Command::new("git")
-        .args(["diff", "--cached", "--stat"])
-        .output()
-        .is_ok_and(|o| !o.stdout.is_empty());
-    let has_unstaged = Command::new("git")
-        .args(["diff", "--stat"])
-        .output()
-        .is_ok_and(|o| !o.stdout.is_empty());
-    if !(has_staged || has_unstaged) {
-        return true;
-    }
-    if !has_staged {
-        let _ = Command::new("git").args(["add", "-A"]).output();
-    }
-    let files = Command::new("git")
-        .args(["diff", "--cached", "--name-only"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-        .unwrap_or_default();
-    let file_list: Vec<&str> = files.trim().lines().collect();
-    let msg = if file_list.len() == 1 {
-        format!("Update {}", file_list[0])
-    } else {
-        format!("Update {} files", file_list.len())
+    use crate::cli::commit_pipeline::{
+        execute_commit_pipeline, CommitError, CommitOptions, CommitOutcome, RealGitRunner,
+        StdioPrompt,
     };
-    match Command::new("git").args(["commit", "-m", &msg]).output() {
-        Ok(o) if o.status.success() => {
-            println!("✓ Committed: {msg}");
+    let mut git = RealGitRunner;
+    let mut prompt = StdioPrompt;
+    match execute_commit_pipeline(&mut git, &mut prompt, CommitOptions::automatic()) {
+        Ok(CommitOutcome::Committed { message }) => {
+            println!("✓ Committed: {message}");
             true
         }
-        Ok(o) => {
-            println!(
-                "✗ Commit failed: {}",
-                String::from_utf8_lossy(&o.stderr).trim()
-            );
+        Ok(CommitOutcome::NothingToCommit | CommitOutcome::Cancelled) => true,
+        Err(CommitError::NotARepo) => {
+            println!("\nNot inside a git repository.\n");
             false
         }
-        Err(e) => {
-            println!("✗ {e}");
+        Err(CommitError::CommitFailed(stderr)) => {
+            println!("✗ Commit failed: {stderr}");
             false
         }
     }
@@ -572,15 +483,9 @@ fn commit_push_pr_create_pr(branch: String) {
 }
 
 pub fn slash_commit_push_pr() -> SlashCommandResult {
-    use std::process::Command;
-    if !Command::new("git")
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .output()
-        .is_ok_and(|o| o.status.success())
-    {
-        println!("\nNot inside a git repository.\n");
-        return SlashCommandResult::Handled;
-    }
+    // Repo check is performed inside `commit_push_pr_stage_and_commit`
+    // (via the shared commit pipeline, #476). Bailing here would re-shell
+    // out to git for no benefit.
     if !commit_push_pr_stage_and_commit() {
         return SlashCommandResult::Handled;
     }
@@ -1605,7 +1510,8 @@ pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::
             }
         }
         PluginAction::Uninstall { plugin } => {
-            let project_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let project_root =
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             let mut installed = plugins::InstalledPlugins::load(&project_root);
             if installed.remove(&plugin) {
                 if let Err(e) = installed.save(&project_root) {
