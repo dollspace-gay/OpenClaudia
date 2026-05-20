@@ -3,11 +3,12 @@
   "display_id": 986,
   "title": "READ_TRACKER LRU eviction does not actually implement LRU semantics (insertion-order only)",
   "description": "## Severity\nTrivial\n\n## Dimension\nNaming / Documentation & Intent\n\n## Location\nsrc/tools/file/mod.rs:29-55 (ReadFileTracker — comment says LRU-ordered)\n\n## Violation\n```rust\npub struct ReadFileTracker {\n    /// LRU-ordered list: most recently read files at the end.\n    /// When capacity is exceeded, oldest entries (front) are evicted.\n    read_files: Mutex<Vec<PathBuf>>,\n}\n\npub(crate) fn mark_read(&self, path: &Path) {\n    ...\n    files.retain(|p| p != &resolved);\n    files.push(resolved);\n    ...\n}\n```\n\nCalling `mark_read(p)` after `has_been_read(p)` returns true does promote `p` to most-recent. But `has_been_read(p)` itself does NOT promote — it only reads. So a file that is *frequently checked* but never *re-marked* will be evicted while a file that was marked once 10k entries ago and never touched again gets kept (until something else pushes 10k more entries). The doc says LRU; the implementation is \"insertion order, MRU on re-insert.\" These are different policies.\n\nThe distinction matters because edit_file calls has_been_read(); a session that does many edits but few reads can have its frequently-edited file evicted while a never-touched file blocks the slot.\n\n## Mandated refactor\nEither:\n1. Make the policy match the docs: have has_been_read also promote (turn it into &mut self and acquire the write lock — currently it only takes the lock; turn it from `contains` to a remove-then-push-at-end).\n2. OR fix the docs to say \"insertion order with most-recent-touch promotion on mark_read\" and explicitly document that has_been_read does not promote.\n\nCross-references issue #787 (READ_TRACKER global mutex) — the right fix is to use a real LRU container (linked_hash_map) so the policy is mechanical.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:27:51.053001450Z",
-  "updated_at": "2026-05-18T22:27:54.070625958Z",
+  "updated_at": "2026-05-20T04:53:44.566038973Z",
+  "closed_at": "2026-05-20T04:53:44.566038973Z",
   "labels": [
     "qa-review",
     "naming"
