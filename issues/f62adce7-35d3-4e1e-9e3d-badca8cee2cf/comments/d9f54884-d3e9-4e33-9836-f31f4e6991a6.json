@@ -1,0 +1,10 @@
+{
+  "uuid": "d9f54884-d3e9-4e33-9836-f31f4e6991a6",
+  "issue_uuid": "f62adce7-35d3-4e1e-9e3d-badca8cee2cf",
+  "author": "lOrm",
+  "content": "Issue calls for splitting permission handler by runtime context (interactive vs swarm-worker vs coordinator). Not addressable in a cleanup pass: requires runtime-context detection at permission-resolution time, three handler strategies (UI prompt / default-deny silent / coordinator-relay), and an integration with #507 coordinator subsystem and #619 channel-permissions relay. Multi-day feature work depending on coordinator landing first. Parent audit #523.",
+  "created_at": "2026-05-20T14:39:03.966378379Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAmsH+676cyAV9EWqDEhAvIUk0b5GDWJkkQEiMz0JlBQfx2VW2KNti+sJA3VpPsRpktgm4NLafMxlMOrpO5KnADw=="
+}
