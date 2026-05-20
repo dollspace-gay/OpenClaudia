@@ -3,11 +3,12 @@
   "display_id": 973,
   "title": "TodoItem status field is String not enum — invalid states unrepresentable rule violated",
   "description": "## Severity\nMajor\n\n## Dimension\nType Safety / SOLID-L (LSP) / Naming\n\n## Location\nsrc/tools/todo.rs:9-15 (TodoItem struct) and 100-116 (status validation)\n\n## Violation\n```rust\n#[derive(Debug, Clone, Serialize, Deserialize)]\npub struct TodoItem {\n    pub content: String,\n    pub status: String,   // <-- stringly-typed\n    #[serde(rename = \"activeForm\")]\n    pub active_form: String,\n}\n```\n\nThe status field is `String` and validated against the literal slice `[\"pending\", \"in_progress\", \"completed\"]` (line 102) at write time. Every downstream consumer must remember to re-check the value:\n- todo.rs:175-180 (string-compare against \"completed\" and \"in_progress\")\n- todo.rs:213-217 (match on str)\n- get_todo_list() returns TodoItem with status as String — every external caller must hardcode the magic strings again.\n\nCLAUDE.md explicitly says \"Use newtype pattern for domain types... Prefer enums over stringly-typed code... Leverage the type system to make invalid states unrepresentable\" (Type Safety section). This struct is the textbook violation. The validation message \"Must be: pending, in_progress, completed\" is even constructed from the same hardcoded list — drift between the struct, the validator, and the consumers is inevitable.\n\n## Mandated refactor\n```rust\n#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]\n#[serde(rename_all = \"snake_case\")]\npub enum TodoStatus { Pending, InProgress, Completed }\n\npub struct TodoItem {\n    pub content: String,\n    pub status: TodoStatus,\n    pub active_form: String,\n}\n```\n\n`serde` handles validation; every downstream `match todo.status { Pending => ..., }` is exhaustive and the compiler catches new variants. The hand-rolled status_icon match in todo_read becomes infallible — no `\"[?]\" => _` arm needed.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:23:22.033990078Z",
-  "updated_at": "2026-05-18T22:23:24.929458389Z",
+  "updated_at": "2026-05-20T04:53:14.758299954Z",
+  "closed_at": "2026-05-20T04:53:14.758299954Z",
   "labels": [
     "qa-review",
     "solid"
