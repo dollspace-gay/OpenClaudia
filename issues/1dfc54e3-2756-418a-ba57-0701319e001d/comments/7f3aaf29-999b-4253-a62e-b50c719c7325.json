@@ -1,0 +1,10 @@
+{
+  "uuid": "7f3aaf29-999b-4253-a62e-b50c719c7325",
+  "issue_uuid": "1dfc54e3-2756-418a-ba57-0701319e001d",
+  "author": "lOrm",
+  "content": "Verified: cost_tracked event exists in src/session/pricing.rs (line 53/588 — tracing::info!(event='cost_tracked', ...) carrying model + token buckets + web-search hits + cache stats). That covers spend OBSERVABILITY but not the budget-abort path the issue asks for. As a partial landing, this batch added StopConditionsConfig { max_total_input_tokens, max_total_output_tokens, ... } in src/config/stop_conditions.rs with is_stop_condition_met() returning Some(StopReason::InputTokenBudget|OutputTokenBudget) when cumulative spend crosses a configurable cap (see #587 close). Remaining gap: turn-loop integration in pipeline.rs that (a) accumulates per-turn deltas into a session-scoped counter, (b) consults StopConditionsConfig at turn end, (c) aborts with the structured reason. The config schema + predicate are now in place; the loop wire-up is the residual work.",
+  "created_at": "2026-05-20T18:19:34.176707081Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAo0diCsYGjj7r+tn2emks/vXQzf2ZM5NBQQUHMgMSWzTyiEpF+GU8u3mSDXNjILTRgDX76CIUVIP/dfp9pjzGBg=="
+}
