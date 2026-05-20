@@ -1,0 +1,10 @@
+{
+  "uuid": "122410e9-a865-496b-a1b5-8d13fa46bc9a",
+  "issue_uuid": "99c4e64b-8b3d-49a2-8730-5d39b0a08e99",
+  "author": "lOrm",
+  "content": "Added 'skill' tool in src/tools/skill.rs that wraps skills::get_skill and returns the skill body with structured <skill> envelope. Registered as SkillHandler. Long bodies truncated at 32_768 bytes. 3 unit tests.",
+  "created_at": "2026-05-20T18:36:41.415852082Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABALj64ZeiwUs1+vqfQm6/5ZLLWsNVKWCWPBajdQprBkO4Rvwf7u29LRPBytw0NlOZGYzYFBNhUvsMIvUhD5cq9BA=="
+}
