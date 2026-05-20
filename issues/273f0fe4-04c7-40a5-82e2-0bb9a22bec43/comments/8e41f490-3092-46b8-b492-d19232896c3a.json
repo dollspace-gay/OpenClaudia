@@ -1,0 +1,10 @@
+{
+  "uuid": "8e41f490-3092-46b8-b492-d19232896c3a",
+  "issue_uuid": "273f0fe4-04c7-40a5-82e2-0bb9a22bec43",
+  "author": "lOrm",
+  "content": "Issue calls for src/memdir/ subsystem implementing background memory agents (autoDream consolidation, MagicDocs auto-docs, SessionMemory per-session notes, PromptSuggestion speculative next-prompt). Not addressable in a cleanup pass: multi-day feature reading CC memdir/ TS source plus session-lifecycle integration, ~/.claude/projects/X/Y/session-memory/summary.md writer, forked subagent with tool-denial callback for cache-safe speculation. Phase 1 spec captured in #533. Multiple downstream Phase 2 issues (#632/#633/#634/#635) carry the implementable subparts.",
+  "created_at": "2026-05-20T14:33:27.946024086Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABApShM0l3KOf6oOLAgqRieUoX6SFI7rmiVsFUQGpSN1Km/OVg50kdMqV5xNSaaKiBJpEpMK7TszAlbZ0P474xDDQ=="
+}
