@@ -2,13 +2,12 @@
   "uuid": "64fc4b9a-bf32-40d6-81ca-101c6def78ac",
   "display_id": 661,
   "title": "Walk project dirs up to home for skill discovery (parity with CC getProjectDirsUpToHome)",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "21e13dad-6fac-4ae8-9f1c-62788c0392cb",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:10:35.248193688Z",
-  "updated_at": "2026-05-20T14:43:16.131033349Z",
-  "closed_at": "2026-05-20T14:43:16.131033349Z",
+  "updated_at": "2026-05-20T16:59:16.983222608Z",
   "labels": [
     "parity,cc-plugins-skills,skills"
   ]
