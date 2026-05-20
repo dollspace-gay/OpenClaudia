@@ -1,0 +1,10 @@
+{
+  "uuid": "aa60344d-590d-4e38-91bf-8c17c02ac0fb",
+  "issue_uuid": "6312c2b6-9369-4ef5-bc84-7ec107d8772a",
+  "author": "lOrm",
+  "content": "Deferred — owner-level architectural refactor (PluginAction is the slash-command surface for plugins).\n\n**Fix outline:** Replace the PluginAction enum (src/cli/repl/slash.rs:12) + handle_plugin_action match (around line 1100-1165) with a Tell-Don't-Ask trait. Each subcommand becomes a value implementing trait PluginCommand { fn execute(self, mgr: &mut PluginManager) -> Result<(), Error> }. The parser yields Box<dyn PluginCommand>; the dispatcher just calls .execute(). Adding a new subcommand only adds a new struct + impl, no central match edit.\n\n**Partial progress:** Some adjacent slash-command infra has been incrementally tightened, but the PluginAction enum itself remains at 11 variants with the central dispatch match unchanged.\n\n**Recommendation:** Owner-level call on (a) PluginCommand trait shape, (b) whether to do the same for other slash-command families at the same time. Defer.",
+  "created_at": "2026-05-20T14:16:04.238561292Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA7ki2N19FZhkaXWxcNsKm6jnoQ9uW0s6bvV2VvLhf8CGtN+SkyC5voF8RO0umtqgfPEPh+ZE3r76y0y8w08shAQ=="
+}
