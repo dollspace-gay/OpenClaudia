@@ -3,11 +3,12 @@
   "display_id": 874,
   "title": "TaskManager::update_task uses O(N) linear scans inside a 150-line god function",
   "description": "## Severity\nMajor\n## Dimension\ncomplexity\n## Location\nsrc/session/task.rs:185-341\n## Violation\nupdate_task is annotated allow(clippy::too_many_lines) and has cyclomatic complexity well above 15: it handles status transitions (including Delete), validates dependency references, demotes other in-progress tasks, syncs reverse blocked_by/blocks, all in one function. The dependency-validation logic also does linear scans over self.tasks for every reference (any(|t| t.id == bid)) — O(N) per dependency on a Vec lookup that should be O(1). Cycle detection allocates a HashSet+Vec stack every call. Combined: O(M*N) for M dependencies in a task with N total tasks.\n\nThe single-in-progress invariant enforcement is intertwined with status-string parsing and inline 'task removed' early-return that yields Ok(None) — overloads the return.\n## Mandated refactor\nReplace Vec<Task> with BTreeMap<String, Task> or HashMap for O(1) lookup. Split update_task into update_status, update_metadata, add_dependency. Return typed UpdateOutcome { Updated, Deleted } instead of Ok(Option<&Task>). Hoist would_create_cycle into a struct that maintains a reverse-edge index for O(1) cycle checks on adjacent edges.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:09:51.324267861Z",
-  "updated_at": "2026-05-18T22:10:33.936967231Z",
+  "updated_at": "2026-05-20T12:57:41.817014138Z",
+  "closed_at": "2026-05-20T12:57:41.817014138Z",
   "labels": [
     "qa-review",
     "complexity"
