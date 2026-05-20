@@ -1,0 +1,10 @@
+{
+  "uuid": "691c5e04-3a48-4395-88fa-5d548aeca54b",
+  "issue_uuid": "a2f32f84-b156-4cef-86c3-0547eec38dc7",
+  "author": "lOrm",
+  "content": "SKIP — backoff computation is `src/pipeline.rs:390` (`2u64.pow(attempt + 1)`) followed by the sleep at `src/pipeline.rs:395`. `src/pipeline.rs` is FORBIDDEN in this batch. Jitter addition (`+ rand::random::<u64>() % (base/4)`) must be applied directly to that arithmetic; there is no separable helper file.",
+  "created_at": "2026-05-20T05:32:34.793568628Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAieDeSAy9sIfz1PQOKgIW/Wgu3CInX+iftB+gBo6wlMBhH2RLY8mJ/THbRAW6ZoEUQlblewQCqPkziR0oQM8iBA=="
+}
