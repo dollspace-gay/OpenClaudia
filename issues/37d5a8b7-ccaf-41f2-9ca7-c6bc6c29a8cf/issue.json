@@ -3,9 +3,10 @@
   "display_id": 889,
   "title": "TUI session save loses messages on intermediate failures: save_session error ignored repeatedly",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/tui/app.rs:568, 629, multiple call sites\n## Violation\nEvery call to save_session swallows the Result with `let _ =`:\n\n```rust\nlet _ = save_session(&self.chat_session);\n```\n\nThis pattern appears at lines 568 (App::run exit), 629 (ResponseDone), 813, 818 (undo/redo), and others. A disk-full or permission-denied condition silently loses every chat message from this point forward — the user only discovers the data loss when they later try to /resume and the saved session is missing or stale.\n\nThe TUI is interactive and the session is the user's primary artifact. Failing to save is a high-importance event that deserves at least a user-visible notification.\n\n## Mandated refactor\nEither:\n1. Promote save failures to a DisplayMessage that the user sees in the message list (\"⚠ session save failed: disk full\"), OR\n2. Track save failures in self.last_save_error and render the error in the status bar so it persists until the next successful save.\n\nThe fire_notification_hook helper already exists for the API-error path — reuse it for save failures too.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:11:39.034576822Z",
-  "updated_at": "2026-05-18T22:11:39.034576822Z"
+  "updated_at": "2026-05-20T13:22:11.311219812Z",
+  "closed_at": "2026-05-20T13:22:11.311219812Z"
 }
