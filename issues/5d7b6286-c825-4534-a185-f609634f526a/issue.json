@@ -3,11 +3,12 @@
   "display_id": 989,
   "title": "read_text_file offset_arg>0 check uses raw u64 not the post-saturating-sub usize",
   "description": "## Severity\nTrivial\n\n## Dimension\nFunctional Correctness / Naming\n\n## Location\nsrc/tools/file/read.rs:273-316 (read_text_file offset/limit handling)\n\n## Violation\nThe function extracts `offset` from args, computes `offset = offset_arg.saturating_sub(1)`, and later uses `offset > 0 || limit.is_some()` to decide whether to append the \"showing lines ...\" suffix. The test read_text_offset_zero_treated_as_start_of_file (line 418-432) pins the observation that \"OC produces a suffix even when offset=0 because offset_arg>0 check uses the pre-subtraction value — this is an OC quirk.\"\n\nThe function does NOT actually do this — the check `if offset > 0 || limit.is_some()` (line 310) uses `offset` AFTER saturating_sub. But the test COMMENT documents an intent that does not match the code. Either the test comment is stale (CC parity gap that no longer exists) or there's a related subtle bug — but either way, the comment misleads future maintainers.\n\nThis is the \"stale comment\" anti-pattern — comments are documentation that the compiler does not check. They drift.\n\n## Mandated refactor\n1. Audit the test comment and either delete it or fix the code to match the documented intent. Confirm via a fresh test what suffix-emission semantic OC actually has and pin that exactly.\n2. Replace the `(u64 → usize)` saturating subtraction logic with a clearer pattern: model offset as `Option<NonZeroU64>` — None means \"from start,\" Some(n) means \"skip n-1 lines.\" Use `.map_or(0, |n| n.get() - 1)` for the skip count. This eliminates the saturating_sub indirection AND makes 0-vs-absent distinguishable.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:28:43.685007779Z",
-  "updated_at": "2026-05-18T22:28:46.487294195Z",
+  "updated_at": "2026-05-20T04:53:50.234160914Z",
+  "closed_at": "2026-05-20T04:53:50.234160914Z",
   "labels": [
     "qa-review",
     "kiss"
