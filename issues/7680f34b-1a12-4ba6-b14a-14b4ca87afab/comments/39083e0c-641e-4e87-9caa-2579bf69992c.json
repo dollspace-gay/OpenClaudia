@@ -1,0 +1,10 @@
+{
+  "uuid": "39083e0c-641e-4e87-9caa-2579bf69992c",
+  "issue_uuid": "7680f34b-1a12-4ba6-b14a-14b4ca87afab",
+  "author": "lOrm",
+  "content": "Issue calls for remote_trigger tool for webhook fan-out (parity with CC RemoteTriggerTool). Not addressable in a cleanup pass: requires webhook target config, HTTP POST plumbing, response-aggregation, and security review of arbitrary outbound URLs. Parent audit #523.",
+  "created_at": "2026-05-20T14:41:44.597369453Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA5zHAR/Rmv8z/hNuDgVaPqrw0fKhJ2XxsDBL1JvkTGxOY8lpzm01tEN8ogN7eELPN1yk99vG3tMJPHHDDE8dIDQ=="
+}
