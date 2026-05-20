@@ -3,11 +3,12 @@
   "display_id": 734,
   "title": "Schema-marker fast-path treats unreadable file as up-to-date silently skipping migration",
   "description": "## Severity\nMajor\n## Dimension\nerror-handling\n## Location\nsrc/migrations/stamp_transcript_schema_v1.rs:64-71\n## Violation\nThe fast-path skip relies on a chain of `Ok(Some(value))` + `Ok(marker)` checks. If the existing marker file is unreadable for ANY reason other than \"missing\" (permission denied, corrupted JSON, partial write), the chain falls through to the write path silently — there is no log, no error surface, no distinction between \"skipped because already current\" and \"rewrote because we could not read it.\"\n\n```rust\nif let Ok(Some(value)) = super::read_json_if_exists(&path) {\n    if let Ok(marker) = serde_json::from_value::<SchemaMarker>(value) {\n        if marker.transcripts.unwrap_or(0) >= CURRENT_TRANSCRIPT_SCHEMA {\n            return MigrationOutcome::Skipped;\n        }\n    }\n}\n// falls through to write path silently if any of the above is Err\n```\n\nWorse: the surrounding code claims \"We treat a higher version as 'newer build wrote it, don't clobber'\" — but a corrupted marker file written by a newer build, or simply a file with a different schema shape (e.g. v2 added required fields), will be misread as \"not at current version\", get overwritten with v1, and downgrade the user's on-disk schema marker. The contract is violated by the silent fallthrough.\n\n## Mandated refactor\nReplace the if-let chain with explicit branches:\n\n```rust\nmatch super::read_json_if_exists(&path) {\n    Ok(None) => { /* fresh install — proceed to write */ }\n    Ok(Some(value)) => match serde_json::from_value::<SchemaMarker>(value) {\n        Ok(marker) if marker.transcripts.unwrap_or(0) >= CURRENT_TRANSCRIPT_SCHEMA => {\n            return MigrationOutcome::Skipped;\n        }\n        Ok(_) => { /* older version — proceed to write */ }\n        Err(e) => {\n            return MigrationOutcome::Failed(anyhow::anyhow!(\n                \"schema marker at {} has unexpected shape: {e}\", path.display()\n            ));\n        }\n    },\n    Err(e) => return MigrationOutcome::Failed(e),\n}\n```\n\nThis preserves the documented \"don't clobber newer\" invariant and surfaces unreadable / corrupt markers to the runner instead of silently overwriting them.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:51:46.355815085Z",
-  "updated_at": "2026-05-18T21:53:06.055518963Z",
+  "updated_at": "2026-05-20T06:45:52.779061935Z",
+  "closed_at": "2026-05-20T06:45:52.779061935Z",
   "labels": [
     "qa-review",
     "error-handling"
