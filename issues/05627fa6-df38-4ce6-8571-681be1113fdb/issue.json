@@ -3,11 +3,12 @@
   "display_id": 767,
   "title": "context::neutralize_reminder_delimiters does whole-string lowercase per delimiter (O(n*k) on hook output)",
   "description": "## Severity\nMinor\n## Dimension\ncomplexity\n## Location\nsrc/context.rs:37-82 (neutralize_reminder_delimiters + replace_case_insensitive)\n## Violation\n```rust\nlet mut out = content.to_string();\nfor delim in DELIMITERS {\n    if out.to_ascii_lowercase().contains(delim) {\n        out = replace_case_insensitive(&out, delim);\n    }\n}\n```\n\n`out.to_ascii_lowercase()` allocates a full copy of the string once per delimiter (4x). Then `replace_case_insensitive` itself allocates a second lowercase copy and a third output `String`. For a hook output of N bytes scanning K delimiters the algorithm runs O(N·K) with up to 9 full-string allocations even when no delimiter is present. The work is paid on EVERY hook invocation regardless of whether the hook produced anything dangerous.\n\nThe double-pass (`contains` + replace) also means a delimiter that appears in only one casing variant still triggers two lowercase allocations.\n## Mandated refactor\nLowercase the haystack ONCE up front. Walk it linearly with a single state machine that recognizes any of the four delimiter prefixes, emitting either the original byte or the escaped form. Return early with `content.to_string()` (one allocation) when the linear scan finds no delimiter. A regex-based `regex::RegexSet` over the four patterns is also acceptable and benchmarks well under the current implementation.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:55:30.571716912Z",
-  "updated_at": "2026-05-18T21:55:33.337941200Z",
+  "updated_at": "2026-05-20T07:22:34.938768932Z",
+  "closed_at": "2026-05-20T07:22:34.938768932Z",
   "labels": [
     "qa-review",
     "complexity"
