@@ -1,0 +1,10 @@
+{
+  "uuid": "e5623445-b6ed-4c58-a862-acf3ec6b4860",
+  "issue_uuid": "8091626a-0b9f-4486-93a1-00052b3475fa",
+  "author": "lOrm",
+  "content": "Added ThinkingConfig::adaptive bool (default true) + adaptive_budget_for() in src/config/provider.rs. medium=>5000, high/max=>31999, low/None=>None. 3 unit tests.",
+  "created_at": "2026-05-20T18:35:48.756532742Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAGF8mC7BdS5WGNOCiPgZryD/1qHax3vdeUAWOThiE+wlh0KCXLzrNEsJsj4R+wma9pYLfZCqUCg5zAk93ZqznAQ=="
+}
