@@ -816,9 +816,13 @@ impl ChatRepl {
                 );
             }
             if let Some(ctx) = &output.additional_context {
+                // Route through the centralized envelope builder so the
+                // crosslink #502 XML-escape (which neutralizes any
+                // attacker-supplied `</system-reminder>` closing tag)
+                // is applied here too, not just in `ContextInjector`.
                 self.chat_session.messages.push(serde_json::json!({
                     "role": "system",
-                    "content": format!("<system-reminder>\n{}\n</system-reminder>", ctx)
+                    "content": openclaudia::context::wrap_system_reminder(ctx),
                 }));
             }
         }
