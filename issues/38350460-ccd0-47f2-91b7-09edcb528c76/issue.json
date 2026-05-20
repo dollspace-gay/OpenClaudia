@@ -2,11 +2,12 @@
   "uuid": "38350460-ccd0-47f2-91b7-09edcb528c76",
   "display_id": 644,
   "title": "Filter gitignored locations from LSP results via git check-ignore (parity with CC LSPTool.ts:556-611)",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:08:55.348264364Z",
-  "updated_at": "2026-05-20T16:58:56.127211406Z",
+  "updated_at": "2026-05-20T19:55:13.933203847Z",
+  "closed_at": "2026-05-20T19:55:13.933203847Z",
   "labels": [
     "parity,cc-lsp"
   ]
