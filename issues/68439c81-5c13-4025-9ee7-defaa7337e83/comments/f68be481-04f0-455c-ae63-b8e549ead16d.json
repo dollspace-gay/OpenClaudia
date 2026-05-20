@@ -1,0 +1,10 @@
+{
+  "uuid": "f68be481-04f0-455c-ae63-b8e549ead16d",
+  "issue_uuid": "68439c81-5c13-4025-9ee7-defaa7337e83",
+  "author": "lOrm",
+  "content": "Duplicate of #830 (closed 2026-05-20). Verified src/modes/mod.rs:80-86 (Modifier rename) and 125-131 (Preset rename). JSON discriminators in place.",
+  "created_at": "2026-05-20T13:24:11.086269568Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAQgOdd4tdHEbfyDiBLkA9stAq4Y/S9AGZq6bXCVSwJjLeGsXU0vgEJQR1yMFtZHiWKvohOEYf8ljjG4vZH0xbCA=="
+}
