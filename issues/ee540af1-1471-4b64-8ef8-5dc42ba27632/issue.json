@@ -3,11 +3,12 @@
   "display_id": 961,
   "title": "QA: GC sweep retention closure in spawn() unreadable double-negative boolean",
   "description": "## Severity\nTrivial\n## Dimension\nnaming\n## Location\nsrc/tools/bash/mod.rs:88-94\n## Violation\nThe retain predicate uses `!is_finished || !output_retrieved` which reads as \"keep if NOT finished OR NOT retrieved\". The intent is \"delete if finished AND retrieved\" — requires De Morgan in the reader's head every time. Compounds with the boolean names: `is_finished` is reasonable but `output_retrieved` is bare-noun (should be `is_output_drained_after_finish` per CLAUDE.md's binary-naming convention).\n\nQuoted (mod.rs:88-94):\n```\n        if let Ok(mut shells) = self.shells.lock() {\n            // GC sweep: remove finished shells whose output has been retrieved at least once\n            shells.retain(|_id, s| {\n                let is_finished = s.finished.load(Ordering::SeqCst);\n                let output_retrieved = s.output_retrieved_after_finish.load(Ordering::SeqCst);\n                !is_finished || !output_retrieved\n            });\n```\n## Mandated refactor\n1. Invert the predicate to align with the comment: `shells.retain(|_, s| !s.is_collectable())` where `BackgroundShell::is_collectable(&self) -> bool` returns `self.finished.load(...) && self.output_retrieved_after_finish.load(...)`.\n2. Rename `output_retrieved_after_finish` → `was_output_drained_post_exit`.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:20:39.726327739Z",
-  "updated_at": "2026-05-18T22:20:42.456113256Z",
+  "updated_at": "2026-05-20T13:26:42.850726840Z",
+  "closed_at": "2026-05-20T13:26:42.850726840Z",
   "labels": [
     "qa-review",
     "naming"
