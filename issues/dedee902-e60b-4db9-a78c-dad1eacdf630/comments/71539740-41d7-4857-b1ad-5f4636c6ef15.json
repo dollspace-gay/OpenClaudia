@@ -1,0 +1,10 @@
+{
+  "uuid": "71539740-41d7-4857-b1ad-5f4636c6ef15",
+  "issue_uuid": "dedee902-e60b-4db9-a78c-dad1eacdf630",
+  "author": "lOrm",
+  "content": "Duplicate of #938 (same PermissionsConfig::default_allow unbounded-glob validation gap at src/config/permissions.rs:7-17, same mandated AllowEntry refactor with globset validation). Closing #943 as the higher-numbered duplicate; #938 is the canonical open report.",
+  "created_at": "2026-05-20T12:31:57.212780625Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAvARH+dOuYozze/9YNJGSOvci8u1NwbNolnovZXj1ZykX2S/hLWEtBD16SmTu1gER5XmigfXwGjr1oDR8gv0iCQ=="
+}
