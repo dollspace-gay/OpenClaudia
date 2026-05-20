@@ -1,0 +1,10 @@
+{
+  "uuid": "721030b0-227b-40fd-bad8-b4c1f26757e9",
+  "issue_uuid": "d6094882-f1a0-4b69-9dd9-f1cb9e80b131",
+  "author": "lOrm",
+  "content": "Verified-fixed. send_to_builder at src/vdd/transport.rs:194 and send_to_builder_for_verification at src/vdd/transport.rs:255 both wrap forward_request in tokio::time::timeout (config.adversary.request_timeout_seconds), and both response.json() bodies are also timeout-wrapped at 205 and 266. Symmetric to send_to_adversary. The half-applied #496 mitigation noted in this issue is no longer the case — all three send_* paths are timeout-protected. Closing as duplicate of work already landed.",
+  "created_at": "2026-05-20T04:33:25.093015390Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA+GPFW4Fji3rVb3Q1xRw4jZTUQHKjCb7Zc8ymtczGhnBpqqGRD0ZMuy+c+iwbKLcCAXJo2MPkhEEEvCF0ZCi7Cw=="
+}
