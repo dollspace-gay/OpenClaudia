@@ -1,0 +1,10 @@
+{
+  "uuid": "e50c02d0-6030-4e2b-97d1-77b86cb899ea",
+  "issue_uuid": "d93e4371-e8ba-427b-b713-2dd3e8fcfcd1",
+  "author": "lOrm",
+  "content": "Deferred — owner-level architectural refactor (App init contract change ripples to main.rs::cmd_tui callers).\n\n**Fix outline:** Eliminate the two-phase init in src/tui/app.rs. Introduce AppBuilder { model, provider, endpoint, headers, system_prompt, hook_engine, memory_db, rules_content, ... } with builder methods and a finalize fn build(self) -> App. Delete App::new() in favor of App::from_builder or accept ApiConfig + Hooks + Rules + Memory as constructor parameters so missing wiring becomes a compile error rather than an obscure runtime failure (empty endpoint to reqwest at line 1355).\n\n**Recommendation:** Touches the public-ish constructor pattern of the TUI App and the main.rs::cmd_tui call site. Owner-level decision on builder vs constructor-with-required-params, and on whether ApiConfig should be the unified wire-up object. Defer.",
+  "created_at": "2026-05-20T14:14:06.561893409Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA3O5brBj0gDj5HGNiboy7WQOfqRC7hpkkhNNBZ5AKYOFKqGUm0wXGqEN4/PGHBkg4PkQwOUYZnbZVzGVXmm+qBQ=="
+}
