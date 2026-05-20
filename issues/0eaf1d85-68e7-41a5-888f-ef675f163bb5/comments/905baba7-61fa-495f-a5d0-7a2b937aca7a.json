@@ -1,0 +1,10 @@
+{
+  "uuid": "905baba7-61fa-495f-a5d0-7a2b937aca7a",
+  "issue_uuid": "0eaf1d85-68e7-41a5-888f-ef675f163bb5",
+  "author": "lOrm",
+  "content": "#655 closed. Added LspServerConfig struct in src/plugins/manifest.rs and lsp_servers field on PluginManifest (rename 'lspServers' for CC parity). Plugin struct now carries lsp_configs HashMap, populated by resolve_lsp_servers() on plugin load. Schema fields: command, args, env, extensions. Binary-on-PATH validation deferred to runtime so plugins can install their server via a post-install hook. 1 unit test pins manifest parsing. Actual pool registration (depends on #647 long-lived server pool) is the runtime follow-up.",
+  "created_at": "2026-05-20T20:36:28.551229414Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAQfDxXZrp0X11ec5U39H+WY07qBOEaj/bAGRg2yH1ptuX/umG5Nd4x/o2BIsdNyWz6XAcEtO5AZOfvtjywcjmBQ=="
+}
