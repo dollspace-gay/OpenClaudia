@@ -95,7 +95,7 @@ impl ModelPricing {
     /// the previous fixed-ratio code applied uniformly across providers,
     /// and mirror the 5 m multiplier into the 1 h slot since these
     /// providers do not currently differentiate.  This preserves the
-    /// pre-refactor cost numbers for OpenAI / Google / DeepSeek / Qwen.
+    /// pre-refactor cost numbers for `OpenAI` / `Google` / `DeepSeek` / `Qwen`.
     const fn other(input_per_million: f64, output_per_million: f64) -> Self {
         Self {
             input_per_million,
@@ -400,23 +400,27 @@ mod tests {
             cache_read_tokens: 0,
             cache_write_tokens: 1_000_000,
         };
-        let cost_5m =
+        let cost_five_min =
             calculate_cost_with_ttl("claude-sonnet-4-5", &usage, CacheWriteTtl::FiveMinutes)
                 .expect("sonnet must resolve");
-        let cost_1h = calculate_cost_with_ttl("claude-sonnet-4-5", &usage, CacheWriteTtl::OneHour)
-            .expect("sonnet must resolve");
+        let cost_one_hour =
+            calculate_cost_with_ttl("claude-sonnet-4-5", &usage, CacheWriteTtl::OneHour)
+                .expect("sonnet must resolve");
         assert!(
-            (cost_5m - 3.75).abs() < 1e-9,
-            "5m cache write must be 1.25× input (got {cost_5m}, expected $3.75)"
+            (cost_five_min - 3.75).abs() < 1e-9,
+            "5m cache write must be 1.25× input (got {cost_five_min}, expected $3.75)"
         );
         assert!(
-            (cost_1h - 6.0).abs() < 1e-9,
-            "1h cache write must be 2.0× input (got {cost_1h}, expected $6.00) — \
+            (cost_one_hour - 6.0).abs() < 1e-9,
+            "1h cache write must be 2.0× input (got {cost_one_hour}, expected $6.00) — \
              this is the under-billing bug from issue #388"
         );
         // And the 1 h cost is strictly greater than the 5 m cost, which
         // is the operational invariant downstream budget code relies on.
-        assert!(cost_1h > cost_5m, "1h cache write must cost more than 5m");
+        assert!(
+            cost_one_hour > cost_five_min,
+            "1h cache write must cost more than 5m"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -503,7 +507,7 @@ mod tests {
         assert!((cost - 0.375).abs() < 1e-9, "expected ~$0.375, got {cost}");
     }
 
-    /// Exact rate declarations from PRICING_TABLE are returned verbatim.
+    /// Exact rate declarations from `PRICING_TABLE` are returned verbatim.
     #[test]
     fn exact_rates_returned() {
         let p = get_pricing("claude-3-haiku-20240307").expect("haiku must be known");

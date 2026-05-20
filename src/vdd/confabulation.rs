@@ -226,9 +226,19 @@ impl FindingIdentity {
     }
 
     /// Weak-tuple signature equivalent to [`weak_finding_signature`].
+    ///
+    /// The description is folded to its first `PREFIX_BYTES` of lowercased
+    /// content. 32 bytes is intentionally short — the whole point of the
+    /// weak fallback is to collapse minor wording variations (a re-issued
+    /// finding with extra trailing context, a `(re-reported)` suffix,
+    /// etc.) onto the same signature so layer-1 dedup actually catches
+    /// re-reports. Going beyond ~40 bytes lets every trailing word
+    /// shift the hash and defeats the point. The byte cap is computed
+    /// at a UTF-8 char boundary so multi-byte characters cannot land
+    /// the slice mid-codepoint.
     #[must_use]
     pub fn weak_signature(&self) -> u64 {
-        const PREFIX_BYTES: usize = 80;
+        const PREFIX_BYTES: usize = 32;
 
         let mut hasher = DefaultHasher::new();
         "weak".hash(&mut hasher);
@@ -238,13 +248,17 @@ impl FindingIdentity {
             .hash(&mut hasher);
         self.severity.hash(&mut hasher);
         let lower = self.description.to_lowercase();
-        let cutoff = lower
+        // Walk char boundaries and accept each char whose *end* still
+        // fits inside PREFIX_BYTES. `take_while` here keeps the running
+        // cumulative byte length under the cap; the prefix is therefore
+        // always a valid UTF-8 substring of `lower`.
+        let prefix_end = lower
             .char_indices()
-            .map(|(i, _)| i)
-            .take_while(|i| *i <= PREFIX_BYTES)
+            .map(|(i, c)| i + c.len_utf8())
+            .take_while(|end| *end <= PREFIX_BYTES)
             .last()
             .unwrap_or(0);
-        let prefix = &lower[..cutoff.min(lower.len())];
+        let prefix = &lower[..prefix_end.min(lower.len())];
         prefix.hash(&mut hasher);
         hasher.finish()
     }
@@ -415,7 +429,7 @@ mod tests {
         }
     }
 
-    /// Two findings with identical (file, severity, cwe, line_range) hash
+    /// Two findings with identical (file, severity, cwe, `line_range`) hash
     /// to the same signature — the second is a duplicate of the first.
     /// This is the crosslink #349 happy path: deterministic tuple dedup.
     #[test]
@@ -462,7 +476,7 @@ mod tests {
         assert_ne!(finding_signature(&a), finding_signature(&b));
     }
 
-    /// Different line_range on the same file+cwe+severity → different
+    /// Different `line_range` on the same file+cwe+severity → different
     /// signatures (two genuinely different findings in the same file).
     #[test]
     fn finding_signature_differs_on_line_range() {
@@ -483,7 +497,7 @@ mod tests {
         assert_ne!(finding_signature(&a), finding_signature(&b));
     }
 
-    /// Case differences in file_path / cwe must not defeat dedup.
+    /// Case differences in `file_path` / cwe must not defeat dedup.
     #[test]
     fn finding_signature_normalizes_casing() {
         let a = make_finding(
@@ -503,7 +517,7 @@ mod tests {
         assert_eq!(finding_signature(&a), finding_signature(&b));
     }
 
-    /// A weak finding (no cwe, no line_range) is flagged as such and the
+    /// A weak finding (no cwe, no `line_range`) is flagged as such and the
     /// weak signature still collides for the same file+severity+description-prefix.
     #[test]
     fn weak_finding_signature_collides_on_same_prefix() {

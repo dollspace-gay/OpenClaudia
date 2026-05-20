@@ -699,7 +699,7 @@ mod tests {
         );
     }
 
-    /// Weak fallback: when both cwe and line_range are absent, dedup falls
+    /// Weak fallback: when both cwe and `line_range` are absent, dedup falls
     /// back to (file, severity, description-prefix) — same tuple should
     /// still collapse.
     #[tokio::test]
