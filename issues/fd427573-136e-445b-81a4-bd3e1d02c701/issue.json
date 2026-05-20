@@ -3,9 +3,10 @@
   "display_id": 861,
   "title": "policy::canonical_git is too narrow — does not handle trailing slashes or alternate hosts",
   "description": "## Severity\nMinor\n## Dimension\nsecurity\n## Location\nsrc/plugins/policy.rs:172-178, src/plugins/policy.rs:135-150\n## Violation\ncanonical_git only strips a single \".git\" suffix. Trailing slashes, mixed-case hosts, default vs. explicit ports, and percent-encoded path segments all defeat the allowlist match. Quoted lines:\n\n    fn canonical_git(url: &str) -> String {\n        url.strip_suffix(\".git\").unwrap_or(url).to_string()\n    }\n\nA policy that allowlists `https://example.com/foo` does NOT match `https://example.com/foo/` (trailing slash), `https://Example.com/foo`, `https://example.com:443/foo`, or `https://example.com/foo/`. Equally bad: it incorrectly DOES match `https://attacker.com/example.com/foo` because no host comparison is performed beyond textual prefix equality — yet `sources_match` uses raw `==` on canonical_git output, which would reject the attacker URL by string mismatch. The first class of misses (false negatives that lock out legitimate URLs and push admins to widen the allowlist) is the bigger risk.\n## Mandated refactor\nReplace the textual canonicalisation with `url::Url`-aware canonicalisation: parse, lowercase the host, normalise the path (strip trailing slash, decode percent-encoding), drop default ports, drop trailing \".git\", then compare. Reject URLs that fail to parse rather than falling through to raw string compare. Add tests for the four false-negative cases listed above.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:08:18.790401057Z",
-  "updated_at": "2026-05-18T22:08:18.790401057Z"
+  "updated_at": "2026-05-20T12:22:06.140693729Z",
+  "closed_at": "2026-05-20T12:22:06.140693729Z"
 }
