@@ -1,0 +1,10 @@
+{
+  "uuid": "52425fa3-52c2-49be-999b-33603952c3bf",
+  "issue_uuid": "1d6ae074-8c12-4ebb-ba0f-a332b0bb53a9",
+  "author": "lOrm",
+  "content": "Fixed (option 3 from the QA report). git_in's wait loop now uses exponential backoff via GIT_WAIT_BACKOFF_MS = [1, 2, 5, 10, 25, 50, 100] ms — schedule pins on 100ms once exhausted, preserving the prior upper bound (and therefore the 30s timeout resolution). Trivial git plumbing commands (rev-parse, check-ref-format) that exit in <1ms now see <8ms wall-clock overhead instead of the flat ~100ms. The async-tokio refactor (option 2) is the cleaner architectural move but a much wider change — deferred. Backoff captures the user-visible regression here.",
+  "created_at": "2026-05-20T04:34:52.888446767Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAKq+wsna4ul64n9olGEPNp3T7sTWDTD0X5pQlETvxaP2PARJt729QP3pBjBStsMhSxYGlxjiY/hJ+YrvifkH6Bw=="
+}
