@@ -1,0 +1,10 @@
+{
+  "uuid": "d5208cf7-334a-483c-a1ea-f7a8bfe2071e",
+  "issue_uuid": "ea287726-67d5-43d5-9fec-37bd09452509",
+  "author": "lOrm",
+  "content": "Issue calls for a stall watchdog on background bash tasks (parity with CC LocalShellTask startStallWatchdog). Not addressable in a cleanup pass: requires output-stream activity timer, configurable threshold, and graceful kill-on-stall semantics integrated with BackgroundShellManager. Parent audit #523.",
+  "created_at": "2026-05-20T14:40:03.242323283Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAkYV5e8nBxYtUQF7tcx8b1sPaTYUtRscd8bAqxt+3koQI3ZaLiIDhpgGsKuPxEcghcLgLGpvn3VxvfpFaoWT9BQ=="
+}
