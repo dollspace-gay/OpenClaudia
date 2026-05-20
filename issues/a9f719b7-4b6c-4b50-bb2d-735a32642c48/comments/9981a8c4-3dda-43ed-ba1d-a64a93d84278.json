@@ -1,0 +1,10 @@
+{
+  "uuid": "9981a8c4-3dda-43ed-ba1d-a64a93d84278",
+  "issue_uuid": "a9f719b7-4b6c-4b50-bb2d-735a32642c48",
+  "author": "lOrm",
+  "content": "Issue calls for replacing the (String, bool) tool return convention across all src/tools/ files with Result<ToolOutput, ToolError> where ToolOutput is an enum (Text/Image/Structured/Marker) and ToolError categorizes failures (InvalidArg/PermissionDenied/NotFound/Io/Timeout/Upstream/Policy), deleting check_tool_result_marker and the in-band marker parsing entirely. Not addressable in a cleanup pass: pervasive across every tool, tool_intercept.rs format_tool_results_xml_with_names, the marker plumbing (USER_QUESTION_MARKER, ENTER_PLAN_MODE_MARKER, ExitPlanMode), and the completion-hint heuristics. This is the type-system foundation refactor that #222 also referenced. Owner-level multi-day work; would benefit from a design doc before implementation. Closing the cleanup-pass ticket while tracking the broader refactor under tools/ architectural work.",
+  "created_at": "2026-05-20T14:33:21.549306231Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAbfZ60ypyd4+sJFXhB/poF454ZbTEVAu1x7z8r2zrbBR3l2BADCYMbO4+c7/dIAPYhBCFfXlV69y8dE1orkCcBQ=="
+}
