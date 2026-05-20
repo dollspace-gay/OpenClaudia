@@ -37,11 +37,35 @@ impl SessionId {
         &self.0
     }
 
-    /// Wrap a caller-supplied string without re-validating. Used by
-    /// persist.rs when deserializing v1 files written before this
-    /// newtype existed.
+    /// Validate `s` as a UUID and wrap it. Use this on every
+    /// untrusted input path (deserialization, on-disk session files,
+    /// IPC arrivals) so the newtype's "UUID-shaped string" invariant
+    /// actually holds. See crosslink #810.
+    ///
+    /// # Errors
+    /// Returns `uuid::Error` when `s` is not a parseable UUID.
+    pub fn from_raw(s: impl AsRef<str>) -> Result<Self, uuid::Error> {
+        let raw = s.as_ref();
+        // Validate via `Uuid::parse_str` but store the original string so
+        // round-trips preserve formatting (hyphenation, case) chosen by
+        // the original writer.
+        let _: uuid::Uuid = raw.parse()?;
+        Ok(Self(raw.to_string()))
+    }
+
+    /// Wrap a caller-supplied string WITHOUT validating it as a UUID.
+    ///
+    /// Only safe to call on input that was previously the output of
+    /// `uuid::Uuid::to_string()` (or any other UUID-emitting source).
+    /// Test fixtures that need a stable non-UUID id (e.g. literal
+    /// `"abcd-1234"`) are the canonical caller. Production code paths
+    /// MUST use [`Self::from_raw`] so the newtype's invariant holds.
+    ///
+    /// Crosslink #810: split out from the original lenient `from_raw`
+    /// so the validating path becomes the default and the lenient path
+    /// is opt-in with a name that makes its weakness obvious.
     #[must_use]
-    pub fn from_raw(s: impl Into<String>) -> Self {
+    pub fn from_raw_unchecked(s: impl Into<String>) -> Self {
         Self(s.into())
     }
 }
@@ -328,10 +352,41 @@ mod tests {
     }
 
     #[test]
-    fn session_id_round_trips_from_raw() {
+    fn session_id_round_trips_from_raw_unchecked() {
+        // Pre-#810 the lenient path was named `from_raw` and accepted any
+        // string. It is now renamed `from_raw_unchecked` and explicitly
+        // marked unsafe-by-contract; the validated entry point is the
+        // new `from_raw` (UUID-only).
         let raw = "abcd-1234";
-        let id = SessionId::from_raw(raw);
+        let id = SessionId::from_raw_unchecked(raw);
         assert_eq!(id.as_str(), raw);
+    }
+
+    /// #810: `from_raw` validates that the input parses as a UUID.
+    /// A real UUID round-trips; a malformed string is rejected.
+    #[test]
+    fn session_id_from_raw_validates_uuid() {
+        // Round-trip for a real UUID — the canonical happy path.
+        let canonical = uuid::Uuid::new_v4().to_string();
+        let id = SessionId::from_raw(&canonical).expect("real UUID must parse");
+        assert_eq!(id.as_str(), canonical);
+
+        // Malformed strings that the pre-#810 newtype silently accepted
+        // must now fail. Particularly nasty: a path-traversal payload
+        // would have flowed through `session_project_dir.join(id)`
+        // unchecked.
+        for bad in [
+            "",
+            "abcd-1234",
+            "../../etc/passwd",
+            "not-a-uuid",
+            "00000000-0000-0000-0000-00000000000Z", // bad final char
+        ] {
+            assert!(
+                SessionId::from_raw(bad).is_err(),
+                "#810: {bad:?} must NOT parse as a SessionId"
+            );
+        }
     }
 
     #[test]

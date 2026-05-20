@@ -449,28 +449,26 @@ impl<'a> AutoLearner<'a> {
 // === Helper Functions ===
 
 /// Check if a word has a source-code file extension (case-insensitive).
+///
+/// Crosslink #790: derives from `rules::LANGUAGES`, the single source of
+/// truth for extension → language mapping. The previous hand-rolled list
+/// (only `rs`/`py`/`ts`/`js`) silently lagged behind new languages added
+/// to the rules engine; the lookup is now driven by the same registry.
 fn has_source_extension(word: &str) -> bool {
     let path = std::path::Path::new(word);
-    path.extension().is_some_and(|ext| {
-        ext.eq_ignore_ascii_case("rs")
-            || ext.eq_ignore_ascii_case("py")
-            || ext.eq_ignore_ascii_case("ts")
-            || ext.eq_ignore_ascii_case("js")
-    })
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(crate::rules::is_known_extension)
 }
 
 /// Check if a word has a config/source file extension (case-insensitive).
+///
+/// Crosslink #790: identical to [`has_source_extension`] now that the
+/// `rules::LANGUAGES` registry already covers config formats
+/// (toml/yaml/json/xml/…). Kept as a separate function for call-site
+/// readability, but both forward to the registry.
 fn has_file_extension(word: &str) -> bool {
-    let path = std::path::Path::new(word);
-    path.extension().is_some_and(|ext| {
-        ext.eq_ignore_ascii_case("rs")
-            || ext.eq_ignore_ascii_case("py")
-            || ext.eq_ignore_ascii_case("ts")
-            || ext.eq_ignore_ascii_case("js")
-            || ext.eq_ignore_ascii_case("toml")
-            || ext.eq_ignore_ascii_case("yaml")
-            || ext.eq_ignore_ascii_case("json")
-    })
+    has_source_extension(word)
 }
 
 /// Extract the most meaningful error line from stderr output

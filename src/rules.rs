@@ -57,14 +57,26 @@ pub(crate) const LANGUAGES: &[(&str, &[&str])] = &[
 ];
 
 /// File extension to language name mapping (derived from [`LANGUAGES`]).
+///
+/// Uses `eq_ignore_ascii_case` per-entry rather than `ext.to_lowercase()`
+/// (allocates) — see crosslink #790.
 fn extension_to_language(ext: &str) -> Option<&'static str> {
-    let lower = ext.to_lowercase();
     for (lang, exts) in LANGUAGES {
-        if exts.contains(&lower.as_str()) {
+        if exts.iter().any(|e| e.eq_ignore_ascii_case(ext)) {
             return Some(lang);
         }
     }
     None
+}
+
+/// True when `ext` is registered for *any* language in [`LANGUAGES`].
+///
+/// Crosslink #790: replaces the hand-rolled `has_source_extension` /
+/// `has_file_extension` substring lists in `auto_learn.rs`, so adding a
+/// new language requires editing exactly one table.
+#[must_use]
+pub(crate) fn is_known_extension(ext: &str) -> bool {
+    extension_to_language(ext).is_some()
 }
 
 /// A loaded rule with its metadata

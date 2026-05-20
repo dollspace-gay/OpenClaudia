@@ -64,16 +64,26 @@ pub enum Scope {
 }
 
 /// Behavioral modifier overlays.
+///
+/// Crosslink #830: variant names `Debug`, `Methodical`, `Director` overlap
+/// with [`Preset`] variants of the same name. Serde-level disambiguation
+/// is provided by explicit `rename` attributes so JSON readers see
+/// `"modifier-debug"` for a modifier and `"preset-debug"` for a preset,
+/// even when both appear in the same document. `Display` continues to
+/// emit the short human-readable form for status bars / logs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Modifier {
     /// Confident, idiomatic code — no hedging.
     Bold,
     /// Investigation-first debugging.
+    #[serde(rename = "modifier-debug")]
     Debug,
     /// Step-by-step precision.
+    #[serde(rename = "modifier-methodical")]
     Methodical,
     /// Orchestrate subagents, delegate implementation.
+    #[serde(rename = "modifier-director")]
     Director,
     /// No file modifications — read and explain only.
     Readonly,
@@ -82,6 +92,11 @@ pub enum Modifier {
 }
 
 /// Named preset combining axis values and optional modifiers.
+///
+/// Crosslink #830: variant names `Debug`, `Methodical`, `Director` overlap
+/// with [`Modifier`] variants. Serde-level disambiguation is provided by
+/// explicit `rename` attributes so a JSON document containing both an
+/// active preset and an active modifier list is unambiguous to consumers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Preset {
@@ -107,10 +122,13 @@ pub enum Preset {
     /// Read-only — understand code without changing it.
     Explore,
     /// Investigation-first debugging.
+    #[serde(rename = "preset-debug")]
     Debug,
     /// Step-by-step precision.
+    #[serde(rename = "preset-methodical")]
     Methodical,
     /// Delegate to subagents, orchestrate and verify.
+    #[serde(rename = "preset-director")]
     Director,
 }
 

@@ -10,6 +10,16 @@ use crate::session::TokenUsage;
 
 use super::{ProviderAdapter, ProviderError};
 
+/// Build a deterministic Gemini tool-call id from `(ordinal, function name)`.
+///
+/// Crosslink #785: parsing the same Gemini response twice must produce the
+/// same `tool_calls[i].id` so callers can cache / diff / log-correlate
+/// without burning an entry per re-parse. The ordinal prefix disambiguates
+/// repeated calls to the same function in a single turn.
+fn gemini_tool_call_id(ordinal: usize, function_name: &str) -> String {
+    format!("call_{ordinal}_{function_name}")
+}
+
 /// Google Gemini API adapter
 pub struct GoogleAdapter;
 
@@ -33,18 +43,30 @@ impl GoogleAdapter {
                 let parts = match &m.content {
                     MessageContent::Text(t) => json!([{"text": t}]),
                     MessageContent::Parts(parts) => {
+                        // Crosslink #850: a `ContentPart` with neither `text`
+                        // nor `image_url` used to fall through to an empty
+                        // `{"text": ""}` part — silently dropping video / audio
+                        // / file / any future variant the user sent. Emit a
+                        // `tracing::warn` naming the unknown content type so
+                        // the gap is observable in logs, then skip the part
+                        // instead of fabricating empty text.
                         let converted: Vec<Value> = parts
                             .iter()
-                            .map(|p| {
-                                p.text.as_ref().map_or_else(
-                                    || {
-                                        p.image_url.as_ref().map_or_else(
-                                            || json!({"text": ""}),
-                                            |image| json!({"inlineData": image}),
-                                        )
-                                    },
-                                    |text| json!({"text": text}),
-                                )
+                            .filter_map(|p| {
+                                p.text.as_ref().map(|t| json!({"text": t})).or_else(|| {
+                                    p.image_url
+                                        .as_ref()
+                                        .map(|image| json!({"inlineData": image}))
+                                        .or_else(|| {
+                                            tracing::warn!(
+                                                content_type = ?p.content_type,
+                                                role = %m.role,
+                                                "dropping unknown content type in Google adapter \
+                                                 (not text / image_url) — see crosslink #850"
+                                            );
+                                            None
+                                        })
+                                })
                             })
                             .collect();
                         Value::Array(converted)
@@ -199,7 +221,14 @@ impl ProviderAdapter for GoogleAdapter {
             })
             .unwrap_or_default();
 
-        // Extract function calls
+        // Extract function calls.
+        //
+        // Crosslink #785: tool-call ids are derived deterministically from
+        // `(ordinal, function_name)` so re-parsing the same upstream payload
+        // produces identical ids — restores parse idempotency that the prior
+        // `Uuid::new_v4()` formulation broke. The ordinal disambiguates
+        // multiple calls to the same function in one turn (e.g. two `bash`
+        // calls in a row do NOT collide on id `call_0_bash` / `call_1_bash`).
         let tool_calls: Option<Vec<Value>> = candidate
             .get("content")
             .and_then(|c| c.get("parts"))
@@ -207,14 +236,17 @@ impl ProviderAdapter for GoogleAdapter {
             .map(|parts| {
                 parts
                     .iter()
-                    .filter_map(|p| {
-                        let func_call = p.get("functionCall")?;
+                    .filter_map(|p| p.get("functionCall"))
+                    .enumerate()
+                    .filter_map(|(i, func_call)| {
+                        let name = func_call.get("name")?.as_str()?;
+                        let args = serde_json::to_string(func_call.get("args")?).ok()?;
                         Some(json!({
-                            "id": format!("call_{}", uuid::Uuid::new_v4()),
+                            "id": gemini_tool_call_id(i, name),
                             "type": "function",
                             "function": {
-                                "name": func_call.get("name")?,
-                                "arguments": serde_json::to_string(func_call.get("args")?).ok()?
+                                "name": name,
+                                "arguments": args,
                             }
                         }))
                     })
@@ -314,5 +346,110 @@ impl ProviderAdapter for GoogleAdapter {
                 .unwrap_or(0),
             cache_write_tokens: 0,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proxy::ContentPart;
+
+    /// #785: parsing the same Gemini response twice must yield identical
+    /// `tool_calls[*].id` so callers can correlate / cache / diff across
+    /// re-parses. The pre-fix code generated a fresh `Uuid::new_v4()`
+    /// every time, so two parses of the same payload never matched.
+    #[test]
+    fn tool_call_ids_are_deterministic_across_reparses() {
+        let body = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"functionCall": {"name": "bash", "args": {"command": "ls"}}},
+                        {"functionCall": {"name": "read", "args": {"path": "src/lib.rs"}}}
+                    ]
+                }
+            }]
+        });
+        let adapter = GoogleAdapter::new();
+        let a = adapter.transform_response(body.clone(), false).unwrap();
+        let b = adapter.transform_response(body, false).unwrap();
+        let ids_a: Vec<&str> = a["choices"][0]["message"]["tool_calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["id"].as_str().unwrap())
+            .collect();
+        let ids_b: Vec<&str> = b["choices"][0]["message"]["tool_calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids_a, ids_b, "#785: re-parse must yield identical ids");
+        // The shape is `call_<ordinal>_<name>`.
+        assert_eq!(ids_a, vec!["call_0_bash", "call_1_read"]);
+    }
+
+    /// #785: two consecutive calls to the same function in a single turn
+    /// must produce distinct ids — the ordinal disambiguates.
+    #[test]
+    fn repeated_function_calls_get_distinct_ordinal_ids() {
+        let body = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"functionCall": {"name": "bash", "args": {"command": "ls"}}},
+                        {"functionCall": {"name": "bash", "args": {"command": "pwd"}}}
+                    ]
+                }
+            }]
+        });
+        let parsed = GoogleAdapter::new()
+            .transform_response(body, false)
+            .unwrap();
+        let calls = parsed["choices"][0]["message"]["tool_calls"]
+            .as_array()
+            .unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0]["id"], "call_0_bash");
+        assert_eq!(calls[1]["id"], "call_1_bash");
+        assert_ne!(calls[0]["id"], calls[1]["id"]);
+    }
+
+    /// #850: a `ContentPart` with neither `text` nor `image_url` must be
+    /// dropped (and warned about) rather than silently coerced to an
+    /// empty text part — the latter loses the multimodal contract.
+    #[test]
+    fn unknown_content_part_is_dropped_not_emitted_as_empty_text() {
+        use crate::proxy::{ChatMessage, MessageContent};
+        let msg = ChatMessage {
+            role: "user".to_string(),
+            content: MessageContent::Parts(vec![
+                ContentPart {
+                    content_type: "text".to_string(),
+                    text: Some("hello".to_string()),
+                    image_url: None,
+                },
+                ContentPart {
+                    // Unrecognized variant — neither text nor image_url set.
+                    content_type: "video_url".to_string(),
+                    text: None,
+                    image_url: None,
+                },
+            ]),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        let out = GoogleAdapter::convert_messages(std::slice::from_ref(&msg));
+        // One message, with `parts` containing only the recognized text.
+        let parts = out[0]["parts"].as_array().expect("parts is array");
+        assert_eq!(parts.len(), 1, "#850: unknown content type must be dropped");
+        assert_eq!(parts[0]["text"], "hello");
+        // The pre-fix code emitted `{"text": ""}` — must NOT appear.
+        assert!(
+            !parts.iter().any(|p| p["text"] == ""),
+            "#850: must not coerce unknown variant to empty text"
+        );
     }
 }

@@ -76,33 +76,44 @@ impl EntrypointFile {
 /// 2. `<cwd>/.openclaudia/MEMORY.md` — OC-specific file in-repo.
 /// 3. `<home>/.openclaudia/MEMORY.md` — user-global fallback.
 ///
-/// Returns `None` when no candidate exists. Read / decode errors
-/// log at `warn` and fall through to the next candidate — one
-/// unreadable file doesn't silently swallow a valid one.
-#[must_use]
-pub fn load_entrypoint(cwd: &Path) -> Option<EntrypointFile> {
+/// Returns `Ok(None)` when no candidate exists. A non-`NotFound` IO
+/// error (permission denied, mid-read EIO, invalid UTF-8) is
+/// propagated as `Err` rather than silently falling through to the
+/// next candidate — silently loading the user-global MEMORY.md when
+/// the project-local one was merely unreadable would inject the
+/// wrong persona into the system prompt with no surfaced signal.
+/// See crosslink #740.
+///
+/// # Errors
+/// Returns an error when a candidate file exists but cannot be
+/// read (e.g. EACCES, EIO, invalid UTF-8). `NotFound` is not an
+/// error — it simply moves on to the next candidate.
+pub fn load_entrypoint(cwd: &Path) -> anyhow::Result<Option<EntrypointFile>> {
+    use anyhow::Context as _;
+
     let candidates = discovery_candidates(cwd);
     for path in candidates {
         match std::fs::read_to_string(&path) {
             Ok(raw) => {
                 let (content, truncation) = truncate_content(&raw);
-                return Some(EntrypointFile {
+                return Ok(Some(EntrypointFile {
                     path,
                     content,
                     truncation,
-                });
+                }));
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => {
-                tracing::warn!(
-                    path = %path.display(),
-                    error = %err,
-                    "could not read MEMORY.md candidate — trying next"
-                );
+                return Err(err).with_context(|| {
+                    format!(
+                        "MEMORY.md candidate {} exists but is unreadable",
+                        path.display()
+                    )
+                });
             }
         }
     }
-    None
+    Ok(None)
 }
 
 /// Build the absolute paths tried by [`load_entrypoint`], in order.
@@ -270,7 +281,7 @@ mod tests {
         unsafe {
             std::env::set_var("HOME", tmp.path());
         }
-        assert!(load_entrypoint(tmp.path()).is_none());
+        assert!(load_entrypoint(tmp.path()).unwrap().is_none());
         // Restore.
         unsafe {
             match prev_home {
@@ -294,7 +305,9 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join(".openclaudia")).unwrap();
         std::fs::write(tmp.path().join(".openclaudia/MEMORY.md"), "# openclaudia").unwrap();
 
-        let loaded = load_entrypoint(tmp.path()).expect("root MEMORY.md hit");
+        let loaded = load_entrypoint(tmp.path())
+            .expect("io ok")
+            .expect("root MEMORY.md hit");
         assert_eq!(loaded.content.trim(), "# root");
         assert!(loaded.path.ends_with("MEMORY.md"));
         assert!(!loaded.path.to_string_lossy().contains(".openclaudia"));
@@ -319,7 +332,9 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join(".openclaudia")).unwrap();
         std::fs::write(tmp.path().join(".openclaudia/MEMORY.md"), "# from subdir").unwrap();
 
-        let loaded = load_entrypoint(tmp.path()).expect("subdir MEMORY.md hit");
+        let loaded = load_entrypoint(tmp.path())
+            .expect("io ok")
+            .expect("subdir MEMORY.md hit");
         assert_eq!(loaded.content.trim(), "# from subdir");
         assert!(loaded.path.to_string_lossy().contains(".openclaudia"));
 
@@ -345,7 +360,7 @@ mod tests {
             .join("\n");
         std::fs::write(tmp.path().join("MEMORY.md"), &raw).unwrap();
 
-        let loaded = load_entrypoint(tmp.path()).expect("hit");
+        let loaded = load_entrypoint(tmp.path()).expect("io ok").expect("hit");
         assert!(loaded.was_truncated());
         assert_eq!(loaded.truncation, EntrypointTruncation::Lines);
         assert!(loaded.content.contains("truncated"));
@@ -520,7 +535,7 @@ mod tests {
 
         std::fs::write(tmp.path().join("MEMORY.md"), "# home-unset test").unwrap();
 
-        let loaded = load_entrypoint(tmp.path());
+        let loaded = load_entrypoint(tmp.path()).expect("io ok");
         // Must succeed even without HOME.
         assert!(loaded.is_some());
         assert_eq!(loaded.unwrap().content.trim(), "# home-unset test");
@@ -551,7 +566,7 @@ mod tests {
 
         std::fs::write(tmp.path().join("MEMORY.md"), "").unwrap();
 
-        let loaded = load_entrypoint(tmp.path());
+        let loaded = load_entrypoint(tmp.path()).expect("io ok");
         assert!(
             loaded.is_some(),
             "empty file must return Some, not None (B6 OC gap)"
@@ -588,7 +603,7 @@ mod tests {
 
         // Use a separate cwd dir so it's clean.
         let cwd_tmp = TempDir::new().unwrap();
-        let loaded = load_entrypoint(cwd_tmp.path());
+        let loaded = load_entrypoint(cwd_tmp.path()).expect("io ok");
         assert!(loaded.is_some(), "home-level fallback must be found");
         assert_eq!(loaded.unwrap().content.trim(), "# global fallback");
 
@@ -643,5 +658,75 @@ mod tests {
         // OC cuts at byte 24_998: the single 'a' after the newline IS present.
         // (CC would cut at 24_997 and exclude it.)  Pin OC's behavior:
         assert_eq!(out.len(), 24_998, "OC cuts at char boundary 24_998");
+    }
+
+    // -----------------------------------------------------------------------
+    // #740 — non-NotFound IO errors must propagate, not silently fall through.
+    // -----------------------------------------------------------------------
+
+    /// Pin #740: a cwd MEMORY.md that exists but is unreadable
+    /// (chmod 000) must surface as `Err`, not silently load the
+    /// user-global fallback. Skipped on Windows (no POSIX permission
+    /// bits) and when the test runs as root (chmod 000 is a no-op).
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_cwd_file_returns_err_instead_of_falling_through() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        if nix_is_root() {
+            // chmod 000 doesn't lock root out — skip rather than report a false negative.
+            return;
+        }
+
+        let _lock = env_lock();
+        let tmp = TempDir::new().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        // The cwd file is unreadable, but a readable home-level fallback
+        // exists. The pre-#740 implementation would silently load the
+        // home file. The fixed implementation must Err so the caller can
+        // surface the permission problem.
+        let cwd_dir = TempDir::new().unwrap();
+        let cwd_file = cwd_dir.path().join("MEMORY.md");
+        std::fs::write(&cwd_file, "# project-local").unwrap();
+        std::fs::set_permissions(&cwd_file, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let home_oc = tmp.path().join(".openclaudia");
+        std::fs::create_dir_all(&home_oc).unwrap();
+        std::fs::write(home_oc.join("MEMORY.md"), "# wrong fallback").unwrap();
+
+        let result = load_entrypoint(cwd_dir.path());
+
+        // Restore perms so TempDir can clean up.
+        let _ = std::fs::set_permissions(&cwd_file, std::fs::Permissions::from_mode(0o644));
+
+        unsafe {
+            match prev_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+
+        let err = result.expect_err(
+            "#740: unreadable cwd MEMORY.md must propagate, not silently load the home file",
+        );
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("MEMORY.md candidate") && msg.contains("unreadable"),
+            "#740: error message must name the unreadable candidate; got {msg}"
+        );
+    }
+
+    /// True when the current process is running as uid 0 (root).
+    /// `chmod 000` does not deny access to root, so the
+    /// permission-denied test above is a no-op there and must be
+    /// skipped to avoid a false negative.
+    #[cfg(unix)]
+    fn nix_is_root() -> bool {
+        // SAFETY: `libc::geteuid` is a pure thread-safe syscall wrapper with no preconditions.
+        unsafe { libc::geteuid() == 0 }
     }
 }
