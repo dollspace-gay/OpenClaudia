@@ -1,0 +1,10 @@
+{
+  "uuid": "50ff155c-a28c-496a-bd2c-9d353ebc066a",
+  "issue_uuid": "e95a4b20-bcb6-4b3e-93da-a6f353fcf139",
+  "author": "lOrm",
+  "content": "Issue calls for AgentSummary periodic background summarization for sub-agents (parity with CC agentSummary.ts). Not addressable in a cleanup pass: depends on #507 coordinator subsystem and #508 memdir. Parent audit #523.",
+  "created_at": "2026-05-20T14:38:39.219174051Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA8m8YZYP8dQJFQEGkGuMLgYHPXdTNOviYhlxXqNO9o8Vw9/IC1TxCfImGkFRWu3tepEhRJmpyOKY5KtnoNULXAQ=="
+}
