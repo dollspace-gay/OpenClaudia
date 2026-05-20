@@ -3,9 +3,10 @@
   "display_id": 709,
   "title": "persist_transcript_tail advances watermark to total length after early-break on error causing data loss",
   "description": "## Severity\nCritical\n## Dimension\nerror-handling\n## Location\nsrc/tui/app.rs:480-497\n## Violation\nThe transcript persistence loop breaks on the first append error but unconditionally sets the watermark to `session_messages.len()` afterward. Every message in the tail past the failure point is silently skipped on the next call — permanent transcript data loss.\n\n```rust\nfn persist_transcript_tail(&mut self) {\n    let cwd = self.transcript_cwd.clone();\n    let session_id = self.chat_session.id.clone();\n    for msg in &self.session_messages[self.transcript_watermark..] {\n        ...\n        if let Err(err) = crate::transcript::append_entry(&cwd, &session_id, &entry) {\n            tracing::warn!(error = %err, \"transcript append failed\");\n            break;\n        }\n    }\n    self.transcript_watermark = self.session_messages.len();  // BUG: advances past failed messages\n}\n```\n\nIf `append_entry` fails on the 3rd message of 10, the loop breaks but the watermark jumps to 10. The 4th-10th messages will never be retried — they are dropped from the transcript permanently. The warn log gives no hint that 7 entries were lost.\n\n## Mandated refactor\nTrack successful appends in a counter and advance the watermark by that amount only:\n\n```rust\nlet mut appended = 0usize;\nfor msg in &self.session_messages[self.transcript_watermark..] {\n    ...\n    match crate::transcript::append_entry(&cwd, &session_id, &entry) {\n        Ok(()) => appended += 1,\n        Err(err) => {\n            tracing::warn!(error = %err, appended, remaining = self.session_messages.len() - self.transcript_watermark - appended, \"transcript append failed\");\n            break;\n        }\n    }\n}\nself.transcript_watermark += appended;\n```\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:49:49.775529120Z",
-  "updated_at": "2026-05-18T21:49:49.775529120Z"
+  "updated_at": "2026-05-20T06:42:29.748045203Z",
+  "closed_at": "2026-05-20T06:42:29.748045203Z"
 }
