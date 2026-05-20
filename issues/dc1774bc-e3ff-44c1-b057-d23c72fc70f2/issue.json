@@ -3,11 +3,12 @@
   "display_id": 808,
   "title": "coordinator/permission: always_allow HashSet lookup degraded to O(N) linear scan",
   "description": "## Severity\nTrivial\n## Dimension\ncomplexity\n## Location\nsrc/coordinator/permission.rs:90-97 (is_always_allowed)\n## Violation\n```rust\npub fn is_always_allowed(&self, teammate: &TeammateId, tool_name: &str) -> bool {\n    // The HashSet requires owned-key lookup; we keep the\n    // lookup allocation-free by comparing inside a `iter().any`.\n    self.always_allowed\n        .iter()\n        .any(|(t, tool)| t == teammate && tool == tool_name)\n}\n```\n\nThe HashSet is being walked linearly to dodge an owned-key allocation. The comment justifies the choice as \"allocation-free\", but for K cached pairs and Q queries the cost is O(K*Q) when a HashSet was supposed to give O(Q). Bash + write_file + edit_file + ... + 10 teammates = 70 pairs scanned per check. Hot path during dispatch.\n\n## Mandated refactor\nEither store `HashMap<TeammateId, HashSet<String>>` (one allocation on insert, O(1) on lookup with `String::as_str` comparison via `HashSet::contains` taking `&str`), or accept the one-time `tool_name.to_string()` allocation per check — modern allocators make this faster than a 70-element linear scan, regardless. Drop the misleading \"allocation-free\" comment.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:01:20.513735624Z",
-  "updated_at": "2026-05-18T22:01:56.027607904Z",
+  "updated_at": "2026-05-20T07:36:48.393266414Z",
+  "closed_at": "2026-05-20T07:36:48.393266414Z",
   "labels": [
     "qa-review",
     "complexity"
