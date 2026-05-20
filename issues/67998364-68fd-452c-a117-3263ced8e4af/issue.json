@@ -3,9 +3,10 @@
   "display_id": 911,
   "title": "QA: BACKGROUND_SHELLS is process-global LazyLock singleton (DIP violation)",
   "description": "## Severity\nMinor\n## Dimension\ndecoupling\n## Location\nsrc/tools/bash/mod.rs:271-272\n## Violation\n`BACKGROUND_SHELLS` is a process-wide `LazyLock<BackgroundShellManager>` singleton. Tests share state, multi-tenant deployments cannot isolate per-session shells, and the bash module cannot be unit-tested without spawning real processes. This is a textbook DIP violation: high-level callers (the tool dispatcher) depend on a concrete global instead of an injected `&dyn ShellManager`.\n\nQuoted (mod.rs:270-272):\n```\n/// Global background shell manager\npub static BACKGROUND_SHELLS: std::sync::LazyLock<BackgroundShellManager> =\n    std::sync::LazyLock::new(BackgroundShellManager::new);\n```\n\nThe pinning tests acknowledge the problem (\"Because the global `BACKGROUND_SHELLS` is shared across the test binary, this test might interact with others\" — mod.rs:479-482).\n## Mandated refactor\n1. Introduce `pub trait ShellManager: Send + Sync { fn spawn(...); fn kill(...); fn list(...); fn get_output(...); }`.\n2. `BackgroundShellManager` becomes one impl; tests get an in-memory impl.\n3. Plumb an `Arc<dyn ShellManager>` through the tool dispatch context (Session or ToolContext struct) instead of `pub static`.\n4. Eliminate the `pub static` entirely once injection is in place.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:15:03.879324530Z",
-  "updated_at": "2026-05-18T22:15:03.879324530Z"
+  "updated_at": "2026-05-20T12:29:06.618824499Z",
+  "closed_at": "2026-05-20T12:29:06.618824499Z"
 }
