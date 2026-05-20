@@ -3,9 +3,10 @@
   "display_id": 843,
   "title": "FeatureFlagSource trait has unbounded env-var side effects on the hot path",
   "description": "## Severity\nMinor\n## Dimension\ndecoupling\n## Location\nsrc/services/feature_flags.rs:57-78\n## Violation\nEvery is_enabled call performs a std::env::var lookup, allocates a String for the env-key, and uppercases the flag name. Quoted lines:\n\n    fn env_override(name: &str) -> Option<bool> {\n        let upper = name.to_ascii_uppercase();\n        let key = format!(\"OPENCLAUDIA_FEATURE_{upper}\");\n        let raw = std::env::var(&key).ok()?;\n        ...\n    }\n\n    impl FeatureFlagSource for StaticFlags {\n        fn is_enabled(&self, name: &str) -> bool {\n            if let Some(env) = Self::env_override(name) {\n                return env;\n            }\n            self.entries.get(name).copied().unwrap_or(false)\n        }\n    }\n\nThis couples FlagSource to process-global state (env vars are not thread-isolated; another component can `set_var` mid-flight, which is also `unsafe` in modern Rust). Performance: a feature flag checked inside a per-token loop becomes O(n) env-var syscalls. Reasoning: the trait's \"opt-in via map\" contract leaks \"and also via env\" with no way for a consumer to opt out — a test cannot deterministically test a flag without leaking env state across tests (the test code does serialise on `env_lock()`, confirming the design pain).\n## Mandated refactor\nSnapshot env-var overrides at construction time inside StaticFlags::new (walk `OPENCLAUDIA_FEATURE_*` once, merge into entries with the env value winning). Make is_enabled a pure map lookup. Move the runtime override to an explicit `EnvOverlay` source that wraps a delegate flag-source — composability without surprise mutability.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:06:03.587260185Z",
-  "updated_at": "2026-05-18T22:06:03.587260185Z"
+  "updated_at": "2026-05-20T14:04:23.091427764Z",
+  "closed_at": "2026-05-20T14:04:23.091427764Z"
 }
