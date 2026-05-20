@@ -3,11 +3,12 @@
   "display_id": 846,
   "title": "coordinator/teammate: Teammate derives Clone but TeammateId equality marks them as the same agent",
   "description": "## Severity\nMinor\n## Dimension\nsolid\n## Location\nsrc/coordinator/teammate.rs:114-128 (Teammate struct)\n## Violation\n```rust\n#[derive(Debug, Clone)]\npub struct Teammate {\n    pub id: TeammateId,\n    ...\n}\n```\n\n`TeammateId` is the identity key used by `Coordinator::teammates: HashMap<TeammateId, Teammate>` (src/coordinator/mod.rs:45) and by every per-teammate cache including `LeaderPermissionBridge::always_allowed: HashSet<(TeammateId, String)>` (src/coordinator/permission.rs:48). The `derive(Clone)` on `Teammate` produces a second value that compares equal (same id) but has a wholly separate `TeammateState`, transcript path, and session id. Two clones can diverge: one transitions to Dead while the other is still Running, and the coordinator can't tell which is canonical.\n\nThe unique-identity invariant is contradicted by the derive: a teammate is either a singleton (no Clone) or a thin pointer (Arc).\n\n## Mandated refactor\nDrop `Clone` from `Teammate`. If callers need shared access, wrap in `Arc<RwLock<Teammate>>` or move the mutable state behind an `Arc<Mutex<TeammateState>>` so all readers see the same lifecycle row. Keep `Clone` only on the read-only fields (id, color, agent_type) if a snapshot is needed.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:06:10.219449592Z",
-  "updated_at": "2026-05-18T22:06:59.544206971Z",
+  "updated_at": "2026-05-20T14:04:29.420529951Z",
+  "closed_at": "2026-05-20T14:04:29.420529951Z",
   "labels": [
     "qa-review",
     "solid"
