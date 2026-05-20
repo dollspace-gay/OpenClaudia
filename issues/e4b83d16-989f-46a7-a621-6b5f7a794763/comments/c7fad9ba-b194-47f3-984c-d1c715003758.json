@@ -1,0 +1,10 @@
+{
+  "uuid": "c7fad9ba-b194-47f3-984c-d1c715003758",
+  "issue_uuid": "e4b83d16-989f-46a7-a621-6b5f7a794763",
+  "author": "lOrm",
+  "content": "Issue calls for rate-limit mocking for dev/test (parity with CC mockRateLimits.ts and rateLimitMocking.ts). Not addressable in a cleanup pass: requires a feature-flagged mock layer in providers.rs adapters returning 429/503/529 by config, plus a test harness. Multi-day testing-infrastructure work. Parent audit #523.",
+  "created_at": "2026-05-20T14:42:27.339234464Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAoCzU847NUYRbJuSAROd7B8GNZfagtmYvUh3R+76fTzEb6NbMfTntMpVtWt/8A2XK5sCuUKpDayRoe6Vvu+qZBA=="
+}
