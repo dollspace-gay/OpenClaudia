@@ -1,0 +1,10 @@
+{
+  "uuid": "1301dd67-8b2d-41bd-9795-d768157a7f49",
+  "issue_uuid": "ff2170c9-4fd0-4648-ac71-f2a3b0ef0d5f",
+  "author": "lOrm",
+  "content": "Issue calls for SSE streaming on the Google Gemini provider (currently non-streaming JSON only). Not addressable in a cleanup pass: requires implementing Gemini's streamGenerateContent endpoint with SSE chunk parsing in providers.rs and adapter routing in pipeline.rs (forbidden-files). Multi-day provider work. Parent audit #537.",
+  "created_at": "2026-05-20T14:40:51.138876972Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAoWKWxd5E4VjbhRJw07WXjgZUYQk2Ugepng0RxtDsM9UYBArbcF09w1g1XGaFSVhyZRHhY4S+DRuiO/P5OlJaBg=="
+}
