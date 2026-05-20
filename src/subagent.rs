@@ -1281,7 +1281,7 @@ const SUBAGENT_KNOWN_PROVIDERS: &[&str] = &[
 /// instead of issuing wrong-shape HTTP requests upstream.
 fn resolve_subagent_adapter(
     provider: &str,
-) -> Result<Box<dyn crate::providers::ProviderAdapter>, String> {
+) -> Result<&'static dyn crate::providers::ProviderAdapter, String> {
     let normalized = provider.to_ascii_lowercase();
     if !SUBAGENT_KNOWN_PROVIDERS.contains(&normalized.as_str()) {
         return Err(format!(
@@ -1289,7 +1289,9 @@ fn resolve_subagent_adapter(
             SUBAGENT_KNOWN_PROVIDERS.join(", ")
         ));
     }
-    Ok(crate::providers::get_adapter(&normalized))
+    crate::providers::get_adapter(&normalized).map_err(|e| {
+        format!("Subagent provider '{provider}' adapter lookup failed: {e}")
+    })
 }
 
 /// Decode the in-flight subagent `request_body` JSON into the typed
