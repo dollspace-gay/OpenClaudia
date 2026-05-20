@@ -3,13 +3,12 @@
   "display_id": 619,
   "title": "Scope MCP permissions per-server (channelPermissions relay)",
   "description": "CC (channelPermissions.ts:1-240) implements a permission-relay system that races permission dialogs against channel servers (Telegram, iMessage, Discord) that emit notifications/claude/channel/permission events. Servers opt in via capabilities.experimental['claude/channel/permission']. OC has no permission relay subsystem. Required: subscribe to channel-server notifications, match request_id, resolve pending permission dialogs from channel replies.",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:02:39.381573114Z",
-  "updated_at": "2026-05-20T14:41:49.282643054Z",
-  "closed_at": "2026-05-20T14:41:49.282643054Z",
+  "updated_at": "2026-05-20T16:58:31.671493416Z",
   "labels": [
     "feature",
     "cc-parity"
