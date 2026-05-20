@@ -1,0 +1,10 @@
+{
+  "uuid": "5bf1311a-a568-4ad7-a6a9-e25cb51336e9",
+  "issue_uuid": "f30a49ce-cf16-4443-aa9e-f143600a4f19",
+  "author": "lOrm",
+  "content": "Already addressed by #408 fix. validate_branch_name in src/tools/worktree.rs:69-156 rejects '..' (line 126-130), leading dashes, shell metacharacters, control chars, and git ref-syntax specials BEFORE any git invocation. Path traversal vector (\"branch\":\"../../tmp/escape\") is rejected. Tests: validate_branch_name_rejects_double_dot_408, enter_worktree_rejects_path_traversal_branch_408. With '..' upstream-rejected, git_root.join('.worktrees').join(&branch) cannot escape .worktrees/. Closing as duplicate-of-already-fixed.",
+  "created_at": "2026-05-20T04:49:53.745693867Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAHCFYiryj2sTwjzrzPe9AwzWUkRPVCMZA6l5dgdCyjQ274MTNzLEvehUnEGvKF/g1MHWFPNkuI/RHar/8UoEyCg=="
+}
