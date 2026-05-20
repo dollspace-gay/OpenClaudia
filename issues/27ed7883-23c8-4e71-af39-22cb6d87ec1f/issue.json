@@ -2,13 +2,12 @@
   "uuid": "27ed7883-23c8-4e71-af39-22cb6d87ec1f",
   "display_id": 574,
   "title": "Add task_output tool to poll incremental output of background agents (parity with CC TaskOutputTool)",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:52:34.345111197Z",
-  "updated_at": "2026-05-20T14:39:27.754728344Z",
-  "closed_at": "2026-05-20T14:39:27.754728344Z",
+  "updated_at": "2026-05-20T16:57:49.343312642Z",
   "labels": [
     "feature",
     "cc-parity"
