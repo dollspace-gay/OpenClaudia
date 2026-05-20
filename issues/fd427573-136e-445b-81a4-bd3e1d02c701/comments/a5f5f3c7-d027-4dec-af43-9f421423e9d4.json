@@ -1,0 +1,10 @@
+{
+  "uuid": "a5f5f3c7-d027-4dec-af43-9f421423e9d4",
+  "issue_uuid": "fd427573-136e-445b-81a4-bd3e1d02c701",
+  "author": "lOrm",
+  "content": "canonical_git now uses url::Url canonicalization: lowercase host, drop default ports, normalize path (trim trailing /, trim .git). Falls back to string trim for SCP forms. Tests added for trailing-slash, mixed-case, default-port, and host-in-path attack cases.",
+  "created_at": "2026-05-20T12:22:04.676805303Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAPldccwV0oVZogxQNrYf1qlYrLLz4UCkSQpothmtafXnf5HttVtkp4LQiHMuLXxbHQpZrvCV8y6qrZbBixAK9Dw=="
+}
