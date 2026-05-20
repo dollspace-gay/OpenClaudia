@@ -3,11 +3,12 @@
   "display_id": 903,
   "title": "tool_intercept: parse_nested_elements has no depth or size limit, enabling memory exhaustion",
   "description": "## Severity\nMinor\n## Dimension\nsecurity\n## Location\nsrc/tool_intercept.rs:436-498 (parse_nested_elements)\n## Violation\nparse_nested_elements walks the buffer linearly without:\n\n1. A maximum element-count cap. A model that emits 100,000 `<param_n>value</param_n>` nested elements is parsed into a HashMap with no bound.\n2. A maximum value-length cap. A single `<content>` element holding a 50MB string is allocated whole into the parameters map via `value = content[abs_tag_end + 1..abs_close_pos].to_string();` (line 482).\n3. No total-byte ceiling for the surrounding driver — `extract_all_tool_calls` accumulates unbounded tools.\n\nA malicious or buggy upstream stream can drive the proxy into OOM. Because tools are then passed to write_file -> filesystem, this is also a path to disk exhaustion.\n\n## Mandated refactor\nAdd `const MAX_PARAM_LEN: usize = 4 * 1024 * 1024;` and `const MAX_ELEMS: usize = 32;`. Reject (skip + log) any element exceeding the size cap; cap the parameter count at MAX_ELEMS and discard the rest with a warning. Surface a typed `ParseError::ParameterTooLarge` to the caller so the failure is observable.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:13:49.149006385Z",
-  "updated_at": "2026-05-18T22:14:00.624413595Z",
+  "updated_at": "2026-05-20T12:04:30.066530409Z",
+  "closed_at": "2026-05-20T12:04:30.066530409Z",
   "labels": [
     "qa-review",
     "security"
