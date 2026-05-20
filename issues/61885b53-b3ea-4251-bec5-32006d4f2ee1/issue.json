@@ -3,13 +3,12 @@
   "display_id": 594,
   "title": "Add path allowlist validation for bash tool (parity with CC checkPathConstraints)",
   "description": "## Gap\n\nCC's checkPathConstraints (tools/BashTool/pathValidation.ts:1013-1100) validates that file paths accessed by path-modifying commands (cd, mv, cp, rm, ln, tee, truncate, install, find, sed, rsync) are within the allowed working directories for the session. READONLY_COMMAND_REGEXES (readOnlyValidation.ts:1509-1570) classifies cd, ls, find and other commands as read-only when they match safe patterns, and validates cd paths against the allowed directory list.\n\nOC has no path allowlist. execute_bash and BackgroundShellManager::spawn pass commands directly to bash -c. Any path accessible to the OC process can be written or deleted if the command passes the denylist.\n\nKey behaviors missing:\n- Allowed working directory set (per-session, multiple dirs supported)\n- cd path resolution and validation against allowed set\n- Compound command write + cd block (prevents cd /secret && mv ...)\n- Redirect target path validation (> /etc/passwd blocked)\n- Process substitution >(...) blocked\n- Windows UNC path detection\n\n## Parity reference\n- CC: tools/BashTool/pathValidation.ts:1013 checkPathConstraints, readOnlyValidation.ts:1509 READONLY_COMMAND_REGEXES\n- OC: missing entirely — src/tools/bash/policy.rs has no path awareness\n\n## Acceptance\n- Per-session allowed working directory set (initially = cwd at session start)\n- Validate redirect targets and path arguments for path-modifying commands\n- Block compound cd + write patterns\n- Return error (not panic) when path is outside allowed set\n",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:54:07.957277328Z",
-  "updated_at": "2026-05-20T14:40:36.193577019Z",
-  "closed_at": "2026-05-20T14:40:36.193577019Z",
+  "updated_at": "2026-05-20T16:58:05.594369074Z",
   "labels": [
     "feature",
     "cc-parity"
