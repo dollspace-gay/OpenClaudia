@@ -3,13 +3,12 @@
   "display_id": 622,
   "title": "Add in-process MCP transport (embedded server)",
   "description": "CC (services/mcp/InProcessTransport.ts:1-65) provides createLinkedTransportPair() which creates two Transport instances that relay messages via queueMicrotask() without subprocess or network. Used for Computer Use MCP (client.ts:917-942), Chrome MCP, and SDK-mode servers (client.ts:866-867). OC McpTransport trait (src/mcp.rs:123-131) has only StdioTransport and HttpTransport; no in-process implementation exists. Required: implement McpTransport for in-process use (channel-based message passing between two halves of a linked pair).",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:02:55.623310120Z",
-  "updated_at": "2026-05-20T14:41:56.214796451Z",
-  "closed_at": "2026-05-20T14:41:56.214796451Z",
+  "updated_at": "2026-05-20T16:58:34.787436647Z",
   "labels": [
     "feature",
     "cc-parity"
