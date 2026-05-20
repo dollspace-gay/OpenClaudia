@@ -1,0 +1,10 @@
+{
+  "uuid": "cab3356b-ac0a-4fa2-8c6e-9dff57d40a7b",
+  "issue_uuid": "27ed7883-23c8-4e71-af39-22cb6d87ec1f",
+  "author": "lOrm",
+  "content": "Landed src/tools/task_output.rs as a TaskOutputTool parity: takes agent_id, returns new buffered output since last poll plus 'status=running|finished turns=N bytes_total=M' footer. Extended BackgroundAgent with output_buffer (Mutex<Vec<String>>) and output_bytes_total (AtomicU64); added BackgroundAgentManager::append_output / poll_output. 5 tests pin: missing arg / unknown agent / empty buffer / drain semantics / finished status. Registered in tools::registry as 'task_output'.",
+  "created_at": "2026-05-20T18:17:52.322587200Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA6LAGyJJ6a2siWao+QdNhaa7np+4Tjt3bmjfwqMHvjk6crHryEqqwioesnbPB/nXIle0dO9FcdOl4LQCbVPZ+AA=="
+}
