@@ -3,11 +3,12 @@
   "display_id": 855,
   "title": "QA: empty bash command absent-key path returns target=\"\" allowing default_allow=\"\" to fire",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/permissions.rs:274-302, 215-226\n## Violation\n`extract_target` for `\"bash\"` returns an empty target string when the\n`command` key is absent entirely:\n```rust\nmatch (cmd, tool_args.get(\"command\")) {\n    (Some(s), _) => Some(Ok((\"Bash\".to_string(), s.to_string()))),\n    (None, Some(_)) => Some(Err(\"Bash\".to_string())),\n    (None, None) => Some(Ok((\"Bash\".to_string(), String::new()))), // key absent\n}\n```\nThat empty target then flows into the `default_allow` loop:\n```rust\nfor pattern in &self.default_allow {\n    if Self::glob_matches(pattern, &target) {\n        return CheckResult::Allowed;\n    }\n}\n```\nThe pin test `b2_empty_glob_matches_only_empty_target` confirms a\n`default_allow = [\"\"]` rule **allows** a bash call with no `command`\nkey. This is a hostile path: a model can submit `{\"tool\":\"bash\"}` with\nno args to slip past empty-string allow patterns and reach tool\nexecution. The model never needs the command key — the downstream tool\ndispatcher decides what to run.\n## Mandated refactor\nTreat a missing `command` key as malformed: return\n`Some(Err(\"Bash\".to_string()))` from `extract_target` so the\n`Denied(...)` path at line 145 fires. A bash invocation without a\ncommand is never legitimate — there is nothing to execute. Add a test\nthat pins this denial.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:07:19.055171495Z",
-  "updated_at": "2026-05-18T22:08:00.206110338Z",
+  "updated_at": "2026-05-20T14:12:56.507492352Z",
+  "closed_at": "2026-05-20T14:12:56.507492352Z",
   "labels": [
     "qa-review",
     "security"
