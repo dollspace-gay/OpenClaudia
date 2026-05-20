@@ -1,0 +1,10 @@
+{
+  "uuid": "fb7b5588-d9ce-4aa2-b7e7-c95c0e838127",
+  "issue_uuid": "c264aa65-2be0-455c-a556-e54d08701ffb",
+  "author": "lOrm",
+  "content": "Deferred — requires unrestricted access to src/subagent.rs (FORBIDDEN under current cleanup scope).\n\n**Fix outline:** Replace every self.agents.lock().ok() / if let Ok(...) = .lock() pattern in BackgroundAgentManager (src/subagent.rs:294-349) and BackgroundAgent (lines 308-310, 318-321, 423-424) with .lock().unwrap_or_else(|poisoned| poisoned.into_inner()) (the project's standard poison-recovery idiom used elsewhere). This makes poisoning recoverable and observable rather than turning every subsequent call into a no-op. Optionally emit a tracing::error! on first observation of a poisoned guard so the panic that caused it is not lost.\n\n**Blocking:** src/subagent.rs is reserved scope. Pair with #401 split.",
+  "created_at": "2026-05-20T14:13:05.626209877Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAnxQxClImGsESQQj+cE9xWy1Rl4GERXSyl/EjM2J3obDOUnA0liZ70hAKNQA5QBYVcyBiy11W4tMXuu3dwsF7AA=="
+}
