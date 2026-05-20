@@ -1,0 +1,10 @@
+{
+  "uuid": "7652c150-c81c-4128-851c-a50f7dcfe056",
+  "issue_uuid": "2b022de4-161c-448c-87ee-c9c44137c3be",
+  "author": "lOrm",
+  "content": "Duplicate of #388 (closed 2026-05-20) + #642 (closed 2026-05-20). Table-driven pricing + fast-mode tier are landed: src/session/pricing.rs:247 defines static PRICING_TABLE: &[(&str, ModelPricing)] walked top-to-bottom (ordering enforced by tests::ordering_no_entry_is_prefix_of_earlier); ModelPricing has fast_mode_input_per_million / fast_mode_output_per_million; calculate_cost_fast_mode swaps in COST_TIER_30_150 for Opus 4.6+; calculate_cost returns PricingError::UnknownModel; cache-write multipliers split into cache_write_5m_multiplier / cache_write_1hr_multiplier selected by CacheWriteTtl. Verified at HEAD f0c5612b.",
+  "created_at": "2026-05-20T12:03:46.498637637Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAozS+qwbEapIodkohScNPlGkvSkx1DvzgK82ecQ/5yGs6Uz+FY8oQfT3Z/Jl+PMGLewPDYji6uMf4Da/FVxMuAQ=="
+}
