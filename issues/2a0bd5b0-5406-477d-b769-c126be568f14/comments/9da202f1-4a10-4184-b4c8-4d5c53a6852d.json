@@ -1,0 +1,10 @@
+{
+  "uuid": "9da202f1-4a10-4184-b4c8-4d5c53a6852d",
+  "issue_uuid": "2a0bd5b0-5406-477d-b769-c126be568f14",
+  "author": "lOrm",
+  "content": "FORBIDDEN: src/tools/bash/output.rs is on the locked file list for this bulk pass. The '(no new output)' path at lines 39-43 conflates 'silent command' with 'already drained'. Mandated refactor (distinguish lifetime-cumulative-empty vs. since-last-poll-empty, always render exit-code on finished) stands for a bash-focused worktree.",
+  "created_at": "2026-05-20T13:25:46.588814928Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAAv0sfGOjvNGrU7EGYiXxeXGNOhQR916mQSlCE5PHJ6b6YZo27auyHEkT4dw43qZz0GVZAxg6ahYfgeYmgFyVDQ=="
+}
