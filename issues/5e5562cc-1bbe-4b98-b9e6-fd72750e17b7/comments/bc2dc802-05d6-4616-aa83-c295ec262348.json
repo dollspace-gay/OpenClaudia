@@ -1,0 +1,10 @@
+{
+  "uuid": "bc2dc802-05d6-4616-aa83-c295ec262348",
+  "issue_uuid": "5e5562cc-1bbe-4b98-b9e6-fd72750e17b7",
+  "author": "lOrm",
+  "content": "Duplicate of #910 (same TUI event loop / cancellation token defect, same location src/tui/app.rs:526-589, same mandated refactor; #930 already being closed in parallel as the second duplicate). Closing #934 as the higher-numbered duplicate; #910 is the canonical open report.",
+  "created_at": "2026-05-20T12:31:42.153165048Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA3EPJ9a/9fqOhp7FGlLSmZeF13d8NKDkSABkBRhk6JZrTvWaqXnE5hpAoQBpancZYvnT0FFXIeY4Gt3DiU4bzDQ=="
+}
