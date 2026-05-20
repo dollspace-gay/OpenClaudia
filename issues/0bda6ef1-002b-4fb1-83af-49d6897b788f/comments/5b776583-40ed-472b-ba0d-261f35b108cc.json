@@ -1,0 +1,10 @@
+{
+  "uuid": "5b776583-40ed-472b-ba0d-261f35b108cc",
+  "issue_uuid": "0bda6ef1-002b-4fb1-83af-49d6897b788f",
+  "author": "lOrm",
+  "content": "SCP-style URLs now rewrite to ssh:// via scp_to_ssh_url and flow through the same scheme/host/userinfo pipeline as ssh://. Username restricted to 'git' on the ssh scheme. Tests cover non-git user and empty-host rejection.",
+  "created_at": "2026-05-20T12:22:11.964757850Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABATUOCITMY2lJ1yDgSCao+KgwlWWkl+QmTSA8F0umBnBjo3mW9N/RGhjOz3+V0YgiRc5T30uBWqSdX+6O9NhFbCA=="
+}
