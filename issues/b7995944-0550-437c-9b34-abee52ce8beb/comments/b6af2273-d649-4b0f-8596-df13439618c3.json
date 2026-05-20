@@ -1,0 +1,10 @@
+{
+  "uuid": "b6af2273-d649-4b0f-8596-df13439618c3",
+  "issue_uuid": "b7995944-0550-437c-9b34-abee52ce8beb",
+  "author": "lOrm",
+  "content": "Deferred — owner-level architectural refactor (cross-cutting type change touching TUI, ACP, session save/load, and the proxy boundary).\n\n**Fix outline:** Introduce pub struct Message { role: Role, content: Content, tool_calls: Vec<ToolCall>, tool_call_id: Option<String> } with pub enum Content { Text(String), Blocks(Vec<ContentBlock>) }. Replace Vec<serde_json::Value> in src/tui/app.rs:274 and :37 (TuiSession.messages) and src/acp.rs:579 (and 22+ get('role').as_str().unwrap_or downstream sites) with the typed form. Reserve serde_json::Value strictly for the provider adapter boundary. Consolidate on the existing proxy::ChatMessage definition rather than introducing a third type.\n\n**Recommendation:** This is a foundational data-model change that ripples through session persistence, ACP wire format, and TUI rendering. Needs owner-level decisions on (a) is the typed Message also the on-disk format or only the in-memory form, (b) backward-compat for existing session files, (c) ChatMessage vs Message naming reconciliation. Not safe as ad-hoc agent work.",
+  "created_at": "2026-05-20T14:13:55.507917348Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA9wgZKlC78kTMP/54QxKjZchc4YWbQ7CuoaPKVEVTia/83q91PQ0cPlqzY4ROLEAI7Ec1uSRtB+A7MPzQwCxzCg=="
+}
