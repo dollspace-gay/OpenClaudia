@@ -3,11 +3,12 @@
   "display_id": 827,
   "title": "read_pdf_file spawns pdftotext with no timeout, stderr leak, locale-dependent parser",
   "description": "## Severity\nMajor\n\n## Dimension\nSecurity and Access / Error Orchestration / Perimeter Defense\n\n## Location\nsrc/tools/file/read.rs:90-174 (read_pdf_file)\n\n## Violation\nThe function shells out to pdftotext and pdfinfo with no timeout, no resource limits, no stdout cap, and an information leak in stderr:\n\n```rust\nlet mut cmd = Command::new(\"pdftotext\");\nif let Some(pages_str) = pages { ... }\ncmd.arg(path);\ncmd.arg(\"-\");\nmatch cmd.output() { ... }\n```\n\n`cmd.output()` blocks the calling thread until exit OR until the OS pipe buffer fills. A malformed PDF can pin a worker indefinitely. The worktree.rs module already implements git_with_timeout — read.rs ignores the lesson. Additional issues:\n\n1. stderr returned verbatim into model context (line 160): `format!(\"pdftotext failed for '{path}': {stderr}\")` — pdftotext error messages routinely contain absolute filesystem paths, enabling reconnaissance of jail layout.\n2. pdfinfo stdout parsed with `line.starts_with(\"Pages:\")` (line 121) — locale-sensitive. Under fr_FR pdfinfo emits \"Pages :\" and the 10-page guard is silently bypassed.\n3. No total-byte cap on stdout; a 500-page PDF returns 5MB of text, exhausting token budget.\n\n## Mandated refactor\n1. Reuse the git_with_timeout pattern (extract a shared command::run_with_timeout helper — see separate DRY issue).\n2. Cap pdftotext stdout to 100_000 chars matching read_text_file and signal truncation in the message.\n3. Sanitize stderr: do not return upstream filesystem paths; log at tracing::warn! and return \"pdftotext failed (check logs)\".\n4. Set LC_ALL=C in the spawn env so pdfinfo emits the C-locale field labels the parser expects.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:02:30.376656693Z",
-  "updated_at": "2026-05-18T22:03:59.857317959Z",
+  "updated_at": "2026-05-20T14:04:00.211730046Z",
+  "closed_at": "2026-05-20T14:04:00.211730046Z",
   "labels": [
     "qa-review",
     "security"
