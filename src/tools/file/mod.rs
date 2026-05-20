@@ -25,71 +25,133 @@ use std::sync::{LazyLock, Mutex};
 /// previous global ceiling.
 const READ_TRACKER_MAX_ENTRIES: usize = 10_000;
 
+/// Per-session bucket: canonical path → monotonic insertion counter.
+///
+/// Counter values are pulled from a single tracker-wide [`AtomicU64`] so
+/// the smallest counter in the bucket is the least-recently-read path
+/// (LRU). Lookup is O(1) on the underlying [`HashMap`]; eviction at
+/// the cap scans the bucket once.
+type Bucket = HashMap<PathBuf, u64>;
+
 /// Tracks which files have been read, bucketed per session id.
 ///
-/// Each session id (set via `crate::tools::SessionIdGuard`) has its own
-/// write-recency list of canonicalized paths: every `mark_read` removes
-/// any prior occurrence and pushes the path to the end of the list, so the
-/// path with the oldest *write* (not oldest *use*) sits at the front and
-/// is evicted first. `edit_file` will fail if the file hasn't been read
-/// first **in the same session**. Without an active guard the bucket
-/// falls back to the shared default key so the chat REPL and legacy
-/// tests keep working out of the box.
+/// Each session id (set via `crate::tools::SessionIdGuard`) has its
+/// own [`HashSet`]-equivalent of canonicalized paths (stored as a
+/// `HashMap<PathBuf, u64>` so we can drive LRU eviction without
+/// paying the per-lookup linear scan a `Vec` required). `edit_file`
+/// will fail if the file hasn't been read first **in the same
+/// session**. Without an active guard the bucket falls back to the
+/// shared default key so the chat REPL and legacy tests keep working
+/// out of the box.
 ///
 /// crosslink #986: the previous doc-comment called this an "LRU" list,
 /// which is ambiguous — true LRU bumps the entry on read too. Here, only
 /// `mark_read` touches the order; `has_been_read` is read-only and does
-/// not affect eviction. The naming is now "write-recency" / "insertion-
+/// not affect eviction. The naming is "write-recency" / "insertion-
 /// recency" to match the actual semantics.
+///
+/// crosslink #363: canonicalization is now strict — a path whose
+/// `canonicalize` call fails on `has_been_read` is treated as **not
+/// read**. This refuses to silently fall back to the raw path (which
+/// previously hid bugs where the read-before-edit gate compared a
+/// canonical absolute against a raw relative). `mark_read` on a path
+/// whose `canonicalize` fails logs a warning and skips the insertion.
 ///
 /// crosslink #440 phase 1: session isolation lives inside this
 /// singleton (keyed by the thread-local session id), not yet threaded
 /// through `ToolContext`. Phase 2 (follow-up issue) will own the
 /// tracker on `ChatSession` / `ToolContext` directly.
+///
+/// [`HashSet`]: std::collections::HashSet
 pub static READ_TRACKER: LazyLock<ReadFileTracker> = LazyLock::new(ReadFileTracker::new);
 
 pub struct ReadFileTracker {
-    /// Per-session write-recency lists. Key is the session id from the
-    /// thread-local guard (or the shared default key when no guard is
-    /// active). Most-recently-WRITTEN paths sit at the end; over
-    /// [`READ_TRACKER_MAX_ENTRIES`] in a bucket evicts from the front.
+    /// Per-session buckets. Key is the session id from the thread-local
+    /// guard (or the shared default key when no guard is active). Inner
+    /// map is canonical path → insertion counter (see [`Bucket`]).
     /// `has_been_read` does not promote — see crosslink #986.
-    buckets: Mutex<HashMap<String, Vec<PathBuf>>>,
+    buckets: Mutex<HashMap<String, Bucket>>,
+    /// Monotonic counter used to assign each successful `mark_read` a
+    /// strictly increasing value. Drives LRU eviction at the cap.
+    counter: std::sync::atomic::AtomicU64,
 }
 
 impl ReadFileTracker {
     fn new() -> Self {
         Self {
             buckets: Mutex::new(HashMap::new()),
+            counter: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
     /// Mark a file as having been read in the **current session**.
-    /// Moves to end (most recent) if already tracked. Other sessions'
-    /// buckets are untouched.
+    ///
+    /// `path` is canonicalized first. If canonicalization fails (file
+    /// does not exist, permission denied, symlink loop, etc.) the call
+    /// logs a warning and does **not** insert — silently storing the
+    /// raw path would let `has_been_read` succeed via the same fallback
+    /// and defeat the read-before-edit gate (see crosslink #363).
+    /// Other sessions' buckets are untouched.
     pub(crate) fn mark_read(&self, path: &Path) {
-        let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let resolved = match std::fs::canonicalize(path) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "READ_TRACKER.mark_read: canonicalize failed; skipping insertion"
+                );
+                return;
+            }
+        };
+        let stamp = self
+            .counter
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let key = super::todo::current_session_key();
         if let Ok(mut buckets) = self.buckets.lock() {
             let files = buckets.entry(key).or_default();
-            files.retain(|p| p != &resolved);
-            files.push(resolved);
+            // O(1) upsert: re-inserting refreshes the LRU stamp.
+            files.insert(resolved, stamp);
             if files.len() > READ_TRACKER_MAX_ENTRIES {
-                let excess = files.len() - READ_TRACKER_MAX_ENTRIES;
-                files.drain(..excess);
+                Self::evict_lru(files);
             }
         }
     }
 
+    /// Drop bucket entries until the count is back at the cap. Removes
+    /// the oldest-stamped entries first (true LRU).
+    fn evict_lru(files: &mut Bucket) {
+        let excess = files.len().saturating_sub(READ_TRACKER_MAX_ENTRIES);
+        if excess == 0 {
+            return;
+        }
+        // Collect (stamp, path) pairs and partial-sort by stamp ascending.
+        let mut stamped: Vec<(u64, PathBuf)> =
+            files.iter().map(|(p, &s)| (s, p.clone())).collect();
+        stamped.sort_by_key(|(stamp, _)| *stamp);
+        for (_, p) in stamped.into_iter().take(excess) {
+            files.remove(&p);
+        }
+    }
+
     /// Check whether a file has been read in the **current session**.
-    /// A read in another session does not satisfy this check.
+    ///
+    /// `path` is canonicalized first. If canonicalization fails (file
+    /// does not exist, permission denied, symlink loop, etc.) this
+    /// returns `false` — the caller must read the file before the
+    /// check can pass. A read in another session does not satisfy this
+    /// check.
     pub(crate) fn has_been_read(&self, path: &Path) -> bool {
-        let check_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let Ok(check_path) = std::fs::canonicalize(path) else {
+            // Strict mode: refuse to silently fall back to the raw path.
+            // The agent must perform a real read first. See crosslink #363.
+            return false;
+        };
         let key = super::todo::current_session_key();
         self.buckets
             .lock()
             .ok()
-            .is_some_and(|buckets| buckets.get(&key).is_some_and(|f| f.contains(&check_path)))
+            .is_some_and(|buckets| buckets.get(&key).is_some_and(|f| f.contains_key(&check_path)))
     }
 
     /// Clear every session's bucket. Used by tests and at
@@ -478,5 +540,206 @@ mod tests {
                 "clear_all wipes session-b's bucket"
             );
         }
+    }
+
+    // ---------------------------------------------------------------
+    // crosslink #363: strict canonicalize + HashSet/HashMap migration
+    // ---------------------------------------------------------------
+
+    /// crosslink #363 (1): `mark_read` + `has_been_read` for the same
+    /// canonical path returns true.
+    #[test]
+    fn read_tracker_363_canonical_round_trip_returns_true() {
+        let _lock = tracker_lock();
+        READ_TRACKER.clear_all();
+        let _g = crate::tools::SessionIdGuard::set("session-363-canonical");
+        let (_keep, _keep_b, path_a, _path_b) = two_temp_paths();
+        READ_TRACKER.mark_read(&path_a);
+        assert!(
+            READ_TRACKER.has_been_read(&path_a),
+            "canonical mark must satisfy canonical check"
+        );
+    }
+
+    /// crosslink #363 (2): `mark_read` with a relative path, then
+    /// `has_been_read` with the absolute canonical path, resolves to
+    /// the same key (because both calls canonicalize internally).
+    #[test]
+    fn read_tracker_363_relative_then_absolute_resolves() {
+        let _lock = tracker_lock();
+        READ_TRACKER.clear_all();
+        let _g = crate::tools::SessionIdGuard::set("session-363-rel-abs");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let canon_dir = dir.path().canonicalize().expect("canonicalize dir");
+        let abs_file = canon_dir.join("rel_target.txt");
+        std::fs::write(&abs_file, b"hello").expect("write file");
+
+        // Build a relative path to `abs_file` from the current CWD.
+        let cwd = std::env::current_dir().expect("cwd");
+        let rel_file = pathdiff_relative(&cwd, &abs_file)
+            .expect("relative path between cwd and tempdir target exists");
+        assert!(
+            rel_file.is_relative(),
+            "test precondition: derived path must be relative"
+        );
+
+        READ_TRACKER.mark_read(&rel_file);
+        assert!(
+            READ_TRACKER.has_been_read(&abs_file),
+            "relative mark must be visible via the canonical absolute path"
+        );
+        assert!(
+            READ_TRACKER.has_been_read(&rel_file),
+            "relative path query must also succeed (it canonicalizes to the same key)"
+        );
+    }
+
+    /// crosslink #363 (3): `has_been_read` for a nonexistent path
+    /// returns false (canonicalize fails → treat as not read).
+    #[test]
+    fn read_tracker_363_nonexistent_path_returns_false() {
+        let _lock = tracker_lock();
+        READ_TRACKER.clear_all();
+        let _g = crate::tools::SessionIdGuard::set("session-363-nonexistent");
+
+        // Path under a real tempdir but with a leaf that does not exist
+        // on disk: canonicalize on the leaf will fail.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ghost = dir.path().join("does_not_exist_12345.txt");
+        assert!(!ghost.exists(), "test precondition: ghost path must not exist");
+
+        assert!(
+            !READ_TRACKER.has_been_read(&ghost),
+            "nonexistent path must NOT be considered read (strict canonicalize)"
+        );
+
+        // mark_read on a nonexistent path must also be a no-op (warning
+        // logged inside); a subsequent has_been_read still returns false
+        // even if we later create the file, because no insertion happened.
+        READ_TRACKER.mark_read(&ghost);
+        assert!(
+            !READ_TRACKER.has_been_read(&ghost),
+            "mark_read on a nonexistent path must NOT silently store the raw path"
+        );
+
+        // Sanity: once the file exists and is marked, the gate works.
+        std::fs::write(&ghost, b"materialized").expect("write ghost");
+        let canon = ghost.canonicalize().expect("now canonicalizable");
+        READ_TRACKER.mark_read(&canon);
+        assert!(
+            READ_TRACKER.has_been_read(&canon),
+            "after real read on an existing file, the gate must pass"
+        );
+    }
+
+    /// crosslink #363 (4): 100 concurrent `mark_read` calls all succeed;
+    /// the final set contains every path. Guards against a race in the
+    /// `HashMap` upsert + LRU stamp interaction.
+    #[test]
+    fn read_tracker_363_concurrent_mark_read_no_loss() {
+        const N: usize = 100;
+
+        let _lock = tracker_lock();
+        READ_TRACKER.clear_all();
+        let _g = crate::tools::SessionIdGuard::set("session-363-concurrent");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let canon_dir = dir.path().canonicalize().expect("canonicalize dir");
+
+        let mut paths: Vec<PathBuf> = Vec::with_capacity(N);
+        for i in 0..N {
+            let p = canon_dir.join(format!("race_{i}.txt"));
+            std::fs::write(&p, format!("contents-{i}")).expect("write race file");
+            paths.push(p);
+        }
+
+        // Hand each path to a fresh thread. The session guard is
+        // thread-local; inside each thread we re-set it so all
+        // marks land in the same bucket.
+        let session = "session-363-concurrent".to_string();
+        let mut handles = Vec::with_capacity(N);
+        for p in &paths {
+            let p = p.clone();
+            let session = session.clone();
+            handles.push(std::thread::spawn(move || {
+                let _g = crate::tools::SessionIdGuard::set(&session);
+                READ_TRACKER.mark_read(&p);
+            }));
+        }
+        for h in handles {
+            h.join().expect("worker thread panicked");
+        }
+
+        for p in &paths {
+            assert!(
+                READ_TRACKER.has_been_read(p),
+                "concurrent mark must not drop path {}",
+                p.display()
+            );
+        }
+    }
+
+    /// crosslink #363 (5): LRU eviction still works at the cap.
+    /// Bypasses `READ_TRACKER_MAX_ENTRIES` for the test by calling
+    /// `evict_lru` directly with a small over-cap bucket; verifies
+    /// the oldest stamps go first.
+    #[test]
+    fn read_tracker_363_lru_eviction_drops_oldest() {
+        // No tracker_lock needed: this test operates on a local bucket.
+        let mut bucket: Bucket = Bucket::new();
+        // Insert (cap + 3) entries with strictly increasing stamps so
+        // we can predict which three get evicted.
+        let cap = READ_TRACKER_MAX_ENTRIES;
+        for i in 0..(cap + 3) {
+            bucket.insert(PathBuf::from(format!("/virtual/path/{i}")), i as u64);
+        }
+        assert_eq!(bucket.len(), cap + 3);
+
+        ReadFileTracker::evict_lru(&mut bucket);
+
+        assert_eq!(bucket.len(), cap, "post-eviction size must match cap");
+        // The three oldest (stamps 0, 1, 2) must be gone.
+        for i in 0..3 {
+            assert!(
+                !bucket.contains_key(&PathBuf::from(format!("/virtual/path/{i}"))),
+                "oldest entry /virtual/path/{i} should be evicted"
+            );
+        }
+        // The newest (stamp cap+2) must remain.
+        let newest = PathBuf::from(format!("/virtual/path/{}", cap + 2));
+        assert!(
+            bucket.contains_key(&newest),
+            "most-recently-stamped entry must survive eviction"
+        );
+    }
+
+    /// Minimal pathdiff: compute a relative path from `base` to `target`
+    /// when `target` is absolute and `base` is absolute. Returns `None`
+    /// only if either input is relative.
+    fn pathdiff_relative(base: &Path, target: &Path) -> Option<PathBuf> {
+        if !base.is_absolute() || !target.is_absolute() {
+            return None;
+        }
+        let base_comps: Vec<_> = base.components().collect();
+        let target_comps: Vec<_> = target.components().collect();
+        let mut shared = 0;
+        while shared < base_comps.len()
+            && shared < target_comps.len()
+            && base_comps[shared] == target_comps[shared]
+        {
+            shared += 1;
+        }
+        let mut out = PathBuf::new();
+        for _ in shared..base_comps.len() {
+            out.push("..");
+        }
+        for c in &target_comps[shared..] {
+            out.push(c.as_os_str());
+        }
+        if out.as_os_str().is_empty() {
+            out.push(".");
+        }
+        Some(out)
     }
 }
