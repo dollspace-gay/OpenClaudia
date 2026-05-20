@@ -3,12 +3,11 @@
   "display_id": 682,
   "title": "subagent: std::thread::sleep inside async tool execution path blocks the runtime",
   "description": "## Severity\nMajor\n## Dimension\nconcurrency\n## Location\nsrc/subagent.rs:1407-1414 (execute_agent_output_tool block path)\n## Violation\nThe blocking `agent_output` poll loop is:\n\n```rust\nif block && !agent.finished.load(Ordering::SeqCst) {\n    let start = std::time::Instant::now();\n    let timeout = std::time::Duration::from_mins(5);\n    while !agent.finished.load(Ordering::SeqCst) && start.elapsed() < timeout {\n        std::thread::sleep(std::time::Duration::from_millis(500));\n    }\n}\n```\n\n`execute_agent_output_tool` is invoked from `execute_tool_with_memory` which is called from inside `run_subagent`'s async loop (see src/subagent.rs:936). `std::thread::sleep` parks the entire OS thread — under tokio's multi-thread runtime it blocks one worker for up to 5 minutes; under current_thread it deadlocks the whole runtime, including the background agent we're waiting on (so the loop can never complete).\n## Mandated refactor\nConvert the blocking wait to an async path: expose `execute_agent_output_tool_async` returning a `Future`, use `tokio::time::sleep`, and have the calling tool dispatcher await it. Until the dispatcher is async, gate the block path with `tokio::task::block_in_place` AND require multi-thread runtime, or reject `block: true` outright.\n## Filed from QA review dispatch",
-  "status": "closed",
+  "status": "open",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:46:53.368778564Z",
-  "updated_at": "2026-05-20T14:43:39.323694924Z",
-  "closed_at": "2026-05-20T14:43:39.323694924Z",
+  "updated_at": "2026-05-20T16:59:27.810852920Z",
   "labels": [
     "qa-review",
     "concurrency"
