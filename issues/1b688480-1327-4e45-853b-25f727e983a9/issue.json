@@ -2,13 +2,12 @@
   "uuid": "1b688480-1327-4e45-853b-25f727e983a9",
   "display_id": 609,
   "title": "Add LocalMainSessionTask backgrounding semantics (Ctrl+B, foreground/background, sidechain transcript)",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:01:03.843667528Z",
-  "updated_at": "2026-05-20T14:41:22.614507090Z",
-  "closed_at": "2026-05-20T14:41:22.614507090Z",
+  "updated_at": "2026-05-20T16:58:19.643278522Z",
   "labels": [
     "feature",
     "cc-parity"
