@@ -1,0 +1,10 @@
+{
+  "uuid": "a5697ea0-d187-40d2-9699-1f822bcdc18b",
+  "issue_uuid": "25417327-769a-42a5-83c3-8c2e9eb80cda",
+  "author": "lOrm",
+  "content": "Deferred — architectural test-infra issue rooted in production code (SCHEDULES_FILE is a relative path).\n\n**Fix outline:** The real fix is to remove the relative-path dependency from ScheduleStore::load/save in src/tools/cron.rs — accept the path as a constructor argument (ScheduleStore::new(path: PathBuf)) rather than reading a global SCHEDULES_FILE relative to cwd. Tests then pass a tmp.path().join('schedules.json') without ever calling std::env::set_current_dir, eliminating the entire cwd_lock workaround at src/tools/cron.rs:567-577 + the 5 set_current_dir sites at lines 703/707/736/739/etc. There is a separate issue tracking the SCHEDULES_FILE-being-relative root cause; this one is its test-side symptom.\n\n**Partial progress:** A shared process_cwd_lock (src/tools/testutil::process_cwd_lock) was introduced so cron tests and worktree tests now share a single mutex rather than racing. That contained the symptom but did not address the cause.\n\n**Recommendation:** Bundle with the SCHEDULES_FILE-relative-path fix. Defer.",
+  "created_at": "2026-05-20T14:16:16.797408731Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA/5zXImQt6EjUMatcIo2p95rbnf1fmunRjkBlxqsaFzHQ5ASXWTAg214acsfqhIwJ9j/rhVI8f6k2g5oN8PvlDQ=="
+}
