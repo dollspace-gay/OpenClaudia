@@ -1,0 +1,10 @@
+{
+  "uuid": "0939e1ad-2fde-489d-9ccf-66397943879b",
+  "issue_uuid": "1cf7de68-a133-41d1-b26d-7ba930ca26c0",
+  "author": "lOrm",
+  "content": "FORBIDDEN: src/subagent.rs is on the locked file list for this bulk pass. Issue already carries a 12:01 skip note; this confirms the gate still applies. Mandated refactor (move resolve_model_name into pick_model, switch to Option<&str>, Arc-share AppConfig) stands for a subagent-focused worktree.",
+  "created_at": "2026-05-20T13:25:31.154032962Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABABjqggGRC0gWAaiz5akIkFWJoTPyfu9Gn5Ef1NHR7EwwcyRBftkUjgnvh/0SFeAtWvn8fLqkNM2ONaj7lEVLMBw=="
+}
