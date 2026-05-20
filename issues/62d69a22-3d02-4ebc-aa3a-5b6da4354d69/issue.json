@@ -3,11 +3,12 @@
   "display_id": 941,
   "title": "extract_json_from_response chains return paths each duplicating its own boundary checks",
   "description": "## Severity\nTrivial\n## Dimension\ndry\n## Location\nsrc/vdd/parsing.rs:27-94\n## Violation\nextract_json_from_response has four sequential blocks that each search for a delimiter, slice via str::get, and re-test inner content. The pattern repeats:\n\n```rust\nif let Some(start) = text.find(\"```json\") {\n    let json_start = start + \"```json\".len();\n    if let Some(rest) = text.get(json_start..) {\n        if let Some(end) = rest.find(\"```\") {\n            if let Some(inner) = rest.get(..end) {\n                return Some(inner.trim().to_string());\n            }\n        }\n    }\n}\n\nif let Some(start) = text.find(\"```\") {\n    let json_start = start + 3;\n    if let Some(after_fence) = text.get(json_start..) {\n        ...\n    }\n}\n```\n\nEach block does the same thing — find a delimiter, descend, slice, return. Bugs in one block will be missed when reviewing the next because the structure looks identical at a glance. A future change to handle a new fence pattern (e.g., ~~~json) means writing yet another nearly-identical block.\n\n## Mandated refactor\nExtract a helper:\n\n```rust\nfn extract_between(text: &str, open: &str, close: &str) -> Option<String> {\n    let start = text.find(open)? + open.len();\n    let rest = text.get(start..)?;\n    let end = rest.find(close)?;\n    rest.get(..end).map(|s| s.trim().to_string())\n}\n\npub(crate) fn extract_json_from_response(text: &str) -> Option<String> {\n    extract_between(text, \"```json\", \"```\")\n        .or_else(|| extract_after_fence_skip_lang(text))\n        .or_else(|| extract_balanced_braces_after(text, r#\"{\"findings\"\"#))\n        .or_else(|| extract_first_to_last_brace(text))\n}\n```\n\nEach helper has one responsibility and is independently testable. The fallback chain shows the strategy explicitly.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:18:45.259086668Z",
-  "updated_at": "2026-05-18T22:19:17.889881991Z",
+  "updated_at": "2026-05-20T12:57:54.964666200Z",
+  "closed_at": "2026-05-20T12:57:54.964666200Z",
   "labels": [
     "qa-review",
     "dry"
