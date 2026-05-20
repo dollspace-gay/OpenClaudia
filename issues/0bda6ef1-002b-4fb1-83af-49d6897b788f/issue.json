@@ -3,11 +3,12 @@
   "display_id": 866,
   "title": "validate::looks_like_scp_ssh accepts arbitrary userinfo and any tail, bypassing the host allowlist",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/plugins/validate.rs:33-98\n## Violation\nSCP-style URLs are exempt from EVERY host / scheme / userinfo check. validate_source_url short-circuits as soon as looks_like_scp_ssh returns true. Quoted lines:\n\n    pub fn validate_source_url(raw: &str) -> Result<(), PluginError> {\n        if looks_like_scp_ssh(raw) {\n            return Ok(());\n        }\n    ...\n    fn looks_like_scp_ssh(s: &str) -> bool {\n        let Some(at_idx) = s.find('@') else { return false; };\n        let Some(colon_idx) = s.find(':') else { return false; };\n        if at_idx == 0 || at_idx >= colon_idx { return false; }\n        let user = &s[..at_idx];\n        if user.chars().any(|c| c.is_whitespace() || c == '/') { return false; }\n        let rest = &s[colon_idx + 1..];\n        !rest.is_empty() && !rest.starts_with('/')\n    }\n\n`git@attacker.invalid:owner/repo.git` is accepted, even though a managed allowlist with strict_known_marketplaces would only have approved `git@github.com:trusted/repo.git`. The downstream policy::sources_match comparison runs on the raw URL string and `git@attacker:foo` is unequal to any allowlisted form by exact-equality, so a Git variant comparison fails — yet there is NO requirement that an `install_from_git` call construct a MarketplaceSource at all; install_from_git skips policy entirely (see finding #729). Result: validate_source_url passes any SCP form unchecked and the install proceeds. Additionally the userinfo-reject rule (no password, no username outside ssh) does NOT apply because the function returns Ok before reaching it.\n## Mandated refactor\nDon't short-circuit. Treat SCP form as an implicit `ssh://` URL: normalize it (rewrite `user@host:path` to `ssh://user@host/path`) and continue through the standard scheme + host + userinfo checks. Reject SCP URLs whose username is anything other than `git` (or an explicit policy-configured set). Add host-allowlist scaffolding so a managed policy can pin acceptable git hosts.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:09:16.610209583Z",
-  "updated_at": "2026-05-18T22:09:35.939282036Z",
+  "updated_at": "2026-05-20T12:22:13.950105593Z",
+  "closed_at": "2026-05-20T12:22:13.950105593Z",
   "labels": [
     "qa-review",
     "security"
