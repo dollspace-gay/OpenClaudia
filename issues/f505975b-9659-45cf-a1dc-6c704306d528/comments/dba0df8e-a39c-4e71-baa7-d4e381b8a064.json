@@ -1,0 +1,10 @@
+{
+  "uuid": "dba0df8e-a39c-4e71-baa7-d4e381b8a064",
+  "issue_uuid": "f505975b-9659-45cf-a1dc-6c704306d528",
+  "author": "lOrm",
+  "content": "Already addressed: compact_request_context now uses ContextCompactor::for_model_with_overrides(model, &state.compactor_overrides) — single-pass construction with the override list as the single source of truth (crosslink #489).",
+  "created_at": "2026-05-20T12:23:58.401539162Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABARgoVvsShkSBx4vhdilt3y5B1xR6mg28ljakOvwJ62JoHV9fi/GmBIZVZRysMXcjRTRlY3F5jSKQen3ferFZKDg=="
+}
