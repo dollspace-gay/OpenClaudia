@@ -1,0 +1,10 @@
+{
+  "uuid": "8cec4903-6b69-4693-8cbf-d08ed0ff44dc",
+  "issue_uuid": "6312c2b6-9369-4ef5-bc84-7ec107d8772a",
+  "author": "lOrm",
+  "content": "Partially landed: src/cli/repl/slash.rs:1517-1555 now defines trait PluginActionRunner with impl on PluginAction; handle_plugin_action shrunk to a one-line trampoline to action.apply(plugin_manager). This satisfies the OCP/Tell-Don't-Ask direction of the mandated refactor (variants own their dispatch; adding a variant changes one match arm instead of two callers). Full per-variant-struct decomposition + registry lookup was NOT done — the enum and the inner Marketplace string-keyed sub-dispatcher remain. Leaving open to track that finishing pass; if the registry layer is judged unnecessary, close as 'done by trait extraction'.",
+  "created_at": "2026-05-20T13:26:02.251191838Z",
+  "kind": "observation",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA34UJVElKrcB3620m7+1ku3mHdoYW2pHTF9DmxVg2ldhagiYJIsSR3vKZB3QQlclRPX5BCTTElckSHqkEX9y9DQ=="
+}
