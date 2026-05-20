@@ -1,0 +1,10 @@
+{
+  "uuid": "918ed651-8307-4bcd-abbf-24a00ac9db8f",
+  "issue_uuid": "25770e3b-576c-4816-8590-524f8e057c40",
+  "author": "lOrm",
+  "content": "Closing as tracked-future-roadmap-not-active-bug. Phase 1 of #440 landed (READ_TRACKER per-session bucketing via SessionIdGuard pattern). Phase 2 (SessionState owning read_tracker/todo/shells/chainlink-install flag, deleting LazyLock globals, Drop-based shell termination) is a structural refactor — no active bug exists; the audit's concrete defect is closed. Re-file when team has slack to complete the audit's full mandated refactor.",
+  "created_at": "2026-05-20T12:32:23.743880684Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAVxZNvnmorEKsDPEDEJhGUPSUTS1hopJ6djBbE/fzYtS4oL6SXQCmqnFhvzcMNE3236RTUJMruUo4VBKQWLqOAQ=="
+}
