@@ -1,0 +1,10 @@
+{
+  "uuid": "539d64d6-8720-4594-8d44-5606f584b194",
+  "issue_uuid": "268cb04a-7711-4941-8699-ed7663447849",
+  "author": "lOrm",
+  "content": "Forensic verification: cargo clippy --all-targets --all-features -- -D warnings is currently EXIT 0 with [lints.clippy] all/pedantic/nursery/cargo = deny in Cargo.toml. The 10 enumerated findings are stale relative to the current tree: src/vdd/mod.rs is now 46 lines (not 1033-1034 - vdd was split into a module); src/prompt.rs:247 contains no Agency/Quality/Scope imports (only string literals in tests at lines 274-276); src/compaction.rs:1122 has no .clone() (it is an .await.unwrap()); src/memory.rs:158 is an enum variant doc comment; src/pipeline.rs:576 destructures SseLineCapOutcome::Exceeded { discarded_bytes } (not trivially equatable); src/tui/app.rs:1205 is a format! line in a [&str; N] array; src/tui/app.rs:1583 contains no cast; src/tui/events.rs:114 binds key by deref from Copy CEvent; src/tui/mod.rs:667 is a doc comment. The codebase has been refactored since these findings were filed and the underlying lints no longer trigger. No #[allow], no clippy.toml, no #[ignore] introduced. Closing as verified-fixed-by-refactor.",
+  "created_at": "2026-05-20T00:40:34.845305559Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAXW5uryVn6i5Q/54Ac8mCOInwF0XjJWeq1+hf6k2yiVh9k5pRLhqjP/qVvB1WHZGSKJhJlMpYBbF5Cud2hBZiDA=="
+}
