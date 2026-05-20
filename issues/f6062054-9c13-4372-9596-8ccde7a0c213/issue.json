@@ -3,11 +3,12 @@
   "display_id": 723,
   "title": "MemoryDb is a god object — 30+ methods across 8 unrelated concerns in one struct",
   "description": "## Severity\nMajor\n## Dimension\nsolid\n## Location\nsrc/memory.rs:122-1337 (impl MemoryDb)\n## Violation\nA single struct exposes 30+ public methods covering eight orthogonal subsystems:\n\n- Archival memory (memory_save / search / get / update / delete / list / stats / clear)\n- Core memory (get / get_section / update / format)\n- Schema migration (ensure_schema_on, run_migrations_on, migrate_v1_on, migrate_v2_on, migrate_v3_on)\n- Short-term sessions (save_session_summary, get_recent_sessions, format_recent_context_for_prompt)\n- Activity log (log_activity, get_session_activities, get_session_files_modified, get_session_issues)\n- Coding patterns (save_coding_pattern, get_patterns_for_file)\n- File relationships (save_file_relationship, get_related_files)\n- Error patterns + learned preferences (save_error_pattern, resolve_error_pattern, save_learned_preference, get_all_preferences)\n- Raw SQL escape hatch (execute_raw)\n\nThe file is 1767 lines, the impl block is contiguous, and every method takes &self — all eight subsystems share one Mutex<Connection>, so any slow query (e.g. format_file_knowledge running three joins) blocks unrelated paths. SRP says \"one reason to change\" — this struct has eight. Adding a new memory kind currently requires editing this file, a new test mod, the migration ladder, and the three formatting helpers.\n## Mandated refactor\n1. Extract per-concern repositories behind narrow traits: ArchivalRepo, CoreMemoryRepo, SessionRepo, ActivityRepo, PatternRepo, RelationshipRepo, ErrorRepo, PreferenceRepo (ISP — clients depend on the slice they use).\n2. Move schema migration into its own schema module, callable from MemoryDb::open.\n3. Replace the prompt-formatting methods (format_core_memory_for_prompt, format_recent_context_for_prompt, format_file_knowledge, format_learned_preferences) with a PromptFormatter that depends on the read-side traits — keeps the LLM-output sink out of the SQLite layer.\n4. Connection-sharing concern: wrap connection in Arc<Mutex<Connection>>, hand a clone to each repo. Or migrate to r2d2 pool for true parallelism.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:51:22.300403673Z",
-  "updated_at": "2026-05-18T21:51:24.941326788Z",
+  "updated_at": "2026-05-20T14:13:32.089058745Z",
+  "closed_at": "2026-05-20T14:13:32.089058745Z",
   "labels": [
     "qa-review",
     "solid"
