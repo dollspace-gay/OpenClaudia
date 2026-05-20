@@ -1,0 +1,10 @@
+{
+  "uuid": "6bfd7f86-f708-4fe3-86b0-e1fc6ef9b91a",
+  "issue_uuid": "1dfc54e3-2756-418a-ba57-0701319e001d",
+  "author": "lOrm",
+  "content": "Issue calls for tracking token spend against configurable budget; abort on exceed (parity with CC query/tokenBudget.ts). Not addressable in a cleanup pass: requires per-session token accounting, budget config schema, and turn-loop integration in pipeline.rs (forbidden-files territory). Parent audit #523.",
+  "created_at": "2026-05-20T14:37:09.474101693Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAKmFNNWqQ4ilW/MK/NvGlxwY79+HKP/yecF27qACFUlvrLOlwBJZ+368ji3P+izLDnk13zjh7mVUQlFgIfZf6Dg=="
+}
