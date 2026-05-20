@@ -1,0 +1,10 @@
+{
+  "uuid": "fcff880c-52d7-4cf1-96fc-f5656f56c24a",
+  "issue_uuid": "ff2170c9-4fd0-4648-ac71-f2a3b0ef0d5f",
+  "author": "lOrm",
+  "content": "Added stream_endpoint()/supports_streaming() trait methods on ProviderAdapter in src/providers/mod.rs. GoogleAdapter overrides stream_endpoint to return :streamGenerateContent?alt=sse so the proxy SSE parser handles the response. 2 tests.",
+  "created_at": "2026-05-20T18:36:01.105441701Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAwHQE7ABtDkvtXI4neiMZEgLvyjRSw2rda9laA+mdc+ISSFGpQaPjLcReva5mf0fNAQKt/OuuQeEnZeTeqvAJBA=="
+}
