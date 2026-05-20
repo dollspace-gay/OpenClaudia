@@ -3,11 +3,12 @@
   "display_id": 853,
   "title": "execute_enter_worktree mutates process global cwd from sync function",
   "description": "## Severity\nCritical\n\n## Dimension\nConcurrency / Tell-Dont-Ask / Decoupling\n\n## Location\nsrc/tools/worktree.rs:101-110 (execute_enter_worktree), 134, 213, 244, 255-256 (execute_exit_worktree)\n\n## Violation\nThe function unconditionally mutates process-global state with std::env::set_current_dir. set_current_dir is process-global. Every other tokio task in the runtime sees the new cwd. The READ_TRACKER uses canonicalize, which depends on cwd for relative paths. The PROJECT_ROOT static was captured at startup specifically to prevent this drift (see mod.rs:78-82 comment: Pinned at startup so that later cds via the worktree tool cannot move the jail underneath us). The jail design ANTICIPATES this anti-pattern but does not prevent it — the worktree tool deliberately violates the assumption.\n\nWorse, exit_worktree calls set_current_dir multiple times (lines 213, 244, 255), and the failure paths (lines 102-110) acknowledge that set_current_dir CAN fail but still report success on the happy path without verifying the cd actually took effect.\n\nThe test harness has to serialize tests via cwd_lock (line 349) precisely because of this — production code has no such guard. Concurrent agent sessions WILL race on cwd.\n\n## Mandated refactor\n1. Do NOT call set_current_dir at all. Track the worktree cwd as a per-session value in SessionState and pass it explicitly to every tool that needs a working directory (Command::current_dir(...), file resolve paths, etc.).\n2. If the design truly requires a per-session cwd notion, scope it per-Session via a Session struct member, not via process globals.\n3. Remove the WorktreeState struct (it captures original_cwd as a PathBuf but is never used to restore — dead YAGNI code).\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:06:09.200320488Z",
-  "updated_at": "2026-05-18T22:07:42.784349280Z",
+  "updated_at": "2026-05-20T12:57:36.838484233Z",
+  "closed_at": "2026-05-20T12:57:36.838484233Z",
   "labels": [
     "qa-review",
     "concurrency"
