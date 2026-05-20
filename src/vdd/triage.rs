@@ -23,8 +23,65 @@ use crate::vdd::prompts::VERIFIER_SYSTEM_PROMPT;
 use crate::vdd::review::AdversaryResponse;
 use crate::vdd::transport::send_to_builder_for_verification;
 
-/// Parse adversary response text into structured findings.
-pub fn parse_findings(adversary_response: &str, iteration: u32) -> Vec<Finding> {
+/// Disposition of a parsed adversary response.
+///
+/// Replaces the original "everything collapses to `Vec::new()`" return shape
+/// that conflated three distinct signals — `NO_FINDINGS` (adversary intentionally
+/// found nothing), parse failure (we couldn't read the response), and "JSON
+/// parsed but the `findings` array was missing/empty". Callers can now
+/// distinguish these for metrics / logging; the legacy [`parse_findings`]
+/// wrapper still returns the flat `Vec<Finding>` for back-compat.
+///
+/// See crosslink #879.
+#[derive(Debug)]
+pub enum ParseFindingsOutcome {
+    /// JSON parsed and the adversary explicitly reported `NO_FINDINGS`.
+    NoFindings,
+    /// JSON parsed and produced zero or more findings.
+    Findings(Vec<Finding>),
+    /// We could not parse the response as JSON (or relaxed-text). The
+    /// raw response is intentionally NOT carried in the variant — the
+    /// caller has already been logged a truncated preview by the parser
+    /// and we don't want a giant unparseable blob travelling through
+    /// metrics or audit channels.
+    ParseError {
+        /// Stable, short tag for downstream metric labels.
+        kind: ParseErrorKind,
+    },
+}
+
+/// Why parsing failed. Stable strings; do not rename without a metrics
+/// migration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseErrorKind {
+    /// The response was not JSON in any of the three forms (raw, fenced
+    /// code block, or relaxed natural-language).
+    NotJson,
+    /// The response parsed as JSON but had no `findings` field.
+    MissingFindingsField,
+}
+
+impl ParseErrorKind {
+    /// Stable label for tracing fields.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotJson => "not_json",
+            Self::MissingFindingsField => "missing_findings_field",
+        }
+    }
+}
+
+
+/// Parse adversary response text into a discriminated outcome.
+///
+/// Use this when the caller wants to distinguish "adversary said no findings"
+/// from "we couldn't read what the adversary said". Engine code path uses
+/// [`parse_findings`] for the legacy `Vec<Finding>` shape.
+pub fn parse_findings_detailed(
+    adversary_response: &str,
+    iteration: u32,
+) -> ParseFindingsOutcome {
     // Try to parse as JSON first
     let parsed: Option<AdversaryResponse> = serde_json::from_str(adversary_response)
         .ok()
@@ -40,24 +97,77 @@ pub fn parse_findings(adversary_response: &str, iteration: u32) -> Vec<Finding> 
 
     let raw_findings = if let Some(response) = parsed {
         if response.assessment.as_deref() == Some("NO_FINDINGS") {
-            info!("VDD: Adversary reported no findings");
-            return Vec::new();
+            info!(outcome = "no_findings", "VDD: Adversary reported no findings");
+            return ParseFindingsOutcome::NoFindings;
         }
         if let Some(findings) = response.findings {
             findings
         } else {
-            warn!("VDD: Adversary response has no 'findings' field or it is not an array");
-            return Vec::new();
+            warn!(
+                outcome = "parse_error",
+                kind = ParseErrorKind::MissingFindingsField.as_str(),
+                "VDD: Adversary response parsed but has no 'findings' field"
+            );
+            return ParseFindingsOutcome::ParseError {
+                kind: ParseErrorKind::MissingFindingsField,
+            };
         }
     } else {
-        warn!("VDD: Could not parse adversary response as JSON, treating as no findings");
+        warn!(
+            outcome = "parse_error",
+            kind = ParseErrorKind::NotJson.as_str(),
+            "VDD: Could not parse adversary response as JSON (not raw JSON, not fenced, not relaxed text)"
+        );
         info!(
+            kind = ParseErrorKind::NotJson.as_str(),
             "VDD: Unparseable response preview: {}",
             truncate_output(adversary_response, 500)
         );
-        return Vec::new();
+        return ParseFindingsOutcome::ParseError {
+            kind: ParseErrorKind::NotJson,
+        };
     };
 
+    let findings = build_findings_from_raw(raw_findings, iteration);
+    ParseFindingsOutcome::Findings(findings)
+}
+
+/// Parse adversary response text into structured findings (legacy shape).
+///
+/// Returns `Vec::new()` for both `NO_FINDINGS` and parse-failure outcomes,
+/// matching the pre-#879 contract. Use [`parse_findings_detailed`] when the
+/// caller needs to distinguish these.
+///
+/// The legacy wrapper still observes the discriminator in a trace span so
+/// upstream dashboards can count parse failures vs. intentional
+/// `NO_FINDINGS` without changing the function signature. crosslink #879.
+pub fn parse_findings(adversary_response: &str, iteration: u32) -> Vec<Finding> {
+    let outcome = parse_findings_detailed(adversary_response, iteration);
+    match outcome {
+        ParseFindingsOutcome::Findings(f) => f,
+        ParseFindingsOutcome::NoFindings => Vec::new(),
+        ParseFindingsOutcome::ParseError { kind } => {
+            // Re-emit the discriminator at debug level so the legacy
+            // wrapper has the same metric surface as the detailed API.
+            // The original warn! at the failure site already covered
+            // operator-visible logging; this is purely for downstream
+            // counters that key off `parse_error_kind`.
+            tracing::debug!(
+                parse_error_kind = kind.as_str(),
+                "parse_findings: returning Vec::new() due to parse error"
+            );
+            Vec::new()
+        }
+    }
+}
+
+/// Convert raw adversary-supplied finding rows into the canonical
+/// [`Finding`] shape. Extracted so [`parse_findings`] and
+/// [`parse_findings_detailed`] share the exact same construction logic.
+fn build_findings_from_raw(
+    raw_findings: Vec<crate::vdd::finding::RawFinding>,
+    iteration: u32,
+) -> Vec<Finding> {
     raw_findings
         .into_iter()
         .enumerate()
@@ -578,6 +688,39 @@ mod tests {
         let response = r#"{"findings": [], "assessment": "NO_FINDINGS"}"#;
         let findings = parse_findings(response, 1);
         assert!(findings.is_empty());
+    }
+
+    /// crosslink #879: parse-failure and intentional `NO_FINDINGS` are
+    /// distinct conditions and the detailed parser MUST surface them
+    /// with different `ParseFindingsOutcome` variants. The old flat
+    /// `Vec<Finding>` shape conflated both into "empty".
+    #[test]
+    fn parse_findings_detailed_distinguishes_no_findings_from_parse_error() {
+        let no_findings = r#"{"findings": [], "assessment": "NO_FINDINGS"}"#;
+        match parse_findings_detailed(no_findings, 1) {
+            ParseFindingsOutcome::NoFindings => {}
+            other => panic!("expected NoFindings, got {other:?}"),
+        }
+
+        // Pure garbage: not JSON in any form.
+        let garbage = "<<<not json at all>>>";
+        match parse_findings_detailed(garbage, 1) {
+            ParseFindingsOutcome::ParseError { kind } => {
+                assert_eq!(kind, ParseErrorKind::NotJson);
+                assert_eq!(kind.as_str(), "not_json");
+            }
+            other => panic!("expected ParseError(NotJson), got {other:?}"),
+        }
+
+        // JSON object but no `findings` field, no NO_FINDINGS assessment.
+        let no_field = r#"{"assessment": "OTHER"}"#;
+        match parse_findings_detailed(no_field, 1) {
+            ParseFindingsOutcome::ParseError { kind } => {
+                assert_eq!(kind, ParseErrorKind::MissingFindingsField);
+                assert_eq!(kind.as_str(), "missing_findings_field");
+            }
+            other => panic!("expected ParseError(MissingFindingsField), got {other:?}"),
+        }
     }
 
     /// Regression test for crosslink #478: `parse_findings` used `Uuid::new_v4`

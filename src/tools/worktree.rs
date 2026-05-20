@@ -295,18 +295,6 @@ fn git_in(cwd: &Path, args: &[&str]) -> Result<std::process::Output, String> {
     }
 }
 
-/// State of an active worktree.
-///
-/// `original_cwd` records the CWD at the moment the worktree was created so
-/// callers can use it as the path against which the not-yet-implemented
-/// `ToolContext.cwd` would resolve relative paths once Phase 2 lands.
-#[derive(Debug, Clone)]
-pub struct WorktreeState {
-    pub path: PathBuf,
-    pub branch: String,
-    pub original_cwd: PathBuf,
-}
-
 /// Create a new git worktree for isolated agent work.
 ///
 /// **Phase 1 (#345) behavior**: this function does NOT change the process

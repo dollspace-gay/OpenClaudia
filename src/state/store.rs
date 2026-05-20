@@ -184,6 +184,17 @@ impl std::ops::DerefMut for StateWriteGuard<'_> {
 
 impl Drop for StateWriteGuard<'_> {
     fn drop(&mut self) {
+        // crosslink #884: skip the flush during panic unwinding.
+        // A panicking mutation handler typically left the SessionState
+        // in a half-mutated shape; broadcasting the partial event
+        // stream to subscribers would make them act on torn state. We
+        // drop the queued events on the floor — the panic itself is
+        // the operator-visible signal and the runtime will tear down
+        // the task. Outside of panics, behaviour is unchanged.
+        if std::thread::panicking() {
+            self.pending.clear();
+            return;
+        }
         for event in self.pending.drain(..) {
             // send() fails when there are zero subscribers — that's
             // fine, the event just has no audience. Don't log — a

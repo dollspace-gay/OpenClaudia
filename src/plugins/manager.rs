@@ -82,13 +82,52 @@ pub struct PluginManager {
 }
 
 impl PluginManager {
-    /// Create a new plugin manager with default search paths
+    /// Create a new plugin manager with default search paths.
+    ///
+    /// Falls back to the project-relative search path only when `dirs::home_dir()`
+    /// is `None` — kept as the lenient default for tests and CI containers
+    /// where no $HOME is configured. Production callers should prefer
+    /// [`Self::try_new`], which surfaces the missing-home-directory case as
+    /// an explicit error instead of silently degrading to a project-only
+    /// search (crosslink #893).
     #[must_use]
     pub fn new() -> Self {
+        Self::build(dirs::home_dir())
+    }
+
+    /// Create a new plugin manager, returning an error when no home directory
+    /// can be resolved.
+    ///
+    /// `~/.openclaudia/plugins` and `~/.claude/plugins` are the two user-scope
+    /// search locations; without a home directory, plugin discovery can only
+    /// see project-scoped installs, which silently masks the failure case
+    /// where the user installed a plugin globally but the harness can't find
+    /// it. Production code paths (proxy startup, `openclaudia plugin …`,
+    /// `doctor`) MUST use this constructor so the missing-home-directory case
+    /// surfaces as a clear error rather than a "no plugins detected" mystery.
+    ///
+    /// # Errors
+    /// Returns [`PluginError::InstallError`] when `dirs::home_dir()` returns
+    /// `None`. Tests can bypass via [`Self::with_paths`].
+    pub fn try_new() -> Result<Self, PluginError> {
+        dirs::home_dir().map_or_else(
+            || {
+                Err(PluginError::InstallError(
+                    "cannot determine home directory; set $HOME so plugin discovery \
+                     can locate user-scope plugins"
+                        .to_string(),
+                ))
+            },
+            |home| Ok(Self::build(Some(home))),
+        )
+    }
+
+    /// Internal helper shared by [`Self::new`] and [`Self::try_new`].
+    fn build(home_dir: Option<PathBuf>) -> Self {
         let mut search_paths = Vec::new();
 
         // User plugins directory
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home_dir {
             search_paths.push(home.join(".openclaudia").join("plugins"));
             // Also search Claude Code's plugin cache for compatibility
             search_paths.push(home.join(".claude").join("plugins"));

@@ -37,13 +37,36 @@ mod tests;
 pub use ledger::CompletionLedger;
 
 /// What a migration does when invoked.
+///
+/// `Failed` carries a `String` rather than `anyhow::Error` so the outcome is
+/// `Clone`-able and easy to ship through channels / fan out across reporters
+/// (crosslink #894). Producers of `Failed` are expected to call `to_string()`
+/// on the underlying error (or use [`From<anyhow::Error>`]) at the failure
+/// site; the structured chain is lost on purpose — by the time a migration
+/// has returned `Failed`, downstream code only needs a stable human-readable
+/// summary for logs and the `migrate --dry-run` report.
+#[derive(Clone)]
 pub enum MigrationOutcome {
     /// Target state is already current — no action taken.
     Skipped,
     /// Migration ran and changed state. Message is surfaced in logs.
     Applied(String),
-    /// Migration failed. Startup continues; error is logged.
-    Failed(anyhow::Error),
+    /// Migration failed. Startup continues; error is logged. The payload
+    /// is the formatted error message (chain flattened to a single
+    /// `Display` string).
+    Failed(String),
+}
+
+impl From<anyhow::Error> for MigrationOutcome {
+    fn from(err: anyhow::Error) -> Self {
+        Self::Failed(format!("{err:#}"))
+    }
+}
+
+impl From<std::io::Error> for MigrationOutcome {
+    fn from(err: std::io::Error) -> Self {
+        Self::Failed(err.to_string())
+    }
 }
 
 /// Whether the runner needs to consult the completion ledger before

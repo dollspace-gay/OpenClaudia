@@ -1832,8 +1832,16 @@ async fn build_proxy_state(config: AppConfig) -> anyhow::Result<ProxyState> {
         &config.session.persist_path,
     )));
 
-    // Initialize plugin manager and discover plugins
-    let mut plugin_manager = PluginManager::new();
+    // Initialize plugin manager and discover plugins.
+    // crosslink #893: try_new surfaces missing-$HOME as a warning rather
+    // than degrading silently to a project-only manager.
+    let mut plugin_manager = match PluginManager::try_new() {
+        Ok(pm) => pm,
+        Err(e) => {
+            warn!(error = %e, "PluginManager: falling back to project-only search");
+            PluginManager::new()
+        }
+    };
     let plugin_errors = plugin_manager.discover();
     for err in plugin_errors {
         warn!(error = %err, "Plugin discovery error");

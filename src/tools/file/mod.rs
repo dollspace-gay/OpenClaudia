@@ -427,16 +427,33 @@ pub fn execute_read_file(
     }
 }
 
+/// Process-wide mutex for tests that mutate the global `READ_TRACKER`.
+///
+/// Sibling test modules (`edit::tests`, `write::tests`) call this to
+/// serialize against the tracker-internal tests here. Without a shared
+/// mutex, `clear_all()` calls in one test module race with `mark_read`
+/// calls in another and corrupt the `LazyLock` bucket state. See
+/// crosslink #968 follow-up.
+#[cfg(test)]
+pub fn shared_tracker_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use std::sync::MutexGuard;
 
     fn tracker_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        // Delegate to the crate-wide lock so write::tests and
+        // edit::tests can serialize against this module's tests.
+        // crosslink #968 follow-up: a separate local OnceLock here
+        // previously allowed concurrent corruption of READ_TRACKER
+        // state across sibling test modules.
+        super::shared_tracker_lock()
     }
 
     fn two_temp_paths() -> (

@@ -83,7 +83,15 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
 
     // Check plugins
     print!("\nPlugins... ");
-    let mut plugin_manager = PluginManager::new();
+    // crosslink #893: try_new surfaces missing-$HOME loudly in `doctor`
+    // since that is the exact UX a confused user is checking.
+    let mut plugin_manager = match PluginManager::try_new() {
+        Ok(pm) => pm,
+        Err(e) => {
+            println!("WARN ({e}); using project-only search");
+            PluginManager::new()
+        }
+    };
     let errors = plugin_manager.discover();
     if plugin_manager.count() > 0 {
         println!("OK ({} loaded)", plugin_manager.count());

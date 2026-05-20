@@ -1,4 +1,4 @@
-use super::{canonicalize_or_walk_up, resolve_open_path, resolve_path};
+use super::{canonicalize_or_walk_up, resolve_open_path, resolve_path, READ_TRACKER};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -69,6 +69,23 @@ pub fn execute_write_file(args: &HashMap<String, Value>) -> (String, bool) {
     let path = canonical.to_string_lossy().to_string();
     let path = path.as_str();
 
+    // crosslink #968: parity with `edit_file` — require the file to have
+    // been read at least once before we overwrite it. A model that
+    // writes blindly is hallucinating the old contents; the diff is
+    // unverifiable. Creating a new file (path does not exist yet) is
+    // exempt because there is no prior content to hallucinate.
+    let target_exists = Path::new(path).exists();
+    if target_exists && !READ_TRACKER.has_been_read(Path::new(path)) {
+        return (
+            format!(
+                "You must read '{path}' before overwriting it. \
+                 Use read_file first to see the actual contents, \
+                 then write_file to replace them."
+            ),
+            true,
+        );
+    }
+
     let Some(content) = args.get("content").and_then(|v| v.as_str()) else {
         return ("Missing 'content' argument".to_string(), true);
     };
@@ -118,6 +135,14 @@ mod tests {
     use std::collections::HashMap;
     use tempfile::TempDir;
 
+    /// Serialize tests that touch the process-global `READ_TRACKER`.
+    /// Delegates to the crate-wide `shared_tracker_lock` so write tests
+    /// don't race with `clear_all()` calls in the tracker-internal test
+    /// module (`src/tools/file/mod.rs::tests`).
+    fn tracker_lock() -> std::sync::MutexGuard<'static, ()> {
+        super::super::shared_tracker_lock()
+    }
+
     fn make_args(path: &str, content: &str) -> HashMap<String, serde_json::Value> {
         let mut m = HashMap::new();
         m.insert("path".to_string(), serde_json::json!(path));
@@ -152,11 +177,15 @@ mod tests {
 
     #[test]
     fn write_parent_already_exists_is_idempotent() {
+        let _lock = tracker_lock();
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("file.txt");
         let args = make_args(&path.to_string_lossy(), "first");
         let (_, is_err) = super::execute_write_file(&args);
         assert!(!is_err, "first write must succeed");
+        // crosslink #968: second-write to an existing file now requires
+        // the file to have been read first (parity with edit_file).
+        super::READ_TRACKER.mark_read(&path);
         let args2 = make_args(&path.to_string_lossy(), "second");
         let (msg2, is_err2) = super::execute_write_file(&args2);
         assert!(!is_err2, "second write must succeed: {msg2}");
@@ -166,14 +195,54 @@ mod tests {
 
     #[test]
     fn write_overwrites_existing_file() {
+        let _lock = tracker_lock();
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("existing.txt");
         std::fs::write(&path, "old content").expect("setup");
+        // crosslink #968: overwrite requires a prior read.
+        super::READ_TRACKER.mark_read(&path);
         let args = make_args(&path.to_string_lossy(), "new content");
         let (msg, is_err) = super::execute_write_file(&args);
         assert!(!is_err, "overwrite must succeed: {msg}");
         let content = std::fs::read_to_string(&path).expect("read back");
         assert_eq!(content, "new content");
+    }
+
+    /// crosslink #968: overwriting an existing file without first calling
+    /// `read_file` must fail, matching the read-before-edit invariant.
+    #[test]
+    fn fix968_overwrite_without_read_is_rejected() {
+        let _lock = tracker_lock();
+        super::READ_TRACKER.clear_all();
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("must_read_first.txt");
+        std::fs::write(&path, "old").expect("setup");
+        // Deliberately do NOT mark_read. Overwrite must fail.
+        let args = make_args(&path.to_string_lossy(), "new");
+        let (msg, is_err) = super::execute_write_file(&args);
+        assert!(is_err, "must reject overwrite without prior read: {msg}");
+        assert!(
+            msg.contains("must read"),
+            "error should mention read requirement: {msg}"
+        );
+        // File contents untouched.
+        let after = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(after, "old", "file must not be modified on rejection");
+    }
+
+    /// crosslink #968: creating a brand-new file (no prior contents to
+    /// hallucinate) MUST still work without a prior read — the
+    /// read-before-write rule exists to prevent overwriting unknown
+    /// content, not to gate fresh creation.
+    #[test]
+    fn fix968_create_new_file_does_not_require_read() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("brand_new_file.txt");
+        assert!(!path.exists(), "precondition: target must not exist");
+        let args = make_args(&path.to_string_lossy(), "fresh");
+        let (msg, is_err) = super::execute_write_file(&args);
+        assert!(!is_err, "create-new must succeed without prior read: {msg}");
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "fresh");
     }
 
     #[test]
@@ -235,9 +304,12 @@ mod tests {
 
     #[test]
     fn fix417_write_legitimate_regular_file_still_works() {
+        let _lock = tracker_lock();
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("real.txt");
         std::fs::write(&path, "old").expect("setup");
+        // crosslink #968: overwrite requires a prior read.
+        super::READ_TRACKER.mark_read(&path);
         let args = make_args(&path.to_string_lossy(), "new");
         let (msg, is_err) = super::execute_write_file(&args);
         assert!(!is_err, "regular-file overwrite must succeed: {msg}");

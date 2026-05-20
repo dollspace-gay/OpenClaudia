@@ -23,6 +23,32 @@ use std::time::Duration;
 
 use crate::file_error::{self, FileError};
 
+/// Process-wide shutdown flag for the TUI event loop.
+///
+/// crosslink #910: the original `run()` loop relied entirely on the
+/// `should_quit` field plus the event channel — there was no way for
+/// out-of-band code (a tokio signal handler, an integration test, the
+/// proxy's `/shutdown` endpoint) to ask the loop to exit without
+/// synthesising a keypress. This `AtomicBool` is checked at the top of
+/// every tick, giving any caller a lock-free, panic-safe way to bring
+/// the UI down cleanly.
+///
+/// Set via [`request_tui_shutdown`]. The flag is sticky for the
+/// lifetime of the process — once shutdown is requested, every future
+/// TUI invocation will exit immediately. That is intentional: a
+/// shutdown request that survives a restart is what an embedded host
+/// (or a watchdog) wants.
+pub static TUI_SHUTDOWN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Signal the TUI event loop to exit at the next tick.
+///
+/// Safe to call from any thread, including signal handlers — the
+/// underlying store is lock-free.
+pub fn request_tui_shutdown() {
+    TUI_SHUTDOWN.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Chat session state — compatible with the CLI's `ChatSession` JSON format
 /// so sessions saved by one can be loaded by the other.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -255,7 +281,50 @@ fn save_session(session: &TuiSession) -> Result<(), FileError> {
     let dir = sessions_dir();
     file_error::create_dir_all(&dir)?;
     let path = dir.join(format!("{}.json", session.id));
-    file_error::write_json_pretty(&path, session)
+    match file_error::write_json_pretty(&path, session) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            // crosslink #889: a single un-serializable message previously
+            // failed the *whole* save, losing every message in the buffer.
+            // Try a degraded save where messages that fail to serialize
+            // are replaced with a placeholder — operator sees the loss
+            // explicitly in the saved transcript instead of losing
+            // everything silently.
+            tracing::warn!(
+                error = %err,
+                "save_session: full save failed; attempting per-message recovery"
+            );
+            save_session_with_recovery(session, &path)
+        }
+    }
+}
+
+/// Best-effort recovery save: drop messages that fail individual
+/// serialization, replace each with a `{"role":"system","content":"[message
+/// lost: ...]"}` marker so the conversation history is reconstructable.
+///
+/// The path is reused (no second `create_dir_all` needed — the original
+/// `save_session` already created the directory).
+fn save_session_with_recovery(session: &TuiSession, path: &std::path::Path) -> Result<(), FileError> {
+    let mut salvaged = session.clone();
+    let mut lost = 0usize;
+    for msg in &mut salvaged.messages {
+        if serde_json::to_string(msg).is_err() {
+            *msg = serde_json::json!({
+                "role": "system",
+                "content": "[message lost during persistence — original was not serializable]",
+            });
+            lost += 1;
+        }
+    }
+    if lost > 0 {
+        tracing::warn!(
+            lost,
+            session_id = %salvaged.id,
+            "save_session: replaced {lost} unserializable message(s) with placeholders"
+        );
+    }
+    file_error::write_json_pretty(path, &salvaged)
 }
 
 fn list_sessions() -> Vec<TuiSession> {
@@ -598,6 +667,14 @@ impl App {
         // box is rendered directly in draw() as a ratatui widget.
 
         loop {
+            // crosslink #910: out-of-band shutdown signal. Any process
+            // (signal handler, background task, test fixture) can
+            // request a clean exit by flipping TUI_SHUTDOWN — the loop
+            // checks it before every tick so we exit promptly without
+            // a synthetic keypress.
+            if TUI_SHUTDOWN.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
             terminal.draw(|frame| self.draw(frame))?;
             if !self.handle_app_event(events.next()) {
                 break;

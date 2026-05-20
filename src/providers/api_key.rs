@@ -77,6 +77,24 @@ pub const MAX_API_KEY_LEN: usize = 512;
 pub struct ApiKey(String);
 
 impl ApiKey {
+    /// Borrow the raw key value for genuine cases that need it unredacted
+    /// (notably round-trip persistence — see [`Self::expose_raw_for_serialization`]
+    /// for the audit point used by `Serialize`).
+    ///
+    /// This is **unsafe** in the sense of "easy to misuse, not memory-unsafe":
+    /// the return value MUST NOT be logged, traced, printed, or surfaced in
+    /// error messages. The function name is deliberately verbose so that every
+    /// call site shows up under `git grep expose_raw`.
+    ///
+    /// # Safety
+    /// The caller asserts that the returned `&str` will not escape into any
+    /// log, error, or otherwise human-readable sink. The compiler cannot prove
+    /// this; reviewers must.
+    #[must_use]
+    pub unsafe fn expose_raw_for_serialization(&self) -> &str {
+        &self.0
+    }
+
     /// Attempt to construct an [`ApiKey`] from a raw string.
     ///
     /// # Errors
@@ -171,10 +189,25 @@ impl fmt::Display for ApiKey {
 }
 
 impl Serialize for ApiKey {
+    /// Serialize as the redaction placeholder so the raw secret never
+    /// lands in JSON / YAML / debug dumps via `serde_json::to_string`,
+    /// `tracing` field formatters, or any other `Serialize`-driven sink.
+    ///
+    /// Genuine round-trip persistence (rare; the only legitimate site is
+    /// the proxy's own config rewriter) must reach for
+    /// [`ApiKey::expose_raw_for_serialization`] explicitly so call sites
+    /// are greppable. See crosslink #944.
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.0)
+        serializer.serialize_str(REDACTED_PLACEHOLDER)
     }
 }
+
+/// The opaque marker emitted by `<ApiKey as Serialize>::serialize`.
+///
+/// Tests and downstream code can pattern-match on this constant when they
+/// want to assert "the secret did NOT leak" without reasoning about the
+/// redaction helper's truncation behaviour.
+pub const REDACTED_PLACEHOLDER: &str = "[REDACTED]";
 
 impl<'de> Deserialize<'de> for ApiKey {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -249,13 +282,42 @@ mod tests {
     }
 
     #[test]
-    fn serde_roundtrip_ok() {
-        let key = ApiKey::try_from_string("sk-ant-api03-valid-test-value".to_string())
+    fn serialize_redacts_and_does_not_round_trip() {
+        // crosslink #944: `Serialize` now emits the redaction placeholder so
+        // the raw key never leaks through a generic `to_string`. This breaks
+        // the previous serde round-trip on purpose — callers that need the
+        // raw value MUST go through `expose_raw_for_serialization` and
+        // construct the wire form themselves.
+        let key = ApiKey::try_from_string("sk-ant-api03-SECRET_VALUE_HERE".to_string())
             .expect("valid key");
         let json = serde_json::to_string(&key).expect("serialize");
-        assert_eq!(json, "\"sk-ant-api03-valid-test-value\"");
-        let back: ApiKey = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(back, key);
+        assert!(
+            !json.contains("SECRET_VALUE_HERE"),
+            "Serialize must not leak the raw key: {json}"
+        );
+        assert_eq!(json, format!("\"{REDACTED_PLACEHOLDER}\""));
+        // Deserializing the redacted placeholder back yields *that string*
+        // (which still passes validation), NOT the original key — by design,
+        // since reversing redaction would defeat the purpose.
+        let back: ApiKey = serde_json::from_str(&json).expect("deserialize placeholder");
+        assert_ne!(back, key, "round-trip must not recover the original key");
+        // SAFETY: test-only inspection of the raw value to prove the
+        // redaction placeholder was the actual round-trip value.
+        unsafe {
+            assert_eq!(back.expose_raw_for_serialization(), REDACTED_PLACEHOLDER);
+        }
+    }
+
+    #[test]
+    fn expose_raw_returns_unredacted_value() {
+        let raw = "sk-ant-api03-EXPOSE-TEST";
+        let key = ApiKey::try_from_string(raw.to_string()).expect("valid key");
+        // SAFETY: test asserts the unsafe accessor returns the same bytes
+        // that the safe `as_str` returns — no logging or persistence happens.
+        unsafe {
+            assert_eq!(key.expose_raw_for_serialization(), raw);
+        }
+        assert_eq!(key.as_str(), raw);
     }
 
     #[test]

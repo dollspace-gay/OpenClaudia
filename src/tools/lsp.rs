@@ -213,6 +213,32 @@ impl Drop for ChildGuard {
     }
 }
 
+/// Wait up to `timeout` for `child` to exit, polling with `try_wait`.
+///
+/// Returns `true` when the child reaped within the budget. On timeout,
+/// the caller MUST either kill the child or rely on `ChildGuard::drop`
+/// to do so — this helper itself does NOT kill.
+///
+/// Polling cadence is 25 ms so a fast-exiting server takes a quick
+/// path to the next request rather than waiting out the full
+/// timeout. crosslink #900.
+fn wait_with_timeout(child: &mut Child, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    let poll = std::time::Duration::from_millis(25);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    return false;
+                }
+                std::thread::sleep(poll);
+            }
+            Err(_) => return false,
+        }
+    }
+}
+
 /// Readiness probe: drain server-initiated notifications until the server
 /// replies to the `textDocument/documentSymbol` probe we sent with id=1001,
 /// or until `deadline` elapses.
@@ -724,7 +750,13 @@ fn run_lsp_request(
     let _ = read_lsp_response(&mut reader, 3);
     let _ = send_lsp_notification(&mut stdin, "exit", json!(null));
     drop(stdin); // EOF signals server to exit
-    let _ = guard.child_mut().wait();
+    // crosslink #900: the unbounded `wait()` after `shutdown`/`exit`
+    // could block indefinitely if a misbehaving server ignored the
+    // exit notification (the `ChildGuard` Drop also calls `wait()` so
+    // we still avoid a zombie, but the request thread would be wedged
+    // until then). Bounded poll: if the server hasn't reaped in 2s,
+    // fall through to Drop, which kills + waits.
+    wait_with_timeout(guard.child_mut(), std::time::Duration::from_secs(2));
 
     // Parse response into our types
     Ok(parse_lsp_response(action, file_path, &response))
@@ -887,32 +919,13 @@ fn parse_lsp_response(action: LspAction, file_path: &str, response: &Value) -> L
 
     match action {
         LspAction::Hover => {
-            let hover_text = result_data.and_then(|r| r.get("contents")).map(|c| {
-                c.as_str().map_or_else(
-                    || {
-                        c.as_object().map_or_else(
-                            || {
-                                c.as_array().map_or_else(String::new, |arr| {
-                                    arr.iter()
-                                        .filter_map(|v| {
-                                            v.as_str()
-                                                .or_else(|| v.get("value").and_then(|x| x.as_str()))
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join("\n")
-                                })
-                            },
-                            |obj| {
-                                obj.get("value")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string()
-                            },
-                        )
-                    },
-                    str::to_string,
-                )
-            });
+            // crosslink #895: the original 5-level-nested map_or_else
+            // chain compiled but was unreadable. Each shape of the
+            // LSP `contents` payload (string / object / array) is now
+            // handled by a dedicated helper.
+            let hover_text = result_data
+                .and_then(|r| r.get("contents"))
+                .map(extract_hover_contents);
             LspResult {
                 action: "hover".to_string(),
                 file_path: file_path.to_string(),
@@ -947,6 +960,53 @@ fn parse_lsp_response(action: LspAction, file_path: &str, response: &Value) -> L
 /// Convert a u64 to u32, saturating at `u32::MAX`.
 fn u64_to_u32_saturating(v: u64) -> u32 {
     u32::try_from(v).unwrap_or(u32::MAX)
+}
+
+/// Extract a flat text rendering of a `Hover.contents` payload.
+///
+/// Per LSP spec, `contents` may be:
+///   * a plain string,
+///   * a `MarkedString` object `{language, value}` / `MarkupContent`
+///     `{kind, value}`,
+///   * an array of any of the above.
+///
+/// All three shapes collapse to a single newline-joined string for
+/// terminal rendering — callers do not need the structured form.
+fn extract_hover_contents(contents: &Value) -> String {
+    if let Some(s) = contents.as_str() {
+        return s.to_string();
+    }
+    if let Some(obj) = contents.as_object() {
+        return extract_value_field(obj);
+    }
+    if let Some(arr) = contents.as_array() {
+        return arr
+            .iter()
+            .filter_map(extract_hover_array_element)
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    String::new()
+}
+
+/// Pull a `"value": "<string>"` field out of an LSP object payload.
+///
+/// Used for both `MarkupContent` and `MarkedString` object shapes —
+/// in both, the rendered text lives under `value`.
+fn extract_value_field(obj: &serde_json::Map<String, Value>) -> String {
+    obj.get("value")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Extract a single element of a `Hover.contents` array.
+///
+/// Each element is either a plain string or a `{value: ...}` object;
+/// other shapes (numbers, nulls) are skipped.
+fn extract_hover_array_element(v: &Value) -> Option<&str> {
+    v.as_str()
+        .or_else(|| v.get("value").and_then(|x| x.as_str()))
 }
 
 fn parse_locations(data: Option<&Value>) -> Vec<LspLocation> {

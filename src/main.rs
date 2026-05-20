@@ -729,7 +729,20 @@ fn finalize_chat(
 /// loaded" print + per-error `tracing::warn!`. Returns the manager
 /// for the caller to use. Extracted from `cmd_chat` per crosslink #262.
 fn init_plugin_manager() -> plugins::PluginManager {
-    let mut plugin_manager = plugins::PluginManager::new();
+    // crosslink #893: try_new surfaces "no home directory" as an explicit
+    // error. Production code logs it loudly and falls back to the
+    // project-only manager so the operator sees the misconfiguration
+    // rather than discovering it via missing plugins.
+    let mut plugin_manager = match plugins::PluginManager::try_new() {
+        Ok(pm) => pm,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "PluginManager: falling back to project-only search (no user home)"
+            );
+            plugins::PluginManager::new()
+        }
+    };
     let plugin_errors = plugin_manager.discover();
     if plugin_manager.count() > 0 {
         println!("\x1b[90m{} plugin(s) loaded\x1b[0m", plugin_manager.count());

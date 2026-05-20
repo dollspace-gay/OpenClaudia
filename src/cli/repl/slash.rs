@@ -1507,84 +1507,116 @@ fn plugin_action_help() {
     println!("    /<plugin-name>:<command>     - Run a plugin command\n");
 }
 
-/// Handle /plugin slash command actions
-pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::PluginManager) {
-    match action {
-        PluginAction::Menu => plugin_action_menu(plugin_manager),
-        PluginAction::Help => plugin_action_help(),
-        PluginAction::Install {
-            plugin,
-            marketplace,
-        } => plugin_install(plugin.as_deref(), marketplace.as_deref(), plugin_manager),
-        PluginAction::Manage => {
-            let all: Vec<_> = plugin_manager.all().collect();
-            if all.is_empty() {
-                println!("\nNo plugins installed.\n");
-            } else {
-                println!("\n=== Plugin Management ===\n");
-                for plugin in &all {
-                    let status = if plugin.enabled {
-                        "enabled"
-                    } else {
-                        "disabled"
-                    };
-                    println!("  {} [{}]", plugin.name(), status);
-                    println!("    Path: {}", plugin.root().display());
-                }
-                println!();
-                println!("  /plugin enable <name>    - Enable a plugin");
-                println!("  /plugin disable <name>   - Disable a plugin");
-                println!("  /plugin uninstall <name> - Remove a plugin\n");
+/// Tell-Don't-Ask interface for `PluginAction` variants.
+///
+/// crosslink #898: the original `handle_plugin_action` was a 70-line `match`
+/// that branched on every variant and threaded `&mut PluginManager` into
+/// helper functions. Variants now own their dispatch via `apply`, so adding
+/// or splitting a variant changes one impl arm instead of two callers (the
+/// constructor in slash parsing and the dispatcher here).
+pub trait PluginActionRunner {
+    /// Execute this action against `plugin_manager`. Errors are surfaced
+    /// to stdout/stderr by the impl — the CLI is the only consumer.
+    fn apply(self, plugin_manager: &mut plugins::PluginManager);
+}
+
+impl PluginActionRunner for PluginAction {
+    fn apply(self, plugin_manager: &mut plugins::PluginManager) {
+        match self {
+            Self::Menu => plugin_action_menu(plugin_manager),
+            Self::Help => plugin_action_help(),
+            Self::Install {
+                plugin,
+                marketplace,
+            } => plugin_install(plugin.as_deref(), marketplace.as_deref(), plugin_manager),
+            Self::Manage => plugin_action_manage(plugin_manager),
+            Self::Uninstall { plugin } => plugin_action_uninstall(&plugin, plugin_manager),
+            Self::Enable { plugin } => match plugin_manager.enable(&plugin) {
+                Ok(()) => println!("\nEnabled plugin '{plugin}'. Restart to apply changes.\n"),
+                Err(e) => eprintln!("\nFailed to enable plugin: {e}\n"),
+            },
+            Self::Disable { plugin } => match plugin_manager.disable(&plugin) {
+                Ok(()) => println!("\nDisabled plugin '{plugin}'. Restart to apply changes.\n"),
+                Err(e) => eprintln!("\nFailed to disable plugin: {e}\n"),
+            },
+            Self::Validate { path } => plugin_validate(path),
+            Self::Marketplace { action, target } => {
+                plugin_marketplace(action.as_deref(), target.as_deref(), plugin_manager);
             }
-        }
-        PluginAction::Uninstall { plugin } => {
-            let project_root =
-                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            let mut installed = plugins::InstalledPlugins::load(&project_root);
-            if installed.remove(&plugin) {
-                if let Err(e) = installed.save(&project_root) {
-                    tracing::warn!("Failed to save install tracking: {}", e);
-                }
-                let plugins_dir = std::path::PathBuf::from(".openclaudia/plugins");
-                let uninstall_dir = plugins_dir.join(&plugin);
-                if uninstall_dir.exists() {
-                    if let Err(e) = fs::remove_dir_all(&uninstall_dir) {
-                        eprintln!("Warning: Could not remove plugin directory: {e}");
-                    }
-                }
-                let _ = plugin_manager.reload();
-                println!("\nUninstalled plugin '{plugin}'. Restart to apply changes.\n");
-            } else {
-                eprintln!("\nPlugin '{plugin}' not found in install tracking.\n");
+            Self::Reload => plugin_action_reload(plugin_manager),
+            Self::RunCommand {
+                plugin_name,
+                command_name,
+            } => {
+                plugin_run_command(&plugin_name, &command_name, plugin_manager);
             }
-        }
-        PluginAction::Enable { plugin } => match plugin_manager.enable(&plugin) {
-            Ok(()) => println!("\nEnabled plugin '{plugin}'. Restart to apply changes.\n"),
-            Err(e) => eprintln!("\nFailed to enable plugin: {e}\n"),
-        },
-        PluginAction::Disable { plugin } => match plugin_manager.disable(&plugin) {
-            Ok(()) => println!("\nDisabled plugin '{plugin}'. Restart to apply changes.\n"),
-            Err(e) => eprintln!("\nFailed to disable plugin: {e}\n"),
-        },
-        PluginAction::Validate { path } => plugin_validate(path),
-        PluginAction::Marketplace { action, target } => {
-            plugin_marketplace(action.as_deref(), target.as_deref(), plugin_manager);
-        }
-        PluginAction::Reload => {
-            let errors = plugin_manager.reload();
-            println!("\nReloaded plugins: {} loaded", plugin_manager.count());
-            for err in &errors {
-                eprintln!("  Error: {err}");
-            }
-            println!();
-        }
-        PluginAction::RunCommand {
-            plugin_name,
-            command_name,
-        } => {
-            plugin_run_command(&plugin_name, &command_name, plugin_manager);
         }
     }
+}
+
+/// Print the management menu — extracted so [`PluginActionRunner::apply`]
+/// stays one-line-per-variant.
+fn plugin_action_manage(plugin_manager: &plugins::PluginManager) {
+    let all: Vec<_> = plugin_manager.all().collect();
+    if all.is_empty() {
+        println!("\nNo plugins installed.\n");
+        return;
+    }
+    println!("\n=== Plugin Management ===\n");
+    for plugin in &all {
+        let status = if plugin.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        };
+        println!("  {} [{}]", plugin.name(), status);
+        println!("    Path: {}", plugin.root().display());
+    }
+    println!();
+    println!("  /plugin enable <name>    - Enable a plugin");
+    println!("  /plugin disable <name>   - Disable a plugin");
+    println!("  /plugin uninstall <name> - Remove a plugin\n");
+}
+
+/// Remove a plugin from install tracking, delete its on-disk directory,
+/// and refresh the in-memory manager.
+fn plugin_action_uninstall(plugin: &str, plugin_manager: &mut plugins::PluginManager) {
+    let project_root =
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let mut installed = plugins::InstalledPlugins::load(&project_root);
+    if installed.remove(plugin) {
+        if let Err(e) = installed.save(&project_root) {
+            tracing::warn!("Failed to save install tracking: {}", e);
+        }
+        let plugins_dir = std::path::PathBuf::from(".openclaudia/plugins");
+        let uninstall_dir = plugins_dir.join(plugin);
+        if uninstall_dir.exists() {
+            if let Err(e) = fs::remove_dir_all(&uninstall_dir) {
+                eprintln!("Warning: Could not remove plugin directory: {e}");
+            }
+        }
+        let _ = plugin_manager.reload();
+        println!("\nUninstalled plugin '{plugin}'. Restart to apply changes.\n");
+    } else {
+        eprintln!("\nPlugin '{plugin}' not found in install tracking.\n");
+    }
+}
+
+/// Reload manager and print discovered-plugin summary.
+fn plugin_action_reload(plugin_manager: &mut plugins::PluginManager) {
+    let errors = plugin_manager.reload();
+    println!("\nReloaded plugins: {} loaded", plugin_manager.count());
+    for err in &errors {
+        eprintln!("  Error: {err}");
+    }
+    println!();
+}
+
+/// Backwards-compatible free function — call sites that haven't migrated
+/// to [`PluginActionRunner::apply`] still work. New code should use the
+/// trait method directly.
+pub fn handle_plugin_action(action: PluginAction, plugin_manager: &mut plugins::PluginManager) {
+    action.apply(plugin_manager);
 }
 
 fn plugin_install(

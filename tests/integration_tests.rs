@@ -176,8 +176,25 @@ mod file_tools {
 
     #[test]
     fn test_write_file_overwrite() {
+        let _lock = READ_TRACKER_LOCK.lock().unwrap();
+        reset_read_tracker();
         let dir = setup_test_dir();
         let file_path = dir.path().join("test.txt");
+
+        // crosslink #968: overwriting an existing file now requires a
+        // prior `read_file` call. Issue one through the same tool surface
+        // before the write so the test exercises the realistic
+        // read-then-write flow.
+        let read_call = make_tool_call(
+            "read_file",
+            &json!({"path": file_path.to_string_lossy()}),
+        );
+        let read_result = execute_tool(&read_call);
+        assert!(
+            !read_result.is_error,
+            "read_file precondition failed: {}",
+            read_result.content
+        );
 
         let tool_call = make_tool_call(
             "write_file",

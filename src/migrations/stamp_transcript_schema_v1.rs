@@ -83,13 +83,13 @@ impl Migration for StampTranscriptSchemaV1 {
                 // No marker yet — first run on this machine; fall through.
             }
             Err(err) => {
-                return MigrationOutcome::Failed(err);
+                return err.into();
             }
         }
 
         if let Some(parent) = path.parent() {
             if let Err(err) = std::fs::create_dir_all(parent) {
-                return MigrationOutcome::Failed(err.into());
+                return err.into();
             }
         }
         let marker = json!({ "transcripts": CURRENT_TRANSCRIPT_SCHEMA });
@@ -103,7 +103,7 @@ impl Migration for StampTranscriptSchemaV1 {
                 "wrote {} (transcripts: v{CURRENT_TRANSCRIPT_SCHEMA})",
                 path.display()
             )),
-            Err(err) => MigrationOutcome::Failed(err.into()),
+            Err(err) => err.into(),
         }
     }
 }
