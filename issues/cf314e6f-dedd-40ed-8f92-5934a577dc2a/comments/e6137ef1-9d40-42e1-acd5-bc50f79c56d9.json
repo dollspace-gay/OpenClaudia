@@ -1,0 +1,10 @@
+{
+  "uuid": "e6137ef1-9d40-42e1-acd5-bc50f79c56d9",
+  "issue_uuid": "cf314e6f-dedd-40ed-8f92-5934a577dc2a",
+  "author": "lOrm",
+  "content": "Duplicate of #820 (already closed 2026-05-20 07:13) — same defect (execute_lsp accepts arbitrary file_path with no sandbox), same location (src/tools/lsp.rs:79-152), same mandated refactor (project-root check + credential denylist + size cap + env scrub). Verified at HEAD 80439851: related controls have landed — #648 (10 MiB LSP_MAX_FILE_SIZE guard at src/tools/lsp.rs:540-561) and #650 (is_lsp_connected gate at lsp.rs:528-538) and #869 (env scrub on LSP child). The project-root constraint and credential-path denylist portion is still not implemented in current code, but tracking continues under #820 rather than this duplicate. Closing as duplicate; if the residual denylist work needs its own ticket, file fresh rather than reopening.",
+  "created_at": "2026-05-20T13:25:54.069930236Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAPB5Xl4YBQr5KlgPD4av7ytBFkPNn/Mz4ICaJKJIcgn32gpWStXzxkkv/80vWpB22/pXEoDBq0gWkx8GMKELnDQ=="
+}
