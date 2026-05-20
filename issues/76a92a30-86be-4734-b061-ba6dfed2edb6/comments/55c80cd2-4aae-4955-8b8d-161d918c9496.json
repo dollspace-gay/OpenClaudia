@@ -1,0 +1,10 @@
+{
+  "uuid": "55c80cd2-4aae-4955-8b8d-161d918c9496",
+  "issue_uuid": "76a92a30-86be-4734-b061-ba6dfed2edb6",
+  "author": "lOrm",
+  "content": "VERIFIED-DUP-OF-FIXED (closed via #354 + #790). Forensic grep on main @3a19163f:\n\n```\n$ grep -n 'LANGUAGES\\|known_languages\\|extension_to_language' src/rules.rs\n12:/// Both [`extension_to_language`] and [`known_languages`] are derived from\n15:pub(crate) const LANGUAGES: &[(&str, &[&str])] = &[\n59:/// File extension to language name mapping (derived from [`LANGUAGES`]).\n63:fn extension_to_language(ext: &str) -> Option<&'static str> {\n64:    for (lang, exts) in LANGUAGES {\n180:        // single LANGUAGES table so both directions stay in sync.\n181:        for (lang, _) in LANGUAGES {\n\n$ grep -n 'has_source_extension\\|has_file_extension' src/auto_learn.rs\n457:fn has_source_extension(word: &str) -> bool {\n466:/// Crosslink #790: identical to [`has_source_extension`] now that the\n470:fn has_file_extension(word: &str) -> bool {\n471:    has_source_extension(word)\n```\n\n`LANGUAGES` is now the single source of truth; `extension_to_language` iterates it, `known_languages` derives from it (line 181), and `auto_learn.rs` was deduplicated under #790 (`has_file_extension` delegates to `has_source_extension`). Tests at rules.rs:338-351 pin the round-trip. Closing as duplicate of #354/#790.",
+  "created_at": "2026-05-20T07:22:15.140569769Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAF7CyeXU8eYWeLHKazERW1r8dkdFQmvXe8/d3JgvGXEelS51RL6PlutishegfUlS7nmR2W5/aTWFjXP7n+IHoBA=="
+}
