@@ -1,0 +1,10 @@
+{
+  "uuid": "c660818c-1de9-4f6d-ac38-99bb45942631",
+  "issue_uuid": "c898920b-0eda-48c5-a0e9-b5882655cbf3",
+  "author": "lOrm",
+  "content": "Duplicate of #872 (same QA finding: WorktreeState struct in src/tools/worktree.rs is dead YAGNI scaffolding never instantiated). Canonical issue is #872 (lowest ID); fix tracked there.",
+  "created_at": "2026-05-20T12:03:55.859123950Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAwRQyjZR18y6oc1CZhZQpZCr2X5QOoAp4NrXeGM8Ekv9nm9RzySWuUKilcjz+gpyRIwANIsk//7P1ix3TdfY9AA=="
+}
