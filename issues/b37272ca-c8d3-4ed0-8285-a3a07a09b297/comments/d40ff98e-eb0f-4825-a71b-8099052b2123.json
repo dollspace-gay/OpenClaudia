@@ -1,0 +1,10 @@
+{
+  "uuid": "d40ff98e-eb0f-4825-a71b-8099052b2123",
+  "issue_uuid": "b37272ca-c8d3-4ed0-8285-a3a07a09b297",
+  "author": "lOrm",
+  "content": "Issue calls for a native PowerShell tool for Windows (parity with CC PowerShellTool). Not addressable in a cleanup pass: requires Windows-specific subprocess plumbing, command-injection hardening for PS, encoding handling (UTF-16LE), and tests run on Windows CI. Multi-day platform-specific work. Parent audit #523.",
+  "created_at": "2026-05-20T14:39:18.360886453Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAQfSTR/+sMp2crF5GZCB91frwUHlMkfrTvg6j9/YPzx8zVCRLHQtq5r9R+OSkrpvAB2v9Ed5AQUJ5HXsI5zagBQ=="
+}
