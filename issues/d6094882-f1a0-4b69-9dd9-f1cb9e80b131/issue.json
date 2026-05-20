@@ -3,11 +3,12 @@
   "display_id": 957,
   "title": "VddEngine::send_to_builder lacks timeout that send_to_adversary now has after #496",
   "description": "## Severity\nMajor\n## Dimension\nerror-handling\n## Location\nsrc/vdd/mod.rs:1278-1323, 995-1041\n## Violation\nsend_to_adversary at line 1184-1275 wraps the request and body-read in tokio::time::timeout(adversary.request_timeout_seconds) per the comment referencing crosslink #496 fix:\n\n```rust\nlet timeout_secs = self.config.adversary.request_timeout_seconds;\nlet timeout = std::time::Duration::from_secs(timeout_secs);\nlet response = tokio::time::timeout(timeout, forward_request(...)).await\n    .map_err(|_| VddError::AdversaryRequestFailed(format!(\"adversary request timed out after {timeout_secs}s\")))?\n    ...\n```\n\nBut the sibling methods that route through the SAME forward_request — send_to_builder (1278) and send_to_builder_for_verification (995) — have NO timeout wrap. A hung builder revision request blocks the whole VDD blocking loop indefinitely; a hung verifier request similarly blocks every iteration.\n\nThe #496 mitigation is half-applied: the adversary is timeout-protected but the verifier and builder paths share the same hung-API failure mode and got missed.\n\n## Mandated refactor\nExtract the timeout-wrapped forward_request into a helper:\n\n```rust\nasync fn forward_with_timeout(\n    client: &Client,\n    provider: &ProviderConfig,\n    provider_name: &str,\n    model: &str,\n    endpoint: &str,\n    body: &Value,\n    headers: Vec<(String, String)>,\n    timeout_secs: u64,\n) -> Result<reqwest::Response, VddError> { ... }\n```\n\nAll three send_* methods use this helper with the same timeout config. Add a separate config field for verifier_timeout_seconds and builder_timeout_seconds if independent control is needed; otherwise reuse adversary.request_timeout_seconds for all three.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:20:07.785528684Z",
-  "updated_at": "2026-05-18T22:20:14.565358885Z",
+  "updated_at": "2026-05-20T04:33:33.165739651Z",
+  "closed_at": "2026-05-20T04:33:33.165739651Z",
   "labels": [
     "qa-review",
     "error-handling"
