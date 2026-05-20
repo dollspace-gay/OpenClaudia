@@ -242,17 +242,23 @@ async fn main() -> anyhow::Result<()> {
 /// Loads config, resolves the provider/model/API key, builds the system prompt,
 /// then launches the ratatui interactive TUI with the API pipeline wired up.
 async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
-    let mut config = match config::load_config() {
-        Ok(c) => c,
-        Err(e) => {
-            if config::config_file_exists() {
-                eprintln!("Failed to parse configuration: {e}");
-            } else {
-                eprintln!("No configuration found. Run 'openclaudia init' first.");
-            }
-            return Ok(());
+    // Crosslink #797: every configuration-load / provider-resolve /
+    // auth-resolve failure path used to print to stderr and return
+    // `Ok(())`, giving exit code 0 even on a broken setup. `set -e`
+    // wrappers and orchestration that branches on exit status saw success
+    // and continued. Each failure now propagates as `anyhow::Error` so
+    // main() exits non-zero; the human-readable `eprintln!` messages stay
+    // for friendly framing, but the error-vs-non-error distinction is no
+    // longer collapsed at the exit boundary.
+    let mut config = config::load_config().map_err(|e| {
+        if config::config_file_exists() {
+            eprintln!("Failed to parse configuration: {e}");
+            anyhow::anyhow!("invalid configuration: {e}")
+        } else {
+            eprintln!("No configuration found. Run 'openclaudia init' first.");
+            anyhow::anyhow!("no configuration found")
         }
-    };
+    })?;
 
     // Auto-detect provider from model name
     if let Some(ref model) = model_override {
@@ -267,7 +273,10 @@ async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
             "No provider configured for target '{}'",
             config.proxy.target
         );
-        return Ok(());
+        anyhow::bail!(
+            "no provider configured for target '{}'",
+            config.proxy.target
+        );
     };
 
     let Some(ChatAuth {
@@ -275,7 +284,12 @@ async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
         claude_code_token,
     }) = resolve_chat_auth(&config.proxy.target, provider).await?
     else {
-        return Ok(());
+        // resolve_chat_auth already printed the user-facing error; surface
+        // as a non-zero exit so shell wrappers detect the failure.
+        anyhow::bail!(
+            "could not resolve authentication for target '{}'",
+            config.proxy.target
+        );
     };
 
     let model = resolve_model_name(model_override, provider.model.clone(), &config.proxy.target);

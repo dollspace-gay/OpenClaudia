@@ -140,15 +140,19 @@ pub fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool) {
 /// Return the hostname of `url` in lowercase, stripping any `www.`
 /// prefix. Used by [`domain_matches`] to compare a search-result URL
 /// against an allow / block list. `None` when the URL can't be parsed.
+///
+/// Crosslink #763: was a hand-rolled split-on-`://` / `/` / `:` parser that
+/// misread `http://user:pass@host/`, IPv6 literals (`https://[::1]:8080/`)
+/// and treated `://no-scheme` as host `no-scheme`. Now delegates to
+/// `url::Url`, which is already a dependency, so authority / userinfo /
+/// IPv6 handling is correct by construction.
 fn host_of(url: &str) -> Option<String> {
-    let rest = url.split_once("://").map_or(url, |(_, tail)| tail);
-    let host_port = rest.split('/').next()?;
-    let host = host_port.split(':').next()?.to_ascii_lowercase();
-    let host = host.strip_prefix("www.").unwrap_or(&host);
+    let host = url::Url::parse(url).ok()?.host_str()?.to_ascii_lowercase();
+    let host = host.strip_prefix("www.").unwrap_or(&host).to_string();
     if host.is_empty() {
         None
     } else {
-        Some(host.to_string())
+        Some(host)
     }
 }
 
@@ -279,8 +283,20 @@ mod tests {
             host_of("https://EXAMPLE.com:8080/x"),
             Some("example.com".into())
         );
-        assert_eq!(host_of("://no-scheme"), Some("no-scheme".into()));
+        // crosslink #763: url::Url rejects scheme-less and empty inputs
+        // (replacing the bespoke parser that returned `Some("no-scheme")`).
+        assert_eq!(host_of("://no-scheme"), None);
         assert_eq!(host_of(""), None);
+        // Userinfo and IPv6 literals — both wrong with the old hand-rolled
+        // splitter, both correct now via url::Url.
+        assert_eq!(
+            host_of("http://user:pass@example.com/x"),
+            Some("example.com".into())
+        );
+        assert_eq!(
+            host_of("https://[::1]:8080/path"),
+            Some("[::1]".into())
+        );
     }
 
     #[test]

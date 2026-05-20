@@ -576,11 +576,17 @@ impl ToolInterceptor {
         };
 
         let before = self.buffer[..start_idx].to_string();
-        let after = self.buffer[result_end..].to_string();
         let invoke_block = &self.buffer[start_idx..invoke_end];
 
         let tools = self.parse_invocations(invoke_block);
-        self.buffer.clone_from(&after);
+
+        // Crosslink #789: replaced `let after = self.buffer[result_end..].to_string();
+        // self.buffer.clone_from(&after);` (two clones of the trailing N-K bytes
+        // per iteration → O(N*K) over the driving loop) with a single in-place
+        // `drain` and one copy of the suffix to satisfy the public return
+        // signature. Total cost across K extractions is now O(N).
+        self.buffer.drain(..result_end);
+        let after = self.buffer.clone();
         // Buffer shrunk to the post-extraction suffix; cached marker offsets
         // would now point at the wrong bytes, so drop them (crosslink #743).
         self.invalidate_scan_cache();
@@ -600,13 +606,24 @@ impl ToolInterceptor {
             let open_tag_attr = format!("<{tool} ");
 
             // Check for <tool> or <tool attr="...">
+            //
+            // Crosslink #768: the prior form
+            // `earliest_match.is_none() || idx < earliest_match.unwrap().0`
+            // relied on short-circuit evaluation to dodge a panic on the
+            // `.unwrap()`. A future reorder of the operands would introduce
+            // an unconditional panic the compiler cannot warn about.
+            // `map_or(true, ...)` removes the `.unwrap()` entirely.
             if let Some(idx) = self.buffer.find(&open_tag) {
-                if earliest_match.is_none() || idx < earliest_match.unwrap().0 {
+                let should_replace =
+                    earliest_match.is_none_or(|(prev, _)| idx < prev);
+                if should_replace {
                     earliest_match = Some((idx, *tool));
                 }
             }
             if let Some(idx) = self.buffer.find(&open_tag_attr) {
-                if earliest_match.is_none() || idx < earliest_match.unwrap().0 {
+                let should_replace =
+                    earliest_match.is_none_or(|(prev, _)| idx < prev);
+                if should_replace {
                     earliest_match = Some((idx, *tool));
                 }
             }
@@ -624,8 +641,12 @@ impl ToolInterceptor {
         let tool = self.parse_shorthand_tag(tool_name, tag_content)?;
 
         let before = self.buffer[..start_idx].to_string();
-        let after = self.buffer[block_end..].to_string();
-        self.buffer.clone_from(&after);
+        // Crosslink #789: drain in-place rather than the previous
+        // to_string → clone_from pair. Eliminates one full-buffer clone per
+        // iteration; the remaining `after.clone()` only exists to satisfy the
+        // public return signature.
+        self.buffer.drain(..block_end);
+        let after = self.buffer.clone();
         // Buffer shrunk to the post-extraction suffix; cached marker offsets
         // would now point at the wrong bytes, so drop them (crosslink #743).
         self.invalidate_scan_cache();

@@ -82,14 +82,40 @@ pub fn projects_dir() -> PathBuf {
 
 /// Sanitize a filesystem path for use as a project-directory name.
 ///
-/// Claude Code's regex: `/[^a-zA-Z0-9]/g` → `-`. The result is the full
-/// sanitized string — no length cap, so a path like `/home/doll/...`
-/// produces `-home-doll-...`.
+/// Claude Code's regex: `/[^a-zA-Z0-9]/g` → `-`. The naive form collapses
+/// `/home/doll/Open-Claudia`, `/home/doll/Open Claudia`, and
+/// `/home/doll/Open/Claudia` to the same string, sharing the on-disk
+/// project directory between distinct projects and leaking transcript
+/// metadata across them.
+///
+/// Crosslink #777: append a short hex digest of the *original* input so the
+/// human-readable prefix can collide freely without sharing a directory.
+/// The dash-replaced prefix is capped at 200 bytes so the digest-suffixed
+/// total (`-<200>-<16>`) stays well under the 255-byte ext4 path-component
+/// limit. The hash is taken with SHA-256 (already a dependency) and
+/// truncated to 16 hex chars (64 bits) — well above the
+/// `sqrt(50e3)` collision-resistance threshold for the per-machine
+/// project counts this directory ever sees.
 #[must_use]
 pub fn sanitize_path(name: &str) -> String {
-    name.chars()
+    use sha2::{Digest, Sha256};
+
+    const PREFIX_CAP: usize = 200;
+    const DIGEST_HEX_LEN: usize = 16;
+
+    let mut sanitized: String = name
+        .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect()
+        .collect();
+    if sanitized.len() > PREFIX_CAP {
+        sanitized.truncate(PREFIX_CAP);
+    }
+
+    let digest = Sha256::digest(name.as_bytes());
+    let hex = format!("{digest:x}");
+    let suffix = &hex[..DIGEST_HEX_LEN];
+
+    format!("{sanitized}-{suffix}")
 }
 
 /// Absolute projects-dir path for `cwd` (e.g.
@@ -107,24 +133,68 @@ pub fn transcript_path(cwd: &Path, session_id: &str) -> PathBuf {
 }
 
 /// Best-effort git branch lookup via `git rev-parse --abbrev-ref HEAD`.
-/// Returns `None` when git isn't available, `cwd` isn't a repo, or the
-/// command takes longer than 2 seconds.
+/// Returns `None` when git isn't available or `cwd` isn't a repo.
+///
+/// Crosslink #781: previously spawned a blocking `git` subprocess on every
+/// transcript-line append, hitting the tokio executor thread for 5-50 ms
+/// per call (and indefinitely on a wedged git lock — there is no timeout
+/// on `std::process::Command::output()`). Now memoises the answer per
+/// `(cwd, .git/HEAD mtime)` so the steady-state cost on a session that
+/// stays on one branch is a single subprocess call followed by hash-map
+/// hits, and a `git checkout` invalidates the entry naturally on the next
+/// call.
 #[must_use]
 pub fn current_git_branch(cwd: &Path) -> Option<String> {
-    let out = std::process::Command::new("git")
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::SystemTime;
+
+    /// Per-cwd cache entry: last-observed `.git/HEAD` mtime + last branch
+    /// result. `mtime = None` is a sentinel for "no `.git/HEAD` could be
+    /// stat'd", which still memoises the negative answer so a non-repo
+    /// directory does not pay a subprocess on every line.
+    type BranchCacheEntry = (Option<SystemTime>, Option<String>);
+    type BranchCache = HashMap<PathBuf, BranchCacheEntry>;
+
+    static CACHE: Mutex<Option<BranchCache>> = Mutex::new(None);
+
+    let head_mtime = std::fs::metadata(cwd.join(".git").join("HEAD"))
+        .and_then(|m| m.modified())
+        .ok();
+
+    {
+        let guard = CACHE.lock().ok();
+        if let Some(map) = guard.as_ref().and_then(|g| g.as_ref()) {
+            if let Some((cached_mtime, cached_branch)) = map.get(cwd) {
+                if *cached_mtime == head_mtime {
+                    return cached_branch.clone();
+                }
+            }
+        }
+    }
+
+    let branch = match std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(cwd)
         .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
+    {
+        Ok(out) if out.status.success() => {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if s.is_empty() || s == "HEAD" {
+                None
+            } else {
+                Some(s)
+            }
+        }
+        _ => None,
+    };
+
+    if let Ok(mut guard) = CACHE.lock() {
+        let map = guard.get_or_insert_with(HashMap::new);
+        map.insert(cwd.to_path_buf(), (head_mtime, branch.clone()));
     }
-    let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if branch.is_empty() || branch == "HEAD" {
-        None
-    } else {
-        Some(branch)
-    }
+
+    branch
 }
 
 /// Build a [`SerializedMessage`] for `message` using the current time,
@@ -429,15 +499,59 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_matches_claude_code() {
-        // No env lock needed — sanitize_path is pure.
-        assert_eq!(
-            sanitize_path("/home/doll/OpenClaudia"),
-            "-home-doll-OpenClaudia"
+    fn sanitize_path_appends_stable_digest() {
+        // Crosslink #777: sanitize_path now appends a 16-hex SHA-256
+        // suffix so collisions on the dash-replaced prefix are
+        // vanishingly rare. The prefix remains human-readable.
+        let out = sanitize_path("/home/doll/OpenClaudia");
+        assert!(
+            out.starts_with("-home-doll-OpenClaudia-"),
+            "expected human-readable prefix, got: {out}"
         );
-        // Every non-alphanumeric char becomes one dash: `:` → `-`, `\` → `-`.
-        assert_eq!(sanitize_path("C:\\Users\\Foo"), "C--Users-Foo");
-        assert_eq!(sanitize_path("plain"), "plain");
+        // Suffix is deterministic for a given input.
+        assert_eq!(out, sanitize_path("/home/doll/OpenClaudia"));
+        // Last 16 chars after the trailing `-` are lowercase hex.
+        let (_, suffix) = out.rsplit_once('-').expect("suffix present");
+        assert_eq!(suffix.len(), 16);
+        assert!(
+            suffix.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "suffix must be lowercase hex: {suffix}"
+        );
+
+        // Every non-alphanumeric char still becomes a dash in the prefix.
+        let win = sanitize_path("C:\\Users\\Foo");
+        assert!(win.starts_with("C--Users-Foo-"));
+        assert!(sanitize_path("plain").starts_with("plain-"));
+    }
+
+    #[test]
+    fn sanitize_path_distinguishes_collision_targets_777() {
+        // Crosslink #777 regression: the three inputs all collapse to the
+        // same dash-string under the old implementation. Distinct inputs
+        // must now produce distinct sanitized directory names.
+        let dashed = sanitize_path("/home/doll/Open-Claudia");
+        let spaced = sanitize_path("/home/doll/Open Claudia");
+        let nested = sanitize_path("/home/doll/Open/Claudia");
+        assert_ne!(dashed, spaced, "Open-Claudia vs Open Claudia must differ ({dashed} == {spaced})");
+        assert_ne!(dashed, nested, "Open-Claudia vs Open/Claudia must differ ({dashed} == {nested})");
+        assert_ne!(spaced, nested, "Open Claudia vs Open/Claudia must differ ({spaced} == {nested})");
+
+        // /foo/bar vs /foo-bar — the example from the issue body.
+        let slash = sanitize_path("/foo/bar");
+        let hyphen = sanitize_path("/foo-bar");
+        assert_ne!(slash, hyphen, "/foo/bar vs /foo-bar must differ ({slash} == {hyphen})");
+    }
+
+    #[test]
+    fn sanitize_path_caps_prefix_for_long_inputs_777() {
+        // Crosslink #777: the prefix component is capped at 200 bytes so
+        // the digest-suffixed total fits inside the 255-byte ext4 limit,
+        // even for absurdly long input paths.
+        let long = "/".to_string() + &"a".repeat(1000);
+        let out = sanitize_path(&long);
+        // 200 (prefix cap) + 1 (dash) + 16 (digest) = 217 ≤ 255.
+        assert!(out.len() <= 255, "out is {} bytes", out.len());
+        assert!(out.len() >= 200, "prefix should fill the cap, got {}", out.len());
     }
 
     #[test]

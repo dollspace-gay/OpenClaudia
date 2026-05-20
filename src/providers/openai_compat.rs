@@ -24,7 +24,7 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::config::ThinkingConfig;
 use crate::proxy::ChatCompletionRequest;
@@ -84,14 +84,23 @@ impl ThinkingInjector {
                     let is_reasoning_model = model.starts_with("o1")
                         || model.starts_with("o3")
                         || model.starts_with("o4");
+                    let effort = thinking.reasoning_effort.as_deref().unwrap_or("medium");
                     if is_reasoning_model {
-                        let effort = thinking.reasoning_effort.as_deref().unwrap_or("medium");
                         body["reasoning_effort"] = json!(effort);
                         debug!("Added OpenAI reasoning params: effort={}", effort);
                     } else {
-                        debug!(
-                            "Skipping reasoning_effort for non-reasoning model: {}",
-                            model
+                        // Crosslink #779: previously a `debug!` log silently
+                        // swallowed the user's `reasoning_effort` config for
+                        // non-reasoning models. Operators who set
+                        // `effort=high` for `gpt-4` had no signal their
+                        // request was downgraded. Now we surface it as a
+                        // warning that names both the model and the ignored
+                        // effort value.
+                        warn!(
+                            model = %model,
+                            ignored_reasoning_effort = %effort,
+                            "ignoring reasoning_effort: model is not in the o1/o3/o4 reasoning family — \
+                             configured thinking is a no-op for this model",
                         );
                     }
                 }
