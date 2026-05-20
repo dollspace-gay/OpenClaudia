@@ -112,6 +112,9 @@ tokio-test = "0.4"
 wiremock = "0.6"
 predicates = "3"
 rand_core = { version = "0.6", features = ["getrandom"] }
+# Property-based testing for round-trip / invariant coverage across the
+# provider adapters, parsers, and other algebraic surfaces.
+proptest = "1"
 
 [lints.clippy]
 # Group denies at priority -1 so specific overrides (priority 0) can selectively allow.
