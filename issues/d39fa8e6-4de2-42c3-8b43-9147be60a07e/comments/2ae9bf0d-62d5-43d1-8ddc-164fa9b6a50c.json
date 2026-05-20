@@ -1,0 +1,10 @@
+{
+  "uuid": "2ae9bf0d-62d5-43d1-8ddc-164fa9b6a50c",
+  "issue_uuid": "d39fa8e6-4de2-42c3-8b43-9147be60a07e",
+  "author": "lOrm",
+  "content": "Deferred — owner-level architectural decision (defines the openclaudia crate's public API surface).\n\n**Fix outline:** Audit src/lib.rs:13-41 and downgrade implementation modules to pub(crate): compaction, guardrails, context, pipeline, streaming, auto_learn, tool_intercept, and likely several others. Expose only the stable surface as curated re-exports at lib.rs top level (pub use config::AppConfig; pub use proxy::start_proxy; pub use providers::ProviderAdapter; etc.). Keep submodules pub mod only where they are part of the documented external API.\n\n**Recommendation:** Requires owner-level decision on what the crate's documented public API actually is. Until that is declared, any agent-driven visibility downgrade risks breaking integration tests, examples, or downstream consumers. Defer.",
+  "created_at": "2026-05-20T14:14:29.783077036Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAnrMbpFMcUzCZVWQwSV4rVafbkYM88Rw4Z67mcZw/jdL2xLsGSCqELE6FiZCgmwWmqMEQ0CsxiO/gyHRGnPdcAQ=="
+}
