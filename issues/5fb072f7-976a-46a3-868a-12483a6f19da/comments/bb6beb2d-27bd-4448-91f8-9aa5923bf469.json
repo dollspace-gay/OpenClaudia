@@ -1,0 +1,10 @@
+{
+  "uuid": "bb6beb2d-27bd-4448-91f8-9aa5923bf469",
+  "issue_uuid": "5fb072f7-976a-46a3-868a-12483a6f19da",
+  "author": "lOrm",
+  "content": "Already addressed in src/plugins/mod.rs load_legacy_manifest (lines 493-579) via crosslink #347: both 'name' and per-server 'name' fields now use ok_or_else with PluginError::InvalidManifest. The 'unknown' fabricated default has been replaced with explicit errors that name the offending path.",
+  "created_at": "2026-05-20T12:22:52.350296539Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA9mMOwIv4bgkWmTNP9nEFoLvKiN/ZWpwb5dJnMHO6zG5TdAtj0SFqGKV4HRL+Cb8Vs8YoyhXZEOyJ0dXe8/I+DA=="
+}
