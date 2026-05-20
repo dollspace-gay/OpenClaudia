@@ -1,0 +1,10 @@
+{
+  "uuid": "b326248b-0b90-44be-b18d-338fb7e76461",
+  "issue_uuid": "2e8a8e18-b837-4932-bc94-54badfbb0c7b",
+  "author": "lOrm",
+  "content": "Deferred — owner-level pervasive observability change (every execute_* function across src/tools/*).\n\n**Fix outline:** Add tracing instrumentation to every tool execution path: src/tools/bash/mod.rs, src/tools/file/{read,write,edit,list,notebook}.rs, src/tools/chainlink.rs, src/tools/web.rs, src/tools/worktree.rs, src/tools/cron.rs, src/tools/task.rs, src/tools/ask_user.rs, src/tools/plan_mode.rs, src/tools/lsp.rs. Pattern: #[tracing::instrument(skip(args), fields(tool = 'bash', cmd = %args.get('command')...))] on each execute_* fn, with debug! on entry, info! on completion (with duration_ms), warn!/error! on the is_error path. Provides parity with the MCP path which already uses tracing.\n\n**Recommendation:** Pervasive change touching ~12 files. Owner-level decisions on (a) span structure / naming, (b) which fields are PII-safe to log (tool args contain user prompts, file paths, shell commands), (c) integration with the existing tracing-subscriber config. Defer; possibly combine with a structured-logging migration.",
+  "created_at": "2026-05-20T14:15:17.461566645Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAhPHQFZ+/tyZli+I3Cowcy7KPxy6O/3QJ3rT0tURu2ZxyCgKNj1TQb61ZSMKLyDjddnXULfRBkM9vH8UODQv9CQ=="
+}
