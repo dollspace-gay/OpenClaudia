@@ -3,11 +3,12 @@
   "display_id": 802,
   "title": "Hardcoded model names in resolve_model_name will drift with no compile-time guard",
   "description": "## Severity\nMinor\n## Dimension\nnaming\n## Location\nsrc/main.rs:729-744\n## Violation\nThe per-target default model is a string literal with no central registry.\n\n```rust\n.unwrap_or_else(|| match target {\n    \"anthropic\" => \"claude-opus-4-6\".to_string(),\n    \"google\" => \"gemini-2.5-flash\".to_string(),\n    \"zai\" => \"glm-5\".to_string(),\n    \"deepseek\" => \"deepseek-chat\".to_string(),\n    \"qwen\" => \"qwen3.5-plus\".to_string(),\n    _ => \"gpt-5.2\".to_string(),\n})\n```\n\nSeveral anti-patterns:\n1. Magic strings on both sides of the match (provider name AND model name) — naming guideline mandates searchable, registered constants.\n2. The fallback `_ => \"gpt-5.2\"` silently treats any unknown provider as OpenAI, which is a silent failure mode for typos in the config file.\n3. Model names are guaranteed to drift — \"claude-opus-4-6\" will become 4-7, 4-8, etc., and this match must be updated each time. The pricing module, the thinking module, and the provider adapter likely have their own copies of these strings.\n4. Provider names already exist as a typed concept elsewhere in the codebase — using string match here defeats that.\n\n## Mandated refactor\n1. Move per-provider defaults to the provider adapter trait: `fn default_model(&self) -> &'static str`. Each adapter owns its current default.\n2. Replace the open-ended `_ => ...` with an exhaustive match on a Provider enum (or return None and let the caller propagate a configuration error).\n3. Have a single source of truth — the config defaults shipped by `openclaudia init` should reference the same constants.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:00:54.007461156Z",
-  "updated_at": "2026-05-18T22:01:17.966505053Z",
+  "updated_at": "2026-05-20T07:36:45.203443728Z",
+  "closed_at": "2026-05-20T07:36:45.203443728Z",
   "labels": [
     "qa-review",
     "naming"
