@@ -3,11 +3,12 @@
   "display_id": 969,
   "title": "Three copies of canonicalize-or-walk-parent path resolution in write/edit/notebook",
   "description": "## Severity\nMajor\n\n## Dimension\nDRY / Decoupling\n\n## Location\nsrc/tools/file/write.rs:19-34 vs src/tools/file/edit.rs:19-40 vs src/tools/file/notebook.rs:99-108 (canonicalize-or-walk-parent dance)\n\n## Violation\nThree near-identical blocks each implement \"canonicalize the path, and if the file does not yet exist, canonicalize its parent and rejoin the filename\":\n\nwrite.rs:\n```rust\nlet canonical = match std::fs::canonicalize(&p) {\n    Ok(canon) => canon,\n    Err(_) => {\n        if let Some(parent) = p.parent() {\n            std::fs::canonicalize(parent).map_or_else(\n                |_| p.clone(),\n                |canon_parent| canon_parent.join(p.file_name().unwrap_or_default()),\n            )\n        } else { return (format!(\"Invalid path: '{path}'\"), true); }\n    }\n};\n```\n\nedit.rs:19-40 implements the same pattern but errors when the parent doesn't exist (different behavior!).\nnotebook.rs:99-108 implements yet another variant that errors on any canonicalize failure (different behavior!).\n\nThree subtly different copies of the same logic. The mod.rs::resolve_path function already does this exact thing in lines 144-164 — but the three tools re-implement it instead of just calling resolve_path. Worse, each gets the divergent error behavior wrong in a different way.\n\n## Mandated refactor\nDelete the three duplicate blocks. resolve_path is already canonical; the tools should rely on its output. The post-resolve_path re-canonicalize was added (per the inline comments) \"to prevent symlink-based path traversal\" — but resolve_path ALREADY does that. The duplication exists only because the original tools were written before resolve_path was hardened.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:21:55.049320672Z",
-  "updated_at": "2026-05-18T22:21:57.905253044Z",
+  "updated_at": "2026-05-20T04:55:56.878400864Z",
+  "closed_at": "2026-05-20T04:55:56.878400864Z",
   "labels": [
     "qa-review",
     "dry"
