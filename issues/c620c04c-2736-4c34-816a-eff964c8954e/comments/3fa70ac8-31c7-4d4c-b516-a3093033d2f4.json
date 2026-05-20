@@ -1,0 +1,10 @@
+{
+  "uuid": "3fa70ac8-31c7-4d4c-b516-a3093033d2f4",
+  "issue_uuid": "c620c04c-2736-4c34-816a-eff964c8954e",
+  "author": "lOrm",
+  "content": "Issue calls for CronCreate recurring/durable flags, 50-job cap enforcement, and next-fire-date validation. Not addressable in a cleanup pass: requires extending the cron tool schema, durable-job persistence (already exists for crons), and validation before commit. The 50-job cap and next-fire validation are quick but flag-schema design has CC-parity dependencies. Parent audit #523.",
+  "created_at": "2026-05-20T14:41:50.884234699Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAP4W5A48kjJ6GCWOFfm1dfQ3OxF6CxdEM0hCmqADXXClfDsDk3TTs/SFxnwgdgaRNoFffum7Qi7Tc2NKeQNyeAg=="
+}
