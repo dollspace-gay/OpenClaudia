@@ -1,0 +1,10 @@
+{
+  "uuid": "0c35cd2a-aa0c-48c1-8023-defffab1c581",
+  "issue_uuid": "e0f2c5e6-9871-4d93-81e6-06e757e91e47",
+  "author": "lOrm",
+  "content": "Deferred — requires unrestricted access to src/tools/bash/mod.rs (FORBIDDEN under current cleanup scope).\n\n**Fix outline:** Split execute_bash (src/tools/bash/mod.rs:319-401) into: (1) parse_bash_args(args) -> Result<BashArgs, String> handling command/run_in_background/timeout extraction and validate_command; (2) platform::spawn_sync(cmd) -> std::process::Output and platform::spawn_async(cmd) -> BackgroundHandle in a platform submodule that hides #[cfg(windows)] / #[cfg(unix)] selection; (3) render_output(output, max_bytes) -> (String, bool) for truncation + is_error assembly. execute_bash then becomes ~15 lines: parse → spawn → render. Cyclomatic complexity drops from ~12 to ~3.\n\n**Blocking:** src/tools/bash/* is reserved scope.",
+  "created_at": "2026-05-20T14:13:15.784696052Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABATM/gEZv7wCcXcExYr3owcHBGnKQy10dtllmZSsRQSRF/8nNxeLidQ8dhXlnohMWslJyGjwnJeXa5nqSEabN9BQ=="
+}
