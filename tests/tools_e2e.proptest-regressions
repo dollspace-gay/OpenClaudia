@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 90c5923b41bad0ee2cfcd1025450fd2dd62bd1761fee09ec923ff2668af44540 # shrinks to args = "a]\t\t\u{2000}..\tAAa\u{2028}\u{85}\u{1680}]\u{3000}.a\u{3000}a.\u{85},\t}.\u{202f}aaA]\u{1680}]\u{1680}AAA\u{1680}\u{85}A}a\tA\t\u{a0}.,a\t\u{202f}\u{a0}\u{1680}Aa0\u{85}.A,0\t\u{a0}\u{3000}aAA\u{2028}AaA\tAAaA\u{3000}0,\t0},a]\u{3000}a,a\u{2028}AA0\u{85}\u{202f} A\"0.\u{1680}\u{1680}", split_at = 73

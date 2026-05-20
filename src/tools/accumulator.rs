@@ -1,6 +1,25 @@
 use super::{FunctionCall, ToolCall};
 use serde_json::Value;
 
+/// Hard cap on parallel tool-call slots in a single streaming response.
+///
+/// The `OpenAI` Chat Completions API supports parallel tool calls keyed by
+/// an `index` field on each streaming delta. The accumulator grows its
+/// per-call slot vector to accommodate the highest `index` it observes.
+/// Without a cap, an attacker-controlled (or buggy) upstream that emits
+/// a delta with `"index": <huge>` would force the accumulator to
+/// pre-allocate `<huge>` `PartialToolCall` slots — each ~96 bytes —
+/// trivially exceeding host memory.
+///
+/// 512 is far more than any real model emits in one turn (`OpenAI`'s own
+/// documented max parallel-call limit is in the low tens) and bounds
+/// the worst-case allocation to ~48 KiB. Deltas with an out-of-bounds
+/// index are silently dropped — the upstream-protocol surface has no
+/// concept of "rejected slot," and the alternative is to error every
+/// caller of the entire turn. A `tracing::warn!` lets operators see
+/// when the cap actually fires.
+pub const MAX_PARALLEL_TOOL_CALL_SLOTS: usize = 512;
+
 /// Parse tool calls from a streaming response delta
 /// Returns accumulated tool calls when complete
 #[derive(Default, Debug)]
@@ -34,7 +53,22 @@ impl ToolCallAccumulator {
                     .and_then(serde_json::Value::as_u64)
                     .map_or(0, |v| usize::try_from(v).unwrap_or(usize::MAX));
 
-                // Ensure we have enough slots
+                // Cap-enforce the slot index. A delta with an
+                // out-of-bounds index is dropped (with a warn) rather
+                // than blindly pre-allocating slots up to it. See
+                // `MAX_PARALLEL_TOOL_CALL_SLOTS` for the cap rationale.
+                if index >= MAX_PARALLEL_TOOL_CALL_SLOTS {
+                    tracing::warn!(
+                        target: "openclaudia::accumulator",
+                        observed_index = index,
+                        cap = MAX_PARALLEL_TOOL_CALL_SLOTS,
+                        "streaming tool-call delta with index past cap; \
+                         dropping to avoid unbounded allocation"
+                    );
+                    continue;
+                }
+
+                // Ensure we have enough slots (bounded by the cap above).
                 while self.tool_calls.len() <= index {
                     self.tool_calls.push(PartialToolCall::default());
                 }

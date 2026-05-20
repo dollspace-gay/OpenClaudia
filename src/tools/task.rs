@@ -3,10 +3,11 @@ use crate::tools::args::ToolArgs as _;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::hash::BuildHasher;
 
 /// Execute the `task_create` tool
-pub fn execute_task_create(
-    args: &HashMap<String, Value>,
+pub fn execute_task_create<S: BuildHasher>(
+    args: &HashMap<String, Value, S>,
     task_mgr: &mut TaskManager,
 ) -> (String, bool) {
     // crosslink #675: typed accessors. Wording was already canonical
@@ -34,8 +35,8 @@ pub fn execute_task_create(
 }
 
 /// Execute the `task_update` tool
-pub fn execute_task_update(
-    args: &HashMap<String, Value>,
+pub fn execute_task_update<S: BuildHasher>(
+    args: &HashMap<String, Value, S>,
     task_mgr: &mut TaskManager,
 ) -> (String, bool) {
     let Some(task_id) = args.get("task_id").and_then(|v| v.as_str()) else {
@@ -109,7 +110,11 @@ pub fn execute_task_update(
 /// model into a recovery path for what is a legitimate, expected outcome
 /// (e.g. polling a task that was deleted). The success payload is the
 /// literal JSON `null` so structured consumers can branch on it cheaply.
-pub fn execute_task_get(args: &HashMap<String, Value>, task_mgr: &TaskManager) -> (String, bool) {
+#[must_use]
+pub fn execute_task_get<S: BuildHasher>(
+    args: &HashMap<String, Value, S>,
+    task_mgr: &TaskManager,
+) -> (String, bool) {
     let Some(task_id) = args.get("task_id").and_then(|v| v.as_str()) else {
         return ("Missing 'task_id' argument".to_string(), true);
     };
@@ -121,6 +126,7 @@ pub fn execute_task_get(args: &HashMap<String, Value>, task_mgr: &TaskManager) -
 }
 
 /// Execute the `task_list` tool
+#[must_use]
 pub fn execute_task_list(task_mgr: &TaskManager) -> (String, bool) {
     let tasks = task_mgr.list_tasks();
 

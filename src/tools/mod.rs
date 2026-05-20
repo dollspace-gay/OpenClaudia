@@ -27,7 +27,10 @@ mod plan_mode;
 pub mod registry;
 pub mod remote_trigger;
 pub mod skill;
-mod task;
+// `task` is exposed so the end-to-end test suite (`tests/tools_e2e.rs`)
+// can drive `execute_task_create` / `_update` / `_get` / `_list` against
+// a live `TaskManager`. Internal call sites use the same path.
+pub mod task;
 #[cfg(test)]
 pub(crate) mod testutil;
 mod todo;
@@ -38,6 +41,7 @@ pub mod worktree;
 // Re-exports
 pub use accumulator::{
     AnthropicContentBlock, AnthropicToolAccumulator, PartialToolCall, ToolCallAccumulator,
+    MAX_PARALLEL_TOOL_CALL_SLOTS,
 };
 /// Credential-sensitivity classifier re-exported for use outside the tools
 /// module (e.g. `hooks::mod` env-scrub logic). Avoids making `bash` public.
