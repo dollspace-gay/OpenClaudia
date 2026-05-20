@@ -1,0 +1,10 @@
+{
+  "uuid": "7b05f97c-b529-45ec-8432-7549cab769c5",
+  "issue_uuid": "05c1618b-a40d-4a88-8902-5fef60512da1",
+  "author": "lOrm",
+  "content": "Issue calls for IDE-opened file context injection plus task_notification system messages around subagent spawn/complete. Per the issue body, blocked on #517 (IDE bridge for editor-push file-opened events) and #507 (coordinator). Neither blocker is implemented. Compact-boundary portion already shipped in 339a872. Closing the residual ticket — when #517 and #507 land, the small context-injection delta can be filed as a new sub-issue at that time.",
+  "created_at": "2026-05-20T14:33:34.293839976Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAA8UVINSoC/YDlmPHrZf/3CXtheayiSWza+IKtkV8PDkYhXDHaS8ok1ltOKanihCzh6VJFoeqX/xPmo/55rqaAg=="
+}
