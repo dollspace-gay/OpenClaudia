@@ -3,11 +3,12 @@
   "display_id": 913,
   "title": "compact_request_context configuration mutation requires manual model-config reassignment",
   "description": "## Severity\nMinor\n## Dimension\nkiss\n## Location\nsrc/proxy.rs:764-813\n## Violation\ncompact_request_context performs an awkward dance to layer per-model config on top of the global compactor config:\n\n  let mut compactor = ContextCompactor::for_model(&request.model);\n  let base_config = state.compactor.config().clone();\n  let mut model_config = compactor.config().clone();\n  model_config.preserve_recent = base_config.preserve_recent;\n  model_config.preserve_system = base_config.preserve_system;\n  model_config.preserve_tool_calls = base_config.preserve_tool_calls;\n  compactor.set_config(model_config);\n\nThe merge is hand-rolled — only three fields are pulled from base; any new CompactionConfig field added later will silently use the per-model default rather than operator overrides. This is a future maintenance footgun.\n## Mandated refactor\nAdd CompactionConfig::merge(self, override_from: &CompactionConfig) -> Self that explicitly enumerates which fields are operator-overridable. Or invert: ContextCompactor::for_model_with_config(model: &str, base: CompactionConfig). Keep the field list in one place.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:15:47.927522382Z",
-  "updated_at": "2026-05-18T22:16:09.128009819Z",
+  "updated_at": "2026-05-20T12:23:59.985512881Z",
+  "closed_at": "2026-05-20T12:23:59.985512881Z",
   "labels": [
     "qa-review",
     "kiss"
