@@ -3,11 +3,12 @@
   "display_id": 832,
   "title": "skills::load_skills repeats Plugin::resolve_skills directory-walk logic verbatim",
   "description": "## Severity\nMinor\n## Dimension\ndry\n## Location\nsrc/skills.rs:59-119, src/plugins/mod.rs:644-670\n## Violation\nTwo independent code paths walk the same kind of directory hierarchy with the same conventions (SKILL.md inside a subdir, or .md at the top). Quoted lines:\n\n    // skills.rs\n    if path.is_dir() {\n        let skill_file = path.join(\"SKILL.md\");\n        if skill_file.exists() {\n            if let Some(mut skill) = parse_skill_file(&skill_file) {\n                ...\n            }\n        }\n    } else if path.extension().and_then(|e| e.to_str()) == Some(\"md\") {\n        ...\n    }\n\n    // plugins/mod.rs\n    let skills_dir = self.path.join(\"skills\");\n    if skills_dir.exists() && self.manifest.skills.is_none() {\n        if let Ok(entries) = fs::read_dir(&skills_dir) {\n            for entry in entries.flatten() {\n                if entry.path().is_dir() {\n                    self.skill_paths.push(entry.path());\n                }\n            }\n        }\n    }\n\nDrift between the two means plugin-provided skills could become discoverable via different rules than directory-installed ones. Plugin skills currently match only directories — not `.md` files — silently dropping skill files the user might expect to work.\n## Mandated refactor\nHoist a single `discover_skills_in(dir: &Path) -> Vec<SkillDefinition>` into the skills module and have both Plugin::resolve_skills (after picking up the path candidates) and load_skills call it. Define a single SkillDiscoveryRules struct (allow-bare-md, allow-skill-md-subdir, recursive) and pass it explicitly so the two callers can opt into different rules deliberately rather than by accident.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:04:47.773007245Z",
-  "updated_at": "2026-05-18T22:05:13.343486917Z",
+  "updated_at": "2026-05-20T14:04:10.215683548Z",
+  "closed_at": "2026-05-20T14:04:10.215683548Z",
   "labels": [
     "qa-review",
     "dry"
