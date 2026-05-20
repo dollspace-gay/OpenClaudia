@@ -1,0 +1,10 @@
+{
+  "uuid": "b8677b4d-cc5d-433a-82c6-b5d4264b9c13",
+  "issue_uuid": "05627fa6-df38-4ce6-8571-681be1113fdb",
+  "author": "lOrm",
+  "content": "VERIFIED-DUP-OF-FIXED (closed via #502 hardening). Forensic grep on main @3a19163f:\n\n```\n$ grep -n 'neutralize_reminder_delimiters\\|replace_case_insensitive' src/context.rs\n(no matches)\n\n$ grep -rn 'neutralize_reminder_delimiters\\|replace_case_insensitive' src/\n(no matches anywhere in tree)\n\n$ grep -n 'xml_escape_for_prompt' src/context.rs\n131:pub fn xml_escape_for_prompt(s: &str) -> Cow<'_, str> {\n164:    let sanitized = xml_escape_for_prompt(content);\n```\n\nThe O(n*k) lowercase-per-delimiter function was replaced by `xml_escape_for_prompt` (single-pass Cow-returning escape) as part of #502's prompt-injection hardening. The perf pathology this issue describes no longer exists in the codebase. Closing as duplicate-of-fixed.",
+  "created_at": "2026-05-20T07:22:07.285545364Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAAs3fOZ3K95RnmxUNDyeJguvgZMP5fWGALWo96GgwpShwfirDjpt8USiXdAaqRJKaZt/khr8Svaheb4Jjx++tDg=="
+}
