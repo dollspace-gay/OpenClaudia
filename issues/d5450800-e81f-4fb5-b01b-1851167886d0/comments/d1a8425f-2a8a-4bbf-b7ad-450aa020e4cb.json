@@ -1,0 +1,10 @@
+{
+  "uuid": "d1a8425f-2a8a-4bbf-b7ad-450aa020e4cb",
+  "issue_uuid": "d5450800-e81f-4fb5-b01b-1851167886d0",
+  "author": "lOrm",
+  "content": "Verified: closed by commit 6de1fc71 (#432). src/skills.rs has SKILLS_CACHE LazyLock<RwLock<...>> with mtime-keyed invalidation and parse_skill_file logs failures via tracing::warn!. Closing as duplicate.",
+  "created_at": "2026-05-20T01:38:50.361092389Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA5rfROQHHk1+sy0LB2vm13WRvQ2VUUV287+39HwJz67AlwF//MJhKYxHPScSgLi3qRuFTGPkVNV8fSf444LkiDg=="
+}
