@@ -1,0 +1,10 @@
+{
+  "uuid": "6451e1c9-353b-46cc-b227-8bc73ce3e08b",
+  "issue_uuid": "17222638-e7bf-4b07-b426-51fcec7b4c2c",
+  "author": "lOrm",
+  "content": "Landed native GlobTool at src/tools/file/glob.rs (#567). Pattern dialect mirrors src/permissions.rs::glob_to_regex (* / ** / ? with regex-special escaping). Walker caps at 100 matches (MAX_RESULTS) + 50k visited entries (MAX_WALK_ENTRIES); skips vendor dirs (.git, node_modules, target, dist, build) unless caller explicitly names them. Registered as 'glob' handler in src/tools/registry.rs, added to KNOWN_SAFE in #782 enumeration, and to required-tools list in test_tool_definitions. 4 tests in src/tools/file/glob.rs: single-star scoping, double-star descent, missing-arg error, special-char escape robustness.",
+  "created_at": "2026-05-20T17:43:07.604282327Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA80jz2x3/hLlQribEnY4LQBcOxa5b3OFPYfjO+CPh1Uuhjx6mtmiKuZ97AxghP2fksmvAX9VIhjU1LKWdO2UrAA=="
+}
