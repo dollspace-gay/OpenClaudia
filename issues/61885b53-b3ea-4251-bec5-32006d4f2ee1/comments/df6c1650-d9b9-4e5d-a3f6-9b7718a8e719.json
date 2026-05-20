@@ -1,0 +1,10 @@
+{
+  "uuid": "df6c1650-d9b9-4e5d-a3f6-9b7718a8e719",
+  "issue_uuid": "61885b53-b3ea-4251-bec5-32006d4f2ee1",
+  "author": "lOrm",
+  "content": "Issue calls for path allowlist validation for the bash tool (parity with CC checkPathConstraints). Not addressable in a cleanup pass: requires command-line path extraction (which itself depends on #579 tree-sitter bash parser), config schema for allowed paths, and integration with bash tool's pre-execution validation. Parent audit #523.",
+  "created_at": "2026-05-20T14:37:15.774278027Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABArlGn9dpRxb/aXjQPmD13+hCkQMotGSi2+Bb2uGugeVR0LPcSrByobPAvfAgZxDIX7Bdv7j0LKBF1kzwtT1j8DQ=="
+}
