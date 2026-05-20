@@ -3,11 +3,12 @@
   "display_id": 914,
   "title": "AnalyticsEvent CostTracked variant absence is sentinel-tested but should be tracked as a code-comment-only gap",
   "description": "## Severity\nTrivial\n## Dimension\nyagni\n## Location\nsrc/services/analytics.rs:268-287, src/services/analytics.rs:18-43\n## Violation\nA 20-line test (b4_cost_tracked_variant_not_yet_present_gap649) exists purely to sentinel an absent enum variant.\n\n    /// B4 / gap #649: pin that AnalyticsEvent does NOT have a CostTracked\n    /// variant yet.\n    #[test]\n    fn b4_cost_tracked_variant_not_yet_present_gap649() {\n        let event = AnalyticsEvent::ThinkingEmitted { budget: 1 };\n        let _ = match event {\n            AnalyticsEvent::SessionStart { .. }\n            | AnalyticsEvent::SessionEnd { .. }\n            ...\n            => \"no CostTracked yet — see gap #649\",\n        };\n    }\n\nYAGNI-in-reverse: a sentinel for behaviour we DO want to add, sitting in production test code. Once #649 lands the test becomes a hidden footgun (easy to forget to delete). It also does not catch the actual gap (cost emission), only the variant's absence.\n## Mandated refactor\nDelete the sentinel test. Track the gap via the existing crosslink issue #649. If a compile-time check is wanted, use a const-block expecting CostTracked — the exhaustive match in TracingAnalytics::record already enforces this once the variant is added.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:15:57.712079272Z",
-  "updated_at": "2026-05-18T22:16:04.926274724Z",
+  "updated_at": "2026-05-20T12:24:07.962792837Z",
+  "closed_at": "2026-05-20T12:24:07.962792837Z",
   "labels": [
     "qa-review",
     "yagni"
