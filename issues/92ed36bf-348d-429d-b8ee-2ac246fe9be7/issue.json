@@ -3,11 +3,12 @@
   "display_id": 686,
   "title": "Retry loop double-counts HTTP attempts when status is not retryable on the first attempt",
   "description": "## Severity\nMajor\n## Dimension\nerror-handling\n## Location\nsrc/pipeline.rs:330-367\n## Violation\nThe retry loop in `run_turn` has a subtle control-flow defect. The non-retry success path issues `response = Some(resp); break;`, but the failure path for `!is_success()` for a non-retryable status returns Err immediately even on attempts < max_retries. Worse, the retry exponent uses `2u64.pow(attempt + 1)` so on attempt 0 the wait is 2s, attempt 1 is 4s, attempt 2 is 8s — but the loop is `for attempt in 0..=max_retries` (4 iterations) and the last attempt cannot retry. The result is the user sees `Retrying in 16s — ...` printed for an attempt that will not actually retry:\n\n```rust\nfor attempt in 0..=max_retries {        // 0,1,2,3 (4 iterations)\n    ...\n    if matches!(status, 429 | 503 | 529) && attempt < max_retries {\n        let wait_secs = ... .unwrap_or_else(|| 2u64.pow(attempt + 1));\n        ...\n        tokio::time::sleep(Duration::from_secs(wait_secs)).await;\n        continue;\n    }\n```\nThe user-visible retry message also leaks before `tokio::time::sleep` actually waits — the message displays the *next* attempt's wait, not the current. There is no jitter, so two concurrent requests hitting 429 will retry in lockstep and amplify the rate limit.\n## Mandated refactor\nUse `0..max_retries` to bound iterations clearly, decouple retry decision from message emission, add jitter (`rand::thread_rng().gen_range(0..wait_secs/4)`), and surface a structured RetryEvent rather than streaming free-form text into the model output buffer. Cap total elapsed retry time, not just attempt count.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:47:08.940184988Z",
-  "updated_at": "2026-05-18T21:48:29.992912441Z",
+  "updated_at": "2026-05-20T14:41:15.475291827Z",
+  "closed_at": "2026-05-20T14:41:15.475291827Z",
   "labels": [
     "qa-review",
     "error-handling"
