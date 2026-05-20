@@ -589,10 +589,7 @@ fn task_update_status_round_trips_through_get() {
     );
 
     let (upd_msg, is_err) = execute_task_update(
-        &args_from(&[
-            ("task_id", json!(id)),
-            ("status", json!("in_progress")),
-        ]),
+        &args_from(&[("task_id", json!(id)), ("status", json!("in_progress"))]),
         &mut mgr,
     );
     assert!(!is_err, "status update must succeed: {upd_msg}");
@@ -600,8 +597,7 @@ fn task_update_status_round_trips_through_get() {
     // After the update, re-derive the id and look it up. We pass a literal
     // here since the create output is deterministic (task-1 for first call
     // in a fresh manager) — and this also exercises that path.
-    let (got, _) =
-        execute_task_get(&args_from(&[("task_id", json!("task-1"))]), &mgr);
+    let (got, _) = execute_task_get(&args_from(&[("task_id", json!("task-1"))]), &mgr);
     assert!(
         got.contains("in_progress") || got.contains("InProgress"),
         "get must report the new status, got: {got}"

@@ -1,7 +1,13 @@
 mod kill;
 mod output;
 pub mod path_constraints;
-mod policy;
+// `policy` is exposed so the security E2E test suite
+// (`tests/tools_security_e2e.rs`) can drive `validate_command`,
+// `is_safe_for_auto_allow`, `dangerous_shell_construct`, and
+// `is_sensitive_env` against the documented attack catalog
+// without actually executing the attack payloads. Internal call
+// sites use the same path.
+pub mod policy;
 
 pub use kill::{execute_kill_shell, terminate_process_tree};
 pub use output::execute_bash_output;
