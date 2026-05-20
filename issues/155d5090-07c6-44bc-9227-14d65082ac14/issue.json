@@ -3,11 +3,12 @@
   "display_id": 960,
   "title": "MigrationContext::ledger_path is in MigrationContext but read by load() while migrations write via mark()",
   "description": "## Severity\nMinor\n## Dimension\ndecoupling\n## Location\nsrc/migrations/mod.rs:111-114, 126-168\n## Violation\nThe ledger path is owned by MigrationContext but the lifecycle is owned by run_all:\n\n```rust\npub fn ledger_path(&self) -> PathBuf {\n    self.openclaudia_data.join(\"migrations.json\")\n}\n\npub fn run_all(ctx: &MigrationContext) -> Vec<MigrationReport> {\n    let mut ledger = CompletionLedger::load(&ctx.ledger_path());\n    ...\n    if let Err(err) = ledger.save(&ctx.ledger_path()) {  // bottom of fn\n        tracing::warn!(error = %err, \"failed to persist migration ledger\");\n    }\n    out\n}\n```\n\nThe MigrationContext exposes ledger_path but nothing else interacts with the ledger through the context — the ledger itself is a local variable in run_all. This breaks the \"context object\" abstraction: callers cannot inspect or mock the ledger via MigrationContext for testing.\n\nMore importantly, individual Migration impls receive &MigrationContext but the ledger inside it is invisible to them. Once-only migrations have no way to know whether they're being re-run (a debugging affordance), nor can they participate in their own once-only logic (e.g., a migration that records additional metadata alongside its completion mark).\n\n## Mandated refactor\n1. Move the ledger ownership to MigrationContext as an interior-mutable field (RefCell<CompletionLedger>) so individual migrations can read/write it through the context.\n2. Or, hide the ledger entirely as a private detail of run_all and remove ledger_path from the public MigrationContext API — the path leakage suggests an incomplete abstraction.\n\nPick one extreme; the current half-encapsulation forces callers to know about both the path and the loader/saver but gives them no leverage.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:20:32.632802905Z",
-  "updated_at": "2026-05-18T22:20:37.608624033Z",
+  "updated_at": "2026-05-20T12:57:58.110132986Z",
+  "closed_at": "2026-05-20T12:57:58.110132986Z",
   "labels": [
     "qa-review",
     "decoupling"
