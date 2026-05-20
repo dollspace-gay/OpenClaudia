@@ -3,9 +3,10 @@
   "display_id": 714,
   "title": "subagent: WorktreeIsolation cleanup silently swallows branch-delete errors and uses .unwrap_or empty PathBuf",
   "description": "## Severity\nMajor\n## Dimension\nerror-handling\n## Location\nsrc/subagent.rs:454-530 (WorktreeIsolation::create / has_changes / cleanup)\n## Violation\nThree failure-handling defects in one type:\n\n1. Path-to-str fallback uses an empty string (lines 458, 482, 513):\n\n```rust\nworktree_path.to_str().unwrap_or(\"\"),\n```\n\nFor a non-UTF-8 path, git runs against the empty argument; the user sees a confusing git error rather than a typed Err.\n\n2. has_changes swallows command failure as no changes (lines 487-491):\n\n```rust\nmatch result {\n    Ok(output) => !output.stdout.is_empty(),\n    Err(_) => false,\n}\n```\n\nIf git is missing or the worktree was already removed, the caller is told the worktree is clean and proceeds to cleanup, which then fails or deletes the wrong state.\n\n3. Branch deletion fire-and-forgets the error (lines 525-527):\n\n```rust\nlet _ = std::process::Command::new(\"git\")\n    .args([\"branch\", \"-D\", &self.branch_name])\n    .output();\n```\n\nA failed branch -D leaves orphan agent/* branches accumulating across runs, with no log.\n## Mandated refactor\nReplace `to_str().unwrap_or(\"\")` with `to_str().ok_or(Err::NonUtf8Path)`. Propagate has_changes errors as Err, not false. Log (at least) the branch-delete stderr on failure, and surface a structured CleanupError enum to callers.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:49:54.627108421Z",
-  "updated_at": "2026-05-18T21:49:54.627108421Z"
+  "updated_at": "2026-05-20T14:10:54.543308179Z",
+  "closed_at": "2026-05-20T14:10:54.543308179Z"
 }
