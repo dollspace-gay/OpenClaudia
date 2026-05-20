@@ -1,0 +1,10 @@
+{
+  "uuid": "811e6d24-8c01-4780-903a-3e5fb3ef814d",
+  "issue_uuid": "bf744e43-2429-4d0c-9976-42fead9cd618",
+  "author": "lOrm",
+  "content": "Fixed in src/modes/mod.rs: added explicit serde rename on the three overlapping Modifier variants (modifier-debug / modifier-methodical / modifier-director) and matching rename on the Preset side (preset-debug / preset-methodical / preset-director). JSON readers now see disambiguated discriminators when both enums appear in the same document. Display impls unchanged so status-bar output stays human-readable; serde_roundtrip_all_presets and serde_roundtrip_all_modifiers still pass.",
+  "created_at": "2026-05-20T07:00:43.541465853Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAlLfTzKQhAV1nnpnujddOX05UguZWIKfqvZeOppQEFB2zaLA9sE59r+O3ydQposWf6nd4xGpB7CpriATDSdRRDg=="
+}
