@@ -1,0 +1,10 @@
+{
+  "uuid": "0acc0c85-508e-4711-99c0-8058445762fe",
+  "issue_uuid": "c9e72600-9854-4b55-bd89-56f54ec98297",
+  "author": "lOrm",
+  "content": "#658 closed. Added PluginDelistingJob in src/services/background.rs alongside PluginAutoupdateJob. Constructor takes (plugin_id, source) snapshot; tick emits plugin_delisting_check structured events per plugin. Same scheduling-slot Phase 1 pattern as #652 — runtime marketplace polling + auto-uninstall semantics are the follow-up. 2 unit tests cover empty list + object safety.",
+  "created_at": "2026-05-20T20:36:55.427946504Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABASFAADVZsGAlY+GZliWX0vY8FMzq0tv6Z+3Exh8/uaTdfeLc+BTLQqLkfU2VQbJWL8DpchHVna7k7wekgo0OWBg=="
+}
