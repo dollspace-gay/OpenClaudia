@@ -3,11 +3,12 @@
   "display_id": 958,
   "title": "QA: output.rs '(no new output)' path drops exit-code context for finished shells",
   "description": "## Severity\nTrivial\n## Dimension\nnaming\n## Location\nsrc/tools/bash/output.rs:39-43\n## Violation\nWhen a finished shell produces no new output since the last poll, the user sees `Status: finished (exit code: 0)\\n(no new output)` OR `Status: finished\\n(no new output)` if the wait thread hasn't populated `exit_status` yet (see related race-condition issue). The path conflates \"command produced no output\" with \"no new output since last drained\" — a user who never polled before completion sees `(no new output)` and assumes the command was silent.\n\nQuoted (output.rs:39-43):\n```\n            let result = if output.is_empty() {\n                format!(\"Status: {status}\\n(no new output)\")\n            } else {\n                format!(\"Status: {status}\\n\\n{output}\")\n            };\n```\n## Mandated refactor\n1. Distinguish in the manager: `OutputSlice { lines: Vec<String>, was_drained_before: bool }`.\n2. Render `(command produced no output)` only when the lifetime-cumulative byte count is zero; render `(no new output since last poll)` otherwise.\n3. For finished shells, always render the exit-code, never the bare \"finished\".\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:20:22.693060080Z",
-  "updated_at": "2026-05-18T22:20:25.518253240Z",
+  "updated_at": "2026-05-20T13:26:39.521508094Z",
+  "closed_at": "2026-05-20T13:26:39.521508094Z",
   "labels": [
     "qa-review",
     "naming"
