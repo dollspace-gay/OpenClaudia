@@ -3,9 +3,10 @@
   "display_id": 761,
   "title": "ACP session_map grows unbounded across session/new and session/load calls",
   "description": "## Severity\nMajor\n## Dimension\ndecoupling\n## Location\nsrc/acp.rs:125, 565-634 (session_map, handle_session_new, handle_session_load)\n## Violation\n`AcpServer` holds `session_map: HashMap<String, String>` for ACP-id → openclaudia-id, and inserts on every `session/new` or fall-through `session/load`:\n\n```rust\nself.session_map.insert(acp_session_id.clone(), oc_session_id);\nself.messages.clear();\n```\n\nThere is no eviction path. Sessions accumulate for the lifetime of the server process, and `self.messages` is a SINGLE shared `Vec<Value>` that is `clear()`-ed on every new/load — meaning the server is effectively single-session despite the map's existence. A client that opens two ACP sessions concurrently loses the messages of whichever one isn't currently active, with no error surfaced.\n\nThis is a confused-design symptom: either the server is single-session (delete the map and store one current ID) or multi-session (move `messages` into a per-session struct keyed by ACP id, and add eviction on `session/close` or LRU).\n## Mandated refactor\nPick one model and commit to it. Recommended: introduce `struct AcpSessionState { messages: Vec<Value>, cancel_flag: Arc<AtomicBool>, oc_session_id: String, last_activity: Instant }` and store `HashMap<String, AcpSessionState>` keyed by ACP session id. Add `session/close` handling (close notification or LRU eviction at N=64) so a long-lived stdio server cannot leak unbounded memory. Update `handle_session_prompt` to look up the session by id, not by hidden global state.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:52:06.524437156Z",
-  "updated_at": "2026-05-18T21:52:06.524437156Z"
+  "updated_at": "2026-05-20T13:24:18.632728122Z",
+  "closed_at": "2026-05-20T13:24:18.632728122Z"
 }
