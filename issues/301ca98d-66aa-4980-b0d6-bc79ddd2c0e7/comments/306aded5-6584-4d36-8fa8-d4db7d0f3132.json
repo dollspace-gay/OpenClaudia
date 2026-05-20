@@ -1,0 +1,10 @@
+{
+  "uuid": "306aded5-6584-4d36-8fa8-d4db7d0f3132",
+  "issue_uuid": "301ca98d-66aa-4980-b0d6-bc79ddd2c0e7",
+  "author": "lOrm",
+  "content": "Duplicate of #920 (identical: FileIndex::walk_dir in src/tools/file_index.rs:51-78 uses unbounded recursion, no symlink-cycle detection, swallows read_dir errors). Canonical: #920.",
+  "created_at": "2026-05-20T12:04:45.552090031Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAK7Zc5uqKMe8QidDWNrOEmX75WQhLZ7V/uLxSdrFgInbIkV87Aes3GhOlVZlF4PPZkGmD17/dBgjDkpwt7kjcCg=="
+}
