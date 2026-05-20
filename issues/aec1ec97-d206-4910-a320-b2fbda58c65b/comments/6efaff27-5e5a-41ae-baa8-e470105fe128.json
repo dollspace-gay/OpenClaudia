@@ -1,0 +1,10 @@
+{
+  "uuid": "6efaff27-5e5a-41ae-baa8-e470105fe128",
+  "issue_uuid": "aec1ec97-d206-4910-a320-b2fbda58c65b",
+  "author": "lOrm",
+  "content": "Fixed: McpServer::call_tool now inspects the MCP-spec isError flag on the tools/call result. When isError==true, extracts content[0].text and surfaces it as the new McpError::ToolReportedError { message } variant instead of returning a tool failure as Value. Three new tests cover isError:true→typed error, isError:false/absent→Ok passthrough, isError:true without content→fallback message naming the tool. McpManager::call_tool reconnect path only triggers on McpError::Transport so the new variant correctly does NOT mark the server disconnected. All 1666 lib tests pass (single pre-existing worktree-test failure unrelated), cargo clippy --all-targets --all-features -D warnings exits 0, no #[allow]/#[ignore]/clippy.toml.",
+  "created_at": "2026-05-20T05:32:46.046265573Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAHjPawH9cVRW2nss9sedi4sbcVv8GhrGN/jTUOsnlHAvvRphlMECYjDiCw1kyPUdgXjyfc5PEiVS85EMY3rTkDA=="
+}
