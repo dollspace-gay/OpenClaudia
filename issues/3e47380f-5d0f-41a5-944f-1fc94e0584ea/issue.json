@@ -2,11 +2,12 @@
   "uuid": "3e47380f-5d0f-41a5-944f-1fc94e0584ea",
   "display_id": 651,
   "title": "Handle workspace/configuration reverse-request from language servers (parity with CC LSPServerManager.ts:123-135)",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:09:22.106151635Z",
-  "updated_at": "2026-05-18T16:09:23.528755920Z",
+  "updated_at": "2026-05-20T14:39:26.190417241Z",
+  "closed_at": "2026-05-20T14:39:26.190417241Z",
   "labels": [
     "parity,cc-lsp"
   ]
