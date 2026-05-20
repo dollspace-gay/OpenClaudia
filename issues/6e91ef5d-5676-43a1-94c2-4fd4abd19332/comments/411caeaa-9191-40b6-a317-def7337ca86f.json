@@ -1,0 +1,10 @@
+{
+  "uuid": "411caeaa-9191-40b6-a317-def7337ca86f",
+  "issue_uuid": "6e91ef5d-5676-43a1-94c2-4fd4abd19332",
+  "author": "lOrm",
+  "content": "Issue calls for extracting a Graph data structure with explicit add_edge/would_create_cycle/sync_reverse methods, replacing Vec<String> adjacency with HashSet, running cycle detection AFTER staging all new edges on the proposed graph, and adding a fuzz test for graph consistency. Per the 2026-05-20 comment, point 3 (delete dead 'suppress unused warning' block) landed in src/session/task.rs. Remaining points 1 (Graph type), 2 (post-stage cycle detection), 4 (Vec->HashSet), 5 (fuzz test) are an integrated TaskManager refactor — graph type extraction + cycle algorithm rewrite must land together to preserve the blocks-iff-blocked-by invariant. Multi-day work; closing the cleanup-pass ticket while tracking the redesign under TaskManager architectural work.",
+  "created_at": "2026-05-20T14:33:18.215176301Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAGxWb/JUkFbsjc9KbrjMlfXzTDNgs5QBCSEL3paVZONuxMoSeF9pwCLu6CJC2PWSidrrtC5zbX0r5//ReRuBBCw=="
+}
