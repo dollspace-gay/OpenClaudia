@@ -1,0 +1,10 @@
+{
+  "uuid": "4062532a-aa89-4b8d-a9f3-0f48893d5d96",
+  "issue_uuid": "2e224da2-6312-4959-b478-43f8ec8b6bf1",
+  "author": "lOrm",
+  "content": "Extracted parse_mcp_file_content(content) helper that tries the {mcpServers:...} wrapper form first, then falls back to bare-map. Both the convention .mcp.json branch and the manifest McpServersSpec::Path / Array(Path) branches now route through it.",
+  "created_at": "2026-05-20T12:24:22.720388527Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABANirwsGTT6qH5UqHOh68Kmk3ionqLq1fOD1LjQo92DT/uErH9rJGaDnY4T5p/kX5oVkLnCxyG5CGmyOc2VLkqAA=="
+}
