@@ -3,11 +3,12 @@
   "display_id": 947,
   "title": "QA: (String, bool) tuple return type hides error semantics across tool API",
   "description": "## Severity\nMinor\n## Dimension\nnaming\n## Location\nsrc/tools/bash/mod.rs:319, src/tools/bash/kill.rs:7, src/tools/bash/output.rs:8, src/tools/lsp.rs:73\n## Violation\nEvery public tool entry point returns `(String, bool)` where the `bool` silently means \"is_error\". This is a primitive-obsession + boolean-flag-return anti-pattern. Callers must read documentation to know which slot is which; a refactor that inverts the bool would compile silently and break runtime behavior.\n\nQuoted (lsp.rs:72-73):\n```\n#[must_use]\npub fn execute_lsp<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String, bool) {\n```\n\nQuoted (bash/mod.rs:319):\n```\npub fn execute_bash(args: &HashMap<String, Value>) -> (String, bool) {\n```\n\nSame shape in `execute_kill_shell` (kill.rs:7) and `execute_bash_output` (output.rs:8).\n## Mandated refactor\n1. Define `pub struct ToolOutput { pub content: String, pub is_error: bool }` with named fields.\n2. Or use `Result<String, ToolError>` and have the dispatcher translate to the wire shape.\n3. Update every call site in one PR; the type system will surface every miss.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:19:20.712097671Z",
-  "updated_at": "2026-05-18T22:19:32.075922924Z",
+  "updated_at": "2026-05-20T12:32:01.854440517Z",
+  "closed_at": "2026-05-20T12:32:01.854440517Z",
   "labels": [
     "qa-review",
     "naming"
