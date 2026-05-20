@@ -1,0 +1,10 @@
+{
+  "uuid": "87c61e60-0968-4642-9bbd-7d85ece76c34",
+  "issue_uuid": "99a70c21-d410-40b9-b04e-ad6655f42683",
+  "author": "lOrm",
+  "content": "Issue calls for /thinkback slash command to replay thinking blocks. Not addressable in a cleanup pass: requires loading the 'thinkback' plugin (depends on #538), thinking-block playback animation, and marketplace install offer if missing. Parent spec #539.",
+  "created_at": "2026-05-20T14:43:08.400344197Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAcBkqjxc+JKFJId/xs5KSR7D6BZk24TDLkMc/8uG7QFPi2jNuNWHDxahmfVYTGMs/O6F2BVP+lfhyA0LsR1RWCg=="
+}
