@@ -3,11 +3,12 @@
   "display_id": 970,
   "title": "edit_file does not validate old_string equals new_string before doing pointless write",
   "description": "## Severity\nTrivial\n\n## Dimension\nFunctional Correctness / KISS\n\n## Location\nsrc/tools/file/edit.rs:84-95 (occurrence check then replacen)\n\n## Violation\nIf `old_string == new_string`, the code happily reads the file, finds the string, performs `content.replacen(old, new, 1)` (a no-op), and writes the file back unchanged. The test edit_old_equals_new_succeeds_if_present (line 217) pins this as \"OC does NOT special-case this — it succeeds (no-op write) when the string exists once\" while CC errors with errorCode 1.\n\nThis burns IO on a no-op AND updates the mtime, which can churn file watchers, retrigger build pipelines, and falsely appear as a modification in git. The model also receives \"Successfully edited\" feedback for an edit that did nothing — wasting a turn.\n\n## Mandated refactor\nAt the top of execute_edit_file (right after extracting old_string and new_string but before reading the file), insert:\n```rust\nif old_string == new_string {\n    return (\"old_string and new_string are identical — edit would be a no-op. Either change one or remove the call.\".to_string(), true);\n}\n```\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:22:24.012837391Z",
-  "updated_at": "2026-05-18T22:22:26.894173832Z",
+  "updated_at": "2026-05-20T04:53:11.706258520Z",
+  "closed_at": "2026-05-20T04:53:11.706258520Z",
   "labels": [
     "qa-review",
     "yagni"
