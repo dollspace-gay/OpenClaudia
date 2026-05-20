@@ -3,9 +3,10 @@
   "display_id": 884,
   "title": "StateWriteGuard Drop flushes events during panic unwinding broadcasting partial state",
   "description": "## Severity\nMinor\n## Dimension\nconcurrency\n## Location\nsrc/state/store.rs:173-182\n## Violation\nThe StateWriteGuard Drop impl unconditionally flushes pending events to subscribers, even on panic unwind:\n\n```rust\nimpl Drop for StateWriteGuard<'_> {\n    fn drop(&mut self) {\n        for event in self.pending.drain(..) {\n            // send() fails when there are zero subscribers — that's\n            // fine, the event just has no audience.\n            let _ = self.events.send(event);\n        }\n    }\n}\n```\n\nThe module doc claims this as a feature:\n\n```rust\n//! The write-guard-on-drop pattern means a panic during mutation\n//! still emits the event (`Drop` runs on unwind).\n```\n\nBut the panic semantics are dangerous: a writer that records `MessageAppended` then panics BEFORE actually completing the message append still tells subscribers \"a message was appended.\" Subscribers (analytics, transcript writer) then act on state that doesn't match the SessionState — the transcript writer reads `conversation.messages` and finds the message is not there, OR worse, finds a half-populated message. The lock is poisoned but subscribers won't know that until they next try to read.\n\nAdditionally, std::thread::panicking() can be checked inside Drop — if true, we know we're unwinding and should NOT broadcast events that promise post-condition observability.\n\n## Mandated refactor\nGate the flush on std::thread::panicking():\n\n```rust\nimpl Drop for StateWriteGuard<'_> {\n    fn drop(&mut self) {\n        if std::thread::panicking() {\n            // Don't broadcast — state may be inconsistent. Subscribers\n            // will discover the lock is poisoned on their next read.\n            return;\n        }\n        for event in self.pending.drain(..) {\n            let _ = self.events.send(event);\n        }\n    }\n}\n```\n\nAlternatively, require explicit guard.commit() to flush; Drop without commit logs a warn.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:11:09.326054238Z",
-  "updated_at": "2026-05-18T22:11:09.326054238Z"
+  "updated_at": "2026-05-20T13:22:09.696951841Z",
+  "closed_at": "2026-05-20T13:22:09.696951841Z"
 }
