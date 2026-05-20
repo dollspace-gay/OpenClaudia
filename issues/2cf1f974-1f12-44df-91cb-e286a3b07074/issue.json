@@ -3,9 +3,10 @@
   "display_id": 879,
   "title": "parse_findings discards full response on JSON parse failure conflating with NO_FINDINGS",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/vdd/mod.rs:752-760\n## Violation\nWhen adversary response cannot be parsed as JSON, parse_findings returns empty Vec with only a warn log:\n\n```rust\n} else {\n    warn!(\"VDD: Could not parse adversary response as JSON, treating as no findings\");\n    info!(\"VDD: Unparseable response preview: {}\", truncate_output(adversary_response, 500));\n    return Vec::new();\n};\n```\n\nEmpty Vec is indistinguishable from a successful NO_FINDINGS response. blocking_loop treats empty as clean pass and terminates early per check at line 518: `if genuine_count == 0 && iteration >= min_iterations`. A malformed adversary response — a failure signal — closes the loop with finalize(true, \"No genuine findings — clean pass\"). User code passes review because adversary output was unparseable.\n\n## Mandated refactor\nparse_findings returns Result<Vec<Finding>, ParseError>. blocking_loop treats ParseError as soft failure: retry adversary up to N attempts or surface in session.termination_reason as \"adversary response was unparseable\" rather than counting it as clean pass.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:10:31.946826095Z",
-  "updated_at": "2026-05-18T22:10:31.946826095Z"
+  "updated_at": "2026-05-20T13:22:08.107274773Z",
+  "closed_at": "2026-05-20T13:22:08.107274773Z"
 }
