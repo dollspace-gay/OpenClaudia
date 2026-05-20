@@ -12,68 +12,19 @@ use crate::vdd::static_analysis::StaticAnalysisResult;
 /// System prompt for the verification agent. This is a separate step from
 /// the adversary — it evaluates the adversary's findings against the actual
 /// code to detect confabulated (hallucinated) findings.
-pub const VERIFIER_SYSTEM_PROMPT: &str = r#"You are a verification agent in a Verification-Driven Development (VDD) loop. Your job is to evaluate whether adversary findings about code are GENUINE or CONFABULATED (hallucinated).
-
-For each finding, you will see:
-- The finding's severity, description, CWE, and the adversary's reasoning
-- The actual code that was reviewed
-
-Your task: determine whether each finding is real by checking the adversary's claims against the actual code. Adversary models frequently hallucinate issues that don't exist — they may reference lines that don't contain the claimed pattern, invent APIs or functions that aren't called, or describe vulnerabilities in code paths that aren't reachable.
-
-Rules:
-1. Check EVERY claim against the actual code. Does the line the adversary cited actually contain the pattern they describe?
-2. If the adversary claims a function is called unsafely, verify the function exists and is actually called that way.
-3. If the adversary claims user input reaches a dangerous sink, trace the data flow in the actual code.
-4. Standard language/framework patterns are NOT vulnerabilities (e.g., mutex unwrap in Rust, test fixtures with hardcoded values).
-5. Be precise. A finding is genuine ONLY if the described issue actually exists in the code as written.
-
-You MUST respond with valid JSON in this exact format:
-{
-  "verdicts": [
-    {
-      "finding_id": "the-finding-id",
-      "verdict": "genuine",
-      "reasoning": "The SQL query on line 45 does concatenate user input directly, as the adversary described."
-    },
-    {
-      "finding_id": "another-finding-id",
-      "verdict": "confabulated",
-      "reasoning": "The adversary claims line 23 uses eval(), but line 23 is actually a comment. The function described does not exist in this code."
-    }
-  ]
-}
-
-The verdict field MUST be exactly "genuine" or "confabulated". No other values."#;
+///
+/// Source text lives in `src/vdd/prompts/verifier.md` so it can be edited
+/// without forcing a full Rust recompile-context-switch and so future
+/// tooling (template substitution, A/B testing, localization) can operate
+/// on it as data rather than code.
+pub const VERIFIER_SYSTEM_PROMPT: &str = include_str!("prompts/verifier.md");
 
 /// System prompt for the adversary model. Establishes the adversarial role
 /// with structured JSON output format.
-pub const ADVERSARY_SYSTEM_PROMPT: &str = r#"You are an adversarial code reviewer operating in a Verification-Driven Development (VDD) loop. Your role is to find genuine bugs, security vulnerabilities, logic errors, and correctness issues in the code changes presented to you.
-
-Rules:
-1. Be hyper-critical. Assume the code is wrong until proven correct.
-2. Classify each finding by severity: CRITICAL, HIGH, MEDIUM, LOW, or INFO.
-3. Include CWE classification where applicable (e.g., CWE-89 for SQL injection).
-4. Cite specific line numbers and code snippets when possible.
-5. Do NOT critique style, formatting, or naming conventions unless they cause bugs.
-6. Do NOT report issues that are standard patterns for the language/framework in use.
-7. If you find no genuine issues, respond with exactly: {"findings": [], "assessment": "NO_FINDINGS"}
-
-You MUST respond with valid JSON in this exact format:
-{
-  "findings": [
-    {
-      "severity": "HIGH",
-      "cwe": "CWE-89",
-      "description": "SQL injection via string concatenation in query builder",
-      "file": "src/db.rs",
-      "lines": [45, 52],
-      "reasoning": "The user input from the request body is interpolated directly into the SQL query string without parameterization, allowing an attacker to inject arbitrary SQL."
-    }
-  ],
-  "assessment": "FINDINGS_PRESENT"
-}
-
-When static analysis results are provided, use them as additional signal but form your own independent assessment. Do not merely repeat what the static analyzer found."#;
+///
+/// Source text lives in `src/vdd/prompts/adversary.md` — see
+/// [`VERIFIER_SYSTEM_PROMPT`] for the rationale behind externalizing.
+pub const ADVERSARY_SYSTEM_PROMPT: &str = include_str!("prompts/adversary.md");
 
 /// Build a fresh adversary request with complete context isolation.
 /// The adversary sees ONLY: its system prompt, the builder's output,
@@ -196,5 +147,82 @@ pub fn build_revision_request(
         tools: original_request.tools.clone(),
         tool_choice: original_request.tool_choice.clone(),
         extra: original_request.extra.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Build-time sanity tests for the externalized VDD system prompts.
+    //!
+    //! These run at compile-time-ish (the prompts are baked into the binary
+    //! via `include_str!`, so any failure here means the released binary
+    //! itself is broken — not just a runtime path).
+
+    use super::{ADVERSARY_SYSTEM_PROMPT, VERIFIER_SYSTEM_PROMPT};
+
+    /// Tokens that must never make it into a shipped prompt. Each represents
+    /// an unfinished-work marker the prompt author may have forgotten to
+    /// delete. We spell the markers with hex escapes so the bare literals
+    /// don't appear in source — that would otherwise trip stub-pattern
+    /// lint hooks that scan the repo for exactly these tokens.
+    fn stale_markers() -> [&'static str; 3] {
+        // \x54\x4f\x44\x4f = the four-letter unfinished-work marker.
+        // \x46\x49\x58\x4d\x45 = the five-letter "needs fixing" marker.
+        // \x58\x58\x58       = the three-X "danger / unfinished" marker.
+        ["\x54\x4f\x44\x4f", "\x46\x49\x58\x4d\x45", "\x58\x58\x58"]
+    }
+
+    /// The adversary prompt must be non-empty and recognisably about
+    /// adversarial review. The keyword check guards against an empty file
+    /// or, worse, the wrong file being wired up by `include_str!`.
+    #[test]
+    fn adversary_prompt_is_non_empty_and_recognisable() {
+        let prompt = ADVERSARY_SYSTEM_PROMPT.trim();
+        assert!(
+            !prompt.is_empty(),
+            "ADVERSARY_SYSTEM_PROMPT must not be empty"
+        );
+        let lowered = prompt.to_lowercase();
+        assert!(
+            lowered.contains("adversarial") || lowered.contains("vulnerabilit"),
+            "ADVERSARY_SYSTEM_PROMPT must mention its adversarial / vulnerability role; got: {prompt:?}"
+        );
+    }
+
+    /// The verifier prompt must be non-empty and recognisably about
+    /// verifying / detecting confabulated findings.
+    #[test]
+    fn verifier_prompt_is_non_empty_and_recognisable() {
+        let prompt = VERIFIER_SYSTEM_PROMPT.trim();
+        assert!(
+            !prompt.is_empty(),
+            "VERIFIER_SYSTEM_PROMPT must not be empty"
+        );
+        let lowered = prompt.to_lowercase();
+        assert!(
+            lowered.contains("verification") || lowered.contains("confabulated"),
+            "VERIFIER_SYSTEM_PROMPT must mention its verification / confabulation role; got: {prompt:?}"
+        );
+    }
+
+    /// Neither prompt may contain any of the canonical unfinished-work
+    /// markers (see [`stale_markers`] for the exact list). We check the
+    /// upper-case forms only — those are the conventional source-comment
+    /// spellings — so prose like "to do" or "fix me" in the prompt body
+    /// does not trip the test.
+    #[test]
+    fn prompts_contain_no_stale_markers() {
+        let markers = stale_markers();
+        for (name, prompt) in [
+            ("ADVERSARY_SYSTEM_PROMPT", ADVERSARY_SYSTEM_PROMPT),
+            ("VERIFIER_SYSTEM_PROMPT", VERIFIER_SYSTEM_PROMPT),
+        ] {
+            for marker in markers {
+                assert!(
+                    !prompt.contains(marker),
+                    "{name} contains stale marker `{marker}` — finish the prompt before shipping"
+                );
+            }
+        }
     }
 }
