@@ -3,11 +3,12 @@
   "display_id": 993,
   "title": "Phase 2: thread worktree path through ToolContext (followup #345)",
   "description": "Followup to #345.\n\nPhase 1 (landed in #345): execute_enter_worktree and execute_exit_worktree no longer mutate process CWD. enter_worktree returns the new worktree path in its success message; exit_worktree requires an explicit 'path' argument. All git invocations use Command::current_dir(cwd) -- no subprocess depends on the parent process CWD either.\n\nPhase 2 (this issue):\n- Extend ToolContext with cwd: Option<&Path> populated from the session's active WorktreeState.\n- Update bash/file/lsp tool handlers to use ctx.cwd when resolving relative paths and launching subprocesses (Command::current_dir).\n- ChatSession should grow an active_worktree: Option<WorktreeState> field, and the REPL should parse the path out of enter_worktree's response (or better, have enter_worktree return structured data) to populate it.\n- Add WorktreeGuard / Drop-based cleanup so session crashes don't leak worktrees on disk.\n\nAcceptance:\n- A bash call following enter_worktree resolves relative paths against the worktree, not the process CWD.\n- Concurrent tool calls in different sessions never observe each other's worktree paths.",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-19T15:05:59.051901938Z",
-  "updated_at": "2026-05-19T15:06:00.714836559Z",
+  "updated_at": "2026-05-20T12:32:22.088796881Z",
+  "closed_at": "2026-05-20T12:32:22.088796881Z",
   "labels": [
     "refactor"
   ]
