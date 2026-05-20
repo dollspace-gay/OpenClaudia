@@ -3,11 +3,12 @@
   "display_id": 851,
   "title": "auto_learn::detect_preferences uses string-prefix heuristics that miss obvious cases",
   "description": "## Severity\nMinor\n## Dimension\nkiss\n## Location\nsrc/auto_learn.rs:275-315 (detect_preferences)\n## Violation\n```rust\nlet preference_patterns = [\n    (\"always \", \"style\"),\n    (\"never \", \"style\"),\n    (\"prefer \", \"style\"),\n    (\"don't use \", \"style\"),\n    (\"use \", \"workflow\"),\n];\nfor (prefix, category) in &preference_patterns {\n    if trimmed.starts_with(prefix) && trimmed.len() < 200 { ... }\n}\n```\n\nThis recognizes \"always use tabs\" but not \"Always use tabs\" (case-sensitive after `to_lowercase`), and not the equally-natural \"I always...\" or \"We should always...\". The 200-byte cutoff arbitrarily refuses real preference statements that include reasoning (\"always use snake_case because the team has agreed in the style guide...\"), pushing useful corrections out of the auto-learner while still capturing terse one-liners that may be sarcasm or quoted text.\n\nThe \"correction\" pass has the same problem: \"Actually,\" (capital A) does not match because the input is lowercased before comparison, but `correction_starts` are also lowercase — so that case actually works. But \"stop doing that\" matches the literal \"stop\", catching commands like \"stop the server\" as user preferences.\n\n`save_learned_preference(category, message.trim(), Some(\"user_message\"))` stores `message.trim()` — but `lower` was used for matching, so the SAVED preference is the original-case text. If the user wrote \"ALWAYS USE TABS\" the stored value matches the user's intent but the matching key would not. This is a single-pass-mismatch design.\n## Mandated refactor\nReplace string-prefix heuristics with a small classifier or, at minimum, structured slash-command syntax (`/pref always tabs`). If keeping the heuristic, lowercase BOTH the trim+match input AND store only normalized text; require the message to be ≥ 4 words to filter out command-mode utterances; add explicit denylist for words that change a \"preference\" into a command (`server`, `service`, `daemon`, ...). Or — most honestly — gate `detect_preferences` behind an explicit user opt-in flag (`auto_learn.preferences = true`) and document that it's heuristic.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:07:13.164291715Z",
-  "updated_at": "2026-05-18T22:08:00.596975456Z",
+  "updated_at": "2026-05-20T12:57:35.101092418Z",
+  "closed_at": "2026-05-20T12:57:35.101092418Z",
   "labels": [
     "qa-review",
     "kiss"
