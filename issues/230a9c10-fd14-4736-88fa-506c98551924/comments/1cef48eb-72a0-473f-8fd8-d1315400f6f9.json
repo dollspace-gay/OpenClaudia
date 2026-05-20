@@ -1,0 +1,10 @@
+{
+  "uuid": "1cef48eb-72a0-473f-8fd8-d1315400f6f9",
+  "issue_uuid": "230a9c10-fd14-4736-88fa-506c98551924",
+  "author": "lOrm",
+  "content": "Already resolved by crosslink #383 (commit f626c7f3 — single MODIFIERS table).\n\nVerified src/modes/fragments.rs:\n- AGENCY_FRAGMENTS (line 43), QUALITY_FRAGMENTS (59), SCOPE_FRAGMENTS (75), and MODIFIERS (106) are single-source tables paired (variant -> embedded fragment).\n- The four accessors (agency_fragment, quality_fragment, scope_fragment, modifier_fragment at lines 160-205) are now three-line linear-scan lookups, not match-on-enum-to-const blocks.\n- Tests every_modifier_variant_appears_in_table_exactly_once and every_axis_variant_appears_in_its_table_exactly_once enforce the single-source invariant.\n\nAdding a new modifier is one MODIFIERS entry + one enum variant — the mandated refactor outcome. Closing as already-fixed.",
+  "created_at": "2026-05-20T03:48:52.425431227Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAfv8pRJqjn9HFqS271DFV03HWDvb41jYdY14wT2nCqX97EgQk0u1hlPQX3O8pkwJrnIASJH6pL4Hv7h6d7b8aCg=="
+}
