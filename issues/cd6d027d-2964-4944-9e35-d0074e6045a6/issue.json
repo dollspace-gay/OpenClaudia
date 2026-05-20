@@ -3,11 +3,12 @@
   "display_id": 908,
   "title": "OAuth session lookup duplicated between auth_status and proxy_anthropic_messages",
   "description": "## Severity\nMinor\n## Dimension\ndry\n## Location\nsrc/proxy.rs:328-356, 1037-1063\n## Violation\nTwo near-identical cookie-parsing chains exist in auth_status and proxy_anthropic_messages — both perform headers.get(COOKIE)/to_str/split semicolons/strip 'anthropic_session=' prefix/oauth_store.get_session. DRY violation; also naive parsing (no handling of escaped semicolons inside cookie values).\n## Mandated refactor\nExtract fn cookie_session(headers, store) -> Option<OAuthSession>. Use the cookie crate for correct parsing. Inline a single helper in both routes.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:14:57.245651082Z",
-  "updated_at": "2026-05-18T22:15:36.457432036Z",
+  "updated_at": "2026-05-20T12:23:52.194946987Z",
+  "closed_at": "2026-05-20T12:23:52.194946987Z",
   "labels": [
     "qa-review",
     "dry"
