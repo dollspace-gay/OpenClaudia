@@ -3,11 +3,12 @@
   "display_id": 896,
   "title": "subagent: BackgroundAgentManager silently swallows Mutex poisoning, masking corruption",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/subagent.rs:294-296 (register), src/subagent.rs:302-304 (get), src/subagent.rs:307-313 (finish), src/subagent.rs:317-323 (fail), src/subagent.rs:333-349 (list)\n## Violation\nEvery BackgroundAgentManager method uses `self.agents.lock().ok()` / `if let Ok(mut a) = self.agents.lock()`, silently treating a `PoisonError` as a successful no-op:\n\n```rust\npub fn register(&self, agent_type: AgentType, task: &str) -> String {\n    ...\n    if let Ok(mut agents) = self.agents.lock() {\n        agents.insert(id.clone(), agent);\n    }\n    id  // returned even if insert never happened\n}\n```\n\nIf any code path panics while holding the lock (e.g., during `register`/`finish`), every subsequent call appears to succeed but operates on no data. `register` returns an id that was never inserted. `agent_output` then reports the agent \"not found\" forever — with no error trail showing the poisoning event.\n\nSame pattern in `result.lock().ok()` for the BackgroundAgent inner mutexes (lines 308-310, 318-321, 423-424).\n\n## Mandated refactor\nEither (a) propagate `PoisonError` as a typed `RegistryError::Poisoned` so callers can recover or abort, or (b) call `.lock().unwrap_or_else(PoisonError::into_inner)` to recover the inner data and log a `tracing::error!` event. Silent no-op is the worst of all options.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:12:26.484889811Z",
-  "updated_at": "2026-05-18T22:13:07.515015039Z",
+  "updated_at": "2026-05-20T14:13:07.093108412Z",
+  "closed_at": "2026-05-20T14:13:07.093108412Z",
   "labels": [
     "qa-review",
     "error-handling"
