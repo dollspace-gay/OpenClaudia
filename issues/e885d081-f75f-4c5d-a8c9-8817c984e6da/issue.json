@@ -3,11 +3,12 @@
   "display_id": 781,
   "title": "transcript::current_git_branch spawns a blocking git subprocess in async hot path",
   "description": "## Severity\nMinor\n## Dimension\nconcurrency\n## Location\nsrc/transcript.rs:113-128, 132-149 (current_git_branch + envelope_for)\n## Violation\n```rust\npub fn current_git_branch(cwd: &Path) -> Option<String> {\n    let out = std::process::Command::new(\"git\")\n        .args([\"rev-parse\", \"--abbrev-ref\", \"HEAD\"])\n        .current_dir(cwd)\n        .output()\n        .ok()?;\n    ...\n}\n```\n\n`envelope_for` is called for every appended transcript line, and `current_git_branch` is invoked unconditionally inside it. This spawns a blocking `git` subprocess synchronously on whatever thread is running. When the caller is a tokio task (proxy.rs and ACP both wrap appends in async handlers), this blocks the executor thread for the duration of `git rev-parse` — typically 5-50 ms but can be seconds on a cold cache or large repo.\n\nThe contract claim in the doc comment (\"takes longer than 2 seconds\") is wrong: `std::process::Command::output()` has no timeout. A wedged git lock would hang the call indefinitely; the comment misleads operators reading the code.\n## Mandated refactor\nCache the branch per (`cwd`, tokio mtime of `.git/HEAD`) — most appends in a session see the same branch. Move the git invocation behind `tokio::task::spawn_blocking` when called from async context, OR invalidate the cache only when `.git/HEAD` mtime changes. Either way, delete the misleading \"2 seconds\" claim from the doc comment OR add a real timeout via `wait_timeout` / `tokio::process::Command` with `select!`.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:57:33.017041453Z",
-  "updated_at": "2026-05-18T21:57:35.606463416Z",
+  "updated_at": "2026-05-20T08:19:42.264107735Z",
+  "closed_at": "2026-05-20T08:19:42.264107735Z",
   "labels": [
     "qa-review",
     "concurrency"
