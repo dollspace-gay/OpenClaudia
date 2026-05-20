@@ -2,12 +2,13 @@
   "uuid": "e5a075b4-7a2d-4d42-9afe-71da7307d06f",
   "display_id": 588,
   "title": "task_get not-found should return null result (non-error) to match CC TaskGetTool behavior",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:53:37.213022656Z",
-  "updated_at": "2026-05-18T15:53:51.964452464Z",
+  "updated_at": "2026-05-20T03:59:03.592511639Z",
+  "closed_at": "2026-05-20T03:59:03.592511639Z",
   "labels": [
     "feature",
     "cc-parity"
