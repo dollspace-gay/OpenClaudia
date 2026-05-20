@@ -2,13 +2,12 @@
   "uuid": "61f6b3e0-6e74-490f-928e-5c9e68d0bd98",
   "display_id": 615,
   "title": "Add sleep tool so model can wait without holding a bash shell",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:02:20.756697812Z",
-  "updated_at": "2026-05-20T14:41:39.433702806Z",
-  "closed_at": "2026-05-20T14:41:39.433702806Z",
+  "updated_at": "2026-05-20T16:58:27.079878800Z",
   "labels": [
     "feature",
     "cc-parity"
