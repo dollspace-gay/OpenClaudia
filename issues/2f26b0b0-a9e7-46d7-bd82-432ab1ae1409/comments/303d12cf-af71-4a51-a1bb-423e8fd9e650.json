@@ -1,0 +1,10 @@
+{
+  "uuid": "303d12cf-af71-4a51-a1bb-423e8fd9e650",
+  "issue_uuid": "2f26b0b0-a9e7-46d7-bd82-432ab1ae1409",
+  "author": "lOrm",
+  "content": "Fixed in src/tui/app.rs::persist_transcript_tail: tracks an appended counter and advances the watermark by start + appended, NOT to session_messages.len(). The warn log now carries appended/remaining counts for diagnosis. Added two regression tests using a fault-injection EnvGuard (CLAUDE_CONFIG_HOME_DIR pointed at a tempdir, optionally with a file blocking projects/ creation) and promoted transcript::env_lock to pub(crate) so the TUI tests share the same serial-test gate the transcript module already had. 1821/1821 lib tests pass.",
+  "created_at": "2026-05-20T06:42:13.290833474Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAAXD3OFhfnzjbXOQ0sfPwj8MZWVX3z08HUOFchWtJr1AhhfE2cgLuQDMstBfE1lOwr+MC5NbikXgzeqXJ4aDjDg=="
+}
