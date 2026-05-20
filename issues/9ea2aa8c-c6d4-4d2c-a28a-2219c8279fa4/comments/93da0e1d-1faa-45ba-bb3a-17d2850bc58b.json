@@ -1,0 +1,10 @@
+{
+  "uuid": "93da0e1d-1faa-45ba-bb3a-17d2850bc58b",
+  "issue_uuid": "9ea2aa8c-c6d4-4d2c-a28a-2219c8279fa4",
+  "author": "lOrm",
+  "content": "Fixed. transcript::append_entry now opens files via OpenOptionsExt::mode(0o600) and creates the project directory via DirBuilderExt::mode(0o700) on Unix. The file and directory are BORN with the restricted modes — no umask-default window between open(2) and chmod(2). Removed the post-create set_secure_perms calls (and the now-unused helper itself). Windows path unchanged (NTFS ACLs). Same shape as the #801 fix to OAuthStore.",
+  "created_at": "2026-05-20T04:34:06.285597341Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAFzC644wSy/PPX5HeXjm7spJQyuLsM8Jx8uleht+8dxPDHBl1KsC32q5i9ocRXTsFygPXwQkautftFJrwj9bRAg=="
+}
