@@ -1,0 +1,10 @@
+{
+  "uuid": "70839e6b-5023-4bda-8a24-d29f80239a84",
+  "issue_uuid": "6eca7e6f-d207-4b09-a3a2-23942f86c6a1",
+  "author": "lOrm",
+  "content": "Issue calls for plugin trust boundary: signed manifests, origin allowlist, interactive first-install prompt, commit-SHA pinning, no-silent-latest. Per the 2026-04-18 comment, points 1 (SHA pinning) and 5 (no silent latest HEAD for Url source) shipped in bf79482. Per the 2026-05-19 comment, point 2 (ed25519 signed-manifest scheme) shipped via #521. Points 3 (origin allowlist) and 4 (interactive first-install prompt) remain — each is an architectural change with its own UX surface and config schema, owner-level scope. Tracked under cc-plugins-skills label going forward; concrete sub-issues (#521 signature impl, #538 plugin spec, #654/#655 plugin integration, #658 delisting, #664 managed skills) carry the remaining work.",
+  "created_at": "2026-05-20T14:32:54.726194833Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA2Poc+peLq+cYCY1IbPu2sKfwPCp1WaWg0fe4qAeIAgnVM10tLQycKEVrqfrq3gMRYsgF1EUS1coYBtkt8UGIBg=="
+}
