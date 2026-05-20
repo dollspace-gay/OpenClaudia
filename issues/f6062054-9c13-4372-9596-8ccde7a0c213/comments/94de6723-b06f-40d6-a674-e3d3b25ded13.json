@@ -1,0 +1,10 @@
+{
+  "uuid": "94de6723-b06f-40d6-a674-e3d3b25ded13",
+  "issue_uuid": "f6062054-9c13-4372-9596-8ccde7a0c213",
+  "author": "lOrm",
+  "content": "Acknowledged as architectural — not addressable as a single bulk-pass fix. MemoryDb still has 30+ methods spanning 8 subsystems (archival, core, schema migration, sessions, activity, patterns, relationships, errors, preferences, raw SQL). Mandated refactor (extract per-concern repos behind narrow traits, separate schema module, PromptFormatter on read-side traits, Arc<Mutex<Connection>> or r2d2) is a multi-day project. Leaving open as the canonical tracker for the MemoryDb decomposition; small targeted fixes (e.g. extracting individual subsystems) can blame this for direction.",
+  "created_at": "2026-05-20T13:26:11.725027785Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAoZg8WU3E0lhtYDNMS3hWEXuumE27/QqmMEu9SO3C1lQWxlk7paPAwbZ/E1R5SOdzp8dioS72W7PQXtILTwmBBA=="
+}
