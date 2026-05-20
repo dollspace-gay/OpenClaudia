@@ -585,7 +585,11 @@ impl ContextCompactor {
     /// # Errors
     ///
     /// Returns `CompactionError::HookBlocked` if a pre-compact hook rejects, or
-    /// `CompactionError::Failed` if summarization did not reduce token count.
+    /// `CompactionError::Failed` for genuine logic failures.  A run that
+    /// produces no reduction (e.g. all messages are protected by the
+    /// preserve-recent / preserve-system / preserve-tool-calls windows)
+    /// returns `Ok(CompactionResult { compacted: false, .. })` with the
+    /// request rolled back to its original state — see #771.
     pub async fn compact(
         &self,
         request: &mut ChatCompletionRequest,
@@ -608,7 +612,11 @@ impl ContextCompactor {
     /// # Errors
     ///
     /// Returns `CompactionError::HookBlocked` if a pre-compact hook rejects, or
-    /// `CompactionError::Failed` if summarization did not reduce token count.
+    /// `CompactionError::Failed` for genuine logic failures.  A run that
+    /// produces no reduction (e.g. all messages are protected by the
+    /// preserve-recent / preserve-system / preserve-tool-calls windows)
+    /// returns `Ok(CompactionResult { compacted: false, .. })` with the
+    /// request rolled back to its original state — see #771.
     pub async fn compact_with_hint(
         &self,
         request: &mut ChatCompletionRequest,
@@ -694,6 +702,14 @@ impl ContextCompactor {
         // Drop borrows into request.messages before mutating
         drop(messages_to_summarize);
 
+        // #771 / #439: snapshot the original messages before mutating so we can
+        // restore them if the post-build verification shows no token reduction.
+        // The "all preserved" / "nothing to summarize meaningfully" outcome is
+        // not a logic failure — it is a legitimate skip and the caller must
+        // see the request unchanged with `compacted: false`, not a hard Err
+        // alongside a half-mutated request.
+        let original_messages = request.messages.clone();
+
         let new_messages = Self::build_compacted_messages(
             &analysis,
             &request.messages,
@@ -705,16 +721,24 @@ impl ContextCompactor {
 
         let new_tokens = estimate_request_tokens(request);
 
-        // Verify compaction actually reduced tokens
+        // If compaction would not reduce tokens (e.g. every message is
+        // protected by `preserve_recent` / `preserve_system` /
+        // `preserve_tool_calls`), roll back to the original message list
+        // and report a no-op skip instead of erroring.
         if new_tokens >= analysis.current_tokens {
-            warn!(
+            debug!(
                 original_tokens = analysis.current_tokens,
                 new_tokens = new_tokens,
-                "Compaction did not reduce token count"
+                "Compaction produced no reduction; rolling back to original messages"
             );
-            return Err(CompactionError::Failed(
-                "Compaction did not reduce token count".to_string(),
-            ));
+            request.messages = original_messages;
+            return Ok(CompactionResult {
+                compacted: false,
+                original_tokens: analysis.current_tokens,
+                new_tokens: analysis.current_tokens,
+                messages_summarized: 0,
+                summary: None,
+            });
         }
 
         info!(
@@ -2276,6 +2300,49 @@ mod tests {
         assert!(!analysis.needs_compaction);
         assert_eq!(analysis.tokens_to_free, 0);
         assert!(analysis.messages_to_summarize.is_empty());
+    }
+
+    /// #771 — when every message is protected by `preserve_recent` and the
+    /// compaction hint forces `needs_compaction = true`, the compactor must
+    /// return `Ok(compacted: false)` with the request rolled back, not
+    /// `Err(CompactionError::Failed("did not reduce token count"))`.
+    #[tokio::test]
+    async fn issue_771_all_preserved_returns_ok_unchanged() {
+        let messages = vec![
+            create_test_message("user", "hi"),
+            create_test_message("assistant", "hello"),
+            create_test_message("user", "again"),
+            create_test_message("assistant", "ack"),
+        ];
+        let mut request = create_test_request(messages.clone());
+        let config = CompactionConfig {
+            max_context_tokens: 10_000,
+            threshold: 0.85,
+            preserve_system: true,
+            // preserve all 4 messages so categorize yields no summarizable
+            // entries even though the hint forces needs_compaction = true.
+            preserve_recent: 4,
+            preserve_tool_calls: true,
+            summary_prompt: None,
+        };
+        let compactor = ContextCompactor::new(config);
+
+        let original_msgs = request.messages.clone();
+        let result = compactor
+            .compact_with_hint(&mut request, None, None, Some(9_000), None)
+            .await
+            .expect("all-preserved must not error");
+        assert!(
+            !result.compacted,
+            "all-preserved case must report compacted:false"
+        );
+        assert_eq!(result.messages_summarized, 0);
+        assert!(result.summary.is_none());
+        assert_eq!(
+            request.messages.len(),
+            original_msgs.len(),
+            "request.messages must be restored on no-op"
+        );
     }
 
     /// B7c — single system message: categorize puts it in preserve, summarize is empty.

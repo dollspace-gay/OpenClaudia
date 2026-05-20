@@ -351,43 +351,70 @@ fn commit_push_pr_stage_and_commit() -> bool {
     }
 }
 
-/// Push the current branch to origin, asking for confirmation when on a
-/// protected branch. Returns the branch name on success, or `None` to bail.
-fn commit_push_pr_push() -> Option<String> {
+/// Read a single line from stdin after printing `prompt`, returning the
+/// trimmed lower-cased response.  Extracted (#791) so the protected-branch
+/// confirmation can be tested in isolation rather than wedged inline.
+fn prompt_confirm_line(prompt: &str) -> String {
     use std::io::Write;
+    print!("{prompt}");
+    std::io::stdout().flush().ok();
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line).ok();
+    line.trim().to_lowercase()
+}
+
+/// Returns the current branch name, or an empty string when `git` is
+/// unavailable / not in a repo.  Pure git-status probe — no I/O on stdin.
+fn current_branch() -> String {
     use std::process::Command;
-    let branch = Command::new("git")
+    Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+/// Returns true when the user agrees to push (or the branch is not
+/// protected and no confirmation is needed).  Encapsulates the entire
+/// stdin-reading dance for the protected-branch case (#791).
+fn confirm_push_to_branch(branch: &str) -> bool {
     if branch == "main" || branch == "master" {
-        println!("\n⚠ You're on '{branch}'. Push anyway? [y/n] ");
-        std::io::stdout().flush().ok();
-        let mut line = String::new();
-        std::io::stdin().read_line(&mut line).ok();
-        if !line.trim().to_lowercase().starts_with('y') {
+        let answer = prompt_confirm_line(&format!(
+            "\n\u{26a0} You're on '{branch}'. Push anyway? [y/n] "
+        ));
+        if !answer.starts_with('y') {
             println!("Push cancelled.");
-            return None;
+            return false;
         }
+    }
+    true
+}
+
+/// Push the current branch to origin, asking for confirmation when on a
+/// protected branch. Returns the branch name on success, or `None` to bail.
+fn commit_push_pr_push() -> Option<String> {
+    use std::process::Command;
+    let branch = current_branch();
+    if !confirm_push_to_branch(&branch) {
+        return None;
     }
     match Command::new("git")
         .args(["push", "-u", "origin", &branch])
         .output()
     {
         Ok(o) if o.status.success() => {
-            println!("✓ Pushed to origin/{branch}");
+            println!("\u{2713} Pushed to origin/{branch}");
             Some(branch)
         }
         Ok(o) => {
             println!(
-                "✗ Push failed: {}",
+                "\u{2717} Push failed: {}",
                 String::from_utf8_lossy(&o.stderr).trim()
             );
             None
         }
         Err(e) => {
-            println!("✗ {e}");
+            println!("\u{2717} {e}");
             None
         }
     }

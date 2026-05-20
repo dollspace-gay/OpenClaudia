@@ -3,9 +3,25 @@
 //! Loads .md files from .openclaudia/rules/ directory and injects them
 //! as context based on file types being edited.
 
+use regex::Regex;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use tracing::{debug, info, warn};
+
+/// Compiled-once regex used by [`extract_extensions_from_tool_input`] to pull
+/// the trailing extension out of a glob pattern.  Matches a literal `.`
+/// followed by 1-8 alphanumeric characters at the end of the pattern, with an
+/// optional tail of glob metacharacters (`*?]}\)`).  See crosslink #796.
+fn glob_extension_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        // Pattern: `.<ext>` optionally followed by glob metacharacters, anchored
+        // at end-of-string.  Capture group 1 is the bare extension.
+        Regex::new(r"\.([A-Za-z0-9]{1,8})[\*\?\]\}\)]*$")
+            .expect("static glob-extension regex must compile")
+    })
+}
 
 /// Single source-of-truth for `language -> extensions` mapping.
 ///
@@ -275,14 +291,14 @@ pub fn extract_extensions_from_tool_input(
             }
         }
         "Glob" => {
-            // Try to extract extension from glob pattern
+            // #796: only extract an extension when the pattern actually has
+            // a trailing `.<ext>` form.  Patterns without a `.` (e.g.
+            // `src/util`) must yield no extensions — the previous code
+            // returned the bare segment as a fake extension.
             if let Some(pattern) = input.get("pattern").and_then(|v| v.as_str()) {
-                // Handle patterns like "*.rs" or "**/*.ts"
-                if let Some(ext_part) = pattern.rsplit('.').next() {
-                    // Remove any trailing glob characters
-                    let ext = ext_part.trim_end_matches(&['*', '?', ']', ')'][..]);
-                    if !ext.is_empty() && ext.len() < 10 {
-                        extensions.push(ext.to_string());
+                if let Some(caps) = glob_extension_regex().captures(pattern) {
+                    if let Some(ext) = caps.get(1) {
+                        extensions.push(ext.as_str().to_string());
                     }
                 }
             }
@@ -410,5 +426,51 @@ mod tests {
         let input = serde_json::json!({"pattern": "**/*.ts"});
         let exts = extract_extensions_from_tool_input("Glob", &input);
         assert_eq!(exts, vec!["ts"]);
+    }
+
+    /// #796: glob extension extraction must only return the trailing `.ext`,
+    /// and must yield nothing for patterns with no embedded `.`.
+    #[test]
+    fn issue_796_glob_extension_extraction_strict() {
+        // Bare extension after a wildcard.
+        let exts =
+            extract_extensions_from_tool_input("Glob", &serde_json::json!({"pattern": "*.rs"}));
+        assert_eq!(exts, vec!["rs"]);
+
+        // Compound suffix: only the last segment counts.
+        let exts =
+            extract_extensions_from_tool_input("Glob", &serde_json::json!({"pattern": "*.tar.gz"}));
+        assert_eq!(exts, vec!["gz"]);
+
+        // Path with no extension must yield no extensions (was previously "util").
+        let exts =
+            extract_extensions_from_tool_input("Glob", &serde_json::json!({"pattern": "src/util"}));
+        assert!(
+            exts.is_empty(),
+            "path with no `.` must not produce a fake extension, got {exts:?}"
+        );
+
+        // Recursive globs.
+        let exts =
+            extract_extensions_from_tool_input("Glob", &serde_json::json!({"pattern": "**/*.rs"}));
+        assert_eq!(exts, vec!["rs"]);
+
+        // Single `*` with no `.` must produce nothing.
+        let exts = extract_extensions_from_tool_input("Glob", &serde_json::json!({"pattern": "*"}));
+        assert!(exts.is_empty(), "bare `*` must not produce an extension");
+
+        // Brace alternation: ambiguous (multiple extensions), so the
+        // anchored regex declines to pick one rather than contaminating
+        // the result with `"toml}"` like the old `trim_end_matches`
+        // approach.  Callers that need brace-alternation handling must
+        // expand the pattern first.
+        let exts = extract_extensions_from_tool_input(
+            "Glob",
+            &serde_json::json!({"pattern": "*.{rs,toml}"}),
+        );
+        assert!(
+            exts.is_empty(),
+            "brace alternation is ambiguous and must yield no extension, got {exts:?}"
+        );
     }
 }

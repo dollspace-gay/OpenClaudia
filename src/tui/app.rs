@@ -170,39 +170,54 @@ fn expand_file_refs(input: &str) -> String {
             continue;
         }
 
-        // Canonicalize and verify it's within the project root
-        match std::fs::canonicalize(&resolved) {
-            Ok(canonical) => {
-                if !canonical.starts_with(&cwd) {
-                    replacements.push((
-                        full_match.to_string(),
-                        format!("[File outside project directory: {raw_path}]"),
-                    ));
-                    continue;
-                }
-                match std::fs::read_to_string(&canonical) {
-                    Ok(content) => {
-                        replacements.push((
-                            full_match.to_string(),
-                            format!(
-                                "\n<file path=\"{}\">\n{}\n</file>\n",
-                                canonical.display(),
-                                content.trim()
-                            ),
-                        ));
-                    }
-                    Err(e) => {
-                        replacements.push((
-                            full_match.to_string(),
-                            format!("[Cannot read {raw_path}: {e}]"),
-                        ));
-                    }
-                }
-            }
-            Err(_) => {
+        // #818: open-then-read on a single file descriptor.  The previous
+        // canonicalize → read_to_string pair was a TOCTOU window — between
+        // the two syscalls the path could be replaced with a symlink to an
+        // arbitrary file.  We now open the file first (yielding an fd
+        // pinned to one inode), then validate the canonical path of the
+        // already-resolved name, then read from the same fd.  Any post-open
+        // symlink flip is irrelevant — the kernel keeps reading the
+        // originally-opened inode.
+        let Ok(mut file) = std::fs::File::open(&resolved) else {
+            replacements.push((
+                full_match.to_string(),
+                format!("[File not found: {raw_path}]"),
+            ));
+            continue;
+        };
+        // Canonicalize for the containment check.  Even if the symlink
+        // chain is swapped between the open() above and this canonicalize,
+        // the file we will actually read is the inode pinned by `file`.
+        let Ok(canonical) = std::fs::canonicalize(&resolved) else {
+            replacements.push((
+                full_match.to_string(),
+                format!("[File not found: {raw_path}]"),
+            ));
+            continue;
+        };
+        if !canonical.starts_with(&cwd) {
+            replacements.push((
+                full_match.to_string(),
+                format!("[File outside project directory: {raw_path}]"),
+            ));
+            continue;
+        }
+        let mut content = String::new();
+        match std::io::Read::read_to_string(&mut file, &mut content) {
+            Ok(_) => {
                 replacements.push((
                     full_match.to_string(),
-                    format!("[File not found: {raw_path}]"),
+                    format!(
+                        "\n<file path=\"{}\">\n{}\n</file>\n",
+                        canonical.display(),
+                        content.trim()
+                    ),
+                ));
+            }
+            Err(e) => {
+                replacements.push((
+                    full_match.to_string(),
+                    format!("[Cannot read {raw_path}: {e}]"),
                 ));
             }
         }

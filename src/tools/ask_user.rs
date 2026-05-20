@@ -9,123 +9,148 @@ use super::USER_QUESTION_MARKER;
 /// `claude-code/tools/AskUserQuestionTool/prompt.ts`.
 const HEADER_CHIP_WIDTH: usize = 12;
 
+/// Pull the `questions` array out of the raw tool arguments and apply the
+/// outer 1-4 count bound.  Returns the borrowed slice on success.
+fn parse_args(args: &HashMap<String, Value>) -> Result<&[Value], String> {
+    let questions = args
+        .get("questions")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "Missing 'questions' argument".to_string())?;
+    if questions.is_empty() || questions.len() > 4 {
+        return Err("Must provide 1-4 questions".to_string());
+    }
+    Ok(questions.as_slice())
+}
+
+/// Validate the shape of a single option object.  Index `i` and `j` are
+/// carried through purely for error-message context.
+fn validate_option(
+    i: usize,
+    j: usize,
+    opt: &Value,
+    seen: &mut HashSet<String>,
+) -> Result<(), String> {
+    let label = opt
+        .get("label")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("Question {i} option {j} missing 'label'"))?;
+    if !seen.insert(label.to_string()) {
+        return Err(format!(
+            "Question {i} option labels must be unique; '{label}' appears more than once"
+        ));
+    }
+    if opt.get("description").and_then(|v| v.as_str()).is_none() {
+        return Err(format!("Question {i} option {j} missing 'description'"));
+    }
+    // `preview` is optional (CC parity).  When present it must be a string —
+    // fail loudly rather than silently dropping it.
+    if let Some(v) = opt.get("preview") {
+        if !v.is_string() {
+            return Err(format!(
+                "Question {i} option {j} 'preview' must be a string"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Validate the shape of a single question and its options.  Does not
+/// enforce cross-question uniqueness — that belongs in
+/// [`validate_question_set`].
+fn validate_question(i: usize, q: &Value) -> Result<&str, String> {
+    let question_text = q
+        .get("question")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("Question {i} missing 'question' field"))?;
+
+    let header = q
+        .get("header")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("Question {i} missing 'header' field"))?;
+    // CC uses `.length`, which for ASCII matches byte count.  For multi-byte
+    // UTF-8 we use chars().count() so a header like "日本語" (3 chars, 9
+    // bytes) fits the same way users expect in CC.
+    if header.chars().count() > HEADER_CHIP_WIDTH {
+        return Err(format!(
+            "Question {i} header '{header}' exceeds {HEADER_CHIP_WIDTH} character limit"
+        ));
+    }
+
+    // `multiSelect` is CC's name; `multi_select` is OC's original
+    // camelCase-impaired spelling.  Accept either for back-compat.  Both
+    // must be booleans when present.
+    for key in ["multiSelect", "multi_select"] {
+        if let Some(v) = q.get(key) {
+            if !v.is_boolean() {
+                return Err(format!("Question {i} '{key}' must be a boolean"));
+            }
+        }
+    }
+
+    let opts = q
+        .get("options")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| format!("Question {i} missing 'options' field"))?;
+    if opts.len() < 2 || opts.len() > 4 {
+        return Err(format!(
+            "Question {} must have 2-4 options, got {}",
+            i,
+            opts.len()
+        ));
+    }
+    let mut seen_labels: HashSet<String> = HashSet::new();
+    for (j, opt) in opts.iter().enumerate() {
+        validate_option(i, j, opt, &mut seen_labels)?;
+    }
+
+    Ok(question_text)
+}
+
+/// Enforce cross-question uniqueness on the question-text field.  CC parity:
+/// see `claude-code/tools/AskUserQuestionTool/AskUserQuestionTool.tsx`
+/// (`UNIQUENESS_REFINE`).
+fn validate_question_set(questions: &[Value]) -> Result<(), String> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    for (i, q) in questions.iter().enumerate() {
+        let text = validate_question(i, q)?;
+        if !seen.insert(text) {
+            return Err(format!(
+                "Question texts must be unique; '{text}' appears more than once"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Rewrite the legacy `multi_select` key to the canonical `multiSelect` so
+/// downstream renderers see one spelling.  Leaves other fields untouched.
+fn normalize_question(q: &Value) -> Value {
+    let mut out = q.clone();
+    if let Some(obj) = out.as_object_mut() {
+        if !obj.contains_key("multiSelect") {
+            if let Some(legacy) = obj.remove("multi_select") {
+                obj.insert("multiSelect".to_string(), legacy);
+            }
+        }
+    }
+    out
+}
+
 /// Execute the `ask_user_question` tool.
 /// Returns a special JSON result that signals the main loop to collect user input.
 pub fn execute_ask_user_question(args: &HashMap<String, Value>) -> (String, bool) {
-    let Some(questions) = args.get("questions").and_then(|v| v.as_array()) else {
-        return ("Missing 'questions' argument".to_string(), true);
+    let questions = match parse_args(args) {
+        Ok(qs) => qs,
+        Err(msg) => return (msg, true),
     };
-
-    if questions.is_empty() || questions.len() > 4 {
-        return ("Must provide 1-4 questions".to_string(), true);
+    if let Err(msg) = validate_question_set(questions) {
+        return (msg, true);
     }
-
-    // Validate each question shape + enforce CC-compatible uniqueness:
-    // question texts unique across the array, option labels unique
-    // within each question. See
-    // claude-code/tools/AskUserQuestionTool/AskUserQuestionTool.tsx
-    // (UNIQUENESS_REFINE).
-    let mut seen_question_texts: HashSet<&str> = HashSet::new();
-    for (i, q) in questions.iter().enumerate() {
-        let Some(question_text) = q.get("question").and_then(|v| v.as_str()) else {
-            return (format!("Question {i} missing 'question' field"), true);
-        };
-        if !seen_question_texts.insert(question_text) {
-            return (
-                format!("Question texts must be unique; '{question_text}' appears more than once"),
-                true,
-            );
-        }
-
-        let Some(header) = q.get("header").and_then(|v| v.as_str()) else {
-            return (format!("Question {i} missing 'header' field"), true);
-        };
-        // CC uses `.length`, which for ASCII matches byte count. For
-        // multi-byte UTF-8 we use chars().count() so a header like
-        // "日本語" (3 chars, 9 bytes) fits the same way users expect in CC.
-        if header.chars().count() > HEADER_CHIP_WIDTH {
-            return (
-                format!(
-                    "Question {i} header '{header}' exceeds {HEADER_CHIP_WIDTH} character limit"
-                ),
-                true,
-            );
-        }
-
-        // `multiSelect` is CC's name; `multi_select` is OC's original
-        // camelCase-impaired spelling. Accept either for back-compat.
-        // Both must be booleans when present.
-        for key in ["multiSelect", "multi_select"] {
-            if let Some(v) = q.get(key) {
-                if !v.is_boolean() {
-                    return (format!("Question {i} '{key}' must be a boolean"), true);
-                }
-            }
-        }
-
-        let Some(opts) = q.get("options").and_then(|v| v.as_array()) else {
-            return (format!("Question {i} missing 'options' field"), true);
-        };
-        if opts.len() < 2 || opts.len() > 4 {
-            return (
-                format!("Question {} must have 2-4 options, got {}", i, opts.len()),
-                true,
-            );
-        }
-        let mut seen_labels: HashSet<&str> = HashSet::new();
-        for (j, opt) in opts.iter().enumerate() {
-            let Some(label) = opt.get("label").and_then(|v| v.as_str()) else {
-                return (format!("Question {i} option {j} missing 'label'"), true);
-            };
-            if !seen_labels.insert(label) {
-                return (
-                    format!(
-                        "Question {i} option labels must be unique; '{label}' appears more than once"
-                    ),
-                    true,
-                );
-            }
-            if opt.get("description").and_then(|v| v.as_str()).is_none() {
-                return (
-                    format!("Question {i} option {j} missing 'description'"),
-                    true,
-                );
-            }
-            // `preview` is optional (CC parity). When present it must
-            // be a string — fail loudly rather than silently dropping it.
-            if let Some(v) = opt.get("preview") {
-                if !v.is_string() {
-                    return (
-                        format!("Question {i} option {j} 'preview' must be a string"),
-                        true,
-                    );
-                }
-            }
-        }
-    }
-
-    // Normalize: copy every question, making sure `multiSelect` is the
-    // canonical output key so downstream renderers see one spelling.
-    let normalized: Vec<Value> = questions
-        .iter()
-        .map(|q| {
-            let mut out = q.clone();
-            if let Some(obj) = out.as_object_mut() {
-                if !obj.contains_key("multiSelect") {
-                    if let Some(legacy) = obj.remove("multi_select") {
-                        obj.insert("multiSelect".to_string(), legacy);
-                    }
-                }
-            }
-            out
-        })
-        .collect();
-
+    let normalized: Vec<Value> = questions.iter().map(normalize_question).collect();
     let result = json!({
         "type": USER_QUESTION_MARKER,
         "questions": normalized,
     });
-
     (result.to_string(), false)
 }
 
