@@ -3,13 +3,12 @@
   "display_id": 575,
   "title": "Add sandboxed bash execution (seccomp/firejail/macOS sandbox-exec)",
   "description": "## Gap\n\nClaude Code wraps every bash execution in a platform sandbox:\n- Linux: seccomp or firejail\n- macOS: sandbox-exec\n- Controlled by SandboxManager (utils/sandbox/sandbox-adapter.js)\n- shouldUseSandbox() (tools/BashTool/shouldUseSandbox.ts:130-153) determines per-command whether to sandbox\n- Input field dangerouslyDisableSandbox allows bypass when policy allows\n- User can configure excludedCommands in settings.sandbox to opt commands out\n\nOpenClaudia has no sandbox. Bash runs directly via std::process::Command. The only isolation is:\n- process_group(0) for clean SIGTERM delivery (src/tools/bash/mod.rs:82)\n- apply_env_scrub to strip credential env vars (src/tools/bash/policy.rs:141-149)\n\nNeither is a security boundary against a malicious command that passes the denylist.\n\n## Parity reference\n- CC: tools/BashTool/shouldUseSandbox.ts, utils/sandbox/sandbox-adapter.js\n- OC: missing entirely\n\n## Acceptance\n- Linux: seccomp or firejail wrapping of bash -c\n- macOS: sandbox-exec profile\n- shouldUseSandbox() equivalent gating function\n- dangerouslyDisableSandbox input field respected when policy allows\n- User-configurable excludedCommands list\n",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:52:44.037491133Z",
-  "updated_at": "2026-05-20T14:39:35.042398856Z",
-  "closed_at": "2026-05-20T14:39:35.042398856Z",
+  "updated_at": "2026-05-20T16:57:50.786056961Z",
   "labels": [
     "feature",
     "cc-parity"
