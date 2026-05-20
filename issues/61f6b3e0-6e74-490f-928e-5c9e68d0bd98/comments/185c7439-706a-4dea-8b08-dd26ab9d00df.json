@@ -1,0 +1,10 @@
+{
+  "uuid": "185c7439-706a-4dea-8b08-dd26ab9d00df",
+  "issue_uuid": "61f6b3e0-6e74-490f-928e-5c9e68d0bd98",
+  "author": "lOrm",
+  "content": "Issue calls for a sleep tool so the model can wait without holding a bash shell. Not addressable in a cleanup pass: small but requires a new tool under src/tools/, system-prompt update, tool-result emission with elapsed-time accounting, and tokio::time::sleep integration that doesn't violate forbidden-files. Parent audit #523.",
+  "created_at": "2026-05-20T14:38:01.566946388Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAGEFGVCDgQEhSE2/7fSLXwpjb5uMrkcXPwL9f4zCUos8tnRzrzGehCauzp2beM8u4Jw7aoMKzyiUxEU7/J5UyAQ=="
+}
