@@ -1,0 +1,10 @@
+{
+  "uuid": "dbed05c6-9e9b-4554-90be-4020588e126b",
+  "issue_uuid": "99c4e64b-8b3d-49a2-8730-5d39b0a08e99",
+  "author": "lOrm",
+  "content": "Issue calls for making skills model-callable via a skill tool (not just slash command). Not addressable in a cleanup pass: requires a new skill tool with frontmatter inspection, plus deciding whether all skills become model-callable or a per-skill opt-in via #660 frontmatter parity. Parent audit #523.",
+  "created_at": "2026-05-20T14:41:27.171292069Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAMTC497ZXtiPkWx5Y6F1IiBGUqk1tA38iEVRmnezLWs0utGXSRufb3tYpSyX+jthv0WuCo5M1wmG27jVGM9a0CQ=="
+}
