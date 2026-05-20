@@ -1,0 +1,10 @@
+{
+  "uuid": "c01f05de-c514-4968-8637-8b7b477353fd",
+  "issue_uuid": "fb1560f3-c16f-4da2-959b-a528a54ace46",
+  "author": "lOrm",
+  "content": "Issue calls for send_message tool for cross-agent message passing (parity with CC SendMessageTool). Not addressable in a cleanup pass: depends on #507 coordinator subsystem (no multi-agent runtime yet) and #578 team_create. Parent audit #523.",
+  "created_at": "2026-05-20T14:36:47.198573273Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAIEtrQf1/eRL2H98UI96YgLhPqGE1lmNODnJ772KS7nn/TqG5CpCCjuC/hk+UXZ+7PolASwmnL17PNxUeCMsiDw=="
+}
