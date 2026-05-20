@@ -3,11 +3,12 @@
   "display_id": 725,
   "title": "subagent: run_subagent is a 311-line god function with deeply nested branches",
   "description": "## Severity\nMajor\n## Dimension\ncomplexity\n## Location\nsrc/subagent.rs:657-968 (run_subagent)\n## Violation\n`run_subagent` spans lines 658-968 (311 lines), with `#[allow(clippy::too_many_lines)]` masking the breach. The function intermixes:\n\n1. Resume-vs-fresh transcript bootstrapping (lines 664-702)\n2. Optional worktree creation and system-prompt injection (lines 705-731)\n3. Tool definition filtering (lines 733-750)\n4. Model resolution (lines 752-763)\n5. Provider URL/key extraction (lines 769-780)\n6. Permission manager construction (lines 789-793)\n7. The agent turn loop containing the API call, response parsing, content extraction, tool-call extraction, tool dispatch and result formatting (lines 795-944)\n8. Finalization, transcript storage, worktree cleanup (lines 947-967)\n\nEach block has independent reasons to change (SRP). Cyclomatic complexity exceeds the framework's V(G) > 15 reject threshold; the inner content-extraction block at lines 859-876 alone is depth-5 nested. Five early-return error sites each rebuild the same `SubagentResult { agent_id, success: false, ... }` literal (DRY).\n\n## Mandated refactor\nExtract:\n- `prepare_messages(config) -> Result<(AgentId, Vec<Value>)>` (handles resume and fresh init)\n- `prepare_worktree(config, agent_id) -> Result<Option<WorktreeIsolation>>`\n- `pick_model(config, app_config) -> String`\n- `extract_final_text(assistant_message) -> Option<String>`\n- a helper `fail_subagent(agent_id, msg, ...) -> SubagentResult` for the 5 duplicated bail-out literals\n- A top-level `agent_loop(state) -> Result<String, String>` containing only the iteration\n\nRemove `#[allow(clippy::too_many_lines)]` once refactored.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:51:28.003930743Z",
-  "updated_at": "2026-05-18T21:51:33.238061913Z",
+  "updated_at": "2026-05-20T14:11:17.012802121Z",
+  "closed_at": "2026-05-20T14:11:17.012802121Z",
   "labels": [
     "qa-review",
     "complexity"
