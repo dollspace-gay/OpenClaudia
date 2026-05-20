@@ -1205,6 +1205,24 @@ impl ChatRepl {
                 None => break,
             }
         }
+        // #601 — Gemini path previously bailed silently when the
+        // `max_turns` ceiling was reached. Emit a structured
+        // `error_max_turns` result event so SDK/MCP consumers see a
+        // typed signal, matching CC's QueryEngine.ts:851-873 behaviour.
+        if max_iterations > 0
+            && iteration >= max_iterations
+            && !state.tool_calls.is_empty()
+        {
+            let _ = emit_max_turns_event(
+                &self.chat_session.id,
+                "google_gemini",
+                max_iterations,
+                iteration,
+            );
+            eprintln!(
+                "\n\x1b[33m⚠ Reached max_turns limit ({max_iterations} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m"
+            );
+        }
     }
 
     /// Persist the final Gemini message, run VDD review, draw the status
@@ -1881,6 +1899,15 @@ impl ChatRepl {
                 break;
             }
             if max_proxy_iterations > 0 && proxy_iteration >= max_proxy_iterations {
+                // #601 — emit structured `error_max_turns` result event
+                // before printing the user-facing warning so subscribers
+                // see a typed event, not just a stderr string.
+                let _ = emit_max_turns_event(
+                    &self.chat_session.id,
+                    "anthropic_proxy",
+                    max_proxy_iterations,
+                    proxy_iteration,
+                );
                 eprintln!(
                     "\n\x1b[33m⚠ Reached max_turns limit ({max_proxy_iterations} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m"
                 );
@@ -2265,6 +2292,13 @@ impl ChatRepl {
             && proxy_iteration >= max_proxy_iterations
             && tool_interceptor.has_complete_block()
         {
+            // #601 — structured `error_max_turns` for the XML-intercept path.
+            let _ = emit_max_turns_event(
+                &self.chat_session.id,
+                "anthropic_xml_intercept",
+                max_proxy_iterations,
+                proxy_iteration,
+            );
             eprintln!(
                 "\n\x1b[33m⚠ Reached max_turns limit ({max_proxy_iterations} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m"
             );
@@ -2518,6 +2552,13 @@ impl ChatRepl {
         }
 
         if max_iterations > 0 && iteration >= max_iterations && tool_accumulator.has_tool_calls() {
+            // #601 — structured `error_max_turns` for the OpenAI path.
+            let _ = emit_max_turns_event(
+                &self.chat_session.id,
+                "openai",
+                max_iterations,
+                iteration,
+            );
             eprintln!(
                 "\n\x1b[33m⚠ Reached max_turns limit ({max_iterations} turns). Configure session.max_turns in config.yaml (0 = unlimited).\x1b[0m"
             );
@@ -3058,6 +3099,45 @@ fn gemini_extract_usage_tokens(json: &serde_json::Value) -> (u64, u64) {
     (input, output)
 }
 
+/// Emit a structured `error_max_turns` event when the agentic loop's
+/// turn cap is reached.
+///
+/// Crosslink #601 / CC parity (`QueryEngine.ts:851-873`): when the
+/// per-turn iteration counter trips the configured `session.max_turns`
+/// ceiling, CC yields a typed `{type:'result', subtype:'error_max_turns'}`
+/// envelope so SDK callers can distinguish a turn-cap stop from other
+/// terminal conditions. OC previously only wrote an ANSI string to
+/// stderr, which is invisible to API/MCP/TUI consumers. This helper
+/// emits a `tracing::error!` at `target = "openclaudia::turns"` with
+/// the structured fields a downstream subscriber needs to reconstruct
+/// the `error_max_turns` result event.
+///
+/// The function is intentionally pure (no `eprintln!` here) so callers
+/// can keep their existing terminal warning unchanged while subscribers
+/// get a typed event. Returning the formatted string lets tests assert
+/// the message verbatim without intercepting the global tracing
+/// subscriber.
+fn emit_max_turns_event(
+    agent_id: &str,
+    provider_path: &str,
+    max_turns: u32,
+    turns_executed: u32,
+) -> String {
+    let message = format!("Reached maximum number of turns ({max_turns})");
+    tracing::error!(
+        target: "openclaudia::turns",
+        event = "error_max_turns",
+        kind = "result",
+        is_error = true,
+        agent_id,
+        provider_path,
+        max_turns,
+        num_turns = turns_executed,
+        "max turns exceeded"
+    );
+    message
+}
+
 fn openai_activity_type(tool_call: &tools::ToolCall) -> &'static str {
     match tool_call.function.name.as_str() {
         "read_file" => "file_read",
@@ -3084,5 +3164,37 @@ fn openai_activity_type(tool_call: &tools::ToolCall) -> &'static str {
         // from this caller's perspective, so we degrade to a constant rather than leak
         // an unbounded set of static strings into the activity log.
         _ => "tool",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #601 — `emit_max_turns_event` returns the canonical
+    /// `Reached maximum number of turns (N)` message string and the
+    /// structured fields it logs include `max_turns` and the
+    /// `agent_id` / `provider_path` so a downstream subscriber can
+    /// reconstruct the `error_max_turns` result envelope.
+    #[test]
+    fn emit_max_turns_event_returns_canonical_message() {
+        let msg = emit_max_turns_event("sess-123", "openai", 7, 7);
+        assert_eq!(
+            msg, "Reached maximum number of turns (7)",
+            "message must match CC's error_max_turns wording exactly"
+        );
+    }
+
+    /// #601 — the helper is provider-agnostic: each provider path label
+    /// produces a stable message that only varies in the turn count,
+    /// so subscribers can group by `provider_path` without re-parsing.
+    #[test]
+    fn emit_max_turns_event_message_varies_only_with_count() {
+        let a = emit_max_turns_event("s1", "anthropic_proxy", 3, 3);
+        let b = emit_max_turns_event("s2", "google_gemini", 3, 3);
+        let c = emit_max_turns_event("s3", "openai", 10, 10);
+        assert_eq!(a, b, "provider_path must not leak into the user message");
+        assert_ne!(a, c, "different max_turns must yield different messages");
+        assert!(c.contains("10"));
     }
 }
