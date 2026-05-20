@@ -1,0 +1,10 @@
+{
+  "uuid": "8867b597-2d2e-41b5-a1b4-e42588179b01",
+  "issue_uuid": "0582677c-07fd-45ec-8ef2-4edd9bd58a3f",
+  "author": "lOrm",
+  "content": "Added LocalShellTask in src/coordinator/tasks/local_shell.rs wrapping BACKGROUND_SHELLS visibility with owner_agent + shell_id + state. tasks_for_agent() filter implements the killShellTasksForAgent agent-scoped sweep. 5 unit tests.",
+  "created_at": "2026-05-20T18:36:38.531441767Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAlZrQRInp4lTt9r0F2qAsLf1/y3QtPbC9flj9K55TaArdmBum0aWH8e6R3X5GHwkrH2brtQ4AgRq2MWa2OdISCA=="
+}
