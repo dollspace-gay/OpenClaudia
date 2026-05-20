@@ -3,11 +3,12 @@
   "display_id": 860,
   "title": "QA: hook deep_merge concatenates arrays unconditionally, enabling allowlist amplification",
   "description": "## Severity\nMinor\n## Dimension\nsecurity\n## Location\nsrc/hooks/merge.rs:75-90\n## Violation\n`deep_merge` always concatenates arrays:\n```rust\nmatch (target, source) {\n    (Value::Object(target_map), Value::Object(source_map)) => { ... }\n    (Value::Array(target_arr), Value::Array(source_arr)) => {\n        target_arr.extend(source_arr.iter().cloned());\n    }\n    (target, source) => {\n        *target = source.clone();\n    }\n}\n```\nThis is called from `load_claude_settings` (claude_compat.rs:108-184)\nwhich loads user-global -> project -> project-local ->\nmanaged-enterprise settings in that order. The\n`allowedTools` array (extracted at claude_compat.rs:162-170) and the\n`hooks` arrays are concatenated across all layers — there is no\n\"replace\" semantic, no per-layer ACL, and no way for an enterprise\nmanaged-settings file to **remove** a permission granted at user level.\nA user can append `allowedTools` entries the enterprise tier intended to\nforbid.\n## Mandated refactor\nMake the merge strategy explicit per top-level key. `allowedTools` and\n`disallowedTools` should be unioned-then-filtered: union of all\n`allowedTools`, minus union of all `disallowedTools` from any later\n(higher-priority) layer. Hook arrays should similarly support\n`disabledHooks` from higher layers. Document the merge semantics in\n`load_claude_settings` and add tests covering \"enterprise overrides\nuser\".\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:08:14.662085821Z",
-  "updated_at": "2026-05-18T22:09:13.922186856Z",
+  "updated_at": "2026-05-20T12:03:34.327558716Z",
+  "closed_at": "2026-05-20T12:03:34.327558716Z",
   "labels": [
     "qa-review",
     "security"
