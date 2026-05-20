@@ -2,12 +2,13 @@
   "uuid": "6a321e28-3ec2-4b99-871c-f4217573d72e",
   "display_id": 654,
   "title": "Wire plugin-declared mcp_configs into ServiceRegistry on plugin load (parity with CC mcpPluginIntegration.ts)",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "parent_uuid": "21e13dad-6fac-4ae8-9f1c-62788c0392cb",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:09:52.423994872Z",
-  "updated_at": "2026-05-18T16:09:55.465877601Z",
+  "updated_at": "2026-05-20T14:39:43.847034146Z",
+  "closed_at": "2026-05-20T14:39:43.847034146Z",
   "labels": [
     "parity,cc-plugins-skills,mcp"
   ]
