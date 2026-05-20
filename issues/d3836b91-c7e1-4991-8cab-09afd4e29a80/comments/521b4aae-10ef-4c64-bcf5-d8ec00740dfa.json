@@ -1,0 +1,10 @@
+{
+  "uuid": "521b4aae-10ef-4c64-bcf5-d8ec00740dfa",
+  "issue_uuid": "d3836b91-c7e1-4991-8cab-09afd4e29a80",
+  "author": "lOrm",
+  "content": "Issue calls for handling LocationLink responses in goToDefinition/goToImplementation (parity with CC LSPTool.ts:616-631). Not addressable in a cleanup pass: depends on #636 LSP server pool and the broader LSPTool implementation. Parent audit #523.",
+  "created_at": "2026-05-20T14:42:33.566925058Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABARynxngKRM6liMl6hHbkQa4GmLVF0CJfwvzIQnAP7VQ2k2a2pQowFQdee+tJRXE6K/zyWyEEuKGM+4rWmmH7xBQ=="
+}
