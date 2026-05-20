@@ -1,0 +1,10 @@
+{
+  "uuid": "3ba666e8-0314-488c-a442-9cf1cd69e0a0",
+  "issue_uuid": "deab8e8a-f516-4bf9-8b03-9389fa8d42fa",
+  "author": "lOrm",
+  "content": "Issue calls for separating autoCompact hook from pipeline (parity with CC autoCompact.ts). Not addressable in a cleanup pass: requires extracting compaction-threshold logic from the pipeline run loop (forbidden-files src/pipeline.rs) into a hook-style trigger. Tied to #534 spec and #634/#633/#635. Parent audit #523.",
+  "created_at": "2026-05-20T14:42:04.433097448Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAvCK5DzZaLqZFN++ypEyoHUV/JFdsWHzy+BZtLjayIif533nEPnnfFxXEoJdYeIm3FZBX0k8hcZBHMX0IwfOwBw=="
+}
