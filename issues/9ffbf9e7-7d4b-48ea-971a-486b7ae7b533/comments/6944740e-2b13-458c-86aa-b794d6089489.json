@@ -1,0 +1,10 @@
+{
+  "uuid": "6944740e-2b13-458c-86aa-b794d6089489",
+  "issue_uuid": "9ffbf9e7-7d4b-48ea-971a-486b7ae7b533",
+  "author": "lOrm",
+  "content": "Verified tri-state implementation in src/guardrails.rs (commit history references #749 fail-closed refactor that addressed #369 architecturally):\n\n1. GuardrailsState::{Disabled, Enabled(Box<GuardrailsEngine>), Poisoned} enum at L45-53. Holder is LazyLock<Mutex<GuardrailsState>> with no Option wrapper.\n\n2. All six wrapper fns (check_file_access, record_file_modification, check_diff_thresholds, run_quality_gates, reset_turn, get_diff_summary) match all three arms explicitly. Security-boundary check_file_access returns Err(POISON_ERR) on Poisoned (L148-154) — fail-closed, not silent allow. Non-security wrappers log error!() on Poisoned then no-op (loud, not silent). Disabled returns Ok(())/None/empty as the QA-mandated 'no policy loaded' branch.\n\n3. lock_or_poison() helper (L68-80) converts std PoisonError into the Poisoned state instead of swallowing via 'if let Ok(guard) = ...'. grep confirms zero such lock acquisitions remain in the module (only a historical reference inside a test comment at L1946).\n\nSticky-poison contract enforced: configure() refuses to re-arm a Poisoned state (L118-121).\n\nRegression tests test_749_check_file_access_returns_err_when_poisoned, test_749_check_file_access_happy_path_with_enabled_engine, test_749_configure_refuses_when_poisoned all green. Full guardrails suite: 50 passed. cargo clippy --all-targets --all-features exit 0. No code changes made — pure verify.",
+  "created_at": "2026-05-20T04:19:23.533338773Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA3vHdMYtiYPwznKZsB+DJF7nnvA96v3yjgnm8ou8hC0CJHzIc1h2Dd+b0MBEd2A/wpy36wnv5Y7eZfVnyeyFtAQ=="
+}
