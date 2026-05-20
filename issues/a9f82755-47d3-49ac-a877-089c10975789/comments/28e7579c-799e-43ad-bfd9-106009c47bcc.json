@@ -1,0 +1,10 @@
+{
+  "uuid": "28e7579c-799e-43ad-bfd9-106009c47bcc",
+  "issue_uuid": "a9f82755-47d3-49ac-a877-089c10975789",
+  "author": "lOrm",
+  "content": "Fixed in commit 45b07267 'fix: QA batch — typed enums, dedup, error surfacing, semantic naming'. See commit body for the per-issue forensic summary.",
+  "created_at": "2026-05-20T04:53:19.285383781Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAyB37OAswq7+IDNeqGzrWfGs9h/qmHh/8W7GPFic5rrLP5A9pdR0HXERzpxyE04YyqCERQh2pcNEg1YMrBlICDg=="
+}
