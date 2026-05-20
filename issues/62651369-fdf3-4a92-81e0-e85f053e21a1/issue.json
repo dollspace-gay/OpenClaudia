@@ -2,12 +2,13 @@
   "uuid": "62651369-fdf3-4a92-81e0-e85f053e21a1",
   "display_id": 646,
   "title": "Add unknown-model analytics event + hasUnknownModelCost session flag — CC fires tengu_unknown_model_cost and drives 'costs may be inaccurate' warning (modelCost.ts:155-163, cost-tracker.ts:231-233)",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:08:58.305634752Z",
-  "updated_at": "2026-05-18T16:09:06.429536876Z",
+  "updated_at": "2026-05-20T06:24:42.058828387Z",
+  "closed_at": "2026-05-20T06:24:42.058828387Z",
   "labels": [
     "feature",
     "cc-parity"
