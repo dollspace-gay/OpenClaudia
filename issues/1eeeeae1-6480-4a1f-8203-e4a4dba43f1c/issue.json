@@ -3,11 +3,12 @@
   "display_id": 966,
   "title": "FileType enum uses static-str payload to carry mime type — primitive obsession",
   "description": "## Severity\nTrivial\n\n## Dimension\nSOLID-O (OCP) / Decoupling\n\n## Location\nsrc/tools/file/read.rs:10-37 (FileType enum and detect_file_type)\n\n## Violation\n```rust\npub enum FileType {\n    Text,\n    Image(&'static str),  // mime type\n    Pdf,\n    Notebook,\n}\n```\n\nThe Image variant carries its mime type as a raw `&'static str`. The dispatcher in mod.rs (line 206) then passes that opaque string down to read_image_file. Adding a new image format (e.g. AVIF) requires editing detect_file_type, the read_image_file signature, the dispatcher, and probably a hidden assumption in the Anthropic adapter that expects \"image/png\" or \"image/jpeg\". OCP violation: the enum is not closed under extension.\n\nThe trailing comment \"// mime type\" carries the type information the type system should be carrying. Use a typed Mime instead.\n\n## Mandated refactor\n```rust\npub enum ImageKind { Png, Jpeg, Gif, Webp }\nimpl ImageKind {\n    pub const fn mime(self) -> &'static str { ... }\n    pub fn from_extension(ext: &str) -> Option<Self> { ... }\n}\npub enum FileType { Text, Image(ImageKind), Pdf, Notebook }\n```\n\nThis forces every consumer to handle the enum exhaustively and makes adding AVIF a single edit-and-recompile.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:21:09.954941775Z",
-  "updated_at": "2026-05-18T22:21:15.582666084Z",
+  "updated_at": "2026-05-20T04:53:08.598996244Z",
+  "closed_at": "2026-05-20T04:53:08.598996244Z",
   "labels": [
     "qa-review",
     "solid"
