@@ -3,11 +3,12 @@
   "display_id": 740,
   "title": "load_entrypoint swallows non-NotFound IO errors and silently picks wrong file",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/memdir/entrypoint.rs:83-106 (load_entrypoint)\n## Violation\nNon-NotFound IO errors are downgraded to a `warn!` and the loop falls through to the next candidate:\n\n```rust\nmatch std::fs::read_to_string(&path) {\n    Ok(raw) => { ... return Some(...); }\n    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}\n    Err(err) => {\n        tracing::warn!(path = %path.display(), error = %err, \"could not read MEMORY.md candidate — trying next\");\n    }\n}\n```\n\nFailure modes this hides:\n1. `<cwd>/MEMORY.md` exists but is unreadable (permission denied, EACCES). The function silently loads `~/.openclaudia/MEMORY.md` instead — a different agent persona — and the model gets the wrong project memory with no surfaced error.\n2. The file exists but is not valid UTF-8 (binary blob accidentally placed there). Same silent fallback.\n3. Disk I/O error mid-read (EIO). Same.\n\nThis is the perimeter-defense anti-pattern from §3.4: \"Reject invalid inputs and throw immediate exceptions. Do not return default/null values to mask errors.\" The CLAUDE.md project explicitly mandates `anyhow::Result` + `.context()` for read paths, and `load_entrypoint` is exactly such a perimeter (filesystem → in-process state).\n## Mandated refactor\n1. Change signature to `pub fn load_entrypoint(cwd: &Path) -> Result<Option<EntrypointFile>>`.\n2. Return `Err` on any non-NotFound IO error so the caller (system-prompt builder) can decide whether to abort startup or surface a banner to the user.\n3. Specifically distinguish \"file exists but unreadable\" (Err) from \"file does not exist\" (continue scanning candidates).\n4. Test cases: chmod 000 on the cwd file with a writable home file — must Err, not load the home file.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:53:18.729292523Z",
-  "updated_at": "2026-05-18T21:53:23.092601036Z",
+  "updated_at": "2026-05-20T07:00:31.222341172Z",
+  "closed_at": "2026-05-20T07:00:31.222341172Z",
   "labels": [
     "qa-review",
     "error-handling"
