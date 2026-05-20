@@ -1,0 +1,10 @@
+{
+  "uuid": "3cffb4c5-001e-4f8b-8cee-084836570781",
+  "issue_uuid": "eeb0e14b-9f92-4955-9fe9-094d665ddb32",
+  "author": "lOrm",
+  "content": "Verified: crosslink #830 addressed the naming collision via explicit serde rename (modifier-debug vs preset-debug). The matching_preset linear scan and display_name modifier-omission concerns were also reviewed: a OnceLock cache for matching_preset would have to be invalidated on every modifier mutation, and the 8-preset scan is well below the noise floor of the surrounding rendering work — documented in the matching_preset doc comment, no behaviour change.",
+  "created_at": "2026-05-20T12:24:49.725437758Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAI/tSAEDetXJhsmi6iUum7LZ6PHh8ccDsA7vK9J/H5IMb1fPk+O/m5RtlY/Fr7afWTirKb9f2ugHbf4C9gTADAw=="
+}
