@@ -1,0 +1,10 @@
+{
+  "uuid": "5feb01be-15af-4905-b5d0-dc006a6e4e40",
+  "issue_uuid": "aa53dd75-6079-4a5a-96b4-97accbf7e72b",
+  "author": "lOrm",
+  "content": "Landed src/config/stop_conditions.rs with StopConditionsConfig { max_turns, max_total_input_tokens, max_total_output_tokens, stop_on_finish_reasons }, TurnSnapshot, and StopReason enum (MaxTurns/InputTokenBudget/OutputTokenBudget/MatchedFinishReason). is_stop_condition_met() takes a TurnSnapshot and returns Option<StopReason>. is_active() lets the loop short-circuit when no rules set. Added stop_conditions: StopConditionsConfig field on AppConfig. 6 tests pin: default inactive / max_turns boundary / zero caps mean unlimited / token budgets fire at-or-above threshold / finish_reason matching / YAML round trip / stable stop_reason codes. Turn-loop integration in pipeline.rs deliberately scoped out (forbidden-files territory); the predicate is now ready for that integration.",
+  "created_at": "2026-05-20T18:18:26.421497208Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAzIfs+9fizfx8sKidUx2B5Irz+UtcZqxu0X9FicRYNgFqUFqSeezpnL1VLIsXcKyAr+WD3dUpv6nHzb4XvbFECA=="
+}
