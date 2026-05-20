@@ -1,0 +1,10 @@
+{
+  "uuid": "8994eafd-843e-460d-9b9c-4beaf0bc7132",
+  "issue_uuid": "277e3ab4-cebf-46b4-91d0-7c45cf94857f",
+  "author": "lOrm",
+  "content": "Issue calls for expanding skill frontmatter parity: when_to_use, argument-hint, model, effort, paths, hooks, user-invocable (CC loadSkillsDir.ts). Not addressable in a cleanup pass: depends on #538 plugin spec; requires extending skill frontmatter schema, parser, and consumers across the codebase. Parent #538.",
+  "created_at": "2026-05-20T14:40:16.642119568Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA58ZBSuqUgUz3hr3TMAlgV4fEcADIeAFxlCjPrTls9o/tUnuIrGRehfFZLgZoWMeUXs6805+V8oWUnBbFAbC1AA=="
+}
