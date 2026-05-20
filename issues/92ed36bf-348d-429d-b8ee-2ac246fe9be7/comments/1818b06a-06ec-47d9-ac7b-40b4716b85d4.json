@@ -1,0 +1,10 @@
+{
+  "uuid": "1818b06a-06ec-47d9-ac7b-40b4716b85d4",
+  "issue_uuid": "92ed36bf-348d-429d-b8ee-2ac246fe9be7",
+  "author": "lOrm",
+  "content": "SKIPPED: the retry loop lives in src/pipeline.rs which is in this change-set's forbidden-files list. Grep confirmed no parallel retry implementation outside pipeline.rs (only pipeline.rs references max_retries / 429-handling). Issue left open for a future change-set with pipeline.rs in scope.",
+  "created_at": "2026-05-20T06:41:55.881681798Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA8kdSsTw/siJ89EwvEMzsNMvZEYH5PlGpCkh0WWVYfvF1rzGkU0JaCYT1avOu3m43RlCh50Gt2GHV5bCl+4vhAw=="
+}
