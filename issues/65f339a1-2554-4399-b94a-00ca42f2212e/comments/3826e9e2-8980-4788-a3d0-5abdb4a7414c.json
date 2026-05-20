@@ -1,0 +1,10 @@
+{
+  "uuid": "3826e9e2-8980-4788-a3d0-5abdb4a7414c",
+  "issue_uuid": "65f339a1-2554-4399-b94a-00ca42f2212e",
+  "author": "lOrm",
+  "content": "Both AnthropicAdapter::extract_system and GoogleAdapter::extract_system now iterate every system-role message and concatenate the texts with '\\n\\n' separators. Empty pieces are dropped; non-text parts surface a tracing::warn! so the dropping is visible.",
+  "created_at": "2026-05-20T12:24:39.758990595Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAFe7ni8p4BrInZgtF7UiPyCt4R6pBiNEhjoWjLaIWmKhRhAQ6ro5xQvUWyGVk0UYI6A2gAQ80WA+KfNxMi4z+AA=="
+}
