@@ -1,0 +1,10 @@
+{
+  "uuid": "f51ea16c-265b-459e-aa41-85f5a2e87990",
+  "issue_uuid": "e23d7ab5-279f-4e40-ad14-ab8e422db2e2",
+  "author": "lOrm",
+  "content": "Duplicate of #849 (same App overlay.handle_key unwrap defect, same location src/tui/app.rs:659-664, same mandated refactor to if-let). Closing #873 as the higher-numbered duplicate; #849 is the canonical open report.",
+  "created_at": "2026-05-20T12:31:32.789028587Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAIkz8aawQvFTfMduEsTPmaTgGywnT4IWfnjvCoRdYod61u6RLyLO5W/YTxfSnevmut8Lea1sODAs4VqxlMfhGBA=="
+}
