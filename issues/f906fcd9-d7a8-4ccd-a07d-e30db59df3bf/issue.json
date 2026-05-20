@@ -3,11 +3,12 @@
   "display_id": 865,
   "title": "Session.turn_metrics grows unbounded across long sessions",
   "description": "## Severity\nMajor\n## Dimension\ncomplexity\n## Location\nsrc/session/mod.rs:96-101, 158-182\n## Violation\nturn_metrics is Vec<TurnMetrics> appended every API turn with no cap. A long-running coding session can accumulate thousands of entries. Each TurnMetrics carries ~9 u64 fields, an Option<TokenUsage>, and a DateTime — call it 100 bytes. 10k turns = ~1 MB of state that is fully serialized to JSON on every persist_session (atomic write — full rewrite of the file). For a long-running daemon (the typical OC mode), I/O grows O(turns^2) cumulative bytes written across the session.\n\n\n\nThere is no rolling-window, no compaction, no off-loading older metrics to a sidecar log.\n## Mandated refactor\nCap turn_metrics to the last N (e.g. 200) entries; spill older entries to an append-only audit log file. Or move turn_metrics to a separate sidecar JSON written incrementally. Compute cumulative_usage purely from the rolling-window sum + an archived counter.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:08:03.385684572Z",
-  "updated_at": "2026-05-18T22:09:26.860435955Z",
+  "updated_at": "2026-05-20T12:03:44.020668669Z",
+  "closed_at": "2026-05-20T12:03:44.020668669Z",
   "labels": [
     "qa-review",
     "complexity"
