@@ -3,11 +3,12 @@
   "display_id": 951,
   "title": "QA: BackgroundShellManager::spawn returns Result<_, String> (stringly-typed error)",
   "description": "## Severity\nTrivial\n## Dimension\nerror-handling\n## Location\nsrc/tools/bash/mod.rs:54, 173, 230\n## Violation\n`spawn`, `get_output`, and `kill` all return `Result<_, String>`. Errors cannot be matched on programmatically; callers must `contains()`-substring-test error messages (and the tests at lines 506-520, 626-630 do exactly that). Changes to the error string silently break consumers.\n\nQuoted (mod.rs:54, 173, 230):\n```\npub(crate) fn spawn(&self, command: &str) -> Result<String, String> {\n...\npub(crate) fn get_output(&self, shell_id: &str) -> Result<(String, bool, Option<i32>), String> {\n...\npub(crate) fn kill(&self, shell_id: &str) -> Result<String, String> {\n```\n## Mandated refactor\n1. Add `#[derive(thiserror::Error, Debug)] pub enum ShellError { Validation(String), CapacityReached, SpawnFailed(io::Error), ShellNotFound { id: String }, Poisoned }`.\n2. Return `Result<_, ShellError>` from each method.\n3. Move display-string formatting into the `Display` impl.\n4. Update tests to match enum variants, not substrings.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:19:43.939203778Z",
-  "updated_at": "2026-05-18T22:19:50.784116179Z",
+  "updated_at": "2026-05-20T13:26:37.835623684Z",
+  "closed_at": "2026-05-20T13:26:37.835623684Z",
   "labels": [
     "qa-review",
     "error-handling"
