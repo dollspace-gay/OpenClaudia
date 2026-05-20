@@ -3,11 +3,12 @@
   "display_id": 166,
   "title": "Speculation engine: speculative execution with overlay filesystem, prediction pipeline, and acceptance workflow for instant user interactions",
   "description": "Speculation engine: speculative execution with overlay filesystem, prediction pipeline, and acceptance workflow for instant user interactions.\n\nPhase 1 landed in commit <pending>; remaining work tracked in #990.\n\nPhase 1 delivered (src/speculation/mod.rs, 698 lines):\n- SpeculationEngine trait (Send + Sync + 'static, object-safe via Arc)\n- 5 trait methods: predict, submit_result, has_pending, name, hit_rate\n- NoOpSpeculationEngine: zero-cost constant-time default implementation\n- SpeculationConfig with sane defaults (enabled=false, threshold=0.70, depth=6)\n- build_engine factory\n- build_hint_from_messages pure function\n- after_turn integration hook\n- PredictionId newtype, MessageSummary, SpeculationHint, SpeculationPrediction, ActualOutcome, PredictionOutcome types\n- 23 tests covering trait contract, factory, hint construction, and edge cases\n- Registered in lib.rs\n\nRemaining phases tracked in #990.",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-04-01T18:12:54.615583946Z",
-  "updated_at": "2026-05-18T23:24:32.190436262Z",
+  "updated_at": "2026-05-20T00:10:50.594715495Z",
+  "closed_at": "2026-05-20T00:10:50.594715495Z",
   "labels": [
     "enhancement"
   ]
