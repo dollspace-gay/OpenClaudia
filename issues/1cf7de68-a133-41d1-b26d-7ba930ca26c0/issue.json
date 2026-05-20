@@ -3,11 +3,12 @@
   "display_id": 863,
   "title": "subagent: model_override resolved twice and ignored when run_in_background spawns internally",
   "description": "## Severity\nMinor\n## Dimension\ndry\n## Location\nsrc/subagent.rs:1283-1331 (execute_task_tool) and src/subagent.rs:753-763 (run_subagent model resolution)\n## Violation\n`execute_task_tool` resolves the model name via `resolve_model_name` (line 1289-1292) and stores it on `SubagentConfig::model_override`. `run_subagent` then resolves model again, this time consulting `AgentType::preferred_model` and provider config defaults (lines 753-763). The two code paths can produce different model strings:\n\n- `execute_task_tool` will pass `\"opus\" -> \"claude-opus-4-6\"` through `resolve_model_name`.\n- `run_subagent`'s fallback chain uses `provider.model` raw.\n\nSo a friendly name typed by the caller is canonicalized, but a default from provider config is not — they end up as different string formats downstream.\n\nAdditionally, the background-spawn branch (lines 1316-1331) clones the entire `app_config` into the spawned task per call. For a config with many providers, hooks, and rules, this is megabytes of copy. `app_config: Arc<AppConfig>` would let the spawn share the reference.\n\n## Mandated refactor\nMove the friendly-name resolution into `run_subagent::pick_model` so both paths normalize identically. Switch `SubagentConfig::model_override` from `Option<String>` to `Option<&str>` consumed only in pick_model. Make `AppConfig` arc-shared so background spawn just clones the Arc.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:08:19.340254895Z",
-  "updated_at": "2026-05-18T22:09:00.163022215Z",
+  "updated_at": "2026-05-20T13:26:26.404528059Z",
+  "closed_at": "2026-05-20T13:26:26.404528059Z",
   "labels": [
     "qa-review",
     "dry"
