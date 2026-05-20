@@ -3,11 +3,12 @@
   "display_id": 836,
   "title": "git_with_timeout in worktree.rs reimplements process timeout; not shared with pdf reader",
   "description": "## Severity\nMinor\n\n## Dimension\nDRY / Decoupling\n\n## Location\nsrc/tools/worktree.rs:15-46 (git_with_timeout) vs src/tools/file/read.rs:142-173 (pdftotext invocation with no timeout)\n\n## Violation\nworktree.rs implements a polling-based subprocess timeout helper that spawns, polls try_wait every 100ms, kills+reaps on deadline. read.rs's pdftotext invocation (line 156: match cmd.output()) does NOT use any timeout, despite being subject to the same class of hang. The helper is hard-coded to git — it is not reusable. Two stovepiped subprocess strategies in the same subsystem.\n\n## Mandated refactor\nLift the helper into src/tools/command.rs as pub fn run_with_timeout(program: &str, args: &[&str], timeout: Duration) -> Result<Output, CommandError>. Use it in BOTH worktree.rs (git) and read.rs (pdftotext, pdfinfo). The polling-with-sleep approach is also poor — replace with wait_timeout crate or tokio::process::Command + tokio::time::timeout when called from async contexts.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:05:26.740346934Z",
-  "updated_at": "2026-05-18T22:05:54.458089621Z",
+  "updated_at": "2026-05-20T14:04:13.371262319Z",
+  "closed_at": "2026-05-20T14:04:13.371262319Z",
   "labels": [
     "qa-review",
     "dry"
