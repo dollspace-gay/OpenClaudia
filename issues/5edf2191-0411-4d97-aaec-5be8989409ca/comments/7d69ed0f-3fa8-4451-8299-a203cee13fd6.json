@@ -1,0 +1,10 @@
+{
+  "uuid": "7d69ed0f-3fa8-4451-8299-a203cee13fd6",
+  "issue_uuid": "5edf2191-0411-4d97-aaec-5be8989409ca",
+  "author": "lOrm",
+  "content": "#657 closed. Added /teleport to TIME_TRAVEL section of src/slash_commands.rs. CC parity stub — CC itself ships /teleport with isEnabled() => false. Surfaces in /help cheatsheet so the registration tracks parity when CC enables it. Test pins the entry.",
+  "created_at": "2026-05-20T20:36:52.050222229Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAT9LUsdLCCTQZByApxe0SKehy+7znPrHz/46b/FeYtwXKjS/DbpRG3v9p6diGKSvudhU59NvUSrvZyrfVNf9hAA=="
+}
