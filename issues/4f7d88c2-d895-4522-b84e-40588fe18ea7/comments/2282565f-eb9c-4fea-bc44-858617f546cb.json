@@ -1,0 +1,10 @@
+{
+  "uuid": "2282565f-eb9c-4fea-bc44-858617f546cb",
+  "issue_uuid": "4f7d88c2-d895-4522-b84e-40588fe18ea7",
+  "author": "lOrm",
+  "content": "Fixed in src/providers/google.rs::transform_response: tool-call ids derived from (ordinal, function_name) via new gemini_tool_call_id helper (call_0_bash / call_1_bash). Re-parsing same payload yields identical ids (tests: tool_call_ids_are_deterministic_across_reparses, repeated_function_calls_get_distinct_ordinal_ids). pipeline.rs and streaming.rs sites are in forbidden modules for this bulk task.",
+  "created_at": "2026-05-20T07:00:32.859872175Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAh+ffT4fndVChsZ39BH2nZ+PW3UAM+LQoXQeIWTPBziPhRz3Fdd2Q7jT9rENS9uZoWQr8m60GrRVbjZvrljHPCQ=="
+}
