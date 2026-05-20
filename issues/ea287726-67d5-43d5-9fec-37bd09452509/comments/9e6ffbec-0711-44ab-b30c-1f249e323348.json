@@ -1,0 +1,10 @@
+{
+  "uuid": "9e6ffbec-0711-44ab-b30c-1f249e323348",
+  "issue_uuid": "ea287726-67d5-43d5-9fec-37bd09452509",
+  "author": "lOrm",
+  "content": "Landed stall watchdog on BackgroundShellManager. Added last_data_time: Arc<AtomicU64> to BackgroundShell, refreshed on every stdout/stderr line by the reader threads (unix-secs via SystemTime). Added stall_check(timeout) returning Vec<(shell_id, command, idle_secs)> for every RUNNING shell whose idle time exceeds the threshold; finished shells excluded. Public free function stall_check_global() and constant DEFAULT_STALL_TIMEOUT_SECS = 120 re-exported via tools::. 4 tests pin: active shell not flagged at 60s threshold / silent shell flagged at 0s threshold / finished shell never flagged / DEFAULT constant convertible to Duration. Notification surfacing is the caller's choice — watchdog is a polling primitive.",
+  "created_at": "2026-05-20T18:18:36.830413442Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAPLs6n3hiw2LJMrzKPJLrnyDvCCuiw72CuUKSWYw+lju9ksgxb5OypenNqC2zSuFjtJJiajXgE/Mkb7iWiJ0wBw=="
+}
