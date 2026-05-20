@@ -3,9 +3,10 @@
   "display_id": 824,
   "title": "QA: lsp.rs execute_lsp reads arbitrary file paths with no sandbox boundary",
   "description": "## Severity\nCritical\n## Dimension\nsecurity\n## Location\nsrc/tools/lsp.rs:79-152\n## Violation\n`execute_lsp` accepts a model-supplied `file_path`, canonicalizes it, reads its contents into memory, then hands them to a language-server binary chosen by extension. NO check that the path is within a project root, NO denylist for system paths (`/etc/shadow`, `/proc/*/environ`, `~/.ssh/id_rsa`, `~/.aws/credentials`).\n\nQuoted (lsp.rs:79-152):\n```\n    let Some(file_path) = args.get(\"file_path\").and_then(|v| v.as_str()) else {\n        return (\"Error: file_path is required\".to_string(), true);\n    };\n...\n    let abs_path =\n        std::fs::canonicalize(file_path).map_err(|e| format!(\"Cannot resolve path: {e}\"))?;\n...\n    let content =\n        std::fs::read_to_string(&abs_path).map_err(|e| format!(\"Cannot read file: {e}\"))?;\n```\n\nContents are sent over LSP to a child process; any LSP server can leak them. OWASP A01.\n## Mandated refactor\n1. Require `file_path` resolves under a configured project root.\n2. Hard denylist for credential paths (`~/.ssh`, `~/.aws`, `/etc/shadow`, `/proc/*/environ`).\n3. Cap file size before reading.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:03:25.078538328Z",
-  "updated_at": "2026-05-18T22:03:25.078538328Z"
+  "updated_at": "2026-05-20T13:25:55.576233513Z",
+  "closed_at": "2026-05-20T13:25:55.576233513Z"
 }
