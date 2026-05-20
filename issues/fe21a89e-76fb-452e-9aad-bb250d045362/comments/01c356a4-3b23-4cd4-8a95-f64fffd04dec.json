@@ -1,0 +1,10 @@
+{
+  "uuid": "01c356a4-3b23-4cd4-8a95-f64fffd04dec",
+  "issue_uuid": "fe21a89e-76fb-452e-9aad-bb250d045362",
+  "author": "lOrm",
+  "content": "FORBIDDEN: src/hooks/mod.rs (line 485-495 confirmed) is on the locked file list for this bulk pass. The matcher-context ReDoS exposure is real and the mandated refactor (truncate context to 8 KB before regex matching, timeout-wrap is_match, debug! on truncation) still stands. Leaving open for a future hooks-focused worktree.",
+  "created_at": "2026-05-20T13:25:28.400943534Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABANzWeZwDDW31aZ1NDc0sPBJY5GjlqiUY5gjFip2jtCsQ3xhN42qff5mFiLHCMCmwNWXOhL6q0iw4f900fkPp6CA=="
+}
