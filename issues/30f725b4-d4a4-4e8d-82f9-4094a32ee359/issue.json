@@ -3,9 +3,10 @@
   "display_id": 831,
   "title": "extract_api_key falls through silently when Authorization lacks Bearer prefix",
   "description": "## Severity\nMinor\n## Dimension\nsecurity\n## Location\nsrc/proxy.rs:1243-1282\n## Violation\nextract_api_key inspects Authorization header. If present without 'Bearer ' prefix, it logs a warn! and returns None for that header — but then proceeds to try x-api-key. A client that mistakenly sends 'Authorization: sk-xxx' (no Bearer) AND also sends 'x-api-key: yyy' will succeed using the second key with no indication that the first was rejected. Combined with the proxy_chat_completions fallback to provider.api_key, an operator can be billing an unintended key without any audit trail.\n## Mandated refactor\nOn Authorization-prefix-failure, return ProxyError::InvalidBody early so the client sees a 400 with 'Authorization header must use Bearer prefix'. Do not silently fall through to alternate auth schemes when the caller has clearly attempted Authorization.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:04:03.060438997Z",
-  "updated_at": "2026-05-18T22:04:03.060438997Z"
+  "updated_at": "2026-05-20T14:04:07.095011579Z",
+  "closed_at": "2026-05-20T14:04:07.095011579Z"
 }
