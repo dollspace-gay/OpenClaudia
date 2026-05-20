@@ -3,11 +3,12 @@
   "display_id": 878,
   "title": "Plugin::resolve_commands TOCTOU on PluginSource::Path traversal — canonicalize after path-handoff, not before",
   "description": "## Severity\nMinor\n## Dimension\nsecurity\n## Location\nsrc/plugins/manager.rs:575-608\n## Violation\nThe path-traversal guard canonicalises BOTH the marketplace dir and the per-plugin source, then checks starts_with. Between the check and the subsequent copy_dir_recursive, a symlink swap on `canonical_marketplace` itself (e.g., a malicious marketplace that just got pulled mutates one of its inner dirs into a symlink to /etc) bypasses the guard. Quoted lines:\n\n    let canonical = full.canonicalize().map_err(|e| { ... })?;\n    let canonical_marketplace = marketplace_dir.canonicalize().map_err(|e| { ... })?;\n    if !canonical.starts_with(&canonical_marketplace) {\n        return Err(PluginError::IoError(format!(\n            \"Plugin path traversal detected: ...\",\n        )));\n    }\n    canonical\n    ...\n    copy_dir_recursive(&source_path, &dest).map_err(...)?;\n\nThe window is small but not zero — and the same marketplace.json that just landed in via `git_pull` is the same source the canonicalisation reads from. A racy clone whose post-clone hooks mutate the layout can exploit this. Combined with finding #727 (symlink-following copy) it becomes a working primitive for arbitrary local read.\n## Mandated refactor\nOpen `marketplace_dir` once with `File::open` (which gives a directory fd on Unix) and use openat-style relative ops (`openat`, `linkat`) so the directory cannot be swapped under you. On platforms without dirfd support, copy into a temp dir under `marketplace_dir/.tmp-<uuid>/` and rename — the kernel enforces the inode identity rather than a path-string check.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:10:28.364734984Z",
-  "updated_at": "2026-05-18T22:10:55.261880886Z",
+  "updated_at": "2026-05-20T13:22:06.371719215Z",
+  "closed_at": "2026-05-20T13:22:06.371719215Z",
   "labels": [
     "qa-review",
     "security"
