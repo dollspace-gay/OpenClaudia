@@ -1,0 +1,10 @@
+{
+  "uuid": "e20fc911-784d-4209-b7f3-aa660b169208",
+  "issue_uuid": "4df6ebfa-8eb5-46fe-b2e7-87ad55c197d0",
+  "author": "lOrm",
+  "content": "Issue calls for ed25519 plugin-manifest signature verification (crate selection, signature shape, trusted-key config, verify_plugin_signature, PluginManager wiring, CLI plugin trust-key/list/revoke). Per the 2026-05-19 result comment on #249, Phase 1 (ed25519-dalek added, signed-manifest scheme implemented) landed. The CLI surface (trust-key / trust-list / trust-revoke) and the require_signatures policy enforcement remain. Tracked under cc-plugins-skills going forward; the residual CLI/policy delta will land with the wider plugin-policy work (#664 managed skills, #658 delisting). Closing the cleanup-pass ticket.",
+  "created_at": "2026-05-20T14:33:40.719039006Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAuHY79B5kPhZuKurKs8bT4VEDJEfL+hWdNVjtj7B476/FXWeMSoxb+TfuJ+Qw+dwrCsVN2bmnXWmHbDVndNWABg=="
+}
