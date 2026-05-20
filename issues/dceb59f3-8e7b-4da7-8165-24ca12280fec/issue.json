@@ -3,11 +3,12 @@
   "display_id": 746,
   "title": "review_text and advisory_review duplicate the entire single-pass adversary flow violating DRY",
   "description": "## Severity\nMajor\n## Dimension\ndry\n## Location\nsrc/vdd/mod.rs:209-281 (review_text) vs 348-398 (advisory_review)\n## Violation\nBoth methods implement the same six-step pipeline: short-circuit on disabled/short input, run static analysis, build adversary request, send, parse findings, triage, format injection. The only difference is `review_text` accepts a `user_task: &str` directly while `advisory_review` extracts it from the original ChatCompletionRequest via `extract_user_task`.\n\nThe two paths must be kept in sync — for example, the recently-added (per the comments) static analysis flow runs in both, the triage layer ordering must match, and the genuine_count logging must match. Any drift between them creates two divergent VDD behaviors depending on which entry point the caller chose.\n\nCompare line 241-280 (review_text) with 354-397 (advisory_review):\n```rust\n// review_text\nlet static_results = self.run_static_analysis().await;\nlet adversary_request = self.build_adversary_request(builder_text, user_task, &static_results, 1);\nlet (adversary_text, tokens_used) = self.send_to_adversary(&adversary_request).await?;\nlet mut findings = self.parse_findings(&adversary_text, 1);\nself.triage_findings(&mut findings, &[], builder_text, builder_provider, builder_api_key).await;\nlet context_injection = format_findings_for_injection(&findings, &static_results);\n```\n\n```rust\n// advisory_review — same six lines\nlet static_results = self.run_static_analysis().await;\nlet original_task = extract_user_task(original_request);\nlet adversary_request = self.build_adversary_request(builder_text, &original_task, &static_results, 1);\nlet (adversary_text, tokens_used) = self.send_to_adversary(&adversary_request).await?;\nlet mut findings = self.parse_findings(&adversary_text, 1);\nself.triage_findings(&mut findings, &[], builder_text, builder_provider, builder_api_key).await;\nlet context_injection = format_findings_for_injection(&findings, &static_results);\n```\n\n## Mandated refactor\nExtract the shared pipeline into one private method that takes the resolved `user_task: &str` (the only varying input). Both `review_text` and `advisory_review` become thin adapters: `review_text` calls the shared method with its arg directly; `advisory_review` calls `extract_user_task` first then delegates. Short-circuit checks (`!enabled`, `len < 100`) move into the shared method or a guard helper.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:53:47.458448164Z",
-  "updated_at": "2026-05-18T21:53:49.873859292Z",
+  "updated_at": "2026-05-20T07:05:08.049883373Z",
+  "closed_at": "2026-05-20T07:05:08.049883373Z",
   "labels": [
     "qa-review"
   ]
