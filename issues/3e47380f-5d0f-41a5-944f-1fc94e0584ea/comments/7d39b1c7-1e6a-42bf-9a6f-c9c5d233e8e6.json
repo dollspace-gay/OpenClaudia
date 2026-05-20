@@ -1,0 +1,10 @@
+{
+  "uuid": "7d39b1c7-1e6a-42bf-9a6f-c9c5d233e8e6",
+  "issue_uuid": "3e47380f-5d0f-41a5-944f-1fc94e0584ea",
+  "author": "lOrm",
+  "content": "#651 closed. Added build_reverse_response() and read_lsp_response_with_reverse() in src/tools/lsp.rs. Server->client reverse-requests are now answered inline during init: workspace/configuration -> one null per requested scope item; client/registerCapability + client/unregisterCapability + window/workDoneProgress/create -> null acknowledge; unknown methods -> JSON-RPC MethodNotFound (-32601). Wired into the initialize() call path so servers like clangd/gopls/jdtls that stall waiting for these no longer hang. Public-via-pub(crate) so the 4 new unit tests can exercise the dispatch matrix without spinning up child processes.",
+  "created_at": "2026-05-20T20:35:43.294864477Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAFakOwY+ELdsjsa15tS9jGXe4FVkl3vCilazQy+CUUsnnd9TlSJNZNT3pezExevvJS4AIlyDFwWY4dF6MW/mQCA=="
+}
