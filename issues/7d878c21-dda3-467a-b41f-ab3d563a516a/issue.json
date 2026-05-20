@@ -3,11 +3,12 @@
   "display_id": 875,
   "title": "validate_plugin_dir_name forbids backslash but the URL-segment derivation never encounters Windows backslashes — and misses Windows reserved names",
   "description": "## Severity\nMinor\n## Dimension\nsecurity\n## Location\nsrc/plugins/validate.rs:108-138\n## Violation\nThe forbidden-char set is `['/', '\\\\', '\\0', ':']` plus a `..` substring check. This is a partial Windows-aware allowlist but misses the reserved-name set (CON, PRN, AUX, NUL, COM1-9, LPT1-9), trailing dot/space (Windows strips them, enabling collision), and case-insensitive comparison. Quoted lines:\n\n    let forbidden: &[char] = &['/', '\\\\', '\\0', ':'];\n    if name\n        .chars()\n        .any(|c| forbidden.contains(&c) || c.is_control())\n    {\n        return Err(PluginError::InvalidManifest(format!(\n            \"Derived directory name '{name}' contains path separator, NUL, or control character\"\n        )));\n    }\n    if name.contains(\"..\") {\n        return Err(PluginError::InvalidManifest(format!(\n            \"Derived directory name '{name}' contains '..'\"\n        )));\n    }\n\nA repository named `con.git` or `nul.git` (case-insensitive on Windows) materialises as a reserved device path, with undefined behaviour ranging from \"fails opaquely\" to \"writes to the device\". A name like `foo .git` (trailing space before .git) derives `foo ` and silently collides with `foo` on Windows.\n## Mandated refactor\nAdd a Windows-reserved-name allowlist check (case-insensitive comparison against the documented set). Reject trailing dot or whitespace. Reject empty-after-trim. Cap derived names at 64 chars. Consider running everything through a `slug` crate to produce a single canonical form regardless of the platform.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:09:53.318627017Z",
-  "updated_at": "2026-05-18T22:10:01.305997703Z",
+  "updated_at": "2026-05-20T12:22:28.482355076Z",
+  "closed_at": "2026-05-20T12:22:28.482355076Z",
   "labels": [
     "qa-review"
   ]
