@@ -1,0 +1,10 @@
+{
+  "uuid": "4ca48fae-54ec-4550-9f08-637362ba60e9",
+  "issue_uuid": "98de5d97-789c-46c2-9381-9047790d6307",
+  "author": "lOrm",
+  "content": "Honoured replace_all=true via the existing #687 implementation in src/tools/file/edit.rs (multi-occurrence path uses content.replace; single-occurrence path unchanged). Added two #569-banner tests: fix569_replace_all_true_with_three_matches_replaces_all (3 matches all rewritten, success message reports count) and fix569_replace_all_false_default_preserves_single_match_behavior (default omits flag, single match still uses singular success message). Verified: cargo test --lib fix569 → 2/2 pass.",
+  "created_at": "2026-05-20T03:58:54.461683201Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA5bfen3uvMYFTt+Z0el6732jbY7stxpJXIuBuDrA7L6jFZypiLvuvMAANRGhc8MyQM0Y5mOBPD5EwmcOCTH4CAw=="
+}
