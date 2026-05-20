@@ -1,0 +1,10 @@
+{
+  "uuid": "98b1f5ec-16e2-4f56-a223-89e6c2473125",
+  "issue_uuid": "b37272ca-c8d3-4ed0-8285-a3a07a09b297",
+  "author": "lOrm",
+  "content": "Landed src/tools/powershell.rs (pwsh preferred, powershell.exe fallback). Same safety posture as bash: validate_command length cap + denylist via bash::validate_command, PS-specific denylist via powershell_denied_reason() catching Format-Volume/Clear-Disk, IEX-on-downloaded-string RCE, -EncodedCommand payloads, Remove-Item -Recurse -Force of root. apply_env_scrub strips credentials. Bounded timeout (default 120s, max 600s, polled via try_wait). 9 tests pin denylist coverage + dispatch paths. Registered as 'powershell' with PermissionTarget canonical='Bash' arg_key='command' so existing Bash rules cover it.",
+  "created_at": "2026-05-20T18:18:03.935014887Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA/mqET7unGJksezJ9A7steQ010DcXJS0C9TYTKZYgNHbeqrQEhph249QjLQtVyDjP167bnfa7FKUn+jpaiWChAQ=="
+}
