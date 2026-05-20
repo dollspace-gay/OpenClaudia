@@ -1,0 +1,10 @@
+{
+  "uuid": "83d342a0-6f85-4f35-88aa-1c7203b0a69c",
+  "issue_uuid": "dfa4f899-0a14-4d29-9e5a-5bb1d6c1e206",
+  "author": "lOrm",
+  "content": "Fixed. lsp.rs availability check replaced with which::which(server_cmd) using the in-process which crate (already in Cargo.toml). No more fork+exec of which(1), no more PATH-hijack class via a shadowed which binary, no more map_or(true, ...) fail-open. Behavior is identical for the user — same error message on missing server, real path lookup otherwise — but cheaper and safer.",
+  "created_at": "2026-05-20T04:34:41.094155781Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAR936jr8jCs4sRlXjkSvOI6oZKmm0+9yqHWdHJ+v3xEuqkeer0teYIRTn7FObmoDTPcgidDODqTnf41A/BoKwDw=="
+}
