@@ -2,11 +2,12 @@
   "uuid": "51aaab20-efde-4506-a4b8-a8989e950e59",
   "display_id": 636,
   "title": "Add LSP server pool with reuse + lifecycle (parity with CC LSPServerManager)",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:08:22.701014405Z",
-  "updated_at": "2026-05-18T16:08:24.283703630Z",
+  "updated_at": "2026-05-20T14:38:44.092181362Z",
+  "closed_at": "2026-05-20T14:38:44.092181362Z",
   "labels": [
     "parity,cc-lsp,performance"
   ]
