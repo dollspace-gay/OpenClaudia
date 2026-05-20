@@ -2,12 +2,13 @@
   "uuid": "e4b83d16-989f-46a7-a621-6b5f7a794763",
   "display_id": 639,
   "title": "Add rate-limit mocking for dev/test — parity with CC services/mockRateLimits.ts and services/rateLimitMocking.ts",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:08:30.328079656Z",
-  "updated_at": "2026-05-18T16:08:35.890696972Z",
+  "updated_at": "2026-05-20T14:38:55.836796630Z",
+  "closed_at": "2026-05-20T14:38:55.836796630Z",
   "labels": [
     "feature",
     "cc-parity"
