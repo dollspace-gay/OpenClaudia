@@ -3,9 +3,10 @@
   "display_id": 883,
   "title": "Pricing table is hardcoded string-match cascade duplicating model knowledge",
   "description": "## Severity\nMajor\n## Dimension\ndry\n## Location\nsrc/session/pricing.rs:18-131\n## Violation\nget_pricing is a 110-line if/else cascade matching model substrings — annotated allow(clippy::too_many_lines). Adds a new model = edit pricing.rs. The same model knowledge exists in src/proxy.rs (determine_provider) and src/providers/* (chat_endpoint, get_headers). A model rename or repricing requires coordinated edits across at least 3 files. The cascade order is also order-sensitive — m.contains(\"gpt-5\") matches before m.contains(\"gpt-4\"), and m.contains(\"gemini-2\") must come before m.contains(\"gemini\") — fragile undocumented ordering.\n\nCache-write factor 1.25× and cache-read factor 0.1× are hard-coded in calculate_cost without per-model overrides; in reality each provider has different cache pricing.\n## Mandated refactor\nExternalize pricing into a static toml/json table loaded once at startup. Structure: { 'claude-3-opus': { input: 15.0, output: 75.0, cache_read_factor: 0.1, cache_write_factor: 1.25 } } with explicit model patterns (regex or glob), not substring matching. Add a fallback hook the operator can configure.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:11:10.260049526Z",
-  "updated_at": "2026-05-18T22:11:10.260049526Z"
+  "updated_at": "2026-05-20T12:03:48.431881193Z",
+  "closed_at": "2026-05-20T12:03:48.431881193Z"
 }
