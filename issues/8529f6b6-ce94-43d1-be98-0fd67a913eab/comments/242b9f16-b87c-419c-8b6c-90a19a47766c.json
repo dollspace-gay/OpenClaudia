@@ -1,0 +1,10 @@
+{
+  "uuid": "242b9f16-b87c-419c-8b6c-90a19a47766c",
+  "issue_uuid": "8529f6b6-ce94-43d1-be98-0fd67a913eab",
+  "author": "lOrm",
+  "content": "Deferred — owner-level architectural refactor (extracts the agentic loop across 3 seams; touches FORBIDDEN file src/pipeline.rs).\n\n**Fix outline:** Extract pub async fn run_agentic_loop(initial_request, max_iterations: u32, event_sink: &dyn AgentEventSink, client, endpoint, headers, provider, memory_db) -> Result<Vec<Message>, String> into src/pipeline.rs (or a new src/agent_loop.rs). Define trait AgentEventSink { fn stream_text(...); fn tool_start(...); fn tool_done(...); fn response_done(...); fn api_error(...) }. Implement AgentEventSink for:\n- TUI: bridges to the existing mpsc tx (src/tui/app.rs:1457-1522, max_iterations=25)\n- ACP: bridges to ACP notifications (src/acp.rs:555-775, max_iterations=50)\n- REPL: bridges to stdout (src/cli/repl / src/main.rs::cmd_chat)\nReconcile the iteration-cap drift (25 vs 50) by making it a single config value.\n\n**Recommendation:** Owner-level decision on event-sink trait shape and the canonical iteration cap. Also requires unrestricted access to src/pipeline.rs (FORBIDDEN). Defer.",
+  "created_at": "2026-05-20T14:14:18.768946936Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA62iy0zsEDf98FGzJ0UrpJrmHQl3EW2yLnekfwiES3gwfB4vUguy8WRWQHxwT3NBNItDeEViqHWMFVjQTM663DA=="
+}
