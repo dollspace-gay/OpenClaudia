@@ -1,0 +1,10 @@
+{
+  "uuid": "7c3e7151-e6d5-4c54-96e1-0d193e2c85eb",
+  "issue_uuid": "a5981680-6556-4b66-a4db-5f7aa07a2a5f",
+  "author": "lOrm",
+  "content": "Fixed in commit 07a3dd1e (src/modes/mod.rs). Option (b) from the mandate: clarified the decision boundary in both the enum-variant rustdoc and BehaviorMode::description() output. Extend = Adjacent scope (touch call-site +/- 1 hop), Refactor = Unrestricted scope (cross-module reshape OK). Each description() string now includes a concrete example (Extend: add a field, wire a new tool; Refactor: extract trait, split module). Variant docs explicitly cross-reference each other so picking between them is unambiguous.",
+  "created_at": "2026-05-20T00:03:15.841112917Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA5XiU6lroAJop5928jBAwdcq/DHFo7kshlDEoVA2scxgZN3hPQbCKyxPL/QyjiTuFbeddL2XJb9Iwwbvw7pzzCg=="
+}
