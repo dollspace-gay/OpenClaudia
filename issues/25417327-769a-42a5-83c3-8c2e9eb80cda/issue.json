@@ -3,11 +3,12 @@
   "display_id": 984,
   "title": "cron_create_test invokes process-global cwd mutation poisoning sibling tests",
   "description": "## Severity\nTrivial\n\n## Dimension\nTestability / Concurrency\n\n## Location\nsrc/tools/cron.rs:395-503 (cron tests that std::env::set_current_dir into tempdirs)\n\n## Violation\nFive cron tests mutate process-global cwd via std::env::set_current_dir(tmp.path()) (lines 402, 434, 473, 514, 550) — even though the function under test (ScheduleStore::load/save) is only \"stuck on cwd\" because its SCHEDULES_FILE is a relative path. Tests carry the same workaround the production code requires: a serializing cwd_lock that pretends to coordinate but is in fact independent of worktree.rs's separate cwd_lock.\n\nThis makes the entire test module a global concurrency hazard. Any new test in a separate module that mutates cwd without taking BOTH locks corrupts cron tests. The locks are an aspirin for the underlying problem.\n\nThe root cause is cron's relative-path file (see separate issue on SCHEDULES_FILE being relative). Fixing the production code eliminates the need for these tests to touch cwd at all.\n\n## Mandated refactor\nAfter making SCHEDULES_FILE absolute (via PROJECT_ROOT or a constructor argument), refactor all five tests to pass the desired storage path in directly (via a ScheduleStore::with_path(tmp.path().join(\"schedules.json\")) constructor). The cwd dance disappears; tests can run in parallel without serialization.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:27:05.253444574Z",
-  "updated_at": "2026-05-18T22:27:08.086865186Z",
+  "updated_at": "2026-05-20T14:16:18.283563292Z",
+  "closed_at": "2026-05-20T14:16:18.283563292Z",
   "labels": [
     "qa-review",
     "concurrency"
