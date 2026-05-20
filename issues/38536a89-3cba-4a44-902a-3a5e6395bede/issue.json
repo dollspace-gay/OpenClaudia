@@ -3,11 +3,12 @@
   "display_id": 894,
   "title": "MigrationOutcome::Failed wraps anyhow::Error which is not Clone limiting reporting",
   "description": "## Severity\nTrivial\n## Dimension\nsolid\n## Location\nsrc/migrations/mod.rs:38-45\n## Violation\nMigrationOutcome::Failed holds an anyhow::Error:\n\n```rust\npub enum MigrationOutcome {\n    Skipped,\n    Applied(String),\n    Failed(anyhow::Error),\n}\n```\n\nanyhow::Error does not implement Clone. Callers of run_all that want to aggregate / persist / display the result set cannot do so without consuming the Vec<MigrationReport>. The Vec is returned by value so this works once, but a CLI subcommand like `openclaudia migrate --dry-run --json` (mentioned in the description's doc comment) would need to print the errors AND optionally save them — currently impossible without consuming twice.\n\nAdditionally, MigrationOutcome implements no Display / Debug derivations (anyhow's Display works manually, but the enum itself can't derive Debug because anyhow::Error doesn't impl Debug uniformly).\n\n## Mandated refactor\nEither:\n1. Store String (the error message) in Failed:\n```rust\nFailed(String),  // captured via format!(\"{:#}\", err) at the call site\n```\n2. Or define a typed migration error enum with thiserror so each variant has known structure.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:12:09.878235683Z",
-  "updated_at": "2026-05-18T22:14:03.041787008Z",
+  "updated_at": "2026-05-20T13:22:14.520480854Z",
+  "closed_at": "2026-05-20T13:22:14.520480854Z",
   "labels": [
     "qa-review",
     "solid"
