@@ -3,11 +3,12 @@
   "display_id": 856,
   "title": "policy::wild_match_opt is dead-easy to misread — semantic asymmetry is undocumented at the call site",
   "description": "## Severity\nTrivial\n## Dimension\nkiss\n## Location\nsrc/plugins/policy.rs:164-170, src/plugins/policy.rs:121-160\n## Violation\nThe helper is named \"wild_match_opt\" but the rule encoded is \"rule=None wildcards everything, rule=Some requires candidate=Some-and-equal\". The asymmetry is critical (see the `ref_must_match_when_rule_specifies_it` test which exists exactly because the misreading is plausible) but the call sites use it bare. Quoted lines:\n\n    fn wild_match_opt(candidate: Option<&String>, rule: Option<&String>) -> bool {\n        match (candidate, rule) {\n            (_, None) => true,\n            (Some(c), Some(r)) => c == r,\n            (None, Some(_)) => false,\n        }\n    }\n    ...\n    r1.eq_ignore_ascii_case(r2) && wild_match_opt(ref1.as_ref(), ref2.as_ref()) && wild_match_opt(p1.as_ref(), p2.as_ref()),\n\nA reader skimming the call site cannot tell whether the `git_ref` field on the policy entry or on the candidate is the \"rule\" without going to the helper. Argument-order bugs at call sites — swapping candidate and rule — would invert the semantics silently and a test would only catch the most obvious case.\n## Mandated refactor\nRename to `rule_matches_candidate(rule: Option<&String>, candidate: Option<&String>) -> bool` and put `rule` first; or introduce two newtypes (`Rule<&String>`, `Candidate<&String>`) so the type system catches the swap. Add a `///` doc comment showing the truth table.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:07:31.335012044Z",
-  "updated_at": "2026-05-18T22:07:58.229763762Z",
+  "updated_at": "2026-05-20T12:57:38.569967353Z",
+  "closed_at": "2026-05-20T12:57:38.569967353Z",
   "labels": [
     "qa-review",
     "kiss"
