@@ -3,11 +3,12 @@
   "display_id": 717,
   "title": "acp::run_prompt_loop hard-codes max_iterations and prompt builder ignores cwd/mode",
   "description": "## Severity\nMajor\n## Dimension\ncomplexity\n## Location\nsrc/acp.rs:777-988 (run_prompt_loop)\n## Violation\nThe agentic loop is a 211-line function with several intertwined design defects:\n\n```rust\nlet max_iterations = 50; // Safety limit\n...\nlet system_prompt = crate::prompt::build_system_prompt(None, None, None);\n...\nlet mut all_messages: Vec<crate::proxy::ChatMessage> =\n    vec![crate::proxy::ChatMessage { role: \"system\".to_string(), ... }];\n```\n\n1. `max_iterations = 50` is a magic local, not configurable, and silently caps real work.\n2. `build_system_prompt(None, None, None)` discards hook instructions, custom instructions, and memory.\n3. The function builds a fresh `reqwest::Client::new()` per call (line 779) instead of holding a pooled client on the server struct.\n4. The function clones `self.config.active_provider().thinking` every iteration inside the 50-iteration loop.\n5. `serde_json::from_value(tools.clone()).unwrap_or_default()` (line 813) swallows tool-definition parse errors and silently strips the tool array.\n\nCyclomatic complexity by inspection is well above the 15 threshold.\n## Mandated refactor\nSplit `run_prompt_loop` into (a) `build_request`, (b) `dispatch`, (c) `consume_stream`. Hoist the `reqwest::Client` to a field of `AcpServer`. Pull `max_iterations` and per-call timeout onto `AcpConfig`. Replace `unwrap_or_default()` on tool definitions with an explicit `?`.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:50:12.208119712Z",
-  "updated_at": "2026-05-18T21:51:19.499220630Z",
+  "updated_at": "2026-05-20T06:42:35.961524320Z",
+  "closed_at": "2026-05-20T06:42:35.961524320Z",
   "labels": [
     "qa-review",
     "complexity"
