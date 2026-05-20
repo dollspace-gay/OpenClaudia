@@ -3,9 +3,10 @@
   "display_id": 893,
   "title": "PluginManager::new returns Default-equivalent silently when home_dir is None — search paths become incomplete",
   "description": "## Severity\nTrivial\n## Dimension\nerror-handling\n## Location\nsrc/plugins/manager.rs:29-47\n## Violation\nIf `dirs::home_dir()` returns None (sandboxed environments, missing $HOME), the manager initialises with ONLY the project plugins dir, no warning, no log. Quoted lines:\n\n    pub fn new() -> Self {\n        let mut search_paths = Vec::new();\n        if let Some(home) = dirs::home_dir() {\n            search_paths.push(home.join(\".openclaudia\").join(\"plugins\"));\n            search_paths.push(home.join(\".claude\").join(\"plugins\"));\n        }\n        search_paths.push(PathBuf::from(\".openclaudia/plugins\"));\n        ...\n    }\n\nA user wondering why their `~/.claude/plugins/foo` isn't loading gets zero signal. InstalledPlugins::load also silently degrades because its file_path falls back to a relative path. Same pattern as marketplaces_dir (line 263-268) which falls back to `.` — meaning marketplaces could land in cwd.\n## Mandated refactor\nEmit a `warn!` (or `error!` if managed-policy mode is detected) when home_dir returns None. Make PluginManager::new return Result<Self, PluginError> and let install_from_marketplace return an error if HOME is unset — silent degradation here is worse than fail-fast.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:12:23.037316042Z",
-  "updated_at": "2026-05-18T22:12:23.037316042Z"
+  "updated_at": "2026-05-20T13:22:12.774721028Z",
+  "closed_at": "2026-05-20T13:22:12.774721028Z"
 }
