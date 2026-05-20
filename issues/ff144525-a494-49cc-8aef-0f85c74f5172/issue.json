@@ -3,12 +3,13 @@
   "display_id": 634,
   "title": "Add token-budget-aware partial compaction (parity with CC microCompact.ts)",
   "description": "## Goal\nImplement microcompact behavior from CC services/compact/microCompact.ts (~530 lines): partial tool-result clearing that avoids a full conversation summarization.\n\n## CC behaviors (microCompact.ts lines 41–529)\n- COMPACTABLE_TOOLS set: FileRead, Bash/Shell tools, Grep, Glob, WebSearch, WebFetch, FileEdit, FileWrite\n- estimateMessageTokens(): pads roughTokenCount by 4/3 factor for conservatism; handles text, tool_result, tool_use, thinking, redacted_thinking, image/document blocks\n- TIME_BASED_MC_CLEARED_MESSAGE sentinel = '[Old tool result content cleared]'\n- microcompactMessages(): checks time-based trigger first (cold-cache path), then cached-MC path (ant-only, CACHED_MICROCOMPACT feature), no-ops for external builds\n- evaluateTimeBasedTrigger(): fires when gap since last assistant > threshold minutes AND main-thread querySource\n- maybeTimeBasedMicrocompact(): content-clears old tool results in-place, keeps last N compactable IDs, logs tengu_time_based_microcompact event, resets microcompact state\n- cachedMicrocompactPath(): registers tool results, queues cache_edits API block instead of mutating content, tracks pinnedEdits for re-sending on subsequent calls\n- consumePendingCacheEdits() / getPinnedCacheEdits() / pinCacheEdits(): API-layer integration\n- resetMicrocompactState(): clears all cached-MC module state + pendingCacheEdits\n- MicrocompactResult type: messages + optional compactionInfo.pendingCacheEdits\n- IMAGE_MAX_TOKEN_SIZE = 2000 tokens for image/document blocks\n\n## OC counterpart\nNone. OC has no partial tool-result compaction. context window pressure goes directly to full compaction.\n\n## apiMicrocompact.ts (~153 lines) gap\nCC also has server-side context management via getAPIContextManagement(): ContextManagementConfig with clear_tool_uses_20250919 and clear_thinking_20251015 strategies sent as API parameters. OC does not send context_management in requests.\n\n## Parent\n#523. Phase 1 spec tracked in #534.",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:07:56.607006515Z",
-  "updated_at": "2026-05-18T16:07:59.544926700Z",
+  "updated_at": "2026-05-20T14:38:37.649548220Z",
+  "closed_at": "2026-05-20T14:38:37.649548220Z",
   "labels": [
     "feature",
     "cc-parity"
