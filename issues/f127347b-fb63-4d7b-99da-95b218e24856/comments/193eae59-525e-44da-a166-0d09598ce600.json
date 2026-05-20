@@ -1,0 +1,10 @@
+{
+  "uuid": "193eae59-525e-44da-a166-0d09598ce600",
+  "issue_uuid": "f127347b-fb63-4d7b-99da-95b218e24856",
+  "author": "lOrm",
+  "content": "SKIP — fix site is the `max_retries = 3u32` constant at `src/pipeline.rs:370` and the retry loop at `src/pipeline.rs:369-396`. `src/pipeline.rs` is in the agent's FORBIDDEN file list for this batch, so this issue cannot be addressed from this work-session. `grep -rn 'max_retries' src/` confirms there is no out-of-pipeline retry constant to redirect; the lift to 10 (CC parity) must be applied directly to the pipeline.rs constant in a future session with that file unlocked.",
+  "created_at": "2026-05-20T05:32:28.998238781Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAN/xOJjsA3QVkz91dajfCj1Z03YlZutNzHLMAU6iChs7mVb55H9LgvIyTYjhyU/R/r5+dV/twMDsiIjBpEnSfBg=="
+}
