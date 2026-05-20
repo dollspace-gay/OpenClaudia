@@ -3,11 +3,12 @@
   "display_id": 974,
   "title": "edit_mode in notebook is validated as string against literal slice instead of enum",
   "description": "## Severity\nTrivial\n\n## Dimension\nSOLID-L / Type Safety\n\n## Location\nsrc/tools/file/notebook.rs:72-84 (edit_mode extraction + validation) plus 165, 249, 266-274 (string matches)\n\n## Violation\n```rust\nlet edit_mode = args.get(\"edit_mode\").and_then(|v| v.as_str()).unwrap_or(\"replace\");\nif ![\"replace\", \"insert\", \"delete\"].contains(&edit_mode) {\n    return (format!(\"Invalid edit_mode '{edit_mode}'. Must be 'replace', 'insert', or 'delete'.\"), true);\n}\n...\nmatch edit_mode { \"replace\" => { ... } \"insert\" => { ... } \"delete\" => { ... } _ => unreachable!() }\n```\n\nSame pattern as TodoItem.status: stringly-typed, validated against a hardcoded list, then matched against the same list three more times (lines 165, 249, 266-274). The `_ => unreachable!()` is a tell — the type system COULD prove this branch dead but cannot because the type is &str. Future addition of a \"swap\" edit_mode requires editing four locations.\n\n## Mandated refactor\n```rust\n#[derive(Debug, Clone, Copy, Deserialize)]\n#[serde(rename_all = \"snake_case\")]\nenum EditMode { Replace, Insert, Delete }\n```\nParse via serde from the args. Every subsequent match is exhaustive without `unreachable!()`. Cross-references issue #973 (TodoStatus enum refactor) — same root cause.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:23:55.693546214Z",
-  "updated_at": "2026-05-18T22:23:59.102513758Z",
+  "updated_at": "2026-05-20T04:53:17.798125750Z",
+  "closed_at": "2026-05-20T04:53:17.798125750Z",
   "labels": [
     "qa-review",
     "solid"
