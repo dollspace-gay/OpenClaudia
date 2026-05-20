@@ -3,11 +3,12 @@
   "display_id": 917,
   "title": "QA: BACKGROUND_SHELLS is process-global LazyLock singleton",
   "description": "## Severity\nMinor\n## Dimension\ndecoupling\n## Location\nsrc/tools/bash/mod.rs:271-272\n## Violation\n`BACKGROUND_SHELLS` is a process-wide `LazyLock<BackgroundShellManager>`. Tests share state, multi-tenant deployments cannot isolate per-session shells, bash cannot be unit-tested without real processes. DIP violation.\n\nQuoted (mod.rs:270-272):\n```\npub static BACKGROUND_SHELLS: std::sync::LazyLock<BackgroundShellManager> =\n    std::sync::LazyLock::new(BackgroundShellManager::new);\n```\n\nTests admit the problem at mod.rs:479-482.\n## Mandated refactor\n1. Introduce `pub trait ShellManager: Send + Sync`.\n2. Plumb `Arc<dyn ShellManager>` through tool dispatch.\n3. Eliminate `pub static`.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:16:11.262913320Z",
-  "updated_at": "2026-05-18T22:16:13.924045074Z",
+  "updated_at": "2026-05-20T12:04:43.707223806Z",
+  "closed_at": "2026-05-20T12:04:43.707223806Z",
   "labels": [
     "qa-review",
     "decoupling"
