@@ -3,11 +3,12 @@
   "display_id": 785,
   "title": "Google adapter constructs ToolCall ids with random UUIDs every parse",
   "description": "## Severity\nMinor\n## Dimension\nnaming\n## Location\nsrc/providers/google.rs:212, src/pipeline.rs:453, src/streaming.rs:308\n## Violation\nThree sites generate tool-call ids for Gemini using different schemes — pipeline.rs uses format!(\"call_{}\", Uuid::new_v4()), GoogleAdapter::transform_response uses format!(\"call_{}\", Uuid::new_v4()), and streaming::parse_gemini uses format!(\"gemini_{name}\") with no UUID. The format!(\"gemini_{name}\") form is NOT unique — two consecutive bash function-calls in one response collide on id 'gemini_bash', breaking tool_use_id linkage when relayed to Anthropic via convert_messages_to_anthropic which uses the id to bind tool_result back to tool_use. Inconsistent ID schemes also frustrate log correlation.\n## Mandated refactor\nLift a single id_generator: fn gemini_tool_id(name: &str, index: usize) -> String into providers/google.rs. Use it in all three sites. Include a counter to guarantee uniqueness even when the model emits the same function name twice in a turn.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:57:39.206959220Z",
-  "updated_at": "2026-05-18T21:57:50.795018147Z",
+  "updated_at": "2026-05-20T07:00:34.407493551Z",
+  "closed_at": "2026-05-20T07:00:34.407493551Z",
   "labels": [
     "qa-review",
     "naming"
