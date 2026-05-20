@@ -3,9 +3,10 @@
   "display_id": 850,
   "title": "GoogleAdapter::convert_messages drops unknown content types as empty text",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/providers/google.rs:32-51\n## Violation\nFor MessageContent::Parts, when neither p.text nor p.image_url is set the closure falls through to json!({\"text\": \"\"}). This silently drops video content, file references, audio parts, or any unknown ContentPart variant. The user sends a multipart message expecting Gemini to handle, say, video, and gets an empty text part instead — no warning, no error. The Anthropic adapter has the same shape but at least keeps array Value::Array as-is via convert_messages_to_anthropic.\n## Mandated refactor\nEither (a) return an explicit Err with Unsupported when a ContentPart has none of the recognized fields, or (b) map ContentPart::content_type explicitly with a tracing::warn for unrecognized types and drop them by name (not silently as empty). Force callers to deal with the multimodal contract.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:06:03.462587716Z",
-  "updated_at": "2026-05-18T22:06:03.462587716Z"
+  "updated_at": "2026-05-20T07:00:49.616115348Z",
+  "closed_at": "2026-05-20T07:00:49.616115348Z"
 }
