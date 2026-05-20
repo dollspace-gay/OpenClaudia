@@ -3,11 +3,12 @@
   "display_id": 839,
   "title": "modes::BehaviorMode serde_default missing on modifiers field breaks backwards compat",
   "description": "## Severity\nMinor\n## Dimension\nkiss\n## Location\nsrc/modes/mod.rs:251-269 (BehaviorMode struct)\n## Violation\n```rust\npub struct BehaviorMode {\n    pub agency: Agency,\n    pub quality: Quality,\n    pub scope: Scope,\n    pub modifiers: Vec<Modifier>,\n}\n```\n\nThe struct test `serde_missing_modifiers_defaults_to_empty` (line 809) explicitly documents this is a known regression: sessions saved before the `modifiers` field existed fail to deserialize. The test passes by asserting on the failure, but that's a deferred fix masquerading as a passing test.\n\n```rust\nassert!(\n    result.is_err(),\n    \"BehaviorMode currently requires modifiers field; \\\n     add #[serde(default)] to make it optional\"\n);\n```\n\nThe fix is one line and the comment explicitly states it. Every session resume after a deploy that adds new fields will fail in the same shape unless the team commits to a default-everywhere policy.\n## Mandated refactor\nAdd `#[serde(default)]` to every field of `BehaviorMode` (and to the Agency/Quality/Scope variants once they have a `Default` impl — they do). Convert the negative-assertion test into a positive assertion verifying the field defaults to an empty vec. Establish a project-wide rule: any added enum/field on a persisted struct gets `#[serde(default)]` so wire-format additions are non-breaking.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:05:33.853047480Z",
-  "updated_at": "2026-05-18T22:05:46.747984429Z",
+  "updated_at": "2026-05-20T14:04:19.832133880Z",
+  "closed_at": "2026-05-20T14:04:19.832133880Z",
   "labels": [
     "qa-review",
     "kiss"
