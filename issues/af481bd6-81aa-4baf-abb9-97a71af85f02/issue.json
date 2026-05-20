@@ -2,12 +2,13 @@
   "uuid": "af481bd6-81aa-4baf-abb9-97a71af85f02",
   "display_id": 618,
   "title": "Plan-mode prePlanMode snapshot missing: ExitPlanMode always restores to Build not pre-plan mode",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:02:35.698029004Z",
-  "updated_at": "2026-05-18T16:02:38.893048291Z",
+  "updated_at": "2026-05-20T05:47:37.630592760Z",
+  "closed_at": "2026-05-20T05:47:37.630592760Z",
   "labels": [
     "feature",
     "cc-parity"
