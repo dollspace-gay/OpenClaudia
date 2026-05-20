@@ -3,11 +3,12 @@
   "display_id": 945,
   "title": "duplicate cwd_lock helper inlined verbatim in worktree.rs and cron.rs tests",
   "description": "## Severity\nTrivial\n\n## Dimension\nDRY\n\n## Location\nsrc/tools/worktree.rs:349-354 and src/tools/cron.rs:268-273 (both define `fn cwd_lock() -> MutexGuard<'static, ()>`)\n\n## Violation\nThe exact same helper definition appears in both test modules:\n\n```rust\nfn cwd_lock() -> MutexGuard<'static, ()> {\n    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();\n    LOCK.get_or_init(|| Mutex::new(()))\n        .lock()\n        .unwrap_or_else(std::sync::PoisonError::into_inner)\n}\n```\n\nTwo separate `static LOCK` instances — meaning the cwd_lock in worktree.rs does NOT serialize against the cwd_lock in cron.rs. A worktree test and a cron test that BOTH mutate cwd via std::env::set_current_dir can interleave under parallel test execution and corrupt each other's cwd assumptions.\n\n(The comment in cron.rs:267 even acknowledges the need to coordinate \"with worktree tests\" — but the two locks are independent.)\n\n## Mandated refactor\nMove the helper to a shared test utility module (e.g. `src/tools/testutil.rs` with `#[cfg(test)] pub`) that exports a single `pub fn process_cwd_lock() -> MutexGuard<'static, ()>` backed by ONE OnceLock<Mutex<()>>. Both test modules import that helper. This guarantees mutual exclusion across the entire process.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:19:15.537323428Z",
-  "updated_at": "2026-05-18T22:19:29.402463220Z",
+  "updated_at": "2026-05-20T04:33:57.667717714Z",
+  "closed_at": "2026-05-20T04:33:57.667717714Z",
   "labels": [
     "qa-review",
     "dry"
