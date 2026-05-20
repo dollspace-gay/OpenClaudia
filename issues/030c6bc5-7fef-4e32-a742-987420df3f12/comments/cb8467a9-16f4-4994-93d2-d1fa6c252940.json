@@ -1,0 +1,10 @@
+{
+  "uuid": "cb8467a9-16f4-4994-93d2-d1fa6c252940",
+  "issue_uuid": "030c6bc5-7fef-4e32-a742-987420df3f12",
+  "author": "lOrm",
+  "content": "Fixed at HEAD (working tree on main, pending commit). src/thinking.rs::has_ultrathink_keyword now scans the raw &str.as_bytes() with allocation-free ASCII-case-insensitive helpers (find_whole_word_ci + contains_ci + matches_ci_at) and no longer calls text.to_lowercase(). ULTRATHINK_PHRASES stored as &[&[u8]] of pre-lowered bytes; ULTRATHINK_NEEDLE constant for the whole-word case. Word-boundary semantics preserved (case bytes are lowered point-wise via to_ascii_lowercase on the haystack side only). New regression test thinking::tests::large_input_case_insensitive_match exercises a 256 KiB buffer with positive (\"UltraThink\"), negative (no trigger), embedded (\"myUltraThinker\" must NOT match), and multi-word (\"THINK ULTRA HARD\") cases. cargo test --lib thinking:: passes 7/7. cargo clippy --lib --all-features -- -D warnings is clean.",
+  "created_at": "2026-05-20T12:04:18.257298517Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAuvv2l8VPu9adgmateqswOEhOI8SZakP0gdXcke9JXmUuOrs8TnPy0Zbupe62c77PQNr3R9s3WHS4UvM1er5FDg=="
+}
