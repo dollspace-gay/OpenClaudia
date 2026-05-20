@@ -1,0 +1,10 @@
+{
+  "uuid": "adbce517-933c-41f6-9518-f6d0c4229abd",
+  "issue_uuid": "e7630c27-7e6e-4157-bbc9-231b1d51ce32",
+  "author": "lOrm",
+  "content": "Issue calls for extracting a SlashCommandRegistry trait shared between TUI (src/tui/app.rs:586-1247, ~660 lines, 24 branches) and CLI (src/cli/repl/slash.rs, #232) dispatchers. Not addressable in a cleanup pass: requires a new src/commands/ module, trait Command with execute(ctx, args)->CommandOutcome, a CommandContext abstraction across the two seams, and a HashMap<&str, Box<dyn Command>> registry. Each existing branch is its own command struct migration. Companion ticket #232 covers the CLI side. Both must land together. Owner-level architectural work.",
+  "created_at": "2026-05-20T14:33:01.275941439Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAJq/wbsDw+jJ+MJCtPr6t1e+yFZj2eKjEU+iuU40x9BjjaBCIHQ6vmw4TKmVLWMBybhEL634QAtdaI//TOkzKAQ=="
+}
