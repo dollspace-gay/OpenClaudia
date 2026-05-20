@@ -3,12 +3,13 @@
   "display_id": 632,
   "title": "Separate autoCompact hook from pipeline (parity with CC autoCompact.ts)",
   "description": "## Goal\nAdd a dedicated autoCompact trigger/hook module matching CC services/compact/autoCompact.ts (~351 lines).\n\n## CC behaviors missing from OC\n- getAutoCompactThreshold(model): effectiveWindow minus 13_000 buffer (not a 90% ratio)\n- CLAUDE_AUTOCOMPACT_PCT_OVERRIDE env var override\n- DISABLE_AUTO_COMPACT and DISABLE_COMPACT env kill-switches\n- autoCompactEnabled user config flag\n- calculateTokenWarningState(): percentLeft, isAboveWarningThreshold/ErrorThreshold/AutoCompactThreshold, isAtBlockingLimit\n- shouldAutoCompact(): recursion guard (session_memory/compact sources return false), circuit-breaker flag checks\n- autoCompactIfNeeded(): circuit breaker at 3 consecutive failures, sessionMemoryCompaction tried first, full compactConversation fallback, resets lastSummarizedMessageId on success\n- AutoCompactTrackingState: compacted, turnCounter, turnId, consecutiveFailures\n\n## OC counterpart\ncompaction.rs check_context_budget() (lines 713-725) uses a simpler 85/90% threshold pair with no buffer-based tuning, no circuit breaker, no env overrides, no user config flag.\n\n## Parent\n#523. Phase 1 spec tracked in #534.",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:07:01.138500519Z",
-  "updated_at": "2026-05-20T16:58:39.545070118Z",
+  "updated_at": "2026-05-20T19:54:58.372116723Z",
+  "closed_at": "2026-05-20T19:54:58.372116723Z",
   "labels": [
     "feature",
     "cc-parity"
