@@ -1,0 +1,10 @@
+{
+  "uuid": "a75838e8-2529-49fb-a868-7038ec15f1d3",
+  "issue_uuid": "3e3780c5-e063-4121-8098-c174399d2d2f",
+  "author": "lOrm",
+  "content": "Issue calls for MCP XAA/IdP OAuth login flow (RFC 8693 token-exchange + RFC 7523 JWT-bearer, RFC 9728 PRM discovery, RFC 8414 AS metadata, token caching). Not addressable in a cleanup pass: substantial enterprise SSO feature with multiple RFCs to implement, JWT crypto, persistent token cache, and CLI flow. Multi-day implementation. Parent audit #523.",
+  "created_at": "2026-05-20T14:41:41.214875908Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAUK5NSpZiIE4/y8UWmXE9WyTjWLtWEjNabZCVlCZ5sp055Tywv2TcNecWsT5Cpc898bcAR38tewM0EvJosepBCA=="
+}
