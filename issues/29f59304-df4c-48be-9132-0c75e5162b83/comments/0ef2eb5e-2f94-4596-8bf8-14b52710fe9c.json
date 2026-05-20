@@ -1,0 +1,10 @@
+{
+  "uuid": "0ef2eb5e-2f94-4596-8bf8-14b52710fe9c",
+  "issue_uuid": "29f59304-df4c-48be-9132-0c75e5162b83",
+  "author": "lOrm",
+  "content": "Deferred — both architectural (subagent split, owner-level) and FORBIDDEN-file (src/subagent.rs reserved scope).\n\n**Fix outline:** Split src/subagent.rs (1486 lines) into a module tree:\n- subagent/mod.rs — public API + AgentType enum\n- subagent/manager.rs — BackgroundAgentManager + (now-injectable, see #739) registry\n- subagent/transcript.rs — TRANSCRIPT_STORE + TTL eviction\n- subagent/worktree.rs — WorktreeIsolation\n- subagent/runner.rs — run_subagent loop (decomposed per #725)\n- subagent/prompts.rs — AgentType system prompts + allowed_tools\n- subagent/tools.rs — tool JSON + dispatch glue\nAlso remove transform_to_anthropic / transform_from_anthropic — already done in commit cde77d7b (#407: subagent uses ProviderAdapter trait instead of duplicate transforms).\n\n**Partial progress already landed:**\n- cde77d7b: subagent now delegates request/response shaping to the providers.rs adapter trait.\n- b786593b, a698afd4: provider adapter dispatch made static and consistent.\n\n**Blocking:** src/subagent.rs is reserved scope AND owner-level architectural call. This issue is the umbrella for the file split itself — close until a dedicated unrestricted pass.",
+  "created_at": "2026-05-20T14:13:43.720578692Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAl8UdfBKKO3C4nAwsr4EWyaobCcXauVLQWoUA1DkbsWXRQQRs3VtCVVufRG1NKmuNYpFvoBAStuTNkb/cewtTBw=="
+}
