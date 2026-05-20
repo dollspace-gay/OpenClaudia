@@ -3,9 +3,10 @@
   "display_id": 830,
   "title": "modes::Modifier::Debug and Preset::Debug share name with serde rename_all collision risk",
   "description": "## Severity\nTrivial\n## Dimension\nnaming\n## Location\nsrc/modes/mod.rs:67-104 (Modifier and Preset enums)\n## Violation\nBoth `Modifier` and `Preset` have a variant named `Debug`:\n\n```rust\npub enum Modifier { Bold, Debug, Methodical, Director, Readonly, ContextPacing }\npub enum Preset   { Create, Extend, Safe, Refactor, Explore, Debug, Methodical, Director }\n```\n\nThree variant names overlap (`Debug`, `Methodical`, `Director`) across the two enums. When both are serialized in the same JSON document via serde (e.g., a session-state dump or config slice), readers cannot disambiguate without the enclosing field name. The `Display` impl produces the same string (\"debug\") for both, so log lines like `\"mode: debug\"` are ambiguous.\n\nThis is a naming-discipline violation per §3.3: enum variants should be uniquely identifiable in their domain. The Preset::Debug variant is also confusingly close to the standard library `std::fmt::Debug` trait — the literal name \"Debug\" inside `match preset { Preset::Debug => ... }` reads as a trait reference rather than a variant.\n## Mandated refactor\nRename `Preset::Debug` → `Preset::Investigate` (matches the existing \"Investigation-first debugging\" doc-comment). Rename `Preset::Methodical` and `Modifier::Methodical` to disambiguate by prefix (`Preset::MethodicalRollout` vs `Modifier::Methodical`) OR document the intentional overlap and add a `#[serde(rename = \"preset-debug\")]` discriminator on Preset variants so JSON consumers can't confuse them.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:04:09.155600105Z",
-  "updated_at": "2026-05-18T22:04:09.155600105Z"
+  "updated_at": "2026-05-20T07:00:45.053023558Z",
+  "closed_at": "2026-05-20T07:00:45.053023558Z"
 }
