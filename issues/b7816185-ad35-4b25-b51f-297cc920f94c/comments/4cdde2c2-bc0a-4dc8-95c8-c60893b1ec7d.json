@@ -1,0 +1,10 @@
+{
+  "uuid": "4cdde2c2-bc0a-4dc8-95c8-c60893b1ec7d",
+  "issue_uuid": "b7816185-ad35-4b25-b51f-297cc920f94c",
+  "author": "lOrm",
+  "content": "Landed agent-scoped shell cleanup. Added agent_id: Option<String> to BackgroundShell, populated via new BackgroundShellManager::spawn_with_agent(command, agent_id) (spawn() unchanged — calls spawn_with_agent(.., None)). Added kill_shell_tasks_for_agent(agent_id) which iterates the shell map, terminates every shell whose agent_id matches via terminate_process_tree, and removes the entry. Re-exported as tools::kill_shell_tasks_for_agent and routed through BACKGROUND_SHELLS singleton. 2 tests pin: unowned shells survive a targeted kill / targeted kill removes only shells owned by the named agent.",
+  "created_at": "2026-05-20T18:18:45.989291309Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAIGGLm/g4xINzy7DiTP31EObQo0eCjC5PEZrlFD57OGJ1AhQBx+cNKGydYp8jXZ+9+trcS3kGkg7MmfUUYl1OAA=="
+}
