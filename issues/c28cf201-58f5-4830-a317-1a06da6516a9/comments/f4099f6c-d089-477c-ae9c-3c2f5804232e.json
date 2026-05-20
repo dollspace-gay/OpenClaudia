@@ -1,0 +1,10 @@
+{
+  "uuid": "f4099f6c-d089-477c-ae9c-3c2f5804232e",
+  "issue_uuid": "c28cf201-58f5-4830-a317-1a06da6516a9",
+  "author": "lOrm",
+  "content": "Fixed in worktree: replaced O(N) pop()-loop with single Vec::truncate(saturating_sub) in src/tui/messages.rs::pop_last. Added test pop_last_handles_saturating_and_zero_edges covering count == 0 (no-op) and count > len (saturates without panic). cargo clippy --all-targets --all-features clean (-D warnings); new test passes.",
+  "created_at": "2026-05-20T00:40:24.973521412Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABASLQWdOezdAKGvI5VtQK7Q1Xp5qDZfzr83SUEW+wJuemKd6BB1yLOctwsWXrdw2AGub33lm4pEFxOmAhnTa4sCg=="
+}
