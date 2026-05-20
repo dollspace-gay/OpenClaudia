@@ -1,0 +1,10 @@
+{
+  "uuid": "a8d0fea7-00f9-4b2a-b743-232345a3f148",
+  "issue_uuid": "0eaf1d85-68e7-41a5-888f-ef675f163bb5",
+  "author": "lOrm",
+  "content": "Issue calls for LSP server registration from plugins (parity with CC lspPluginIntegration.ts). Not addressable in a cleanup pass: depends on #636 LSP server pool and #538 plugin spec. Parent #538.",
+  "created_at": "2026-05-20T14:39:45.522189995Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABANdMrDn7EnTlBuFhKrZO5pb8lu1eQusrC37oZnpSaUoUTcOC/sRfVDkLcS5O6814BbHNpCU3ZLgHG/rAvzxEKDQ=="
+}
