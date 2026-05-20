@@ -199,23 +199,28 @@ pub fn execute_todo_write(args: &HashMap<String, Value>) -> (String, bool) {
     // instead of keeping a list of done items. Keeps the session cleanup
     // clean and signals the agent to stop referring back to finished work.
     // See claude-code/tools/TodoWriteTool/TodoWriteTool.ts (`allDone` branch).
+    //
+    // crosslink #972: the all_done decision MUST be made inside the lock
+    // alongside the mutation. Earlier code decided outside the lock, which
+    // raced two concurrent todo_write calls — thread A could decide
+    // "all_done → remove" from its input while thread B's pending insert
+    // landed first, erasing B's todos. The decide-and-write pair is one
+    // critical section now.
     let all_done =
         !new_todos.is_empty() && new_todos.iter().all(|t| t.status == TodoStatus::Completed);
-    let stored_todos = if all_done {
-        Vec::new()
-    } else {
-        new_todos.clone()
-    };
 
     // Update the per-session todo list. Thread-local
     // `CURRENT_SESSION_ID` picks the bucket; absent guard → default key.
+    // The all_done compare-and-{remove|insert} pair runs atomically under the
+    // map lock so two concurrent todo_write calls cannot race the bucket
+    // (crosslink #972).
     let session_key = current_session_key();
     match TODO_LISTS.lock() {
         Ok(mut map) => {
-            if stored_todos.is_empty() {
+            if all_done {
                 map.remove(&session_key);
             } else {
-                map.insert(session_key, stored_todos);
+                map.insert(session_key, new_todos.clone());
             }
         }
         Err(e) => return (format!("Failed to update todo list: {e}"), true),

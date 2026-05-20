@@ -415,6 +415,12 @@ impl<'a> AutoLearner<'a> {
             return;
         }
 
+        // crosslink #851: also accept conversational prefixes ("I always X",
+        // "we should always X", "please always X") by *stripping* them and
+        // re-matching the imperative head. This keeps the imperative-only
+        // gate honest while widening the natural-language surface.
+        let normalized = strip_conversational_prefix(&lower);
+
         // Preference verbs in imperative mood. The bare `use ` prefix was
         // removed deliberately — see doc comment above.
         let preference_patterns: &[(&str, &str)] = &[
@@ -423,10 +429,12 @@ impl<'a> AutoLearner<'a> {
             ("prefer ", "style"),
             ("don't use ", "style"),
             ("dont use ", "style"),
+            ("avoid ", "style"),
+            ("do not use ", "style"),
         ];
 
         for (prefix, category) in preference_patterns {
-            if let Some(rest) = lower.strip_prefix(prefix) {
+            if let Some(rest) = normalized.strip_prefix(prefix) {
                 if !is_substantive_object_phrase(rest) {
                     continue;
                 }
@@ -677,6 +685,37 @@ fn is_substantive_object_phrase(rest: &str) -> bool {
         .filter(|t| !t.is_empty())
         .count();
     alpha_tokens >= 2
+}
+
+/// Strip natural-language conversational prefixes so an imperative buried
+/// inside ("I always X", "we should always X", "please always X") is
+/// recognised the same as a bare "always X". crosslink #851.
+///
+/// Prefixes are matched in lowercased form and the longest matching prefix
+/// is consumed. If nothing matches, the input is returned unchanged.
+fn strip_conversational_prefix(lower: &str) -> std::borrow::Cow<'_, str> {
+    const PREFIXES: &[&str] = &[
+        "i would prefer to ",
+        "i would prefer ",
+        "i would like you to ",
+        "i would like to ",
+        "we should ",
+        "you should ",
+        "i prefer to ",
+        "i prefer ",
+        "i think we should ",
+        "please ",
+        "i always ",
+        "we always ",
+        "i never ",
+        "we never ",
+    ];
+    for prefix in PREFIXES {
+        if let Some(rest) = lower.strip_prefix(prefix) {
+            return std::borrow::Cow::Owned(rest.to_string());
+        }
+    }
+    std::borrow::Cow::Borrowed(lower)
 }
 
 /// Idiomatic phrases that pattern-match a preference verb but carry no

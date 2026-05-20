@@ -77,11 +77,39 @@ fn canonicalise_edit_path(path: &str) -> Result<String, String> {
     Ok(canonical.to_string_lossy().to_string())
 }
 
+/// Sentinel pair used as an in-band signal to the terminal renderer that the
+/// substring between them is a JSON-encoded diff payload (a temporary
+/// stringly-typed event protocol — see crosslink #670 / #971 for the planned
+/// move to a `Result<ToolOutput { diff: Option<DiffData>, .. }, _>` return).
+///
+/// `format_edit_success` deliberately escapes any literal occurrence of these
+/// markers inside `old_string` / `new_string`, otherwise an edit whose
+/// replacement text contained the literal string `"@@DIFF_START@@"` (entirely
+/// possible in test fixtures or this very file's source) would inject
+/// arbitrary content into the diff pane.
+const DIFF_MARK_START: &str = "@@DIFF_START@@";
+const DIFF_MARK_END: &str = "@@DIFF_END@@";
+const DIFF_MARK_START_ESCAPED: &str = "@@DIFF__START@@";
+const DIFF_MARK_END_ESCAPED: &str = "@@DIFF__END@@";
+
+/// Escape any literal sentinel occurrences in a payload string so the
+/// downstream parser cannot be tricked into reading a fabricated diff JSON.
+fn escape_diff_payload(s: &str) -> String {
+    s.replace(DIFF_MARK_START, DIFF_MARK_START_ESCAPED)
+        .replace(DIFF_MARK_END, DIFF_MARK_END_ESCAPED)
+}
+
 /// Build the human-readable success message + DIFF marker block.
 ///
 /// Extracted from [`execute_edit_file`] so the parent function stays under
 /// the clippy `too_many_lines` threshold once the crosslink #687
 /// `replace_all` branch is added.
+///
+/// Emits a structured `tracing::event!` carrying the same data so subscribers
+/// (log sinks, observability tooling) can consume the diff without parsing
+/// the in-band markers (crosslink #971). The markers remain until the typed
+/// `ToolOutput` refactor (crosslink #670) lets us drop the string protocol
+/// entirely.
 fn format_edit_success(
     path: &str,
     old_string: &str,
@@ -89,14 +117,32 @@ fn format_edit_success(
     count: usize,
     replace_all: bool,
 ) -> String {
+    // Escape any literal sentinels so a malicious / unlucky payload cannot
+    // inject a fake diff block into the renderer.
+    let safe_old = escape_diff_payload(old_string);
+    let safe_new = escape_diff_payload(new_string);
+
+    // Structured event for log subscribers — the future "control plane" for
+    // diff data once the in-band markers are removed.
+    tracing::event!(
+        target: "openclaudia::tools::edit",
+        tracing::Level::DEBUG,
+        path = path,
+        old_chars = old_string.len(),
+        new_chars = new_string.len(),
+        replacements = count,
+        replace_all = replace_all,
+        "file edited"
+    );
+
     let diff_json = serde_json::json!({
         "path": path,
-        "old": old_string,
-        "new": new_string,
+        "old": safe_old,
+        "new": safe_new,
     });
     let mut out = if replace_all && count > 1 {
         format!(
-            "Successfully edited '{}'. Replaced {} occurrences ({} chars each with {} chars).\n@@DIFF_START@@\n{}\n@@DIFF_END@@",
+            "Successfully edited '{}'. Replaced {} occurrences ({} chars each with {} chars).\n{DIFF_MARK_START}\n{}\n{DIFF_MARK_END}",
             path,
             count,
             old_string.len(),
@@ -105,7 +151,7 @@ fn format_edit_success(
         )
     } else {
         format!(
-            "Successfully edited '{}'. Replaced {} chars with {} chars.\n@@DIFF_START@@\n{}\n@@DIFF_END@@",
+            "Successfully edited '{}'. Replaced {} chars with {} chars.\n{DIFF_MARK_START}\n{}\n{DIFF_MARK_END}",
             path,
             old_string.len(),
             new_string.len(),

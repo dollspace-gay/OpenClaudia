@@ -86,15 +86,39 @@ pub fn execute_enter_plan_mode() -> (String, bool) {
 
 /// Execute the `exit_plan_mode` tool.
 /// Returns a special marker that the main loop intercepts to show the plan for approval.
+///
+/// Perimeter defense: `allowed_prompts`, when present, MUST be a JSON array.
+/// Earlier versions used `as_array().cloned().unwrap_or_default()` which
+/// silently swallowed type errors — passing `allowed_prompts: "Bash"` would
+/// be treated identically to an absent field, masking model mistakes
+/// (crosslink #933). Now the wrong container shape is a hard error.
 pub fn execute_exit_plan_mode(args: &HashMap<String, Value>) -> (String, bool) {
-    let allowed_prompts = args
-        .get("allowed_prompts")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+    let allowed_prompts: Vec<Value> = match args.get("allowed_prompts") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(arr)) => arr.clone(),
+        Some(other) => {
+            let kind = match other {
+                Value::String(_) => "string",
+                Value::Bool(_) => "boolean",
+                Value::Number(_) => "number",
+                Value::Object(_) => "object",
+                Value::Array(_) | Value::Null => unreachable!(),
+            };
+            return (
+                format!("allowed_prompts must be an array, got {kind}"),
+                true,
+            );
+        }
+    };
 
     // Validate allowed_prompts structure
     for (i, prompt) in allowed_prompts.iter().enumerate() {
+        if !prompt.is_object() {
+            return (
+                format!("allowed_prompts[{i}] must be an object with 'tool' and 'prompt' fields"),
+                true,
+            );
+        }
         if prompt.get("tool").and_then(|v| v.as_str()).is_none() {
             return (format!("allowed_prompts[{i}] missing 'tool' field"), true);
         }
@@ -208,6 +232,25 @@ mod tests {
             msg.contains("missing 'prompt'"),
             "error message must name the missing field; got: {msg}"
         );
+    }
+
+    /// #933: when `allowed_prompts` is present but is not an array, the tool
+    /// rejects the call rather than silently treating it as empty. The
+    /// previous behaviour (`as_array().cloned().unwrap_or_default()`) masked
+    /// model mistakes by collapsing "wrong type" and "absent" into the same
+    /// successful empty-array path.
+    #[test]
+    fn exit_plan_mode_rejects_non_array_allowed_prompts_933() {
+        for bad in [json!("Bash"), json!(42), json!({"tool": "Bash"}), json!(true)] {
+            let mut args = HashMap::new();
+            args.insert("allowed_prompts".to_string(), bad.clone());
+            let (msg, is_err) = execute_exit_plan_mode(&args);
+            assert!(is_err, "non-array value {bad} must be rejected; got: {msg}");
+            assert!(
+                msg.contains("allowed_prompts must be an array"),
+                "error must name the shape violation; got: {msg}"
+            );
+        }
     }
 
     /// Contract: absent `allowed_prompts` key behaves the same as an empty

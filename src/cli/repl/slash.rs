@@ -782,17 +782,33 @@ pub fn slash_login() -> SlashCommandResult {
     if openclaudia::claude_credentials::has_claude_code_credentials() {
         println!("\n✓ Authenticated via Claude Code credentials.");
         println!("  File: ~/.claude/.credentials.json");
-        if let Ok(creds) = tokio::runtime::Handle::current()
-            .block_on(openclaudia::claude_credentials::load_credentials())
-        {
-            println!(
-                "  Type: {}",
-                creds.subscription_type.as_deref().unwrap_or("unknown")
-            );
-            println!(
-                "  Tier: {}",
-                creds.rate_limit_tier.as_deref().unwrap_or("default")
-            );
+        // crosslink #932: previously this used `Handle::current()` which
+        // panics when called outside a runtime. `try_current` mirrors the
+        // pattern used by `slash_model` above. When called from a worker
+        // thread that is itself driving the runtime, `block_on` would also
+        // panic — degrade gracefully to "details unavailable" rather than
+        // crashing the REPL.
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                let load_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    handle.block_on(openclaudia::claude_credentials::load_credentials())
+                }));
+                if let Ok(Ok(creds)) = load_result {
+                    println!(
+                        "  Type: {}",
+                        creds.subscription_type.as_deref().unwrap_or("unknown")
+                    );
+                    println!(
+                        "  Tier: {}",
+                        creds.rate_limit_tier.as_deref().unwrap_or("default")
+                    );
+                } else {
+                    println!("  (credential details unavailable — cannot block on current runtime)");
+                }
+            }
+            Err(_) => {
+                println!("  (credential details unavailable — no tokio runtime active)");
+            }
         }
     } else {
         println!("\n✗ Not authenticated via Claude Code.");

@@ -316,23 +316,25 @@ pub fn process_tool_result_marker(
     tool_name: &str,
     result_content: &str,
 ) -> (String, bool) {
-    if let Some(marker) = tools::check_tool_result_marker(result_content) {
-        match marker.as_str() {
-            tools::USER_QUESTION_MARKER => {
+    // crosslink #980: dispatch on the typed control signal rather than the
+    // raw marker string. The marker constants exist only for serialisation
+    // / wire-format compatibility; the dispatcher matches the enum.
+    if let Some(signal) = tools::parse_tool_control_signal(result_content) {
+        match signal {
+            tools::ToolControlSignal::UserQuestion => {
                 if let Some(questions) = tools::parse_user_questions(result_content) {
                     let answers = handle_user_questions(&questions);
                     return (answers, true);
                 }
             }
-            tools::ENTER_PLAN_MODE_MARKER => {
+            tools::ToolControlSignal::EnterPlanMode => {
                 let msg = handle_enter_plan_mode(chat_session);
                 return (msg, true);
             }
-            tools::EXIT_PLAN_MODE_MARKER => {
+            tools::ToolControlSignal::ExitPlanMode => {
                 let (msg, _approved) = handle_exit_plan_mode(chat_session, result_content);
                 return (msg, true);
             }
-            _ => {}
         }
     }
     let _ = tool_name; // suppress unused warning

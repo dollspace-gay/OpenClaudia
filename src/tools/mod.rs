@@ -316,21 +316,64 @@ pub fn get_all_tool_definitions(subagents: bool) -> Value {
     tools
 }
 
-/// Check if a tool result contains a special marker that needs main loop handling.
-/// Returns the marker type if found, None otherwise.
-#[must_use]
-pub fn check_tool_result_marker(content: &str) -> Option<String> {
-    if let Ok(parsed) = serde_json::from_str::<Value>(content) {
-        if let Some(marker_type) = parsed.get("type").and_then(|v| v.as_str()) {
-            match marker_type {
-                USER_QUESTION_MARKER | ENTER_PLAN_MODE_MARKER | EXIT_PLAN_MODE_MARKER => {
-                    return Some(marker_type.to_string());
-                }
-                _ => {}
-            }
+/// Typed control-plane signal carried by a tool result.
+///
+/// crosslink #980: the `enter_plan_mode` / `exit_plan_mode` / `ask_user_question`
+/// tools used to communicate with the main loop via JSON payloads whose `type`
+/// field carried a magic string marker. The dispatcher had to substring-parse
+/// every tool result and route on the marker. This enum is the typed control
+/// plane that the dispatcher should match on instead.
+///
+/// The legacy [`check_tool_result_marker`] returning `Option<String>` is kept
+/// for back-compat callers but should be considered deprecated in favour of
+/// [`parse_tool_control_signal`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolControlSignal {
+    /// `ask_user_question` — the dispatcher must prompt the user and feed
+    /// the answers back into the conversation.
+    UserQuestion,
+    /// `enter_plan_mode` — flip the session into read-only / plan mode.
+    EnterPlanMode,
+    /// `exit_plan_mode` — restore the previous permission posture and show
+    /// the proposed plan to the user for approval.
+    ExitPlanMode,
+}
+
+impl ToolControlSignal {
+    /// Marker string the tool layer embeds in its JSON `type` field. Used by
+    /// [`parse_tool_control_signal`] to recognise the signal.
+    #[must_use]
+    pub const fn marker(self) -> &'static str {
+        match self {
+            Self::UserQuestion => USER_QUESTION_MARKER,
+            Self::EnterPlanMode => ENTER_PLAN_MODE_MARKER,
+            Self::ExitPlanMode => EXIT_PLAN_MODE_MARKER,
         }
     }
-    None
+}
+
+/// Attempt to interpret `content` as a typed [`ToolControlSignal`].
+///
+/// Returns `None` for ordinary tool results (the overwhelmingly common case)
+/// — only the three control tools produce signals here. crosslink #980.
+#[must_use]
+pub fn parse_tool_control_signal(content: &str) -> Option<ToolControlSignal> {
+    let parsed: Value = serde_json::from_str(content).ok()?;
+    let marker_type = parsed.get("type").and_then(|v| v.as_str())?;
+    match marker_type {
+        USER_QUESTION_MARKER => Some(ToolControlSignal::UserQuestion),
+        ENTER_PLAN_MODE_MARKER => Some(ToolControlSignal::EnterPlanMode),
+        EXIT_PLAN_MODE_MARKER => Some(ToolControlSignal::ExitPlanMode),
+        _ => None,
+    }
+}
+
+/// Legacy back-compat shim around [`parse_tool_control_signal`] that returns
+/// the marker as `Option<String>` rather than the typed [`ToolControlSignal`].
+/// New call sites should prefer the typed variant.
+#[must_use]
+pub fn check_tool_result_marker(content: &str) -> Option<String> {
+    parse_tool_control_signal(content).map(|sig| sig.marker().to_string())
 }
 
 /// Parse user questions from a tool result with the `user_question` marker.

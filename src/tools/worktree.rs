@@ -610,9 +610,44 @@ fn render_git_failure(res: &Result<std::process::Output, String>) -> String {
     }
 }
 
+/// Outcome of [`merge_into_main`] — distinguishes the three relevant states
+/// the orchestrator must react to (crosslink #858).
+pub(crate) enum MergeOutcome {
+    /// Branch merged cleanly into the main worktree.
+    Merged(String),
+    /// Worktree had no changes to commit; nothing to merge.
+    NothingToMerge,
+    /// A git command produced an error the caller must surface. The message
+    /// already encodes whether `git merge --abort` succeeded — the orchestrator
+    /// only needs to forward the text to the user.
+    Failed { message: String },
+}
+
 /// Stage + commit + merge the worktree branch into the main worktree.
-fn merge_into_main(ctx: &ExitContext) -> String {
-    let _stage = git_in(&ctx.worktree_path, &["add", "-A"]);
+///
+/// crosslink #858: each git step is now error-propagated rather than
+/// swallowed by `let _ = …`. On merge conflict the function runs
+/// `git merge --abort` in the main worktree so the user is left in a clean
+/// state instead of a half-merged HEAD that the next `worktree remove
+/// --force` would silently throw away.
+fn merge_into_main(ctx: &ExitContext) -> MergeOutcome {
+    match git_in(&ctx.worktree_path, &["add", "-A"]) {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => {
+            return MergeOutcome::Failed {
+                message: format!(
+                    "git add -A failed in worktree: {}",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ),
+            };
+        }
+        Err(e) => {
+            return MergeOutcome::Failed {
+                message: format!("git add -A failed in worktree: {e}"),
+            };
+        }
+    }
+
     let commit = git_in(
         &ctx.worktree_path,
         &[
@@ -621,21 +656,41 @@ fn merge_into_main(ctx: &ExitContext) -> String {
             &format!("Worktree changes from branch '{}'", ctx.current_branch),
         ],
     );
-    let committed = commit.is_ok_and(|o| o.status.success());
-
+    // A failed commit here is the *expected* signal that there are no staged
+    // changes — git exits non-zero with stderr "nothing to commit, working
+    // tree clean". Treat that as "nothing to merge" rather than a hard error.
+    let committed = commit.as_ref().is_ok_and(|o| o.status.success());
     if !committed {
-        return "No changes to commit.".to_string();
+        return MergeOutcome::NothingToMerge;
     }
 
     match git_in(&ctx.main_path, &["merge", &ctx.current_branch, "--no-edit"]) {
-        Ok(o) if o.status.success() => {
-            format!("Merged branch '{}' into main worktree.", ctx.current_branch)
+        Ok(o) if o.status.success() => MergeOutcome::Merged(format!(
+            "Merged branch '{}' into main worktree.",
+            ctx.current_branch
+        )),
+        Ok(o) => {
+            // crosslink #858: leaving the main worktree mid-merge is the
+            // worst possible failure mode — `worktree remove --force` would
+            // then discard the user's uncommitted (conflict-resolution)
+            // edits. Abort the merge first so HEAD is clean again.
+            let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
+            let abort = git_in(&ctx.main_path, &["merge", "--abort"]);
+            let aborted = abort.is_ok_and(|out| out.status.success());
+            MergeOutcome::Failed {
+                message: format!(
+                    "Merge had conflicts: {stderr}{}",
+                    if aborted {
+                        " (merge aborted; main worktree restored)"
+                    } else {
+                        " (warning: git merge --abort also failed; main worktree may be in a half-merged state)"
+                    }
+                ),
+            }
         }
-        Ok(o) => format!(
-            "Merge had conflicts: {}",
-            String::from_utf8_lossy(&o.stderr).trim()
-        ),
-        Err(e) => format!("Merge failed: {e}"),
+        Err(e) => MergeOutcome::Failed {
+            message: format!("Merge failed: {e}"),
+        },
     }
 }
 
@@ -716,6 +771,32 @@ pub fn execute_exit_worktree<S: std::hash::BuildHasher>(
 
     if ctx.apply_changes {
         let merge_result = merge_into_main(&ctx);
+
+        // crosslink #858: on merge conflict, refuse the destructive
+        // `worktree remove --force` and surface the conflict to the caller.
+        // The conflicting branch is still present; the user can resolve it
+        // manually or invoke exit_worktree again with `discard_changes=true`.
+        if let MergeOutcome::Failed { message, .. } = &merge_result {
+            return (
+                format!(
+                    "Exit worktree at {} aborted: {}\nMain worktree: {}\n\
+                     The worktree was NOT removed; resolve the conflict and \
+                     retry, or pass `discard_changes:true` to discard the \
+                     branch.",
+                    ctx.worktree_path.display(),
+                    message,
+                    ctx.main_path.display()
+                ),
+                true,
+            );
+        }
+
+        let summary = match &merge_result {
+            MergeOutcome::Merged(msg) => msg.clone(),
+            MergeOutcome::NothingToMerge => "No changes to commit.".to_string(),
+            MergeOutcome::Failed { .. } => unreachable!("returned above"),
+        };
+
         let (removed_ok, detail) = remove_worktree(&ctx);
         let warning = if removed_ok {
             String::new()
@@ -726,7 +807,7 @@ pub fn execute_exit_worktree<S: std::hash::BuildHasher>(
             format!(
                 "Exited worktree at {}. {}{}\nMain worktree: {}",
                 ctx.worktree_path.display(),
-                merge_result,
+                summary,
                 warning,
                 ctx.main_path.display()
             ),

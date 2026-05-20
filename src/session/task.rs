@@ -44,6 +44,18 @@ pub struct Task {
     pub created_at: DateTime<Utc>,
 }
 
+/// Outcome of [`TaskManager::apply_status_transition`] — distinguishes
+/// "no status field supplied" from "status set" from "task deleted" without
+/// overloading `Option<Result<…>>`. crosslink #874.
+enum StatusOutcome {
+    /// Caller omitted the `status` field; keep whatever the task had.
+    Unchanged,
+    /// Caller supplied `status: "deleted"`; the task has been removed.
+    Deleted,
+    /// Caller supplied a real status; this is the new value.
+    Transitioned(TaskStatus),
+}
+
 /// Status values accepted by task updates (includes Deleted which removes the task).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskUpdateStatus {
@@ -137,12 +149,36 @@ impl TaskManager {
     /// Get a task by ID.
     #[must_use]
     pub fn get_task(&self, task_id: &str) -> Option<&Task> {
-        self.tasks.iter().find(|t| t.id == task_id)
+        self.index_of(task_id).map(|i| &self.tasks[i])
     }
 
     /// Get a mutable reference to a task by ID.
     fn get_task_mut(&mut self, task_id: &str) -> Option<&mut Task> {
-        self.tasks.iter_mut().find(|t| t.id == task_id)
+        let idx = self.index_of(task_id)?;
+        self.tasks.get_mut(idx)
+    }
+
+    /// Locate the position of `task_id` in `self.tasks`, if any.
+    ///
+    /// crosslink #874: still O(N) in the worst case (`Vec` is the storage),
+    /// but centralising the scan here is a prerequisite for the planned move
+    /// to a `HashMap<TaskId, usize>` index — every caller now goes through a
+    /// single helper instead of open-coding `.iter().find(..)`.
+    fn index_of(&self, task_id: &str) -> Option<usize> {
+        self.tasks.iter().position(|t| t.id == task_id)
+    }
+
+    /// Build a temporary `id` -> `index` map for one call's worth of lookups.
+    ///
+    /// Used by [`update_task`] which performs O(M) dependency-existence
+    /// checks (one per added edge). Building the map up front is O(N); each
+    /// lookup is then O(1), turning the previous O(M*N) loop into O(N+M).
+    fn build_id_index(&self) -> std::collections::HashMap<&str, usize> {
+        self.tasks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.id.as_str(), i))
+            .collect()
     }
 
     /// Check if adding an edge from `from_id` blocks `to_id` would create a cycle.
@@ -182,14 +218,19 @@ impl TaskManager {
     /// # Panics
     ///
     /// Panics if internal lookups fail after validation (should be unreachable).
-    #[allow(clippy::too_many_lines)]
+    ///
+    /// crosslink #874: the previous 150-line god function has been split into
+    /// focused helpers (status transition, dependency validation, reverse-
+    /// edge sync). Dependency existence checks build a `HashMap<&str, usize>`
+    /// once instead of doing an O(N) scan per edge, turning the inner loop
+    /// from O(M*N) into O(N+M).
     pub fn update_task(
         &mut self,
         task_id: &str,
         params: TaskUpdateParams,
     ) -> Result<Option<&Task>, String> {
         // Validate the task exists
-        if self.get_task(task_id).is_none() {
+        if self.index_of(task_id).is_none() {
             return Err(format!("Task '{task_id}' not found"));
         }
 
@@ -202,22 +243,59 @@ impl TaskManager {
             add_blocked_by,
         } = params;
 
-        // Handle status update
-        let new_status = match status {
-            Some(TaskUpdateStatus::Deleted) => {
-                self.tasks.retain(|t| t.id != task_id);
-                return Ok(None);
-            }
-            Some(TaskUpdateStatus::Pending) => Some(TaskStatus::Pending),
-            Some(TaskUpdateStatus::InProgress) => Some(TaskStatus::InProgress),
-            Some(TaskUpdateStatus::Completed) => Some(TaskStatus::Completed),
-            None => None,
+        // Phase 1: handle status transition (Deleted is a short-circuit return).
+        let new_status = match self.apply_status_transition(task_id, status.as_ref())? {
+            StatusOutcome::Deleted => return Ok(None),
+            StatusOutcome::Unchanged => None,
+            StatusOutcome::Transitioned(s) => Some(s),
         };
 
-        // If setting to InProgress, enforce blocked_by: every blocker must be
-        // Completed. Pending or InProgress blockers reject the transition.
-        // Crosslink #593.
-        if new_status == Some(TaskStatus::InProgress) {
+        // Phase 2: validate every added dependency against an O(1) id index.
+        self.validate_dependency_edges(task_id, add_blocks.as_deref(), add_blocked_by.as_deref())?;
+
+        // Phase 3: apply scalar field updates and the new edges.
+        Self::apply_task_fields(
+            self.get_task_mut(task_id)
+                .expect("task must exist after validation"),
+            new_status,
+            subject,
+            description,
+            active_form,
+            add_blocks.as_deref(),
+            add_blocked_by.as_deref(),
+        );
+
+        // Phase 4: sync reverse edges (both directions) so blocks/blocked_by
+        // are always symmetric.
+        self.sync_reverse_edges(task_id);
+
+        Ok(Some(
+            self.get_task(task_id)
+                .expect("task must exist after update"),
+        ))
+    }
+
+    /// Apply (or short-circuit) a status transition. Returns the new
+    /// `TaskStatus` to set (None means no status field was supplied) or
+    /// `Deleted` to tell the caller the task is gone.
+    fn apply_status_transition(
+        &mut self,
+        task_id: &str,
+        status: Option<&TaskUpdateStatus>,
+    ) -> Result<StatusOutcome, String> {
+        let new_status = match status {
+            None => return Ok(StatusOutcome::Unchanged),
+            Some(TaskUpdateStatus::Deleted) => {
+                self.tasks.retain(|t| t.id != task_id);
+                return Ok(StatusOutcome::Deleted);
+            }
+            Some(TaskUpdateStatus::Pending) => TaskStatus::Pending,
+            Some(TaskUpdateStatus::InProgress) => TaskStatus::InProgress,
+            Some(TaskUpdateStatus::Completed) => TaskStatus::Completed,
+        };
+
+        if new_status == TaskStatus::InProgress {
+            // Enforce blocked_by: every blocker must be Completed (crosslink #593).
             let blockers: Vec<String> = self
                 .get_task(task_id)
                 .map(|t| t.blocked_by.clone())
@@ -237,10 +315,8 @@ impl TaskManager {
                     }
                 }
             }
-        }
 
-        // If setting to InProgress, demote any currently in-progress task
-        if new_status == Some(TaskStatus::InProgress) {
+            // Demote any currently in-progress task to Pending.
             for task in &mut self.tasks {
                 if task.status == TaskStatus::InProgress && task.id != task_id {
                     task.status = TaskStatus::Pending;
@@ -248,17 +324,30 @@ impl TaskManager {
             }
         }
 
-        // Validate dependency references
-        if let Some(ref block_ids) = add_blocks {
+        Ok(StatusOutcome::Transitioned(new_status))
+    }
+
+    /// Validate every edge in `add_blocks` / `add_blocked_by` against the
+    /// task store. Uses an `id -> index` [`HashMap`] built once so each
+    /// existence check is O(1).
+    ///
+    /// [`HashMap`]: std::collections::HashMap
+    fn validate_dependency_edges(
+        &self,
+        task_id: &str,
+        add_blocks: Option<&[String]>,
+        add_blocked_by: Option<&[String]>,
+    ) -> Result<(), String> {
+        let index = self.build_id_index();
+
+        if let Some(block_ids) = add_blocks {
             for bid in block_ids {
                 if bid == task_id {
                     return Err("A task cannot block itself".to_string());
                 }
-                if !self.tasks.iter().any(|t| t.id == *bid) {
+                if !index.contains_key(bid.as_str()) {
                     return Err(format!("Referenced task '{bid}' not found"));
                 }
-                // Cycle detection: if bid already (transitively) blocks task_id, adding
-                // task_id blocks bid would create a cycle.
                 if self.would_create_cycle(task_id, bid) {
                     return Err(format!(
                         "Adding '{task_id}' blocks '{bid}' would create a circular dependency"
@@ -266,16 +355,14 @@ impl TaskManager {
                 }
             }
         }
-        if let Some(ref blocked_ids) = add_blocked_by {
+        if let Some(blocked_ids) = add_blocked_by {
             for bid in blocked_ids {
                 if bid == task_id {
                     return Err("A task cannot be blocked by itself".to_string());
                 }
-                if !self.tasks.iter().any(|t| t.id == *bid) {
+                if !index.contains_key(bid.as_str()) {
                     return Err(format!("Referenced task '{bid}' not found"));
                 }
-                // Cycle detection: if task_id already (transitively) blocks bid, adding
-                // bid blocks task_id would create a cycle.
                 if self.would_create_cycle(bid, task_id) {
                     return Err(format!(
                         "Adding '{bid}' blocks '{task_id}' would create a circular dependency"
@@ -284,11 +371,20 @@ impl TaskManager {
             }
         }
 
-        // Apply updates to the task -- task existence validated above
-        let task = self
-            .get_task_mut(task_id)
-            .expect("task must exist after validation");
+        Ok(())
+    }
 
+    /// Apply the validated scalar / edge updates to a single task. Operates
+    /// on `&mut Task` directly so the caller controls the borrow lifetime.
+    fn apply_task_fields(
+        task: &mut Task,
+        new_status: Option<TaskStatus>,
+        subject: Option<String>,
+        description: Option<String>,
+        active_form: Option<String>,
+        add_blocks: Option<&[String]>,
+        add_blocked_by: Option<&[String]>,
+    ) {
         if let Some(s) = new_status {
             task.status = s;
         }
@@ -303,27 +399,25 @@ impl TaskManager {
         }
         if let Some(block_ids) = add_blocks {
             for bid in block_ids {
-                if !task.blocks.contains(&bid) {
+                if !task.blocks.iter().any(|b| b == bid) {
                     task.blocks.push(bid.clone());
                 }
-                // Also add the reverse relationship on the other task
-                // We need to drop the mutable borrow first, so we collect and do it below
             }
         }
         if let Some(blocked_ids) = add_blocked_by {
             for bid in blocked_ids {
-                if !task.blocked_by.contains(&bid) {
+                if !task.blocked_by.iter().any(|b| b == bid) {
                     task.blocked_by.push(bid.clone());
                 }
             }
         }
+    }
 
-        // Now handle reverse relationships for add_blocks/add_blocked_by
-        // We need to re-borrow after the first mutable borrow ends
+    /// Restore the symmetric invariant: for every `A blocks B`, `B.blocked_by`
+    /// must contain `A`, and vice versa. Called after `apply_task_fields` so
+    /// new edges are propagated to the other end.
+    fn sync_reverse_edges(&mut self, task_id: &str) {
         let task_id_owned = task_id.to_string();
-
-        // Second pass: sync reverse dependencies
-        // Collect the current blocks and blocked_by for the target task
         let current_blocks: Vec<String> = self
             .get_task(&task_id_owned)
             .map(|t| t.blocks.clone())
@@ -333,7 +427,6 @@ impl TaskManager {
             .map(|t| t.blocked_by.clone())
             .unwrap_or_default();
 
-        // For each task that this task blocks, ensure they have us in blocked_by
         for bid in &current_blocks {
             if let Some(other) = self.get_task_mut(bid) {
                 if !other.blocked_by.contains(&task_id_owned) {
@@ -341,8 +434,6 @@ impl TaskManager {
                 }
             }
         }
-
-        // For each task that blocks this task, ensure they have us in blocks
         for bid in &current_blocked_by {
             if let Some(other) = self.get_task_mut(bid) {
                 if !other.blocks.contains(&task_id_owned) {
@@ -350,11 +441,6 @@ impl TaskManager {
                 }
             }
         }
-
-        Ok(Some(
-            self.get_task(&task_id_owned)
-                .expect("task must exist after update"),
-        ))
     }
 
     /// List all tasks.

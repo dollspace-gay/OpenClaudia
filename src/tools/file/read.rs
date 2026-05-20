@@ -1,4 +1,3 @@
-use crate::tools::safe_truncate;
 use base64::Engine;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -13,6 +12,10 @@ use std::process::Command;
 /// text file an agent would realistically need to read in full; callers
 /// should use `offset`+`limit` or `grep` for larger artifacts.
 const MAX_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Maximum chars retained in [`read_text_file`] output before truncation
+/// at the next line boundary kicks in. crosslink #939.
+const READ_TEXT_BUDGET: usize = 100_000;
 
 /// Return `(error_message, is_error=true)` if `path` is too large or is a
 /// special device file that bypasses the size check (e.g., `/dev/zero`
@@ -147,6 +150,18 @@ pub fn read_image_file(path: &str, kind: ImageKind) -> (String, bool) {
         }
         Err(e) => return (format!("Failed to read image file '{path}': {e}"), true),
     };
+
+    // Fail fast at the boundary: a 0-byte image is never valid input for any
+    // vision-capable model. Without this check the upstream API rejects the
+    // empty base64 with an opaque 400 after we've already burned a turn.
+    // crosslink #942.
+    if bytes.is_empty() {
+        return (
+            format!("Image file '{path}' is empty (0 bytes); refusing to send empty base64 payload"),
+            true,
+        );
+    }
+
     let file_size = bytes.len();
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     let filename = Path::new(path)
@@ -520,9 +535,15 @@ pub fn read_text_file(path: &str, args: &HashMap<String, Value>) -> (String, boo
         .map(|(i, line)| format!("{:4}| {}", i + 1, line))
         .collect();
 
-    let result = numbered.join("\n");
+    // Truncate at a *line boundary* so that the last shown line is never
+    // a half-line ending mid line-number prefix (`   N|`). crosslink #939.
+    // We accumulate lines until adding the next would exceed the budget,
+    // then emit a structured `<truncated …/>` sentinel that downstream
+    // dispatchers can detect programmatically rather than substring-grepping.
+    let total_chars: usize = numbered.iter().map(|line| line.len() + 1).sum();
 
-    // Add context about what was shown
+    // Add context about what was shown (lines actually selected, not lines
+    // surviving the byte budget — the truncation sentinel reports that).
     let suffix = if offset > 0 || limit.is_some() {
         let shown_start = offset + 1;
         let shown_end = offset + selected_lines.len();
@@ -531,18 +552,36 @@ pub fn read_text_file(path: &str, args: &HashMap<String, Value>) -> (String, boo
         String::new()
     };
 
-    // Truncate if too long
-    if result.len() > 100_000 {
-        (
-            format!(
-                "{}...\n(file truncated, {} total chars){}",
-                safe_truncate(&result, 100_000),
-                result.len(),
-                suffix
-            ),
-            false,
-        )
+    if total_chars > READ_TEXT_BUDGET {
+        let mut acc = String::with_capacity(READ_TEXT_BUDGET + 256);
+        let mut kept_lines = 0usize;
+        let mut kept_chars = 0usize;
+        for line in &numbered {
+            // `+1` accounts for the join newline we are about to append.
+            let next_size = line.len() + 1;
+            if kept_chars + next_size > READ_TEXT_BUDGET {
+                break;
+            }
+            if !acc.is_empty() {
+                acc.push('\n');
+            }
+            acc.push_str(line);
+            kept_chars += next_size;
+            kept_lines += 1;
+        }
+        let dropped_lines = numbered.len().saturating_sub(kept_lines);
+        // Truncation sentinel: structured marker (easy to grep / parse) plus
+        // a human-readable hint pointing at offset+limit recovery.
+        let sentinel = format!(
+            "\n<truncated kept_lines=\"{kept_lines}\" dropped_lines=\"{dropped_lines}\" \
+             total_chars=\"{total_chars}\" budget_chars=\"{READ_TEXT_BUDGET}\"/>\n\
+             (file truncated at line boundary; retry with offset={} or limit=… to read the rest){suffix}",
+            kept_lines + 1
+        );
+        acc.push_str(&sentinel);
+        (acc, false)
     } else {
+        let result = numbered.join("\n");
         (format!("{result}{suffix}"), false)
     }
 }
@@ -739,21 +778,19 @@ mod tests {
     }
 
     #[test]
-    fn read_image_empty_file_returns_ok_with_empty_base64() {
-        // Behavior 2 edge: empty image file — CC throws; OC succeeds with empty
-        // base64 string. Pinned as current OC behavior.
+    fn read_image_empty_file_returns_error() {
+        // Behavior 2 edge: empty image file is rejected at the boundary
+        // (crosslink #942 — previously OC accepted 0-byte images and let the
+        // upstream vision API reject the empty base64 after a turn was burned).
         let f = NamedTempFile::new().expect("tempfile");
         // Write nothing — file is 0 bytes
         let path = f.path().to_string_lossy().to_string();
         let (output, is_err) = read_image_file(&path, ImageKind::Png);
-        // OC: no error for 0-byte file (CC parity gap — CC throws "Image file is empty").
-        // Pinned as current OC behavior.
+        assert!(is_err, "0-byte image must be a structured error: {output}");
         assert!(
-            !is_err,
-            "OC does not error on 0-byte image (CC does): {output}"
+            output.contains("empty") && output.contains("0 bytes"),
+            "error message must name the failure mode: {output}"
         );
-        assert!(output.contains("[Image:"), "header still present");
-        assert!(output.contains("0 bytes"), "zero byte count shown");
     }
 
     #[test]
@@ -820,9 +857,10 @@ mod tests {
 
     #[test]
     fn read_text_large_file_truncated_as_non_error() {
-        // Behavior 8: OC silently truncates at 100 000 chars (non-error result).
-        // CC errors with token count + offset/limit guidance.
-        // Pinned as current OC behavior: truncation is NOT an error in OC.
+        // Behavior 8: large files are truncated at a *line boundary* (crosslink
+        // #939) and tagged with a structured <truncated …/> sentinel that the
+        // dispatcher can detect programmatically. The truncation itself is not
+        // surfaced as an error — the caller is told how to recover via offset.
         let line = "x".repeat(200) + "\n"; // 201 chars per line
                                            // Need > 100_000 chars in the numbered output: with "   N| " prefix (~7 chars)
                                            // each line becomes ~208 chars; 600 lines = ~124 800 chars → triggers truncation.
@@ -834,15 +872,22 @@ mod tests {
         let (output, is_err) = read_text_file(&path, &args);
         assert!(
             !is_err,
-            "OC truncation is NOT an error (CC parity gap): {output}"
+            "truncation is not an error — the sentinel signals it: {output}"
         );
         assert!(
-            output.contains("file truncated"),
-            "truncation note must be present: {output}"
+            output.contains("<truncated"),
+            "structured truncation sentinel must be present: {output}"
         );
         assert!(
-            output.len() > 100_000,
-            "output includes '...' + suffix beyond the 100k body"
+            output.contains("file truncated at line boundary"),
+            "human-readable retry hint must be present: {output}"
+        );
+        // The kept body is bounded by the budget; the only thing past 100_000
+        // chars should be the sentinel + retry hint (a few hundred bytes).
+        assert!(
+            output.len() < 100_000 + 1024,
+            "kept body must respect the budget, only the sentinel exceeds it: {} bytes",
+            output.len()
         );
     }
 

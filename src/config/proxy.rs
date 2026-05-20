@@ -24,12 +24,19 @@ pub const fn default_port() -> u16 {
     8080
 }
 
+/// Default bind address for the proxy server. Loopback by default —
+/// users who need to bind 0.0.0.0 must do so explicitly via config.
+pub const DEFAULT_HOST: &str = "127.0.0.1";
+
+/// Default upstream provider when none is configured.
+pub const DEFAULT_TARGET: &str = "anthropic";
+
 pub fn default_host() -> String {
-    "127.0.0.1".to_string()
+    DEFAULT_HOST.to_string()
 }
 
 pub fn default_target() -> String {
-    "anthropic".to_string()
+    DEFAULT_TARGET.to_string()
 }
 
 pub const fn default_max_response_bytes() -> usize {

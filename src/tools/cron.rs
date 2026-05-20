@@ -436,32 +436,42 @@ pub fn execute_cron_create(args: &HashMap<String, Value>) -> (String, bool) {
         run_count: 0,
     };
 
-    store.schedules.push(schedule.clone());
+    store.schedules.push(schedule);
 
     if let Err(e) = store.save_locked(&path) {
         return (format!("Failed to save schedule: {e}"), true);
     }
 
+    // crosslink #987: the response no longer surfaces the internal UUID.
+    // `name` is the unique key (dedup'd above) and the sole identifier the
+    // model is told to use for `cron_delete`. The `id` field remains in the
+    // persisted record for backwards-compatible JSON-on-disk but is no
+    // longer part of the tool's public surface.
     (
         format!(
-            "Created schedule '{}' (id: {})\nCron: {}\nEnabled: true",
-            name, schedule.id, cron_expression
+            "Created schedule '{name}'\nCron: {cron_expression}\nEnabled: true\n(use `cron_delete name=\"{name}\"` to remove)"
         ),
         false,
     )
 }
 
 pub fn execute_cron_delete(args: &HashMap<String, Value>) -> (String, bool) {
-    // crosslink #675: prefer 'id', fall back to 'name'. Custom message kept
-    // because neither helper covers the two-key composite case; the typed
-    // accessors are still used to share extraction logic.
-    let id_or_name = match args
-        .arg_str_opt("id")
-        .or_else(|| args.arg_str_opt("name"))
-    {
-        Some(s) => s.to_string(),
-        None => return ("Missing 'id' or 'name' argument".to_string(), true),
-    };
+    // crosslink #987: `name` is the primary identifier. `index` (1-based
+    // position in the `cron_list` output) is a human-friendly fallback so a
+    // user reading the listing can say "delete #2" without typing a name.
+    // The legacy `id` field is still accepted for backwards compatibility
+    // with any persisted prompts that captured a UUID, but it is no longer
+    // documented in the tool surface.
+    let name_arg = args.arg_str_opt("name").map(str::to_string);
+    let index_arg = args.get("index").and_then(serde_json::Value::as_u64);
+    let id_arg = args.arg_str_opt("id").map(str::to_string);
+
+    if name_arg.is_none() && index_arg.is_none() && id_arg.is_none() {
+        return (
+            "Missing 'name' (preferred), 'index', or legacy 'id' argument".to_string(),
+            true,
+        );
+    }
 
     let path = schedules_path();
     // Same locking discipline as `execute_cron_create` — see #403.
@@ -471,21 +481,47 @@ pub fn execute_cron_delete(args: &HashMap<String, Value>) -> (String, bool) {
     };
 
     let mut store = ScheduleStore::load_locked(&path);
-    let initial_len = store.schedules.len();
 
-    store
-        .schedules
-        .retain(|s| s.id != id_or_name && s.name != id_or_name);
+    // Resolve the deletion target *under the lock* so concurrent reorders
+    // of the list cannot shift an index out from under us.
+    let target_name: String = if let Some(name) = name_arg {
+        name
+    } else if let Some(idx) = index_arg {
+        let one_based = usize::try_from(idx).unwrap_or(0);
+        if one_based == 0 || one_based > store.schedules.len() {
+            return (
+                format!(
+                    "Index {idx} is out of range (1..={})",
+                    store.schedules.len()
+                ),
+                true,
+            );
+        }
+        store.schedules[one_based - 1].name.clone()
+    } else if let Some(id) = id_arg {
+        match store.schedules.iter().find(|s| s.id == id) {
+            Some(s) => s.name.clone(),
+            None => return (format!("No schedule found with id '{id}'"), true),
+        }
+    } else {
+        unreachable!("at least one identifier must be set, checked above");
+    };
+
+    let initial_len = store.schedules.len();
+    store.schedules.retain(|s| s.name != target_name);
 
     if store.schedules.len() == initial_len {
-        return (format!("No schedule found matching '{id_or_name}'"), true);
+        return (
+            format!("No schedule found matching '{target_name}'"),
+            true,
+        );
     }
 
     if let Err(e) = store.save_locked(&path) {
         return (format!("Failed to save: {e}"), true);
     }
 
-    (format!("Deleted schedule '{id_or_name}'"), false)
+    (format!("Deleted schedule '{target_name}'"), false)
 }
 
 pub fn execute_cron_list(_args: &HashMap<String, Value>) -> (String, bool) {

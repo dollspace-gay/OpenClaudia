@@ -15,82 +15,81 @@ use super::review::AdversaryResponse;
 // JSON Extraction
 // ==========================================================================
 
+/// Extract the substring between the first occurrence of `open` and the next
+/// occurrence of `close` (after `open`). Returns `None` if either delimiter
+/// is missing or `open`'s end lands on a non-char-boundary.
+///
+/// All slicing goes through [`str::get`] so multibyte content can never panic
+/// (crosslink #337).
+fn extract_between(text: &str, open: &str, close: &str) -> Option<String> {
+    let start = text.find(open)? + open.len();
+    let rest = text.get(start..)?;
+    let end = rest.find(close)?;
+    rest.get(..end).map(|s| s.trim().to_string())
+}
+
+/// Extract the body of a generic ``` ... ``` fence, skipping an optional
+/// language identifier on the same line as the opening fence.
+fn extract_after_fence_skip_lang(text: &str) -> Option<String> {
+    let start = text.find("```")? + 3;
+    let after_fence = text.get(start..)?;
+    let line_end = after_fence.find('\n').unwrap_or(0);
+    let after_lang = after_fence.get(line_end..)?;
+    let end = after_lang.find("```")?;
+    after_lang.get(..end).map(|s| s.trim().to_string())
+}
+
+/// Find the first occurrence of `anchor` in `text` and return the balanced
+/// `{ ... }` block that *starts* at that anchor. Walks codepoints so
+/// multibyte content stays sound.
+fn extract_balanced_braces_after(text: &str, anchor: &str) -> Option<String> {
+    let start = text.find(anchor)?;
+    let tail = text.get(start..)?;
+    let mut depth = 0i32;
+    let mut end_rel: Option<usize> = None;
+    for (i, c) in tail.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end_rel = Some(i + c.len_utf8());
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let len = end_rel?;
+    tail.get(..len).map(String::from)
+}
+
+/// Last-resort fallback: take everything from the first `{` to the last `}`.
+fn extract_first_to_last_brace(text: &str) -> Option<String> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    // `}` is ASCII so `end + 1` is on a char boundary.
+    text.get(start..=end).map(String::from)
+}
+
 /// Try to extract JSON from a response that may contain markdown code blocks.
 ///
 /// Every slice into `text` goes through [`str::get`] so an offset that
-/// somehow lands mid-codepoint returns `None` instead of panicking. The
-/// previous implementation used direct `text[a..b]` indexing; today's
-/// delimiters are all ASCII so the arithmetic stays on char boundaries,
-/// but a single future non-ASCII fence token would turn adversary output
-/// into a VDD-loop kill via a single multibyte codepoint.
-/// See crosslink #337.
+/// somehow lands mid-codepoint returns `None` instead of panicking
+/// (crosslink #337).
+///
+/// crosslink #941: the four extraction strategies used to be open-coded as
+/// near-identical blocks of nested `if let Some(..) = ..` ladders. Each
+/// strategy is now a focused helper with one responsibility and the
+/// composing function reads as a declarative fallback chain.
 pub(crate) fn extract_json_from_response(text: &str) -> Option<String> {
-    // Look for ```json ... ``` blocks
-    if let Some(start) = text.find("```json") {
-        let json_start = start + "```json".len();
-        if let Some(rest) = text.get(json_start..) {
-            if let Some(end) = rest.find("```") {
-                if let Some(inner) = rest.get(..end) {
-                    return Some(inner.trim().to_string());
-                }
-            }
-        }
-    }
-
-    // Look for ``` ... ``` blocks
-    if let Some(start) = text.find("```") {
-        let json_start = start + 3;
-        if let Some(after_fence) = text.get(json_start..) {
-            // Skip optional language identifier on the same line
-            let line_end = after_fence.find('\n').unwrap_or(0);
-            if let Some(after_lang) = after_fence.get(line_end..) {
-                if let Some(end) = after_lang.find("```") {
-                    if let Some(inner) = after_lang.get(..end) {
-                        return Some(inner.trim().to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    // Try to find raw JSON object starting with `{"findings"`
-    if let Some(start) = text.find(r#"{"findings""#) {
-        let tail = text.get(start..)?;
-        let mut depth = 0i32;
-        let mut end_rel: Option<usize> = None;
-        for (i, c) in tail.char_indices() {
-            match c {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end_rel = Some(i + c.len_utf8());
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        if let Some(len) = end_rel {
-            if let Some(inner) = tail.get(..len) {
-                return Some(inner.to_string());
-            }
-        }
-    }
-
-    // Try to find any raw JSON object
-    if let Some(start) = text.find('{') {
-        if let Some(end) = text.rfind('}') {
-            if end > start {
-                // `end + 1` is guaranteed to be a char boundary because `}` is ASCII.
-                if let Some(inner) = text.get(start..=end) {
-                    return Some(inner.to_string());
-                }
-            }
-        }
-    }
-
-    None
+    extract_between(text, "```json", "```")
+        .or_else(|| extract_after_fence_skip_lang(text))
+        .or_else(|| extract_balanced_braces_after(text, r#"{"findings""#))
+        .or_else(|| extract_first_to_last_brace(text))
 }
 
 /// Try to construct a valid `AdversaryResponse` from partial/malformed JSON

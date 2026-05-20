@@ -191,8 +191,20 @@ fn sources_match(candidate: &MarketplaceSource, rule: &MarketplaceSource) -> boo
     }
 }
 
-/// Matches two optional fields: `None` on the rule side wildcards
-/// (any candidate matches); otherwise both must be `Some` and equal.
+/// Matches two optional fields with deliberately ASYMMETRIC semantics:
+/// `None` on the *rule* side wildcards (any candidate matches), but
+/// `None` on the *candidate* side against a `Some` rule does NOT match.
+///
+/// Truth table (rows = candidate, columns = rule):
+///
+/// | candidate \ rule | `None`  | `Some(r)`           |
+/// |------------------|---------|---------------------|
+/// | `None`           | `true`  | `false`             |
+/// | `Some(c)`        | `true`  | `c == r`            |
+///
+/// IMPORTANT: argument order matters. Swapping `candidate` and `rule`
+/// inverts the semantics silently. Callers should pass the value from
+/// the policy entry as `rule` and the value being checked as `candidate`.
 fn wild_match_opt(candidate: Option<&String>, rule: Option<&String>) -> bool {
     match (candidate, rule) {
         (_, None) => true,

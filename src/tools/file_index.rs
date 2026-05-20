@@ -213,11 +213,9 @@ impl FileIndex {
                     if prev == '/' || prev == '\\' || prev == '.' || prev == '-' || prev == '_' {
                         score += BONUS_BOUNDARY;
                     }
-                    // CamelCase bonus
+                    // CamelCase bonus. `pi > 0` guards `pi - 1` from underflow.
                     if orig_chars[pi].is_uppercase()
-                        && orig_chars
-                            .get(pi.wrapping_sub(1))
-                            .is_some_and(|c| c.is_lowercase())
+                        && orig_chars.get(pi - 1).is_some_and(|c| c.is_lowercase())
                     {
                         score += BONUS_CAMEL;
                     }
@@ -231,9 +229,10 @@ impl FileIndex {
                         consecutive += 1;
                         score += BONUS_CONSECUTIVE * consecutive;
                     } else {
-                        // Gap penalty
-                        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-                        let gap = (pi - last - 1) as i32;
+                        // Gap penalty. `pi > last` because last_match_idx is set
+                        // strictly before incrementing; the subtraction is safe.
+                        let gap_usize = pi.saturating_sub(last).saturating_sub(1);
+                        let gap = i32::try_from(gap_usize).unwrap_or(i32::MAX);
                         score -= PENALTY_GAP_START + PENALTY_GAP_EXTENSION * (gap - 1).max(0);
                         consecutive = 0;
                     }
@@ -244,9 +243,9 @@ impl FileIndex {
             }
         }
 
-        // Prefer shorter paths (less noise)
-        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-        let path_len_penalty = (path_chars.len() as i32) / 10;
+        // Prefer shorter paths (less noise). Paths are bounded by OS PATH_MAX
+        // so the conversion saturates at i32::MAX rather than truncating.
+        let path_len_penalty = i32::try_from(path_chars.len()).unwrap_or(i32::MAX) / 10;
         score -= path_len_penalty;
 
         // Penalize test files slightly

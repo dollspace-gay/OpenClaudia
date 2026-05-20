@@ -109,8 +109,14 @@ impl MigrationContext {
     }
 
     /// Where the once-only completion ledger lives.
+    ///
+    /// crosslink #960: scoped to `pub(crate)` so external callers cannot
+    /// reach in and mutate ledger state through a path they fabricated.
+    /// The ledger itself is a private detail of [`run_all`]; callers that
+    /// need to inspect what has run should consume the [`MigrationReport`]
+    /// stream instead of reading the file directly.
     #[must_use]
-    pub fn ledger_path(&self) -> PathBuf {
+    pub(crate) fn ledger_path(&self) -> PathBuf {
         self.openclaudia_data.join("migrations.json")
     }
 }
