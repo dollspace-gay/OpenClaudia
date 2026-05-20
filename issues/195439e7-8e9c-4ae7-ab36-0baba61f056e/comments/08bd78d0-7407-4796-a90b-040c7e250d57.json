@@ -1,0 +1,10 @@
+{
+  "uuid": "08bd78d0-7407-4796-a90b-040c7e250d57",
+  "issue_uuid": "195439e7-8e9c-4ae7-ab36-0baba61f056e",
+  "author": "lOrm",
+  "content": "Deferred — requires unrestricted access to src/tool_intercept.rs (FORBIDDEN under current cleanup scope).\n\n**Fix outline:** The function format_tool_results_xml_with_names already takes the is_error flag from the tool result tuple. The completion-hint branch for 'bash' should consult is_error directly rather than re-deriving error state by string-scanning content for 'error'/'Error'/'failed' (current location: src/tool_intercept.rs:~1075-1085, originally cited as 717-722). Drop the content.contains() heuristic entirely; gate on the boolean.\n\n**Blocking:** src/tool_intercept.rs is reserved scope. Trivial fix but defer to a future unrestricted pass.",
+  "created_at": "2026-05-20T14:11:58.876477913Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAzTVEwUnbyrEfR8A/HuYKZ35pTRzBRG0ZEl623zUSwV4A1l2wAtfQosEflek2qkTlNgg6+o2h4zCrlrcbJNvMAg=="
+}
