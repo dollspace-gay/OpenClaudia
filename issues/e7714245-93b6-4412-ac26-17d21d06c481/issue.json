@@ -3,11 +3,12 @@
   "display_id": 776,
   "title": "execute_ask_user_question is a single function with cyclomatic complexity > 15",
   "description": "## Severity\nMinor\n## Dimension\ncomplexity\n## Location\nsrc/tools/ask_user.rs:14-130 (execute_ask_user_question)\n## Violation\nA single function performs argument extraction, schema validation across 7 distinct constraint families (existence of `questions`, count bounds, duplicate question texts, header presence/length, multiSelect type, options count bounds, duplicate labels, description presence, preview type) and normalization. Counted branch points include 4 `let-else`, 1 explicit `if`, 1 `for` over questions, 2 nested `for` over options, 4 `if !x.is_*` checks, and 3 `if let Some` arms. Cyclomatic complexity exceeds the framework's V(G) > 15 reject threshold. Cognitive complexity is high: rejection logic is interleaved with normalization rather than separated.\n\nThe single big function also means callers cannot validate questions independently of the JSON tool wrapper — any future consumer (`mcp.rs`, `acp.rs`, a CLI) must reimplement validation.\n## Mandated refactor\nExtract:\n- `parse_question(value: &Value) -> Result<Question, String>` that returns a typed `Question` struct.\n- `validate_question_set(qs: &[Question]) -> Result<(), String>` for cross-question uniqueness.\n- `normalize_question(q: Question) -> Question` for the multi_select → multiSelect rename.\n- A `Question` newtype with constructor that enforces invariants at the type boundary.\n\nThe tool entry point then becomes a 10-line orchestrator over typed values.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:57:02.350004062Z",
-  "updated_at": "2026-05-18T22:06:02.032623443Z",
+  "updated_at": "2026-05-20T07:32:44.929618226Z",
+  "closed_at": "2026-05-20T07:32:44.929618226Z",
   "labels": [
     "qa-review",
     "complexity"
