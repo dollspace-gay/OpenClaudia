@@ -1,0 +1,10 @@
+{
+  "uuid": "d092e8ef-2781-4eb7-9108-8c8e56e36448",
+  "issue_uuid": "0f5161a6-ec58-4110-a543-9bc5f3c1e20d",
+  "author": "lOrm",
+  "content": "Deferred — owner-level architectural refactor (1607-line file split across 4 new modules; touches the ACP protocol surface).\n\n**Fix outline:** Split src/acp.rs into:\n- src/acp/transport.rs — AcpTransport { stdout, stdin, pending_responses } owns JSON-RPC framing (send_response, send_notification, send_error, client_request)\n- src/acp/protocol.rs — dispatcher + typed handle_X request structs (serde-derived) replacing the raw params: Value pattern, covering handle_initialize/authenticate/session_new/load/cancel/set_mode/set_config_option/prompt\n- src/acp/tools.rs — each acp_* tool (acp_read_file/write_file/edit_file/bash/bash_output/kill_shell/list_files/search) as a free function taking &mut Workspace\n- src/acp/mod.rs — AcpSession orchestrator only\nThe agentic loop (run_prompt_loop, lines 555-775) should delegate to the extracted run_agentic_loop from #449 rather than be a local copy.\n\n**Recommendation:** Owner-level call on module layout and on whether to land it before or after #449. Defer.",
+  "created_at": "2026-05-20T14:14:42.009560064Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABATCOvpQjb7hwHA8HN1+8Viq5O+hJ3ngYUCnkKMM6bfcv2W3vGaNBE8Tl7HEb+m/Z0rv/iuQLwYlZZbJ36jhOsBg=="
+}
