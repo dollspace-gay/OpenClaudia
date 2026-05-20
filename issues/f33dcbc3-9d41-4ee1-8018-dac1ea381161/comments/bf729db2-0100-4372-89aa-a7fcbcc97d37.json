@@ -1,0 +1,10 @@
+{
+  "uuid": "bf729db2-0100-4372-89aa-a7fcbcc97d37",
+  "issue_uuid": "f33dcbc3-9d41-4ee1-8018-dac1ea381161",
+  "author": "lOrm",
+  "content": "Deferred — requires unrestricted access to src/subagent.rs (FORBIDDEN under current cleanup scope).\n\n**Fix outline:** Replace the three error-swallowing patterns in WorktreeIsolation (create/has_changes/cleanup) with typed errors: (a) reject non-UTF-8 worktree paths up front with a typed WorktreeError variant rather than passing an empty string to git; (b) propagate git command failure from has_changes as a Result rather than collapsing to 'no changes'; (c) log+propagate cleanup branch-delete failures instead of discarding them. The fix is local (~50 lines in WorktreeIsolation impl block, src/subagent.rs:454-530).\n\n**Blocking:** src/subagent.rs is reserved scope under the multi-agent collision policy. Defer to a future unrestricted pass.",
+  "created_at": "2026-05-20T14:11:05.642027139Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABANuJL1hpEwxqLkVA3j6gd1EdCDIzjxEe/hG8l0qN69W0M2y5/eZxLr3TtvDnw4b6aWERn78v5OeEBFUDZ1STBCg=="
+}
