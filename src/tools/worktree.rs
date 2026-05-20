@@ -30,9 +30,11 @@
 //! filed against #345.
 
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 /// Maximum time to wait for a git command (seconds).
 const GIT_TIMEOUT_SECS: u64 = 30;
@@ -44,6 +46,84 @@ const GIT_TIMEOUT_SECS: u64 = 30;
 /// commands (sub-millisecond exit) see <10 ms wall-clock overhead
 /// instead of the previous flat 100 ms.
 const GIT_WAIT_BACKOFF_MS: &[u64] = &[1, 2, 5, 10, 25, 50, 100];
+
+/// Process-wide set of worktree paths currently held by the agent harness.
+///
+/// Populated by [`execute_enter_worktree`] on success and consulted on every
+/// subsequent call so a duplicate enter is short-circuited into a no-op
+/// instead of racing with itself (crosslink #624). Entries are removed by
+/// [`execute_exit_worktree`] when the worktree is successfully torn down.
+///
+/// Stored under a `Mutex` (not a `DashSet`) because contention is per-call
+/// and each call already issues several `git` subprocesses; a single lock
+/// roundtrip is negligible next to that.
+fn active_worktrees() -> &'static Mutex<HashSet<PathBuf>> {
+    static SET: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    SET.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Best-effort canonicalisation that falls back to the original path. Used
+/// for *comparison* keys in [`active_worktrees`] so two equivalent spellings
+/// of the same path collide on the duplicate-guard check (crosslink #624).
+fn canonical_or_self(p: &Path) -> PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
+/// Monotonic generation counter bumped whenever the active-worktree set
+/// changes. This is the harness-wide signal that any cwd/canonicalize-keyed
+/// cache must invalidate (crosslink #624). Callers that *do* cache such
+/// state can stash the generation alongside the cached value and reload
+/// when [`cwd_cache_generation`] advances.
+///
+/// The harness today does not own a long-lived realpath cache (Phase 1 of
+/// #345 retired the `set_current_dir` calls that would have required one),
+/// but exposing the generation now means a future cache only needs to
+/// subscribe — it won't need a parallel invalidation mechanism wired in.
+static CWD_CACHE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Current generation of the cwd/canonicalize invalidation token. Bumped by
+/// every successful [`execute_enter_worktree`] / [`execute_exit_worktree`]
+/// call that mutates the active-worktree set.
+#[must_use]
+pub fn cwd_cache_generation() -> u64 {
+    CWD_CACHE_GENERATION.load(Ordering::Acquire)
+}
+
+/// Bump [`CWD_CACHE_GENERATION`] so subscribers see the change. The store
+/// uses `Release` so subscribers using `Acquire` observe a happens-before
+/// ordering with respect to the path-set mutation that preceded the bump.
+fn bump_cwd_cache_generation() {
+    CWD_CACHE_GENERATION.fetch_add(1, Ordering::AcqRel);
+}
+
+/// Record `worktree_dir` as active and bump the cache generation. Returns
+/// `true` if the entry was newly inserted (i.e. the duplicate-guard was
+/// satisfied), `false` if it was already present — callers that have
+/// already short-circuited on the duplicate-guard should never observe
+/// the `false` return, but it keeps the helper total.
+fn register_active_worktree(worktree_dir: &Path) -> bool {
+    let key = canonical_or_self(worktree_dir);
+    let inserted = active_worktrees()
+        .lock()
+        .is_ok_and(|mut set| set.insert(key));
+    if inserted {
+        bump_cwd_cache_generation();
+    }
+    inserted
+}
+
+/// Symmetric to [`register_active_worktree`]: drop a worktree from the
+/// active set and bump the cache generation if a removal actually
+/// happened. Called by [`execute_exit_worktree`] on successful teardown.
+fn unregister_active_worktree(worktree_dir: &Path) {
+    let key = canonical_or_self(worktree_dir);
+    let removed = active_worktrees()
+        .lock()
+        .is_ok_and(|mut set| set.remove(&key));
+    if removed {
+        bump_cwd_cache_generation();
+    }
+}
 
 /// Validate a user-supplied branch name before it reaches any other `git`
 /// invocation (crosslink #408).
@@ -272,71 +352,111 @@ pub fn execute_enter_worktree<S: std::hash::BuildHasher>(
 
     let worktree_dir = git_root.join(".worktrees").join(&branch);
 
-    let base_branch = get_current_branch_at(&cwd).unwrap_or_else(|| "HEAD".to_string());
+    // Crosslink #624: duplicate-session guard. If this exact worktree path
+    // is already tracked as active (by canonical equality), return a no-op
+    // success so re-issuing the call doesn't race with itself or leave a
+    // half-created git worktree behind. The branch -> worktree_dir mapping
+    // above is deterministic, so two callers asking for the same branch
+    // both land here.
+    let dup_key = canonical_or_self(&worktree_dir);
+    if let Ok(set) = active_worktrees().lock() {
+        if set.contains(&dup_key) {
+            return (
+                format!(
+                    "already in worktree at {} (branch '{}'). No-op — use exit_worktree to leave it.",
+                    worktree_dir.display(),
+                    branch
+                ),
+                false,
+            );
+        }
+    }
 
+    let base_branch = get_current_branch_at(&cwd).unwrap_or_else(|| "HEAD".to_string());
+    create_worktree_on_disk(&cwd, &worktree_dir, &branch, &base_branch)
+}
+
+/// Run `git worktree add` (with the existing-branch retry path) and surface
+/// the resulting `(message, is_error)` tuple. Extracted from
+/// [`execute_enter_worktree`] so the orchestrator stays under the
+/// `clippy::too_many_lines` ceiling. Records the new worktree in the active
+/// set on success (crosslink #624).
+fn create_worktree_on_disk(
+    cwd: &Path,
+    worktree_dir: &Path,
+    branch: &str,
+    base_branch: &str,
+) -> (String, bool) {
     let result = git_in(
-        &cwd,
+        cwd,
         &[
             "worktree",
             "add",
             "-b",
-            &branch,
+            branch,
             worktree_dir.to_str().unwrap_or(""),
-            &base_branch,
+            base_branch,
         ],
     );
 
     match result {
-        Ok(output) if output.status.success() => (
-            format!(
-                "Created worktree at {} on branch '{}' (based on '{}').\n\
-                 The process CWD has NOT been changed. Pass path={} to exit_worktree, \
-                 or use `bash` with explicit working directories when running commands \
-                 inside the worktree.\nOriginal directory: {}",
-                worktree_dir.display(),
-                branch,
-                base_branch,
-                worktree_dir.display(),
-                cwd.display()
-            ),
-            false,
-        ),
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("already exists") {
-                let retry = git_in(
-                    &cwd,
-                    &[
-                        "worktree",
-                        "add",
-                        worktree_dir.to_str().unwrap_or(""),
-                        &branch,
-                    ],
-                );
-                match retry {
-                    Ok(o) if o.status.success() => (
-                        format!(
-                            "Created worktree (existing branch) at {} on branch '{}'.\n\
-                             The process CWD has NOT been changed. Pass path={} to exit_worktree.",
-                            worktree_dir.display(),
-                            branch,
-                            worktree_dir.display()
-                        ),
-                        false,
-                    ),
-                    _ => (
-                        format!("Failed to create worktree: {}", stderr.trim()),
-                        true,
-                    ),
-                }
-            } else {
-                (
-                    format!("Failed to create worktree: {}", stderr.trim()),
-                    true,
-                )
-            }
+        Ok(output) if output.status.success() => {
+            register_active_worktree(worktree_dir);
+            (
+                format!(
+                    "Created worktree at {} on branch '{branch}' (based on '{base_branch}').\n\
+                     The process CWD has NOT been changed. Pass path={} to exit_worktree, \
+                     or use `bash` with explicit working directories when running commands \
+                     inside the worktree.\nOriginal directory: {}",
+                    worktree_dir.display(),
+                    worktree_dir.display(),
+                    cwd.display()
+                ),
+                false,
+            )
         }
+        Ok(output) => retry_worktree_add_for_existing_branch(cwd, worktree_dir, branch, &output),
         Err(e) => (format!("Failed to run git: {e}"), true),
+    }
+}
+
+/// Helper for [`create_worktree_on_disk`]: if the initial `git worktree add
+/// -b` failed because the branch already exists, retry without `-b` so the
+/// existing branch is checked out into the new worktree. Returns the final
+/// `(message, is_error)` tuple to surface to the caller.
+fn retry_worktree_add_for_existing_branch(
+    cwd: &Path,
+    worktree_dir: &Path,
+    branch: &str,
+    failed_output: &std::process::Output,
+) -> (String, bool) {
+    let stderr = String::from_utf8_lossy(&failed_output.stderr);
+    if !stderr.contains("already exists") {
+        return (format!("Failed to create worktree: {}", stderr.trim()), true);
+    }
+    let retry = git_in(
+        cwd,
+        &[
+            "worktree",
+            "add",
+            worktree_dir.to_str().unwrap_or(""),
+            branch,
+        ],
+    );
+    match retry {
+        Ok(o) if o.status.success() => {
+            register_active_worktree(worktree_dir);
+            (
+                format!(
+                    "Created worktree (existing branch) at {} on branch '{branch}'.\n\
+                     The process CWD has NOT been changed. Pass path={} to exit_worktree.",
+                    worktree_dir.display(),
+                    worktree_dir.display()
+                ),
+                false,
+            )
+        }
+        _ => (format!("Failed to create worktree: {}", stderr.trim()), true),
     }
 }
 
@@ -350,6 +470,28 @@ struct ExitContext {
     main_path: PathBuf,
     current_branch: String,
     apply_changes: bool,
+    /// `true` iff the caller explicitly passed `discard_changes=true` and is
+    /// willing to lose uncommitted work in the worktree (crosslink #623).
+    discard_changes: bool,
+}
+
+/// Inspect the worktree for uncommitted changes using `git status --porcelain`.
+///
+/// Returns `Ok(true)` if the worktree has tracked or untracked dirty files,
+/// `Ok(false)` if it is clean, and `Err(msg)` if the porcelain status command
+/// itself failed.
+fn worktree_has_uncommitted_changes(worktree_path: &Path) -> Result<bool, String> {
+    match git_in(worktree_path, &["status", "--porcelain"]) {
+        Ok(o) if o.status.success() => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            Ok(stdout.lines().any(|l| !l.trim().is_empty()))
+        }
+        Ok(o) => Err(format!(
+            "git status --porcelain failed: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        )),
+        Err(e) => Err(e),
+    }
 }
 
 /// Parse and validate the arguments to `exit_worktree`. Returns either a
@@ -380,6 +522,15 @@ fn validate_exit_request<S: std::hash::BuildHasher>(
 
     let apply_changes = args
         .get("apply_changes")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+
+    // Crosslink #623: opt-in flag that lets the caller acknowledge the loss
+    // of uncommitted work. Defaults to `false`, which causes the safety
+    // gate in `execute_exit_worktree` to refuse destructive removal when
+    // the worktree is dirty.
+    let discard_changes = args
+        .get("discard_changes")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
 
@@ -447,6 +598,7 @@ fn validate_exit_request<S: std::hash::BuildHasher>(
         main_path,
         current_branch,
         apply_changes,
+        discard_changes,
     })
 }
 
@@ -488,7 +640,8 @@ fn merge_into_main(ctx: &ExitContext) -> String {
 }
 
 /// Issue `git worktree remove --force` from the main worktree and return
-/// `(removed_ok, detail_string)`.
+/// `(removed_ok, detail_string)`. On success, drop the worktree from the
+/// active set and bump the cwd-cache generation (crosslink #624).
 fn remove_worktree(ctx: &ExitContext) -> (bool, String) {
     let removed = git_in(
         &ctx.main_path,
@@ -500,6 +653,9 @@ fn remove_worktree(ctx: &ExitContext) -> (bool, String) {
         ],
     );
     let ok = removed.as_ref().is_ok_and(|o| o.status.success());
+    if ok {
+        unregister_active_worktree(&ctx.worktree_path);
+    }
     (ok, render_git_failure(&removed))
 }
 
@@ -515,6 +671,12 @@ fn remove_worktree(ctx: &ExitContext) -> (bool, String) {
 /// * `apply_changes` (bool, optional, default `false`) — if true, commit
 ///   uncommitted changes inside the worktree and merge the worktree branch
 ///   into the main worktree before removing the worktree.
+/// * `discard_changes` (bool, optional, default `false`) — opt-in safety
+///   gate (crosslink #623). When `apply_changes=false`, the worktree is
+///   destroyed by `git worktree remove --force`. The previous behaviour
+///   silently destroyed uncommitted work; the gate now refuses removal
+///   unless `discard_changes=true` is set explicitly. Ignored when
+///   `apply_changes=true` because the merge path commits the work first.
 #[must_use]
 pub fn execute_exit_worktree<S: std::hash::BuildHasher>(
     args: &HashMap<String, Value, S>,
@@ -523,6 +685,34 @@ pub fn execute_exit_worktree<S: std::hash::BuildHasher>(
         Ok(ctx) => ctx,
         Err(err) => return err,
     };
+
+    // Crosslink #623: refuse silent destruction of uncommitted work. The
+    // gate fires only on the discard path; `apply_changes=true` commits
+    // work before removal so dirty state is not lost there.
+    if !ctx.apply_changes && !ctx.discard_changes {
+        match worktree_has_uncommitted_changes(&ctx.worktree_path) {
+            Ok(true) => {
+                return (
+                    format!(
+                        "worktree has uncommitted changes; pass discard_changes=true to force \
+                         removal of {} (or apply_changes=true to merge them first)",
+                        ctx.worktree_path.display()
+                    ),
+                    true,
+                );
+            }
+            Ok(false) => {}
+            Err(e) => {
+                return (
+                    format!(
+                        "Refusing to remove worktree {}: could not verify clean state ({e})",
+                        ctx.worktree_path.display()
+                    ),
+                    true,
+                );
+            }
+        }
+    }
 
     if ctx.apply_changes {
         let merge_result = merge_into_main(&ctx);
@@ -753,9 +943,20 @@ mod tests {
         );
     }
 
-    /// Contract: `exit_worktree` called with a path pointing at the main
-    /// worktree (not an isolated one) returns `is_error=true` with a clear
-    /// message — regardless of process CWD.
+    /// Contract: `exit_worktree` called with a path that is the main
+    /// worktree (or otherwise unsafe to destroy) returns `is_error=true`
+    /// with a clear message — regardless of process CWD.
+    ///
+    /// Three valid rejection messages exist after crosslink #623:
+    ///
+    /// 1. "Not in an isolated worktree" (path is the repo root).
+    /// 2. "not inside a git worktree" (path is not a git workspace).
+    /// 3. "uncommitted changes ... `discard_changes=true`" (#623 safety
+    ///    gate — fires when the path *is* a worktree but it is dirty,
+    ///    which is the common case when tests run inside the harness's
+    ///    own agent worktree).
+    ///
+    /// All three are legitimate refusals and must produce `is_error=true`.
     #[test]
     fn exit_worktree_with_main_tree_path_is_error() {
         let _lock = cwd_lock();
@@ -769,46 +970,183 @@ mod tests {
         assert!(is_err, "exit on main worktree must produce is_error=true");
         assert!(
             msg.contains("Not in an isolated worktree")
-                || msg.contains("not inside a git worktree"),
-            "error must indicate we are not in an isolated worktree; got: {msg}"
+                || msg.contains("not inside a git worktree")
+                || msg.contains("uncommitted changes"),
+            "error must indicate a legitimate refusal reason; got: {msg}"
         );
     }
 
-    /// Pin gap #624: OC does NOT check for an already-active worktree session
-    /// before creating another. Verified by calling with a valid branch and
-    /// confirming no "session already active" guard fires.
+    /// #624: a second `enter_worktree` call with the same branch (which
+    /// maps to the same `worktree_dir`) returns a no-op success after the
+    /// duplicate-session guard fires. Pins the *fix* — the previous gap
+    /// test asserted the *absence* of this guard.
     #[test]
-    fn enter_worktree_has_no_duplicate_session_guard_gap624() {
+    fn enter_worktree_duplicate_call_is_no_op_624() {
         let _lock = cwd_lock();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let branch = format!("dup-guard-624-{nanos}");
+
         let mut args = HashMap::new();
         args.insert(
             "branch".to_string(),
-            serde_json::Value::String("probe-gap624".to_string()),
+            serde_json::Value::String(branch.clone()),
         );
-        let (msg, _) = execute_enter_worktree(&args);
+        let (first_msg, first_err) = execute_enter_worktree(&args);
+        assert!(!first_err, "first call must succeed; got: {first_msg}");
+
+        let (second_msg, second_err) = execute_enter_worktree(&args);
+        assert!(!second_err, "duplicate call must be a no-op (not error)");
         assert!(
-            !msg.contains("already in a worktree"),
-            "gap #624: OC must NOT emit 'already in a worktree' guard; got: {msg}"
+            second_msg.contains("already in worktree") && second_msg.contains("No-op"),
+            "duplicate call must surface the no-op message; got: {second_msg}"
         );
+
+        // Cleanup.
+        let cwd = std::env::current_dir().unwrap();
+        let wt = cwd.join(".worktrees").join(&branch);
+        let mut exit_args = HashMap::new();
+        exit_args.insert(
+            "path".to_string(),
+            serde_json::Value::String(wt.display().to_string()),
+        );
+        exit_args.insert("discard_changes".to_string(), serde_json::Value::Bool(true));
+        let _ = execute_exit_worktree(&exit_args);
+        let _ = git_in(&cwd, &["branch", "-D", &branch]);
     }
 
-    /// Pin gap #623: `exit_worktree` with `apply_changes=false` runs
-    /// `git worktree remove --force` without checking for uncommitted work.
+    /// #624: the cwd-cache generation counter advances when a worktree is
+    /// created and again when it is destroyed. Subscribers (future
+    /// realpath caches) can poll this counter to know when to invalidate.
     #[test]
-    fn exit_worktree_discard_path_has_no_safety_guard_gap623() {
+    fn enter_and_exit_worktree_bump_cwd_cache_generation_624() {
         let _lock = cwd_lock();
-        let main = std::env::current_dir().unwrap();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let branch = format!("cache-gen-624-{nanos}");
+        let before = cwd_cache_generation();
+
         let mut args = HashMap::new();
         args.insert(
-            "path".to_string(),
-            serde_json::Value::String(main.display().to_string()),
+            "branch".to_string(),
+            serde_json::Value::String(branch.clone()),
         );
-        args.insert("apply_changes".to_string(), serde_json::Value::Bool(false));
-        let (msg, _) = execute_exit_worktree(&args);
+        let (msg, is_err) = execute_enter_worktree(&args);
+        assert!(!is_err, "enter must succeed; got: {msg}");
+        let after_enter = cwd_cache_generation();
         assert!(
-            !msg.contains("uncommitted changes") && !msg.contains("discard_changes"),
-            "gap #623: OC must NOT emit a safety-guard message; got: {msg}"
+            after_enter > before,
+            "cwd_cache_generation must advance on enter (before={before}, after={after_enter})"
         );
+
+        let cwd = std::env::current_dir().unwrap();
+        let wt = cwd.join(".worktrees").join(&branch);
+        let mut exit_args = HashMap::new();
+        exit_args.insert(
+            "path".to_string(),
+            serde_json::Value::String(wt.display().to_string()),
+        );
+        exit_args.insert("discard_changes".to_string(), serde_json::Value::Bool(true));
+        let (msg, is_err) = execute_exit_worktree(&exit_args);
+        assert!(!is_err, "exit must succeed; got: {msg}");
+        let after_exit = cwd_cache_generation();
+        assert!(
+            after_exit > after_enter,
+            "cwd_cache_generation must advance on exit (after_enter={after_enter}, after_exit={after_exit})"
+        );
+
+        let _ = git_in(&cwd, &["branch", "-D", &branch]);
+    }
+
+    /// #623: with the worktree dirty and `discard_changes` omitted (or
+    /// `false`), `exit_worktree` must refuse with a clear safety message
+    /// instead of silently running `git worktree remove --force`.
+    #[test]
+    fn exit_worktree_refuses_to_destroy_dirty_worktree_without_discard_623() {
+        let _lock = cwd_lock();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let branch = format!("dirty-623-{nanos}");
+
+        let mut args = HashMap::new();
+        args.insert(
+            "branch".to_string(),
+            serde_json::Value::String(branch.clone()),
+        );
+        let (msg, is_err) = execute_enter_worktree(&args);
+        assert!(!is_err, "enter must succeed; got: {msg}");
+
+        let cwd = std::env::current_dir().unwrap();
+        let wt = cwd.join(".worktrees").join(&branch);
+        // Dirty the worktree by writing an untracked file.
+        std::fs::write(wt.join("dirty.txt"), "uncommitted work\n").expect("write dirty");
+
+        // Default `discard_changes=false` must refuse.
+        let mut exit_args = HashMap::new();
+        exit_args.insert(
+            "path".to_string(),
+            serde_json::Value::String(wt.display().to_string()),
+        );
+        let (msg, is_err) = execute_exit_worktree(&exit_args);
+        assert!(is_err, "dirty exit without discard must error");
+        assert!(
+            msg.contains("uncommitted changes") && msg.contains("discard_changes=true"),
+            "safety message must name the gap & the override; got: {msg}"
+        );
+        // Worktree still exists because we refused to destroy it.
+        assert!(
+            wt.exists(),
+            "refused exit must leave the worktree on disk: {}",
+            wt.display()
+        );
+
+        // Now opt in: discard_changes=true must succeed.
+        exit_args.insert("discard_changes".to_string(), serde_json::Value::Bool(true));
+        let (msg, is_err) = execute_exit_worktree(&exit_args);
+        assert!(!is_err, "discard_changes=true must succeed; got: {msg}");
+        assert!(!wt.exists(), "successful exit must remove the worktree");
+
+        let _ = git_in(&cwd, &["branch", "-D", &branch]);
+    }
+
+    /// #623: a *clean* worktree exits successfully without needing the
+    /// opt-in. The safety gate must not raise the bar for the common case.
+    #[test]
+    fn exit_worktree_clean_worktree_exits_without_discard_flag_623() {
+        let _lock = cwd_lock();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let branch = format!("clean-623-{nanos}");
+
+        let mut args = HashMap::new();
+        args.insert(
+            "branch".to_string(),
+            serde_json::Value::String(branch.clone()),
+        );
+        let (msg, is_err) = execute_enter_worktree(&args);
+        assert!(!is_err, "enter must succeed; got: {msg}");
+
+        let cwd = std::env::current_dir().unwrap();
+        let wt = cwd.join(".worktrees").join(&branch);
+        // No mutations: worktree is clean.
+
+        let mut exit_args = HashMap::new();
+        exit_args.insert(
+            "path".to_string(),
+            serde_json::Value::String(wt.display().to_string()),
+        );
+        let (msg, is_err) = execute_exit_worktree(&exit_args);
+        assert!(
+            !is_err,
+            "clean exit without discard_changes must succeed; got: {msg}"
+        );
+        assert!(!wt.exists(), "clean exit must remove the worktree");
+
+        let _ = git_in(&cwd, &["branch", "-D", &branch]);
     }
 
     // ─── #408 regression tests: branch-name validation ────────────────────────

@@ -97,6 +97,17 @@ pub struct PlanModeState {
     pub plan_realpath: PathBuf,
     /// Allowed prompts when exiting plan mode
     pub allowed_prompts: Vec<AllowedPrompt>,
+    /// Snapshot of the agent mode active when plan mode was entered, so
+    /// `exit_plan_mode` can restore the prior mode instead of unconditionally
+    /// falling back to `Build` (crosslink #618).
+    ///
+    /// Encoded as a lowercase token (`"build"`, `"extend"`, `"refactor"`,
+    /// `"plan"`) so this module stays free of a dependency on the binary-side
+    /// `AgentMode` enum. `None` means "the caller did not capture a prior
+    /// mode" and the legacy `Build` fallback applies, preserving the on-disk
+    /// shape of sessions written before #618.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_mode: Option<String>,
 }
 
 /// Error returned when plan-mode entry fails to pin a safe plan-file
@@ -154,6 +165,24 @@ impl PlanModeState {
     ///
     /// Returns [`PlanModeEntryError`] if any of the four steps fails.
     pub fn enter(plan_file: PathBuf) -> Result<Self, PlanModeEntryError> {
+        Self::enter_with_previous_mode(plan_file, None)
+    }
+
+    /// Enter plan mode while snapshotting the caller's prior agent mode
+    /// (crosslink #618).
+    ///
+    /// `previous_mode` is the lowercase token form of the mode that was
+    /// active before the call (e.g. `"build"`, `"extend"`, `"refactor"`).
+    /// Pass `None` to preserve the pre-#618 behaviour of unconditionally
+    /// restoring to `Build` on exit.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::enter`].
+    pub fn enter_with_previous_mode(
+        plan_file: PathBuf,
+        previous_mode: Option<String>,
+    ) -> Result<Self, PlanModeEntryError> {
         let lmeta = match std::fs::symlink_metadata(&plan_file) {
             Ok(m) => m,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -207,6 +236,7 @@ impl PlanModeState {
             plan_file,
             plan_realpath,
             allowed_prompts: Vec::new(),
+            previous_mode,
         })
     }
 }
@@ -696,6 +726,63 @@ mod plan_mode_tests {
             "even with allow_mcp_tools=true, an MCP tool not in the \
              allowlist remains denied (#341 belt-and-braces)"
         );
+    }
+
+    // ─── #618: previous_mode snapshot on plan-mode entry ──────────────────
+
+    /// Default `enter` keeps the legacy on-disk shape — no `previous_mode`
+    /// field — so sessions saved before #618 still load correctly.
+    #[test]
+    fn enter_default_has_no_previous_mode_snapshot_618() {
+        let dir = TempDir::new().unwrap();
+        let plan = dir.path().join("plan.md");
+        std::fs::write(&plan, "# plan\n").unwrap();
+        let state = PlanModeState::enter(plan).expect("enter must succeed");
+        assert_eq!(
+            state.previous_mode, None,
+            "legacy enter() must not snapshot a mode"
+        );
+    }
+
+    /// The new `enter_with_previous_mode` constructor stores the token
+    /// verbatim — the binary-side `AgentMode::from_token` decodes it.
+    #[test]
+    fn enter_with_previous_mode_records_token_618() {
+        let dir = TempDir::new().unwrap();
+        let plan = dir.path().join("plan.md");
+        std::fs::write(&plan, "# plan\n").unwrap();
+        let state = PlanModeState::enter_with_previous_mode(
+            plan.clone(),
+            Some("refactor".to_string()),
+        )
+        .expect("enter must succeed");
+        assert_eq!(state.previous_mode.as_deref(), Some("refactor"));
+        // Sanity: the other fields still satisfy their #334 invariants.
+        assert!(state.active);
+        assert_eq!(state.plan_file, plan);
+        assert!(state.plan_realpath.is_absolute());
+    }
+
+    /// `previous_mode` round-trips through serde (so a paused-then-resumed
+    /// session restores to the same mode after `exit_plan_mode`).
+    #[test]
+    fn previous_mode_round_trips_through_serde_618() {
+        let dir = TempDir::new().unwrap();
+        let plan = dir.path().join("plan.md");
+        std::fs::write(&plan, "# plan\n").unwrap();
+        let state = PlanModeState::enter_with_previous_mode(
+            plan,
+            Some("extend".to_string()),
+        )
+        .expect("enter must succeed");
+        let json = serde_json::to_string(&state).expect("serialise");
+        assert!(
+            json.contains("\"previous_mode\":\"extend\""),
+            "JSON must carry the snapshot; got: {json}"
+        );
+        let round: PlanModeState =
+            serde_json::from_str(&json).expect("deserialise");
+        assert_eq!(round.previous_mode.as_deref(), Some("extend"));
     }
 
     /// #341 — a plugin-contributed tool (`plugin__*`) is HARD-denied by

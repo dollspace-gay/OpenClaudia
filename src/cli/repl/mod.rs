@@ -30,7 +30,14 @@ pub fn get_sessions_dir() -> PathBuf {
     get_data_dir().join("chat_sessions")
 }
 
-/// Agent operating mode
+/// Agent operating mode.
+///
+/// `Build` is the default full-access mode. `Plan` is the read-only review
+/// mode entered via `enter_plan_mode`. `Extend` and `Refactor` mirror the
+/// `modes::Preset` scope axis so the REPL can record (and restore) a
+/// non-Plan working mode across plan-mode entry — see crosslink #618 for
+/// the `previous_mode` snapshot that `ExitPlanMode` consults instead of
+/// unconditionally falling back to `Build`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentMode {
@@ -39,12 +46,19 @@ pub enum AgentMode {
     Build,
     /// Read-only mode - only suggestions
     Plan,
+    /// Extending an existing implementation (write-allowed, scope-locked).
+    Extend,
+    /// Refactor mode — write-allowed, structural changes expected.
+    Refactor,
 }
 
 impl AgentMode {
+    /// Toggle Build <-> Plan. Non-Build/Plan modes flip into Plan so the
+    /// keybinding still has a sensible effect; the previous mode is
+    /// remembered by [`PlanModeState::previous_mode`] (crosslink #618).
     pub const fn toggle(self) -> Self {
         match self {
-            Self::Build => Self::Plan,
+            Self::Build | Self::Extend | Self::Refactor => Self::Plan,
             Self::Plan => Self::Build,
         }
     }
@@ -53,6 +67,8 @@ impl AgentMode {
         match self {
             Self::Build => "Build",
             Self::Plan => "Plan",
+            Self::Extend => "Extend",
+            Self::Refactor => "Refactor",
         }
     }
 
@@ -60,6 +76,33 @@ impl AgentMode {
         match self {
             Self::Build => "Full access - can make changes",
             Self::Plan => "Read-only - suggestions only",
+            Self::Extend => "Write-allowed; scope locked to an existing surface",
+            Self::Refactor => "Write-allowed; structural changes expected",
+        }
+    }
+
+    /// Stable lowercase token used when persisting the mode into
+    /// [`PlanModeState::previous_mode`] (which is a `String` so the
+    /// session module doesn't depend on the binary-side enum).
+    pub const fn as_token(self) -> &'static str {
+        match self {
+            Self::Build => "build",
+            Self::Plan => "plan",
+            Self::Extend => "extend",
+            Self::Refactor => "refactor",
+        }
+    }
+
+    /// Parse the token produced by [`Self::as_token`]. Unknown tokens fall
+    /// back to `Build` so a future variant added on a newer binary doesn't
+    /// crash an older one reading the saved session — the worst case is a
+    /// degraded restore to Build, which matches the pre-#618 behaviour.
+    pub fn from_token(s: &str) -> Self {
+        match s {
+            "plan" => Self::Plan,
+            "extend" => Self::Extend,
+            "refactor" => Self::Refactor,
+            _ => Self::Build,
         }
     }
 }

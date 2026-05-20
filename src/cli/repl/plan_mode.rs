@@ -3,6 +3,25 @@ use super::{AgentMode, ChatSession};
 use openclaudia::tools;
 use std::fs;
 
+/// Restore the agent mode captured at plan-mode entry (crosslink #618).
+///
+/// Returns the snapshotted `previous_mode` decoded from
+/// [`openclaudia::session::PlanModeState::previous_mode`], falling back to
+/// `Build` when:
+/// * the session entered plan mode before the #618 field existed, or
+/// * the snapshot token is unrecognised (forwards-compat: an older binary
+///   reading a session saved by a newer one).
+///
+/// The fallback matches the pre-#618 behaviour so the worst case is a
+/// graceful degradation, never a panic or a wrong mode flip.
+fn restore_previous_mode(
+    plan_state: Option<&openclaudia::session::PlanModeState>,
+) -> AgentMode {
+    plan_state
+        .and_then(|s| s.previous_mode.as_deref())
+        .map_or(AgentMode::Build, AgentMode::from_token)
+}
+
 /// Handle entering plan mode. Creates plan file and sets up state.
 pub fn handle_enter_plan_mode(chat_session: &mut ChatSession) -> String {
     let plans_dir = std::path::PathBuf::from(".openclaudia/plans");
@@ -45,7 +64,21 @@ pub fn handle_enter_plan_mode(chat_session: &mut ChatSession) -> String {
     // FD-based metadata + canonicalize, then stores the canonical
     // realpath. If any step fails we refuse to enter plan mode --
     // falling back to a weaker check is the exact bypass #334 closes.
-    let plan_state = match openclaudia::session::PlanModeState::enter(plan_file.clone()) {
+    //
+    // Crosslink #618: capture the current `AgentMode` so that
+    // `exit_plan_mode` can restore it instead of unconditionally
+    // flipping back to `Build`. Plan-mode itself is not a meaningful
+    // "previous" mode to restore to (it would be a no-op), so we only
+    // record non-Plan modes.
+    let previous_mode = if chat_session.mode == AgentMode::Plan {
+        None
+    } else {
+        Some(chat_session.mode.as_token().to_string())
+    };
+    let plan_state = match openclaudia::session::PlanModeState::enter_with_previous_mode(
+        plan_file.clone(),
+        previous_mode,
+    ) {
         Ok(state) => state,
         Err(e) => {
             return format!("Failed to enter plan mode (plan file identity pin failed): {e}");
@@ -97,8 +130,9 @@ fn handle_plan_edit(
             }
             if input2.trim().to_lowercase().starts_with('y') {
                 let allowed_prompts = tools::parse_exit_plan_mode_prompts(allowed_prompts_json);
+                let restored = restore_previous_mode(chat_session.plan_mode.as_ref());
                 chat_session.plan_mode = None;
-                chat_session.mode = AgentMode::Build;
+                chat_session.mode = restored;
                 chat_session.approved_plan = Some(edited_content.clone());
                 println!("\n\x1b[1;32m>> Plan Approved - Returning to Build Mode\x1b[0m\n");
                 chat_session.messages.push(serde_json::json!({
@@ -181,8 +215,9 @@ pub fn handle_exit_plan_mode(
         "y" | "yes" => {
             let allowed_prompts = tools::parse_exit_plan_mode_prompts(allowed_prompts_json);
 
+            let restored = restore_previous_mode(chat_session.plan_mode.as_ref());
             chat_session.plan_mode = None;
-            chat_session.mode = AgentMode::Build;
+            chat_session.mode = restored;
             chat_session.approved_plan = Some(plan_content.clone());
 
             println!(
@@ -302,4 +337,64 @@ pub fn process_tool_result_marker(
     }
     let _ = tool_name; // suppress unused warning
     (result_content.to_string(), false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use openclaudia::session::PlanModeState;
+    use tempfile::TempDir;
+
+    fn make_plan_state(prev: Option<&str>) -> PlanModeState {
+        let dir = TempDir::new().expect("tempdir");
+        let plan = dir.path().join("plan.md");
+        std::fs::write(&plan, "# plan\n").expect("write");
+        // Leak the dir so the file lives long enough for `state.plan_realpath`
+        // to remain valid for the duration of the test. The temp dir is
+        // GC'd at process exit.
+        Box::leak(Box::new(dir));
+        PlanModeState::enter_with_previous_mode(plan, prev.map(str::to_string))
+            .expect("enter must succeed")
+    }
+
+    /// #618 fix: when `previous_mode` is `None` the restore falls back to
+    /// `Build` — pre-#618 sessions (saved without the field) keep working.
+    #[test]
+    fn restore_previous_mode_defaults_to_build_when_none_618() {
+        let state = make_plan_state(None);
+        assert_eq!(restore_previous_mode(Some(&state)), AgentMode::Build);
+    }
+
+    /// #618 fix: a snapshot of "refactor" restores to `AgentMode::Refactor`
+    /// — the literal `enter (Refactor) -> exit -> Refactor` assertion the
+    /// issue asks for.
+    #[test]
+    fn restore_previous_mode_round_trips_refactor_618() {
+        let state = make_plan_state(Some("refactor"));
+        assert_eq!(restore_previous_mode(Some(&state)), AgentMode::Refactor);
+    }
+
+    /// #618 fix: every non-Plan `AgentMode` round-trips through the snapshot
+    /// — token form is the single source of truth and decoupled from the
+    /// session-module enum.
+    #[test]
+    fn restore_previous_mode_round_trips_all_non_plan_modes_618() {
+        for mode in [AgentMode::Build, AgentMode::Extend, AgentMode::Refactor] {
+            let state = make_plan_state(Some(mode.as_token()));
+            assert_eq!(
+                restore_previous_mode(Some(&state)),
+                mode,
+                "mode {mode:?} must survive the snapshot round-trip"
+            );
+        }
+    }
+
+    /// #618 fix: forward-compat — an unknown token decodes to `Build`
+    /// instead of panicking, so an older binary reading a newer session
+    /// degrades gracefully.
+    #[test]
+    fn restore_previous_mode_unknown_token_falls_back_to_build_618() {
+        let state = make_plan_state(Some("some_future_mode"));
+        assert_eq!(restore_previous_mode(Some(&state)), AgentMode::Build);
+    }
 }

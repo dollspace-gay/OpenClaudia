@@ -37,10 +37,16 @@ pub use accumulator::{
 /// Credential-sensitivity classifier re-exported for use outside the tools
 /// module (e.g. `hooks::mod` env-scrub logic). Avoids making `bash` public.
 pub(crate) use bash::is_sensitive_env;
+/// RAII guard that marks the current thread as executing inside a subagent
+/// task, so `execute_enter_plan_mode` refuses with the CC-parity error
+/// (crosslink #620). Subagent runners construct one of these for the
+/// duration of a `task` tool invocation; tests construct one directly.
+pub use plan_mode::{in_agent_task, AgentContextGuard};
 pub use registry::{PermissionTarget, ToolContext, ToolHandler, ToolRegistry};
 pub use todo::{
     clear_all_todo_lists, clear_todo_list, get_todo_list, SessionIdGuard, TodoItem, TodoStatus,
 };
+pub use worktree::cwd_cache_generation;
 
 use crate::config::AppConfig;
 use crate::memory::MemoryDb;
