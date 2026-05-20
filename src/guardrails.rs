@@ -10,8 +10,8 @@
 use regex::Regex;
 use std::collections::HashSet;
 use std::path::Path;
-use std::process::Command;
 use std::sync::Mutex;
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use crate::config::{
@@ -287,6 +287,51 @@ pub struct QualityCheckResult {
     pub stdout: String,
     pub stderr: String,
     pub required: bool,
+}
+
+/// Outcome of dispatching a quality-gate command via
+/// [`run_shell_command_sync`].
+///
+/// This typed enum replaces the pre-#395 tuple return
+/// `(i32, String, String)` that conflated "the program ran and exited
+/// non-zero" with "the program could not be located" and with "the
+/// supervisor wrapper killed the child after a wall-clock timeout".
+///
+/// Callers MUST exhaustively match every variant so a future addition
+/// (e.g. a `Cancelled` variant for a future caller-initiated abort)
+/// surfaces as a compile-time error rather than a silent
+/// `exit_code == -1`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShellResult {
+    /// The child process started and exited with status `0`. Both
+    /// stdout and stderr are captured verbatim — note that POSIX
+    /// utilities frequently emit progress or warning text on stderr
+    /// even on success (`make`, `cargo`, `git`), so callers MUST keep
+    /// the stderr payload for forensics.
+    Success { stdout: String, stderr: String },
+    /// The child process started and exited with a non-zero status
+    /// code (or was killed by a signal — see `code == -1`). Stdout and
+    /// stderr are still captured so the caller can surface the failure
+    /// diagnostic to the user.
+    ExitFailed {
+        code: i32,
+        stdout: String,
+        stderr: String,
+    },
+    /// The program named by the first argv token could not be located
+    /// on `PATH` (or at the explicit absolute path given). On
+    /// pre-#395 code this collapsed to `(-1, "", "Failed to execute:
+    /// No such file or directory")` and the caller had to grep the
+    /// stderr string to distinguish it from a real exit-1.
+    ///
+    /// `tried` is the list of program names the runner attempted —
+    /// for argv-direct exec this is a single entry, but a future
+    /// shell-fallback path may list `/bin/sh`, `bash`, etc.
+    ShellMissing { tried: Vec<String> },
+    /// The child process exceeded the wall-clock timeout configured on
+    /// the runner. The child has been killed and reaped; any partial
+    /// stdout/stderr is discarded.
+    Timeout,
 }
 
 // ==========================================================================
@@ -620,10 +665,36 @@ impl QualityGateRunner {
         for check in &self.config.checks {
             info!(name = %check.name, "Running quality gate");
 
-            let (exit_code, stdout, stderr) =
-                run_shell_command_sync(&check.command, self.config.timeout_seconds);
+            let outcome = run_shell_command_sync(&check.command, self.config.timeout_seconds);
 
-            let passed = exit_code == 0;
+            // Translate the typed enum into the (passed, exit_code,
+            // stdout, stderr) shape that `QualityCheckResult` still
+            // exposes to downstream callers. Every variant is handled
+            // explicitly so a future addition forces a recompile.
+            let (passed, exit_code, stdout, stderr) = match outcome {
+                ShellResult::Success { stdout, stderr } => (true, 0, stdout, stderr),
+                ShellResult::ExitFailed {
+                    code,
+                    stdout,
+                    stderr,
+                } => (false, code, stdout, stderr),
+                ShellResult::ShellMissing { tried } => (
+                    false,
+                    -1,
+                    String::new(),
+                    format!("Program not found on PATH: tried {tried:?}"),
+                ),
+                ShellResult::Timeout => (
+                    false,
+                    -1,
+                    String::new(),
+                    format!(
+                        "Quality gate timed out after {}s (wall-clock supervisor killed child)",
+                        self.config.timeout_seconds
+                    ),
+                ),
+            };
+
             if !passed && check.required {
                 warn!(name = %check.name, exit_code, "Required quality gate FAILED");
             } else if passed {
@@ -645,43 +716,69 @@ impl QualityGateRunner {
     }
 }
 
-/// Run a quality-gate command synchronously with an optional wall-clock
-/// timeout.
+/// Run a quality-gate command synchronously and return a typed
+/// [`ShellResult`].
 ///
 /// # Security
 ///
-/// The `command` string is parsed with POSIX `shlex` into argv tokens and
-/// executed via `Command::new(argv[0]).args(&argv[1..])` — **no shell is
-/// invoked**. Previously this function built `format!("timeout {N} {cmd}")`
-/// and fed it to `bash -c`, allowing any quality-gate author (or anyone
-/// who could influence the config-loaded `QualityCheck.command` field) to
-/// inject arbitrary shell metacharacters (`$(...)`, `` ` ` ``, `;`, `&&`,
-/// `|`, redirections, env-var expansion, etc.). See crosslink #700.
+/// The `command` string is parsed with POSIX `shlex` into argv tokens
+/// and executed via `tokio::process::Command::new(argv[0])
+/// .args(&argv[1..])` — **no shell is invoked**. Pre-#700 this
+/// function fed `format!("timeout {N} {cmd}")` to `bash -c`, allowing
+/// any quality-gate author (or anyone who could influence the
+/// config-loaded `QualityCheck.command` field) to inject arbitrary
+/// shell metacharacters (`$(...)`, `` ` ` ``, `;`, `&&`, `|`,
+/// redirections, env-var expansion, etc.). See crosslink #700.
 ///
-/// Pipelines, redirections, and `&&`/`||` are therefore **no longer
-/// supported** in this entry point; quality-gate authors that need them
-/// must compose subprocess invocations at the Rust level or split the
-/// pipeline into separate checks.
+/// Pipelines, redirections, and `&&`/`||` are therefore **not
+/// supported** in this entry point; quality-gate authors that need
+/// them must compose subprocess invocations at the Rust level or split
+/// the pipeline into separate checks.
 ///
-/// # Timeout strategy
+/// # Timeout strategy (crosslink #395)
 ///
-/// On Unix, when `timeout_seconds > 0`, the `timeout(1)` coreutils binary
-/// is prepended as a real argv prefix: `["timeout", "<secs>", program,
-/// arg1, ...]`. This is exec'd directly — no shell intermediary — so the
-/// command tokens remain inert literals.
+/// Pre-#395 this function prepended the GNU `timeout(1)` coreutils
+/// binary as an argv prefix on Unix. That binary **does not exist on
+/// macOS by default** (it ships only with GNU coreutils, typically as
+/// `gtimeout` on macOS via Homebrew), and is absent on minimal Alpine
+/// containers without the `coreutils` package. Every quality-gate run
+/// on such systems silently failed with `command not found` and the
+/// caller could not distinguish that from a real exit-1.
 ///
-/// On Windows, `timeout.exe` semantics differ (it sleeps rather than
-/// supervising a child), so we exec the tokenised command directly with
-/// no timeout wrapper. A non-positive `timeout_seconds` skips the wrapper
-/// on all platforms.
+/// We now supervise the child entirely in-process via
+/// `tokio::time::timeout` on `tokio::process::Command::wait_with_output`.
+/// That works identically on macOS, Linux, Alpine, and Windows, with no
+/// dependency on any external coreutils binary. When the wall-clock
+/// expires the child is killed via `Child::kill()` and reaped before we
+/// return [`ShellResult::Timeout`].
+///
+/// `timeout_seconds == 0` disables the wall-clock supervisor entirely.
+///
+/// # Sync-wrapper strategy
+///
+/// The function exposes a synchronous signature because its sole
+/// caller — [`QualityGateRunner::run`] — is invoked from sync code
+/// paths in `pipeline.rs` and `cli/chat_repl.rs`. We use
+/// `tokio::runtime::Handle::try_current()` to detect whether we are
+/// already inside a Tokio runtime:
+///
+/// * Inside a multi-thread runtime: `block_in_place` + `Handle::block_on`
+///   is safe (it parks the current worker thread without blocking the
+///   reactor).
+/// * Inside a current-thread runtime: `block_on` from inside would
+///   deadlock the reactor; we therefore spawn the future onto a
+///   dedicated short-lived current-thread runtime in a helper thread
+///   and join it.
+/// * Outside any runtime: build a one-shot current-thread runtime and
+///   `block_on` directly.
 ///
 /// # Audit logging
 ///
-/// Every invocation emits a structured `info!` event containing the full
-/// argv (program + arguments) and the wall-clock timeout before the
-/// process is spawned. Tokenisation failures and spawn errors are logged
-/// at `error!` level.
-fn run_shell_command_sync(command: &str, timeout_seconds: u64) -> (i32, String, String) {
+/// Every invocation emits a structured `info!` event containing the
+/// full argv (program + arguments) and the wall-clock timeout before
+/// the process is spawned. Tokenisation failures, spawn errors, and
+/// timeouts are logged at `warn!` / `error!` level.
+fn run_shell_command_sync(command: &str, timeout_seconds: u64) -> ShellResult {
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
         warn!(
             "Failed to get current directory ({}), falling back to \".\"",
@@ -690,69 +787,215 @@ fn run_shell_command_sync(command: &str, timeout_seconds: u64) -> (i32, String, 
         std::path::PathBuf::from(".")
     });
 
-    // POSIX-tokenise the user-supplied command into an argv. No shell is
-    // ever invoked, so $(...), `...`, ;, &&, |, > etc. survive as inert
-    // string arguments to the program.
-    let mut argv: Vec<String> = match shlex::split(command) {
+    // POSIX-tokenise the user-supplied command into an argv. No shell
+    // is ever invoked, so $(...), `...`, ;, &&, |, > etc. survive as
+    // inert string arguments to the program.
+    let argv: Vec<String> = match shlex::split(command) {
         Some(t) if !t.is_empty() => t,
         Some(_) => {
             error!(command = %command, "Quality gate: empty command after tokenisation");
-            return (-1, String::new(), "Empty command".to_string());
+            return ShellResult::ExitFailed {
+                code: -1,
+                stdout: String::new(),
+                stderr: "Empty command".to_string(),
+            };
         }
         None => {
             error!(
                 command = %command,
                 "Quality gate: could not tokenise command (unbalanced quotes?)"
             );
-            return (
-                -1,
-                String::new(),
-                "Could not parse command (unbalanced quotes or unsupported escape)".to_string(),
-            );
+            return ShellResult::ExitFailed {
+                code: -1,
+                stdout: String::new(),
+                stderr: "Could not parse command (unbalanced quotes or unsupported escape)"
+                    .to_string(),
+            };
         }
     };
 
-    // Prepend `timeout <secs>` as a real argv prefix on Unix so the
-    // coreutils `timeout(1)` binary supervises the child. On Windows the
-    // built-in `timeout.exe` sleeps rather than supervising, so we skip
-    // the wrapper and exec directly.
-    #[cfg(not(windows))]
-    if timeout_seconds > 0 {
-        let mut wrapped = Vec::with_capacity(argv.len() + 2);
-        wrapped.push("timeout".to_string());
-        wrapped.push(timeout_seconds.to_string());
-        wrapped.append(&mut argv);
-        argv = wrapped;
-    }
+    let Some((program, cmd_args)) = argv.split_first() else {
+        // Unreachable: shlex returned a non-empty Vec above. Defend
+        // against future refactors that drop the empty-check.
+        return ShellResult::ExitFailed {
+            code: -1,
+            stdout: String::new(),
+            stderr: "Empty command".to_string(),
+        };
+    };
 
-    let (program, cmd_args) = argv.split_first().expect("non-empty argv");
-
-    // Structured audit log of the exact argv about to be spawned.
     info!(
         program = %program,
         args = ?cmd_args,
         timeout_seconds = timeout_seconds,
         cwd = %cwd.display(),
-        "Quality gate: spawning command (argv-level, no shell)"
+        "Quality gate: spawning command (argv-level, no shell, in-process timeout)"
     );
 
-    let output = Command::new(program)
-        .args(cmd_args)
-        .current_dir(&cwd)
-        .output();
+    let program_owned: String = program.clone();
+    let args_owned: Vec<String> = cmd_args.to_vec();
+    let cwd_owned = cwd;
 
-    match output {
-        Ok(output) => {
-            let exit_code = output.status.code().unwrap_or(-1);
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            (exit_code, stdout, stderr)
+    // Build the async future once; the sync wrapper below decides how
+    // to drive it depending on the ambient runtime context.
+    let fut = run_shell_command_async(program_owned, args_owned, cwd_owned, timeout_seconds);
+
+    drive_future_sync(fut)
+}
+
+/// Async core of [`run_shell_command_sync`] — extracted so the sync
+/// wrapper stays under the function-length lint while keeping the
+/// argv-direct exec, `kill_on_drop(true)`-backed timeout, and structured
+/// logging from crosslink #395 in one cohesive place.
+async fn run_shell_command_async(
+    program_owned: String,
+    args_owned: Vec<String>,
+    cwd_owned: std::path::PathBuf,
+    timeout_seconds: u64,
+) -> ShellResult {
+    let mut cmd = tokio::process::Command::new(&program_owned);
+    cmd.args(&args_owned)
+        .current_dir(&cwd_owned)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        // crosslink #395: when the wall-clock timer fires and the
+        // outer `tokio::time::timeout` returns Err, dropping the
+        // wait_with_output future drops the underlying Child. With
+        // `kill_on_drop(true)`, that drop reliably SIGKILLs the
+        // child instead of leaking it for `timeout_seconds == 30`
+        // worth of sleep. Critical for the `sleep 30` regression
+        // test and for keeping CI runners from accumulating
+        // orphaned processes.
+        .kill_on_drop(true);
+
+    let child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            warn!(
+                program = %program_owned,
+                error = %e,
+                "Quality gate: program not found on PATH"
+            );
+            return ShellResult::ShellMissing {
+                tried: vec![program_owned],
+            };
         }
         Err(e) => {
-            error!(program = %program, error = %e, "Quality gate: spawn failed");
-            (-1, String::new(), format!("Failed to execute: {e}"))
+            error!(program = %program_owned, error = %e, "Quality gate: spawn failed");
+            return ShellResult::ExitFailed {
+                code: -1,
+                stdout: String::new(),
+                stderr: format!("Failed to execute: {e}"),
+            };
         }
+    };
+
+    // `wait_with_output()` consumes the child; if we time out we
+    // have to kill+reap separately using the pre-take Child handle.
+    // Take stdout/stderr handles first so we can drain them in
+    // parallel with the wait inside `wait_with_output`.
+    let wait_fut = child.wait_with_output();
+
+    let result = if timeout_seconds == 0 {
+        match wait_fut.await {
+            Ok(output) => Some(output),
+            Err(e) => {
+                error!(error = %e, "Quality gate: wait_with_output failed");
+                None
+            }
+        }
+    } else {
+        match tokio::time::timeout(Duration::from_secs(timeout_seconds), wait_fut).await {
+            Ok(Ok(output)) => Some(output),
+            Ok(Err(e)) => {
+                error!(error = %e, "Quality gate: wait_with_output failed");
+                None
+            }
+            Err(_) => {
+                // Wall-clock timer fired. Dropping `wait_fut`
+                // drops the Child, which (because we set
+                // `kill_on_drop(true)` above) SIGKILLs the
+                // process before this function returns. The
+                // tokio reaper then collects the zombie
+                // asynchronously.
+                warn!(
+                    program = %program_owned,
+                    timeout_seconds = timeout_seconds,
+                    "Quality gate: command timed out, killing child"
+                );
+                return ShellResult::Timeout;
+            }
+        }
+    };
+
+    match result {
+        Some(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            if output.status.success() {
+                ShellResult::Success { stdout, stderr }
+            } else {
+                ShellResult::ExitFailed {
+                    code: output.status.code().unwrap_or(-1),
+                    stdout,
+                    stderr,
+                }
+            }
+        }
+        None => ShellResult::ExitFailed {
+            code: -1,
+            stdout: String::new(),
+            stderr: "wait_with_output failed".to_string(),
+        },
     }
+}
+
+/// Drive an async future to completion from a synchronous caller,
+/// regardless of whether a Tokio runtime is already active on the
+/// current thread.
+///
+/// The discipline is the same as in `subagent::run_subagent_sync` and
+/// is required because the guardrails caller is sync but the
+/// underlying I/O (`tokio::process::Command::spawn`,
+/// `tokio::time::timeout`) is async.
+///
+/// * Multi-thread runtime in scope: `block_in_place` + `Handle::block_on`.
+/// * Current-thread runtime in scope: spawning a thread + its own
+///   one-shot runtime, then joining — calling `Handle::block_on` on a
+///   current-thread runtime from within itself would deadlock.
+/// * No runtime in scope: build a one-shot current-thread runtime and
+///   `block_on` directly.
+fn drive_future_sync<F, T>(fut: F) -> T
+where
+    F: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        return match handle.runtime_flavor() {
+            tokio::runtime::RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(|| handle.block_on(fut))
+            }
+            // Current-thread or any other flavour: cannot block_on
+            // from inside without deadlocking the single worker. Offload
+            // to a dedicated short-lived runtime in a helper thread.
+            _ => std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("guardrails: failed to build helper tokio runtime");
+                rt.block_on(fut)
+            })
+            .join()
+            .expect("guardrails: helper thread panicked while driving quality-gate command"),
+        };
+    }
+    // No ambient runtime — build one just for this call.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("guardrails: failed to build tokio runtime");
+    rt.block_on(fut)
 }
 
 // ==========================================================================
@@ -1706,5 +1949,130 @@ mod tests {
         configure(&GuardrailsConfig::default());
         assert_eq!(current_state_kind(), "disabled");
         assert!(check_file_access("any/file.rs").is_ok());
+    }
+
+    // ====== crosslink #395: cross-platform shell ======
+    //
+    // These tests pin the four ShellResult variants and prove the
+    // pre-#395 Unix-only `timeout coreutils + bash hardcode` is gone:
+    // no shell is invoked (verified by special chars surviving as
+    // inert arguments to a binary that doesn't expand them), and the
+    // wall-clock cap is enforced by tokio::time::timeout via
+    // kill_on_drop, not by the absent `timeout(1)` binary on macOS.
+
+    /// Successful command surfaces Success { stdout, stderr } with
+    /// stdout populated. Uses `printf` (POSIX-portable, present on
+    /// every supported target — no Windows path needed because the
+    /// runner shells out to argv directly, not /bin/sh).
+    #[cfg(unix)]
+    #[test]
+    fn cl395_run_shell_success_captures_stdout() {
+        let outcome = run_shell_command_sync("printf %s hello", 5);
+        match outcome {
+            ShellResult::Success { stdout, .. } => assert_eq!(stdout, "hello"),
+            other => panic!("expected Success, got {other:?}"),
+        }
+    }
+
+    /// Non-zero exit surfaces `ExitFailed { code, stdout, stderr }` with
+    /// the real exit code (NOT the pre-#395 sentinel `-1`) so callers can
+    /// distinguish 'tool ran and failed' from 'tool not found'.
+    #[cfg(unix)]
+    #[test]
+    fn cl395_run_shell_nonzero_exit_returns_exit_failed_with_code() {
+        let outcome = run_shell_command_sync("sh -c \"exit 7\"", 5);
+        match outcome {
+            ShellResult::ExitFailed { code, .. } => assert_eq!(code, 7),
+            other => panic!("expected ExitFailed{{code:7,..}}, got {other:?}"),
+        }
+    }
+
+    /// A command that exceeds the wall-clock timeout returns
+    /// `ShellResult::Timeout` (not `ExitFailed`). The pre-#395 `timeout`
+    /// coreutil prefix silently failed with 'command not found' on
+    /// macOS; the in-process `tokio::time::timeout` + `kill_on_drop` now
+    /// enforces the cap on every platform.
+    #[cfg(unix)]
+    #[test]
+    fn cl395_run_shell_long_running_returns_timeout() {
+        let start = std::time::Instant::now();
+        let outcome = run_shell_command_sync("sleep 30", 1);
+        let elapsed = start.elapsed();
+        assert!(
+            matches!(outcome, ShellResult::Timeout),
+            "expected Timeout, got {outcome:?}"
+        );
+        assert!(
+            elapsed.as_secs() < 5,
+            "Timeout must fire well under the 30s sleep — elapsed={elapsed:?} \
+             (kill_on_drop reaping the child is the load-bearing invariant)"
+        );
+    }
+
+    /// A program name that does not exist on PATH surfaces `ShellMissing`
+    /// rather than the pre-#395 `ExitFailed(-1, "", "...No such file or
+    /// directory")`. The caller is now structurally able to tell 'tool
+    /// not installed' apart from 'tool ran and failed'.
+    #[cfg(unix)]
+    #[test]
+    fn cl395_run_shell_missing_program_returns_shell_missing() {
+        let outcome = run_shell_command_sync(
+            "openclaudia-cl395-definitely-not-a-real-binary-name --version",
+            5,
+        );
+        match outcome {
+            ShellResult::ShellMissing { tried } => {
+                assert!(
+                    tried
+                        .iter()
+                        .any(|t| t.contains("openclaudia-cl395-definitely-not-a-real-binary-name")),
+                    "tried list must mention the program that was missing, got {tried:?}"
+                );
+            }
+            other => panic!("expected ShellMissing, got {other:?}"),
+        }
+    }
+
+    /// stderr is captured on a Success path too — POSIX tools commonly
+    /// emit progress / warning text on stderr even when they exit 0
+    /// (`cargo`, `make`, `git`), and a caller that throws away the
+    /// stderr payload loses forensic context.
+    #[cfg(unix)]
+    #[test]
+    fn cl395_run_shell_success_captures_stderr_alongside_stdout() {
+        // sh -c 'echo out; echo err >&2' — both streams populated, exit 0.
+        let outcome = run_shell_command_sync(
+            "sh -c \"echo out; echo err 1>&2\"",
+            5,
+        );
+        match outcome {
+            ShellResult::Success { stdout, stderr } => {
+                assert!(stdout.contains("out"), "stdout missing payload: {stdout:?}");
+                assert!(stderr.contains("err"), "stderr missing payload: {stderr:?}");
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+    }
+
+    /// Shell-metacharacter survival check: the pre-#395 code used
+    /// `format!("timeout {n} {cmd}")` and shelled out via `bash -c`,
+    /// so `$(...)`, backticks, and `;` were *interpreted*. The new
+    /// argv-direct exec must treat them as inert string arguments.
+    /// We use `printf %s` so the literal `$(date)` is echoed verbatim
+    /// rather than substituted.
+    #[cfg(unix)]
+    #[test]
+    fn cl395_run_shell_does_not_invoke_a_shell_for_argv_expansion() {
+        let outcome = run_shell_command_sync("printf %s $(date)", 5);
+        match outcome {
+            ShellResult::Success { stdout, .. } => {
+                assert_eq!(
+                    stdout, "$(date)",
+                    "shell substitution leaked: argv-direct exec must \
+                     preserve `$(date)` as a literal token"
+                );
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
     }
 }
