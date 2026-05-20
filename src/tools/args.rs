@@ -19,7 +19,6 @@
 //! | [`ToolArgs::arg_str_opt`]            | optional string, no error                 |
 //! | [`ToolArgs::arg_str_or`]             | string with default                       |
 //! | [`ToolArgs::arg_bool_or`]            | bool with default                         |
-//! | [`ToolArgs::arg_i64_or`]             | i64 with default (signed integers)        |
 //! | [`ToolArgs::arg_u64_or`]             | u64 with default (unsigned integers)      |
 //! | [`ToolArgs::arg_array`]              | optional JSON array borrow                |
 //!
@@ -126,9 +125,6 @@ pub trait ToolArgs {
     /// (`run_in_background`), worktree (`apply_changes`).
     fn arg_bool_or(&self, key: &str, default: bool) -> bool;
 
-    /// Signed-integer argument with a fallback default.
-    fn arg_i64_or(&self, key: &str, default: i64) -> i64;
-
     /// Unsigned-integer argument with a fallback default. Used by web
     /// (`limit`), LSP (`line`, `character`), notebook (`cell_number`).
     fn arg_u64_or(&self, key: &str, default: u64) -> u64;
@@ -155,10 +151,6 @@ impl<S: BuildHasher> ToolArgs for HashMap<String, Value, S> {
 
     fn arg_bool_or(&self, key: &str, default: bool) -> bool {
         self.get(key).and_then(Value::as_bool).unwrap_or(default)
-    }
-
-    fn arg_i64_or(&self, key: &str, default: i64) -> i64 {
-        self.get(key).and_then(Value::as_i64).unwrap_or(default)
     }
 
     fn arg_u64_or(&self, key: &str, default: u64) -> u64 {
@@ -291,23 +283,6 @@ mod tests {
         // A string "true" is NOT coerced — match prior `as_bool` behaviour.
         let m = make();
         assert!(!m.arg_bool_or("name", false));
-    }
-
-    // ── arg_i64_or ──────────────────────────────────────────────────────
-
-    #[test]
-    fn arg_i64_or_returns_value_when_present_and_integer() {
-        let m = make();
-        assert_eq!(m.arg_i64_or("count", 0), 7);
-        assert_eq!(m.arg_i64_or("negative", 0), -3);
-    }
-
-    #[test]
-    fn arg_i64_or_returns_default_when_missing_or_wrong_type() {
-        let m = make();
-        assert_eq!(m.arg_i64_or("absent", 42), 42);
-        // Numeric strings are NOT coerced.
-        assert_eq!(m.arg_i64_or("number_as_string", 99), 99);
     }
 
     // ── arg_u64_or ──────────────────────────────────────────────────────

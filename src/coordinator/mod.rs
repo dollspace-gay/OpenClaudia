@@ -2,7 +2,7 @@
 //!
 //! Phased rollout (see `docs/designs/507-coordinator.md`):
 //!
-//! - **Phase 1 (this commit)**: infrastructure only — types, queue, teammate
+//! - **Phase 1 (landed)**: infrastructure only — types, queue, teammate
 //!   registry, and tests. `Coordinator::dispatch` returns an error because no
 //!   teammate-spawn path is wired yet; nothing in the harness calls it.
 //! - **Phase 2**: spawn one teammate per task sequentially via the existing

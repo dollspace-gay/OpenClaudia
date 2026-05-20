@@ -1,3 +1,4 @@
+use crate::tools::args::ToolArgs as _;
 use crate::tools::safe_truncate;
 use crate::web::{self, WebConfig};
 use serde_json::Value;
@@ -55,8 +56,10 @@ where
 
 /// Fetch a URL using Jina Reader
 pub fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool) {
-    let Some(url) = args.get("url").and_then(|v| v.as_str()) else {
-        return ("Missing 'url' argument".to_string(), true);
+    // crosslink #675: typed accessor.
+    let url = match args.arg_str("url") {
+        Ok(u) => u,
+        Err(e) => return e.into_tool_error(),
     };
 
     // Validate URL format
@@ -126,8 +129,8 @@ fn domain_matches(host: &str, needle: &str) -> bool {
 /// as owned `Vec<String>`s. Non-string entries are silently dropped,
 /// which matches Claude Code's Zod schema behavior (strict parse).
 fn domain_list(args: &HashMap<String, Value>, key: &str) -> Vec<String> {
-    args.get(key)
-        .and_then(|v| v.as_array())
+    // crosslink #675: typed accessor.
+    args.arg_array(key)
         .map(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str().map(str::to_string))
@@ -144,17 +147,16 @@ fn domain_list(args: &HashMap<String, Value>, key: &str) -> Vec<String> {
 /// that list are kept. Blocked list takes precedence when both lists
 /// name the same domain.
 pub fn execute_web_search(args: &HashMap<String, Value>) -> (String, bool) {
-    let Some(query) = args.get("query").and_then(|v| v.as_str()) else {
-        return ("Missing 'query' argument".to_string(), true);
+    // crosslink #675: typed accessors.
+    let query = match args.arg_str("query") {
+        Ok(q) => q,
+        Err(e) => return e.into_tool_error(),
     };
     if query.trim().len() < 2 {
         return ("Query must be at least 2 characters.".to_string(), true);
     }
 
-    let limit = args
-        .get("limit")
-        .and_then(serde_json::Value::as_u64)
-        .map_or(5, |v| usize::try_from(v).unwrap_or(usize::MAX));
+    let limit = usize::try_from(args.arg_u64_or("limit", 5)).unwrap_or(usize::MAX);
 
     let allowed = domain_list(args, "allowed_domains");
     let blocked = domain_list(args, "blocked_domains");
@@ -194,8 +196,10 @@ pub fn execute_web_search(args: &HashMap<String, Value>) -> (String, bool) {
 /// Fetch a URL using headless Chrome browser
 /// Fallback for when Jina Reader fails on complex sites
 pub fn execute_web_browser(args: &HashMap<String, Value>) -> (String, bool) {
-    let Some(url) = args.get("url").and_then(|v| v.as_str()) else {
-        return ("Missing 'url' argument".to_string(), true);
+    // crosslink #675: typed accessor.
+    let url = match args.arg_str("url") {
+        Ok(u) => u,
+        Err(e) => return e.into_tool_error(),
     };
 
     // Validate URL format

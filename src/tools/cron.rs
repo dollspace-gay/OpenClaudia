@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use crate::file_error::{self, FileError};
+use crate::tools::args::ToolArgs as _;
 
 const SCHEDULES_FILE: &str = ".openclaudia/schedules.json";
 const LOCK_SUFFIX: &str = ".lock";
@@ -265,24 +266,20 @@ fn validate_cron(expr: &str) -> Result<(), String> {
 }
 
 pub fn execute_cron_create(args: &HashMap<String, Value>) -> (String, bool) {
-    let name = match args.get("name").and_then(|v| v.as_str()) {
-        Some(n) => n.to_string(),
-        None => return ("Error: name is required".to_string(), true),
+    // crosslink #675: typed accessors replace per-site
+    // `args.get(k).and_then(|v| v.as_str())` extraction. Error wording
+    // normalises from "Error: name is required" to "Missing 'name' argument".
+    let name = match args.arg_string("name") {
+        Ok(n) => n,
+        Err(e) => return e.into_tool_error(),
     };
-
-    let cron_expression = match args.get("schedule").and_then(|v| v.as_str()) {
-        Some(c) => c.to_string(),
-        None => {
-            return (
-                "Error: schedule (cron expression) is required".to_string(),
-                true,
-            )
-        }
+    let cron_expression = match args.arg_string("schedule") {
+        Ok(c) => c,
+        Err(e) => return e.into_tool_error(),
     };
-
-    let prompt = match args.get("prompt").and_then(|v| v.as_str()) {
-        Some(p) => p.to_string(),
-        None => return ("Error: prompt is required".to_string(), true),
+    let prompt = match args.arg_string("prompt") {
+        Ok(p) => p,
+        Err(e) => return e.into_tool_error(),
     };
 
     if let Err(e) = validate_cron(&cron_expression) {
@@ -338,13 +335,15 @@ pub fn execute_cron_create(args: &HashMap<String, Value>) -> (String, bool) {
 }
 
 pub fn execute_cron_delete(args: &HashMap<String, Value>) -> (String, bool) {
+    // crosslink #675: prefer 'id', fall back to 'name'. Custom message kept
+    // because neither helper covers the two-key composite case; the typed
+    // accessors are still used to share extraction logic.
     let id_or_name = match args
-        .get("id")
-        .and_then(|v| v.as_str())
-        .or_else(|| args.get("name").and_then(|v| v.as_str()))
+        .arg_str_opt("id")
+        .or_else(|| args.arg_str_opt("name"))
     {
         Some(s) => s.to_string(),
-        None => return ("Error: id or name is required".to_string(), true),
+        None => return ("Missing 'id' or 'name' argument".to_string(), true),
     };
 
     let path = schedules_path();
@@ -457,7 +456,7 @@ mod tests {
         args.insert("prompt".to_string(), Value::String("test".to_string()));
         let (msg, is_err) = execute_cron_create(&args);
         assert!(is_err);
-        assert!(msg.contains("name is required"));
+        assert!(msg.contains("Missing 'name'"));
     }
 
     #[test]
@@ -506,7 +505,7 @@ mod tests {
         let (msg, is_err) = execute_cron_create(&args);
         assert!(is_err);
         assert!(
-            msg.contains("name is required"),
+            msg.contains("Missing 'name'"),
             "error must mention 'name'; got: {msg}"
         );
     }
@@ -520,7 +519,7 @@ mod tests {
         let (msg, is_err) = execute_cron_create(&args);
         assert!(is_err);
         assert!(
-            msg.contains("schedule") && msg.contains("required"),
+            msg.contains("Missing 'schedule'"),
             "error must mention 'schedule'; got: {msg}"
         );
     }
@@ -537,7 +536,7 @@ mod tests {
         let (msg, is_err) = execute_cron_create(&args);
         assert!(is_err);
         assert!(
-            msg.contains("prompt is required"),
+            msg.contains("Missing 'prompt'"),
             "error must mention 'prompt'; got: {msg}"
         );
     }

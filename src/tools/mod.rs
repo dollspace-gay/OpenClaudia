@@ -14,6 +14,7 @@
 //!
 
 mod accumulator;
+pub(crate) mod args;
 mod ask_user;
 mod bash;
 mod chainlink;

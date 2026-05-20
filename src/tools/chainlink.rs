@@ -1,3 +1,4 @@
+use crate::tools::args::ToolArgs as _;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::process::Command;
@@ -52,8 +53,10 @@ fn token_has_metachar(tok: &str) -> bool {
 /// [`ALLOWED_SUBCOMMANDS`], and exec the binary directly. **No shell is
 /// invoked**, closing the injection vector described in crosslink #265.
 pub fn execute_chainlink(args: &HashMap<String, Value>) -> (String, bool) {
-    let Some(cmd_args) = args.get("args").and_then(|v| v.as_str()) else {
-        return ("Missing 'args' argument".to_string(), true);
+    // crosslink #675: typed accessor.
+    let cmd_args = match args.arg_str("args") {
+        Ok(c) => c,
+        Err(e) => return e.into_tool_error(),
     };
 
     // Parse the model-supplied string into argv tokens using POSIX word-splitting.

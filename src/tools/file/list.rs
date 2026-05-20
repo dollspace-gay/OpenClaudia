@@ -1,4 +1,5 @@
 use super::resolve_path;
+use crate::tools::args::ToolArgs as _;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
@@ -11,7 +12,8 @@ use std::fs;
 /// caller saw a clean listing with no signal that entries were hidden, and
 /// the model then acted on incomplete information.
 pub fn execute_list_files(args: &HashMap<String, Value>) -> (String, bool) {
-    let raw_path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+    // crosslink #675: typed accessor (default-with-fallback variant).
+    let raw_path = args.arg_str_or("path", ".");
 
     let path = match resolve_path(raw_path) {
         Ok(p) => p,

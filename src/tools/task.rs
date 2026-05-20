@@ -1,4 +1,5 @@
 use crate::session::TaskManager;
+use crate::tools::args::ToolArgs as _;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -8,19 +9,19 @@ pub fn execute_task_create(
     args: &HashMap<String, Value>,
     task_mgr: &mut TaskManager,
 ) -> (String, bool) {
-    let subject = match args.get("subject").and_then(|v| v.as_str()) {
-        Some(s) => s.to_string(),
-        None => return ("Missing 'subject' argument".to_string(), true),
+    // crosslink #675: typed accessors. Wording was already canonical
+    // ("Missing 'X' argument") so no test churn.
+    let subject = match args.arg_string("subject") {
+        Ok(s) => s,
+        Err(e) => return e.into_tool_error(),
     };
-
-    let description = match args.get("description").and_then(|v| v.as_str()) {
-        Some(d) => d.to_string(),
-        None => return ("Missing 'description' argument".to_string(), true),
+    let description = match args.arg_string("description") {
+        Ok(d) => d,
+        Err(e) => return e.into_tool_error(),
     };
 
     let active_form = args
-        .get("active_form")
-        .and_then(|v| v.as_str())
+        .arg_str_opt("active_form")
         .map(std::string::ToString::to_string);
 
     let task = task_mgr.create_task(subject, description, active_form);

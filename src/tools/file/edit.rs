@@ -1,4 +1,5 @@
 use super::{canonicalize_or_walk_up, resolve_open_path, resolve_path, READ_TRACKER};
+use crate::tools::args::ToolArgs as _;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -124,8 +125,10 @@ fn format_edit_success(
 /// or absent, multi-occurrence inputs are rejected so callers must provide
 /// a uniquely-matching `old_string`.
 pub fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
-    let Some(user_path) = args.get("path").and_then(|v| v.as_str()) else {
-        return ("Missing 'path' argument".to_string(), true);
+    // crosslink #675: typed accessor.
+    let user_path = match args.arg_str("path") {
+        Ok(p) => p,
+        Err(e) => return e.into_tool_error(),
     };
 
     // Path passed to `open(2)`: canonical parent + original leaf so that
@@ -158,12 +161,14 @@ pub fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
         return (msg, true);
     }
 
-    let Some(old_string) = args.get("old_string").and_then(|v| v.as_str()) else {
-        return ("Missing 'old_string' argument".to_string(), true);
+    // crosslink #675: typed accessors.
+    let old_string = match args.arg_str("old_string") {
+        Ok(s) => s,
+        Err(e) => return e.into_tool_error(),
     };
-
-    let Some(new_string) = args.get("new_string").and_then(|v| v.as_str()) else {
-        return ("Missing 'new_string' argument".to_string(), true);
+    let new_string = match args.arg_str("new_string") {
+        Ok(s) => s,
+        Err(e) => return e.into_tool_error(),
     };
 
     // crosslink #970: a no-op edit (`old_string == new_string`) would otherwise
@@ -181,10 +186,8 @@ pub fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
     // crosslink #687: honour the `replace_all` flag. When `true`, all
     // occurrences are replaced; when `false` (or absent) the existing
     // single-occurrence-with-multi-rejection behaviour is preserved.
-    let replace_all = args
-        .get("replace_all")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
+    // crosslink #675: typed default-with-fallback accessor.
+    let replace_all = args.arg_bool_or("replace_all", false);
 
     // Open ONCE with O_NOFOLLOW against the LEAF-PRESERVING path; all
     // I/O goes through this FD. See crosslink #417 (dup #428).
