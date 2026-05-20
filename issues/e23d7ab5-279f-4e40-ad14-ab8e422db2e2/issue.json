@@ -3,11 +3,12 @@
   "display_id": 873,
   "title": "TUI overlay handle_key uses unwrap on Option that was just checked",
   "description": "## Severity\nTrivial\n## Dimension\nkiss\n## Location\nsrc/tui/app.rs:659-664\n## Violation\nOverlay dispatch uses is_some() then as_mut().unwrap() leaving an unwrap with no protection against future refactors:\n\n```rust\nif self.overlay.is_some() {\n    let action = match self.overlay.as_mut().unwrap() {\n        ActiveOverlay::Help(o) => o.handle_key(key),\n        ActiveOverlay::LogSelector(o) => o.handle_key(key),\n    };\n```\n\nIf a refactor adds a self.overlay = None step between, the unwrap panics.\n\n## Mandated refactor\nUse if-let to bind &mut once:\n\n```rust\nif let Some(overlay) = self.overlay.as_mut() {\n    let action = match overlay { ... };\n    ...\n}\n```\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:09:24.295052091Z",
-  "updated_at": "2026-05-18T22:09:51.884585484Z",
+  "updated_at": "2026-05-20T12:31:34.485263788Z",
+  "closed_at": "2026-05-20T12:31:34.485263788Z",
   "labels": [
     "qa-review"
   ]
