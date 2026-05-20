@@ -369,6 +369,87 @@ pub struct LspSymbol {
     pub children: Vec<Self>,
 }
 
+/// Safe-env allowlist applied to every spawned language server.
+///
+/// crosslink #869: previously the LSP child process inherited the proxy's
+/// entire environment, including credential variables (`ANTHROPIC_API_KEY`,
+/// `OPENAI_API_KEY`, `AWS_*`, `GITHUB_TOKEN`, …). Language servers commonly
+/// emit telemetry or write debug logs to disk and have no business seeing
+/// API keys, so we [`Command::env_clear`] the inherited env and re-inject
+/// only this small, hand-curated set of variables required for the server
+/// to function at all (locate its binaries, find its config files, render
+/// diagnostics in the right locale).
+///
+/// Exact, case-insensitive matches:
+/// - `PATH` — server needs to locate sub-tools (e.g. rust-analyzer shells
+///   out to `cargo`, typescript-language-server to `node`).
+/// - `HOME` — config discovery (`~/.config/...`, `~/.cargo/...`).
+/// - `USER`, `LOGNAME` — diagnostic identifiers in some servers' logs.
+/// - `LANG`, `LC_ALL` — UTF-8 locale, otherwise the server may mangle
+///   non-ASCII identifiers in completions/hover output.
+/// - `TMPDIR` — workspace-cache directories some servers create.
+/// - `SHELL` — read by a few servers (gopls) for environment introspection.
+/// - `TZ` — timestamp rendering in diagnostics.
+///
+/// Prefix matches (case-insensitive):
+/// - `LC_*` — locale family (`LC_CTYPE`, `LC_NUMERIC`, …).
+/// - `XDG_*` — freedesktop base-dir spec (`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, …).
+///
+/// Anything not on this list is dropped. In particular: every `*_TOKEN`,
+/// `*_API_KEY`, `*_SECRET`, `AWS_*`, `OPENAI_*`, `ANTHROPIC_*`, `GH_*`,
+/// `GITHUB_*` is dropped by construction because it is simply absent from
+/// both the exact and prefix tables.
+const LSP_SAFE_ENV_EXACT: &[&str] = &[
+    "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "SHELL", "TZ",
+];
+
+const LSP_SAFE_ENV_PREFIXES: &[&str] = &["LC_", "XDG_"];
+
+/// Apply env scrubbing to a `Command` before spawn (issue #869).
+///
+/// 1. Clear the entire inherited environment.
+/// 2. Re-inject only variables whose names are on
+///    [`LSP_SAFE_ENV_EXACT`] or start with a prefix in
+///    [`LSP_SAFE_ENV_PREFIXES`].
+fn apply_lsp_env_scrub(cmd: &mut Command) {
+    cmd.env_clear();
+    for (key, value) in std::env::vars() {
+        if is_lsp_env_allowed(&key) {
+            cmd.env(key, value);
+        }
+    }
+}
+
+/// Spawn a language server with stdin/stdout/stderr piped and the
+/// scrubbed env from [`apply_lsp_env_scrub`].
+///
+/// Extracted from `run_lsp_request` (crosslink #869) so the credential-
+/// stripping path lives in one place and `run_lsp_request` stays under
+/// the project's per-function line budget.
+fn spawn_language_server(server_cmd: &str, server_args: &[&str]) -> Result<Child, String> {
+    let mut cmd = Command::new(server_cmd);
+    cmd.args(server_args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    apply_lsp_env_scrub(&mut cmd);
+    cmd.spawn()
+        .map_err(|e| format!("Failed to start {server_cmd}: {e}"))
+}
+
+fn is_lsp_env_allowed(key: &str) -> bool {
+    if LSP_SAFE_ENV_EXACT
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(key))
+    {
+        return true;
+    }
+    let upper = key.to_ascii_uppercase();
+    LSP_SAFE_ENV_PREFIXES
+        .iter()
+        .any(|prefix| upper.starts_with(prefix))
+}
+
 /// Known language servers by file extension
 fn detect_language_server(file_path: &str) -> Option<(&'static str, Vec<&'static str>)> {
     let ext = file_path.rsplit('.').next().unwrap_or("");
@@ -502,14 +583,9 @@ fn run_lsp_request(
 
     // Spawn the server.  stderr is captured into a ring buffer (last 1 KiB) so
     // that crash diagnostics survive instead of being silently discarded
-    // (original: Stdio::null() — fix #355 point 5).
-    let mut raw_child = Command::new(server_cmd)
-        .args(server_args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Failed to start {server_cmd}: {e}"))?;
+    // (original: Stdio::null() — fix #355 point 5). Env is scrubbed inside
+    // `spawn_language_server` (crosslink #869).
+    let mut raw_child = spawn_language_server(server_cmd, server_args)?;
 
     // Take pipes before handing the child to the guard.
     let mut stdin = raw_child.stdin.take().ok_or("Failed to get stdin")?;
@@ -2091,5 +2167,103 @@ mod tests {
             "typescript-language-server"
         );
         assert!(resolve_language_server("nonsense").is_none());
+    }
+
+    // ── crosslink #869: env-scrub allowlist for LSP child process ────────────
+
+    /// #869 — Safe env variables required for the language server are admitted.
+    #[test]
+    fn fix869_safe_env_keys_are_allowed() {
+        for key in [
+            "PATH",
+            "HOME",
+            "USER",
+            "LOGNAME",
+            "LANG",
+            "LC_ALL",
+            "LC_CTYPE",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "TMPDIR",
+            "SHELL",
+            "TZ",
+        ] {
+            assert!(
+                is_lsp_env_allowed(key),
+                "#869: {key} must be on the LSP env allowlist"
+            );
+        }
+    }
+
+    /// #869 — Sensitive credentials never reach the language server.
+    #[test]
+    fn fix869_credential_env_keys_are_dropped() {
+        for key in [
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "GITHUB_TOKEN",
+            "GH_TOKEN",
+            "GOOGLE_API_KEY",
+            "DEEPSEEK_API_KEY",
+            "QWEN_API_KEY",
+            "ZAI_API_KEY",
+            "DATABASE_URL",
+            "STRIPE_SECRET_KEY",
+            "PRIVATE_KEY",
+            "MY_CUSTOM_TOKEN",
+            // Mixed-case variations must also be rejected — env keys are
+            // case-sensitive on Unix but the allowlist is case-insensitive.
+            "Anthropic_Api_Key",
+        ] {
+            assert!(
+                !is_lsp_env_allowed(key),
+                "#869: {key} must NOT reach the LSP child"
+            );
+        }
+    }
+
+    /// #869 — `apply_lsp_env_scrub` clears the inherited environment and only
+    /// re-injects allowlisted variables. We seed a fake credential into the
+    /// process env, scrub a `Command`, and inspect its env directives.
+    #[test]
+    fn fix869_apply_lsp_env_scrub_clears_credentials() {
+        // SAFETY note for the reader: this test mutates process-global env.
+        // We restore it before returning to avoid polluting sibling tests.
+        const SENTINEL_KEY: &str = "OPENCLAUDIA_TEST_FAKE_API_KEY_869";
+        const SENTINEL_VAL: &str = "should-never-reach-the-child";
+        // SAFETY: setting an env var on a process we own; no readers race.
+        unsafe {
+            std::env::set_var(SENTINEL_KEY, SENTINEL_VAL);
+        }
+
+        let mut cmd = Command::new("true");
+        apply_lsp_env_scrub(&mut cmd);
+
+        // `Command::get_envs` reports the directives that will be applied
+        // on top of the (cleared) child environment.  After `env_clear`,
+        // these are the *only* variables the child will ever see.
+        let mut seen_credential = false;
+        for (k, _v) in cmd.get_envs() {
+            let key = k.to_string_lossy().to_string();
+            if key == SENTINEL_KEY {
+                seen_credential = true;
+            }
+            assert!(
+                is_lsp_env_allowed(&key),
+                "#869: {key} leaked past the allowlist"
+            );
+        }
+        assert!(
+            !seen_credential,
+            "#869: sentinel credential survived env_clear+allowlist"
+        );
+
+        // SAFETY: unsetting the same var we set above.
+        unsafe {
+            std::env::remove_var(SENTINEL_KEY);
+        }
     }
 }

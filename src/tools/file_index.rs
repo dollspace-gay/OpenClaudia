@@ -7,7 +7,18 @@
 //! - Gap penalties
 //! - First-char bonus
 
-use std::path::Path;
+use std::collections::{HashSet, VecDeque};
+use std::path::{Path, PathBuf};
+
+/// Maximum directory depth visited by [`FileIndex::walk_dir`] (crosslink #920).
+///
+/// Previously the walker recursed; a symlink loop (`/a/b -> /a`) or a
+/// monorepo with >1 000 nested dirs would exhaust the default 8 MiB
+/// stack. The walker is now iterative, with each queue entry tagged by
+/// its tree depth, and we refuse to descend past this cap. 64 is well
+/// past any realistic source tree and still leaves headroom on a tiny
+/// stack.
+const MAX_WALK_DEPTH: usize = 64;
 
 const SCORE_MATCH: i32 = 16;
 const BONUS_BOUNDARY: i32 = 8;
@@ -59,33 +70,75 @@ impl FileIndex {
         index
     }
 
+    /// Walk the tree rooted at `dir`, indexing every file relative to `root`.
+    ///
+    /// crosslink #920: the walker used to recurse via `walk_dir(root, &path)`,
+    /// which stack-overflows on a symlink cycle (`/a/b -> /a`) and risks
+    /// blowing the default 8 MiB stack on a legitimately deep monorepo.
+    /// The new implementation is iterative:
+    ///
+    /// 1. A `VecDeque` of `(path, depth)` work items replaces the call stack.
+    /// 2. A `HashSet` of canonical paths breaks symlink cycles by skipping
+    ///    any directory whose realpath has already been visited.
+    /// 3. A hard `MAX_WALK_DEPTH` cap (64) refuses to descend past a
+    ///    pathological depth even if cycle detection fails to fire (e.g.
+    ///    canonicalize is unavailable on a platform / errors out).
     fn walk_dir(&mut self, root: &Path, dir: &Path) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
+        let mut queue: VecDeque<(PathBuf, usize)> = VecDeque::new();
+        let mut visited: HashSet<PathBuf> = HashSet::new();
 
-            // Skip hidden, build artifacts, dependency dirs
-            if name.starts_with('.')
-                || name == "node_modules"
-                || name == "target"
-                || name == "__pycache__"
-                || name == "dist"
-                || name == "build"
-            {
+        // Seed with the starting directory. Canonicalize so the visited
+        // set keys match what we later record for sub-directories.
+        let seed = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        visited.insert(seed);
+        queue.push_back((dir.to_path_buf(), 0));
+
+        while let Some((current, depth)) = queue.pop_front() {
+            // crosslink #920: hard depth cap. We *stop descending* here,
+            // but a deep tree is a soft failure: the existing files at
+            // shallower depths remain indexed, which is what the caller
+            // expects (best-effort index, not transactional).
+            if depth >= MAX_WALK_DEPTH {
                 continue;
             }
 
-            if path.is_dir() {
-                self.walk_dir(root, &path);
-            } else if let Ok(rel) = path.strip_prefix(root) {
-                let rel_str = rel.to_string_lossy().to_string();
-                self.paths.push(IndexedPath {
-                    lower: rel_str.to_lowercase(),
-                    display: rel_str,
-                });
+            let Ok(entries) = std::fs::read_dir(&current) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_string();
+
+                // Skip hidden, build artifacts, dependency dirs
+                if name.starts_with('.')
+                    || name == "node_modules"
+                    || name == "target"
+                    || name == "__pycache__"
+                    || name == "dist"
+                    || name == "build"
+                {
+                    continue;
+                }
+
+                if path.is_dir() {
+                    // crosslink #920: cycle detection. canonicalize resolves
+                    // symlinks so `/a/b -> /a` collapses to the same key as
+                    // `/a` itself. If canonicalize fails (broken symlink,
+                    // permission error) we fall back to the literal path —
+                    // the depth cap still ensures termination.
+                    let canonical =
+                        std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+                    if !visited.insert(canonical) {
+                        continue;
+                    }
+                    queue.push_back((path, depth + 1));
+                } else if let Ok(rel) = path.strip_prefix(root) {
+                    let rel_str = rel.to_string_lossy().to_string();
+                    self.paths.push(IndexedPath {
+                        lower: rel_str.to_lowercase(),
+                        display: rel_str,
+                    });
+                }
             }
         }
     }
@@ -269,5 +322,101 @@ mod tests {
         let index = index_from_paths(&["src/MyComponent.tsx"]);
         let results = index.search("mycomp", 10);
         assert_eq!(results.len(), 1);
+    }
+
+    // ── crosslink #920: iterative walker, depth cap, cycle detection ────────
+
+    /// #920 — A normal directory tree is indexed end-to-end. Sanity check
+    /// that converting the walker to iterative did not regress the basic
+    /// "files in subdirectories show up in the index" behavior.
+    #[test]
+    fn fix920_iterative_walker_indexes_nested_files() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join("a/b/c")).unwrap();
+        fs::write(root.join("top.rs"), b"").unwrap();
+        fs::write(root.join("a/inner.rs"), b"").unwrap();
+        fs::write(root.join("a/b/deep.rs"), b"").unwrap();
+        fs::write(root.join("a/b/c/deepest.rs"), b"").unwrap();
+
+        let index = FileIndex::build(root);
+        assert!(index.len() >= 4, "expected >=4 files, got {}", index.len());
+
+        // Confirm the deepest file is present.
+        let results = index.search("deepest", 10);
+        assert!(!results.is_empty(), "deepest.rs must be indexed");
+    }
+
+    /// #920 — A symlink cycle (`loop/back -> loop`) terminates instead of
+    /// stack-overflowing or running until the depth cap. The walker's
+    /// `visited` set catches the cycle on the second descent.
+    #[cfg(unix)]
+    #[test]
+    fn fix920_symlink_cycle_terminates() {
+        use std::fs;
+        use std::os::unix::fs::symlink;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let loop_dir = root.join("loop");
+        fs::create_dir_all(&loop_dir).unwrap();
+        fs::write(loop_dir.join("real.rs"), b"").unwrap();
+
+        // Create `loop/back` -> `loop` (a self-cycle).
+        let back = loop_dir.join("back");
+        symlink(&loop_dir, &back).unwrap();
+
+        // If cycle detection is broken, this either stack-overflows or
+        // (with the depth cap) indexes `real.rs` 64 times.
+        let index = FileIndex::build(root);
+        let results = index.search("real", 100);
+
+        // The file should appear at most a small, bounded number of times.
+        // (We allow >1 because the symlink target *is* canonically distinct
+        // from the literal traversal path in some edge cases; what matters
+        // is that the walk terminates and the result count is bounded.)
+        assert!(
+            results.len() <= 4,
+            "#920: cycle should produce a bounded result count, got {}",
+            results.len(),
+        );
+        assert!(
+            results.iter().any(|r| r.path.contains("real.rs")),
+            "#920: cycle must not prevent indexing the legitimate file"
+        );
+    }
+
+    /// #920 — A pathologically deep tree (>`MAX_WALK_DEPTH`) does not panic /
+    /// overflow — it simply stops descending past the cap. Files above the
+    /// cap remain indexed.
+    #[test]
+    fn fix920_depth_cap_prevents_unbounded_descent() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Build a chain root/d/d/d/.../d (well past MAX_WALK_DEPTH).
+        let mut p = root.to_path_buf();
+        for _ in 0..(MAX_WALK_DEPTH + 16) {
+            p = p.join("d");
+        }
+        // Some filesystems cap PATH_MAX before we hit the iteration limit;
+        // tolerate that and just exercise as much depth as we can create.
+        let _ = fs::create_dir_all(&p);
+        let _ = fs::write(p.join("leaf.rs"), b"");
+        // Always-indexable shallow file.
+        fs::write(root.join("shallow.rs"), b"").unwrap();
+
+        // The crucial guarantee is that this returns without overflowing
+        // the stack. The shallow file must always appear.
+        let index = FileIndex::build(root);
+        let results = index.search("shallow", 10);
+        assert!(!results.is_empty(), "shallow.rs must always be indexed");
     }
 }

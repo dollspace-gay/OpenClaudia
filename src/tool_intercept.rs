@@ -743,12 +743,55 @@ impl ToolInterceptor {
         })
     }
 
+    /// Maximum nesting / tag-scan recursion depth for `parse_nested_elements`.
+    ///
+    /// crosslink #899: the parser today is single-level, but the surrounding
+    /// `extract_all_tool_calls` driver can be made to recurse into nested
+    /// pseudo-XML via repeated `<tool>...</tool>` tags. We cap the work
+    /// performed by any single invocation at 8 tag-scan iterations beyond
+    /// the natural `MAX_PARAMS` budget so a pathological input cannot
+    /// linearly amplify into quadratic cost.
+    pub(crate) const MAX_NESTED_DEPTH: usize = 8;
+
+    /// Maximum distinct parameter entries `parse_nested_elements` will
+    /// emit per call.
+    ///
+    /// crosslink #899: a malicious model can emit 100 000 `<param_n>value</param_n>`
+    /// elements; without a cap the resulting `HashMap` allocates without
+    /// bound. 32 covers every legitimate tool schema in the codebase by an
+    /// order of magnitude.
+    pub(crate) const MAX_NESTED_PARAMS: usize = 32;
+
     /// Parse nested XML elements like <path>value</path><content>...</content>
+    ///
+    /// crosslink #899: bounded by [`Self::MAX_NESTED_DEPTH`] tag-scan iterations
+    /// and [`Self::MAX_NESTED_PARAMS`] distinct parameters. Once either cap is
+    /// hit we stop parsing and emit a synthetic `__parse_error` parameter so
+    /// the failure is visible to the caller and the test suite rather than
+    /// silently truncated.
     #[allow(clippy::unused_self)]
     fn parse_nested_elements(&self, content: &str, parameters: &mut HashMap<String, String>) {
         let mut search_pos = 0;
+        let mut depth_iterations: usize = 0;
 
         while search_pos < content.len() {
+            // crosslink #899: hard cap on scan iterations. Each iteration
+            // either advances `search_pos` past a recognized element or
+            // skips a malformed prefix; either way we bound the total work.
+            if depth_iterations >= Self::MAX_NESTED_DEPTH.saturating_mul(Self::MAX_NESTED_PARAMS) {
+                parameters.insert(
+                    "__parse_error".to_string(),
+                    format!(
+                        "parse_nested_elements: depth cap exceeded \
+                         (MAX_DEPTH={} * MAX_PARAMS={})",
+                        Self::MAX_NESTED_DEPTH,
+                        Self::MAX_NESTED_PARAMS,
+                    ),
+                );
+                break;
+            }
+            depth_iterations += 1;
+
             // Find opening tag
             let Some(tag_start) = content[search_pos..].find('<') else {
                 break;
@@ -799,6 +842,24 @@ impl ToolInterceptor {
                 "contents" => "content", // Claude sometimes uses plural
                 _ => elem_name,
             };
+
+            // crosslink #899: hard cap on distinct parameter entries. We
+            // count distinct entries — an already-present key being
+            // overwritten does not consume budget. Note we still advance
+            // `search_pos` past the matched element so the loop terminates.
+            if !parameters.contains_key(param_name)
+                && parameters.len() >= Self::MAX_NESTED_PARAMS
+            {
+                parameters.insert(
+                    "__parse_error".to_string(),
+                    format!(
+                        "parse_nested_elements: param cap exceeded \
+                         (MAX_PARAMS={})",
+                        Self::MAX_NESTED_PARAMS,
+                    ),
+                );
+                break;
+            }
 
             parameters.insert(param_name.to_string(), value);
 
@@ -1876,5 +1937,78 @@ this never closes"#;
                 "shorthand tool <{tool}>...</{tool}> should be detected as complete"
             );
         }
+    }
+
+    // ── crosslink #899: depth/size caps in parse_nested_elements ─────────────
+
+    /// #899 — A flood of `<param_N>v</param_N>` entries is capped at
+    /// `MAX_NESTED_PARAMS` and the parser emits a visible `__parse_error`
+    /// marker. Without the cap, this input would allocate an unbounded
+    /// `HashMap` keyed on attacker-controlled names.
+    #[test]
+    fn fix899_param_cap_truncates_with_visible_error() {
+        let interceptor = ToolInterceptor::new();
+        // Build a payload with 200 distinct nested params — well beyond
+        // `MAX_NESTED_PARAMS = 32`.
+        let mut content = String::new();
+        for i in 0..200 {
+            use std::fmt::Write as _;
+            write!(content, "<param_{i}>v{i}</param_{i}>").unwrap();
+        }
+
+        let mut params: HashMap<String, String> = HashMap::new();
+        interceptor.parse_nested_elements(&content, &mut params);
+
+        // We allow the cap-trigger marker as one extra entry, so the
+        // observed size must be at most MAX_NESTED_PARAMS + 1.
+        assert!(
+            params.len() <= ToolInterceptor::MAX_NESTED_PARAMS + 1,
+            "#899: expected <= MAX_NESTED_PARAMS+1 entries, got {}",
+            params.len(),
+        );
+        let err = params
+            .get("__parse_error")
+            .expect("#899: cap breach must surface a __parse_error marker");
+        assert!(
+            err.contains("MAX_PARAMS=32") || err.contains("MAX_DEPTH=8"),
+            "#899: marker must name the constants: got {err}"
+        );
+    }
+
+    /// #899 — A degenerate input that never matches a closing tag must
+    /// still terminate via the depth cap (the loop would otherwise scan
+    /// every byte looking for closing tags that do not exist).
+    #[test]
+    fn fix899_depth_cap_terminates_pathological_input() {
+        let interceptor = ToolInterceptor::new();
+        // 10 000 unmatched opening tags. Each iteration skips one byte;
+        // the depth cap (MAX_DEPTH * MAX_PARAMS = 256) is the only
+        // guarantee that this returns in bounded time.
+        let content = "<a>".repeat(10_000);
+        let mut params: HashMap<String, String> = HashMap::new();
+        interceptor.parse_nested_elements(&content, &mut params);
+        // Either we exited via the depth cap (visible marker) or via
+        // the natural "no closing tag" early-out — both are acceptable;
+        // what matters is bounded work + bounded map size.
+        assert!(
+            params.len() <= ToolInterceptor::MAX_NESTED_PARAMS + 1,
+            "#899: map size {} exceeded MAX_NESTED_PARAMS+1",
+            params.len(),
+        );
+    }
+
+    /// #899 — A normal payload with a handful of params is unaffected.
+    #[test]
+    fn fix899_normal_payload_parses_fully() {
+        let interceptor = ToolInterceptor::new();
+        let content = "<path>src/main.rs</path><content>hello</content>";
+        let mut params: HashMap<String, String> = HashMap::new();
+        interceptor.parse_nested_elements(content, &mut params);
+        assert_eq!(params.get("path"), Some(&"src/main.rs".to_string()));
+        assert_eq!(params.get("content"), Some(&"hello".to_string()));
+        assert!(
+            !params.contains_key("__parse_error"),
+            "#899: under-cap payload must not raise a parse-error marker"
+        );
     }
 }

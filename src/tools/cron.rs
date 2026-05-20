@@ -130,12 +130,20 @@ impl ScheduleStore {
         }
     }
 
-    /// Write the schedule store atomically.
+    /// Write the schedule store atomically (crosslink #909).
     ///
-    /// Serializes to a `.tmp` sibling and `rename(2)`s it over the
-    /// destination. POSIX `rename` is atomic on the same filesystem,
-    /// so a crash mid-write cannot leave a truncated `schedules.json`.
+    /// 1. Serialize to a per-process, per-call `.tmp.<pid>.<uuid>` sibling
+    ///    so two concurrent writers cannot collide on the temp name.
+    /// 2. `fsync(2)` the temp file so its contents reach durable storage
+    ///    before the rename — otherwise a power loss between
+    ///    `write` and `rename` can leave a zero-length destination on
+    ///    some filesystems.
+    /// 3. `rename(2)` it over the destination — atomic on POSIX within
+    ///    the same directory, so a crash mid-write cannot leave a
+    ///    truncated `schedules.json`.
     fn save_locked(&self, path: &Path) -> Result<(), FileError> {
+        use std::io::Write as _;
+
         // Each filesystem step surfaces a typed `FileError` carrying the
         // exact path and underlying `io::ErrorKind`, so callers (and the
         // test suite) can distinguish missing-parent from disk-full from
@@ -145,12 +153,48 @@ impl ScheduleStore {
         }
         let json = serde_json::to_string_pretty(self).map_err(FileError::json_with_path(path))?;
 
+        // crosslink #909: previous code used a fixed `<path>.tmp` name,
+        // which two concurrent writers in different processes could
+        // clobber even with the flock — the lock guards the *destination*
+        // but the temp file lives in the same directory. Suffix with
+        // pid + a uuid so concurrent writers each have their own temp.
         let mut tmp_path = path.as_os_str().to_owned();
         tmp_path.push(TMP_SUFFIX);
+        tmp_path.push(format!(
+            ".{}.{}",
+            std::process::id(),
+            Uuid::new_v4().as_simple(),
+        ));
         let tmp_path = PathBuf::from(tmp_path);
 
-        file_error::write_file(&tmp_path, &json)?;
-        std::fs::rename(&tmp_path, path).map_err(FileError::with_path(path))
+        // Write + fsync the tmp file. We open explicitly (rather than
+        // routing through `file_error::write_file`) so we can call
+        // `sync_all()` on the same `File` handle that holds the bytes.
+        {
+            let mut tmp_file = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&tmp_path)
+                .map_err(FileError::with_path(&tmp_path))?;
+            tmp_file
+                .write_all(json.as_bytes())
+                .map_err(FileError::with_path(&tmp_path))?;
+            // fsync — durability guarantee against power-loss between
+            // the write and the rename.
+            tmp_file
+                .sync_all()
+                .map_err(FileError::with_path(&tmp_path))?;
+        }
+
+        // Atomic publish. If rename fails (e.g. cross-filesystem) we
+        // best-effort clean up the orphan tmp so we don't litter
+        // `schedules.json.tmp.*` files.
+        if let Err(e) = std::fs::rename(&tmp_path, path) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(FileError::with_path(path)(e));
+        }
+        Ok(())
     }
 }
 
@@ -1102,9 +1146,55 @@ mod tests {
             tmp_path.display()
         );
 
+        // crosslink #909: per-call tmp suffix (`.tmp.<pid>.<uuid>`) means
+        // no orphan tempfile should remain in the parent directory either.
+        let dir_entries: Vec<_> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        for name in &dir_entries {
+            assert!(
+                !name.starts_with("schedules.json.tmp"),
+                "#909: orphan tempfile {name} left after successful save"
+            );
+        }
+
         let reloaded = ScheduleStore::load_locked(&path);
         assert_eq!(reloaded.schedules.len(), 2);
         assert!(reloaded.schedules.iter().any(|s| s.name == "atomic_seed"));
         assert!(reloaded.schedules.iter().any(|s| s.name == "atomic_second"));
+    }
+
+    /// #909 — Two consecutive `save_locked` calls publish without collision
+    /// and the final state reflects the second write. Together with the
+    /// flock around the load-modify-save sequence in `execute_cron_create`,
+    /// this is the guarantee that no schedule is lost to a non-atomic write.
+    #[test]
+    fn fix909_save_locked_replaces_atomically_under_repeat_writes() {
+        use tempfile::TempDir;
+
+        let _cwd = cwd_lock();
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("schedules.json");
+
+        for i in 0..5 {
+            let mut store = ScheduleStore::default();
+            store.schedules.push(Schedule {
+                id: format!("id{i}"),
+                name: format!("name{i}"),
+                cron_expression: "0 * * * *".to_string(),
+                prompt: "p".to_string(),
+                enabled: true,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                last_run: None,
+                run_count: 0,
+            });
+            store.save_locked(&path).expect("save");
+        }
+
+        let reloaded = ScheduleStore::load_locked(&path);
+        assert_eq!(reloaded.schedules.len(), 1);
+        assert_eq!(reloaded.schedules[0].name, "name4");
     }
 }
