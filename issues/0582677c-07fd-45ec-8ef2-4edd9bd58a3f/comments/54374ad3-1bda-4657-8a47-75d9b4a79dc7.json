@@ -1,0 +1,10 @@
+{
+  "uuid": "54374ad3-1bda-4657-8a47-75d9b4a79dc7",
+  "issue_uuid": "0582677c-07fd-45ec-8ef2-4edd9bd58a3f",
+  "author": "lOrm",
+  "content": "Issue calls for LocalShellTask type and killShellTasksForAgent agent-scoped bash cleanup. Not addressable in a cleanup pass: depends on #507 coordinator task framework. Duplicates the scope of #584. Parent audit #523.",
+  "created_at": "2026-05-20T14:41:24.150989484Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAvV9m9QAjGufsrQHee+bVoQ/8imwhlvPma7AmOn30hWfGYhbzpGdvF4Gdtu8DYf437cvKUYv5OBUkY8qDGpSRDg=="
+}
