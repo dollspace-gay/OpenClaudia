@@ -1,0 +1,10 @@
+{
+  "uuid": "a6af5bfb-0797-490c-90db-8ba1e436db4e",
+  "issue_uuid": "d72acfaf-f590-4f3a-9b79-b2597deecfd5",
+  "author": "lOrm",
+  "content": "Issue calls for converting the std::thread::sleep blocking wait in src/subagent.rs:1407-1414 (execute_agent_output_tool block path) to an async path (tokio::time::sleep) so we don't park a tokio worker for 5 minutes / deadlock current_thread runtime. Per the 2026-05-20 result comment, src/subagent.rs is in the forbidden-files list for the recent bulk fix; the std::thread::sleep at src/subagent.rs:1681 cannot be touched from that session. Real bug — should be revisited in a future change-set that includes subagent.rs in scope.",
+  "created_at": "2026-05-20T14:41:04.952402335Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA4mrcLYcLKuXMkLW0xtFEJ2F4zEQDhWva9jw5gcTRJzNyGLFFjasAJLgMyYq5w0Khav+DzLuwssHq+bznEy/hCg=="
+}
