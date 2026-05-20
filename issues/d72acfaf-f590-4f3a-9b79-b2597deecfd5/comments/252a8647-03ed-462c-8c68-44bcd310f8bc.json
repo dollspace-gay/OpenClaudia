@@ -1,0 +1,10 @@
+{
+  "uuid": "252a8647-03ed-462c-8c68-44bcd310f8bc",
+  "issue_uuid": "d72acfaf-f590-4f3a-9b79-b2597deecfd5",
+  "author": "lOrm",
+  "content": "SKIPPED: src/subagent.rs is in the change-set's forbidden-files list for this bulk fix; the std::thread::sleep at src/subagent.rs:1681 cannot be touched from this session. Issue left open for a future change-set that has subagent.rs in scope.",
+  "created_at": "2026-05-20T06:41:54.306980513Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAelL3ttj+9T7G9INFyv2ykd4gc3UrR+e173QUF3ZeS4GifK3KQGKG0A9tvneLZMRle9xI30fRxcWrc4JckKUWDQ=="
+}
