@@ -3,11 +3,12 @@
   "display_id": 946,
   "title": "skills::parse_skill_file uses byte-indexed slicing without UTF-8 boundary checks",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/skills.rs:37-55\n## Violation\nThe parser slices the string by raw byte indices computed from `find`. If a multi-byte character lies on the boundary, the indexing panics. Quoted lines:\n\n    if !content.starts_with(\"---\") {\n        return None;\n    }\n    let rest = &content[3..];\n    let end = rest.find(\"---\")?;\n    let frontmatter = rest[..end].trim();\n    let body = rest[end + 3..].trim();\n\n`&content[3..]` is safe (3 ASCII dashes) but `rest[end + 3..]` is only safe if the three bytes following `end` are also ASCII. In a malformed file the `find(\"---\")` byte offset can sit before non-ASCII content (e.g. `---\\n…\\n---𠮷` or a corrupt mixed-encoding payload), splitting a codepoint and triggering an str-slice panic that takes down the whole REPL.\n## Mandated refactor\nUse a YAML-frontmatter crate (gray_matter, yaml-front-matter). If a hand-rolled parser is kept, switch to `str::char_indices` to locate the closing `---` and use `str::get(end+3..)` so a malformed boundary returns None instead of panicking. Add a fuzz test with non-ASCII payloads.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:19:11.068061582Z",
-  "updated_at": "2026-05-18T22:19:33.509060128Z",
+  "updated_at": "2026-05-20T04:33:48.650612943Z",
+  "closed_at": "2026-05-20T04:33:48.650612943Z",
   "labels": [
     "qa-review",
     "error-handling"
