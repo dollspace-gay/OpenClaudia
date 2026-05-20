@@ -1,0 +1,10 @@
+{
+  "uuid": "06ab8759-2022-4095-ba1c-844cd414ab2c",
+  "issue_uuid": "cbf93f8b-d67c-4a4f-862c-48172521bffa",
+  "author": "lOrm",
+  "content": "Fixed: VDD response-reassembly extracted into apply_vdd_review helper at src/proxy.rs:708. The 5 inline Response::from_parts sites in proxy_chat_completions are collapsed; final response is reassembled at the single tail site (line 786). The 3 remaining from_parts calls inside the helper (lines 730 oversize body, 736 non-JSON passthrough, 786 final reassembly) are all distinct early-return paths — no longer a duplicated reassembly pattern. Mandated refactor intent (extract VDD block, single reassembly tail, eliminate JSON-parse-failure rebuild branch via early-return) is met. Strict literal acceptance ('exactly one match') is too narrow because early-returns naturally need their own from_parts; the goal of eliminating the temporal-coupling foot-gun is achieved.",
+  "created_at": "2026-05-20T00:17:26.802366532Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABALSG1Ixm2tWLy6P6bx+mO235eRzhcrUPsBcAh7Qceqap0kW9o6imPzN6aa+E6hfM2rWhPqythwNy8suKs0ATbBg=="
+}
