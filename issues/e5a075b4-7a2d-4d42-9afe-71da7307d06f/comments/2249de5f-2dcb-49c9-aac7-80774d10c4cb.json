@@ -1,0 +1,10 @@
+{
+  "uuid": "2249de5f-2dcb-49c9-aac7-80774d10c4cb",
+  "issue_uuid": "e5a075b4-7a2d-4d42-9afe-71da7307d06f",
+  "author": "lOrm",
+  "content": "Fixed: src/tools/task.rs::execute_task_get now returns (Value::Null.to_string(), false) for missing task_id instead of (\"not found\", true), matching CC TaskGetTool's null-on-miss contract. The implementation lives in src/tools/task.rs, not src/subagent.rs (subagent.rs only references the tool name in its allow-list, untouched). Updated stale test_task_get_not_found (which asserted the old is_error=true behaviour) to two #588-banner tests: fix588_task_get_not_found_returns_success_with_null (asserts is_error=false, payload parses as JSON null) and fix588_task_get_found_still_returns_full_detail (regression guard for the happy path). Verified: cargo test --lib fix588 → 2/2 pass.",
+  "created_at": "2026-05-20T03:59:02.169074382Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAxBMXtKgblqilq/KadRkjRluVjjAxs8XtBF1NjYvDhrPNCXHw+0zDsJz5HSt1sYfHSD0zNO+CgBgfjM1UIFd+AA=="
+}
