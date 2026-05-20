@@ -3,11 +3,12 @@
   "display_id": 743,
   "title": "tool_intercept: has_pending_tool_calls and has_complete_block do O(N*M) substring scans on every push",
   "description": "## Severity\nMinor\n## Dimension\ncomplexity\n## Location\nsrc/tool_intercept.rs:135-149 (has_pending_tool_calls), src/tool_intercept.rs:153-180 (has_complete_block)\n## Violation\nBoth methods iterate every entry in `SHORTHAND_TOOLS` (9 entries) and call `String::contains` (a full O(N) scan of the buffer) twice per entry, plus a `contains(\"<invoke name=\\\"\")`. That is up to 19 buffer scans per call. These are called on every streaming push from the SSE loop and again from `extract_all_tool_calls`'s `while self.has_complete_block()` driver (line 251). For an N-byte buffer accumulated over K pushes, total cost is O(K * 19 * N), i.e. quadratic in the response length.\n\n```rust\nfor tool in Self::SHORTHAND_TOOLS {\n    let open_tag = format!(\"<{tool}>\");\n    let open_tag_with_attr = format!(\"<{tool} \");\n    if self.buffer.contains(&open_tag) || self.buffer.contains(&open_tag_with_attr) {\n        return true;\n    }\n}\n```\n\nPlus `format!` allocates a fresh String per tool per call. For a long response the GC pressure is substantial.\n\n## Mandated refactor\nBuild the tag strings once as `const`s (or `LazyLock<Vec<&'static str>>`). Compile a single Aho-Corasick matcher (or use the `memchr` crate) for the full pattern set. Even simpler: maintain a `scan_offset` field that records how far into the buffer the last scan went, and only re-scan from that point forward.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:53:32.124750625Z",
-  "updated_at": "2026-05-18T21:53:42.722875019Z",
+  "updated_at": "2026-05-20T07:06:35.304207713Z",
+  "closed_at": "2026-05-20T07:06:35.304207713Z",
   "labels": [
     "qa-review",
     "complexity"
