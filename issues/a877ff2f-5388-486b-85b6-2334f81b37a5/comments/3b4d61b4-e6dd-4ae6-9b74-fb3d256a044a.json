@@ -1,0 +1,10 @@
+{
+  "uuid": "3b4d61b4-e6dd-4ae6-9b74-fb3d256a044a",
+  "issue_uuid": "a877ff2f-5388-486b-85b6-2334f81b37a5",
+  "author": "lOrm",
+  "content": "Fixed. Extracted process_cwd_lock() helper into src/tools/testutil.rs (cfg-test module). worktree.rs and cron.rs now both delegate to that single OnceLock<Mutex<()>>, so CWD-mutating tests across the two modules now actually serialise against each other. The local cwd_lock() wrappers are retained as thin aliases for call-site readability.",
+  "created_at": "2026-05-20T04:33:56.119001869Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAQNilLc4bEn/A9cVsHzQpTIGzaiMT3Ef70MXkIht7AjvnW5rTKzN26TXFN9UAVTVvWbmA3CBp2X6eJDjXe8KhBw=="
+}
