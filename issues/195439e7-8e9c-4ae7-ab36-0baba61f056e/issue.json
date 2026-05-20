@@ -3,11 +3,12 @@
   "display_id": 773,
   "title": "tool_intercept: bash completion hint regresses on outputs containing word 'error'",
   "description": "## Severity\nTrivial\n## Dimension\nkiss\n## Location\nsrc/tool_intercept.rs:717-722 (format_tool_results_xml_with_names)\n## Violation\n```rust\n\"bash\" | \"Bash\" => {\n    if content.contains(\"error\") || content.contains(\"Error\") || content.contains(\"failed\") {\n        None // Don't add completion hint for errors\n    } else {\n        Some(\"Command executed successfully.\")\n    }\n}\n```\n\n`String::contains` matches anywhere in the buffer. Many valid bash successes contain the word \"error\" (`grep -c error logfile`, `find . -name '*_error_*'`, `cargo build` output that says \"0 errors\"). The hint is suppressed for these. Conversely, a real failure that prints \"fault\" or \"abort\" gets the success hint anyway.\n\nThis conflates \"process exit code\" with \"string content of stdout\" — they are independent signals.\n\n## Mandated refactor\nUse the actual `is_error` field that has already been computed for `*is_error in results` (it is the function parameter the outer `if *is_error` branch already uses). Remove the substring heuristic entirely.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:56:03.304162161Z",
-  "updated_at": "2026-05-18T21:56:33.994296362Z",
+  "updated_at": "2026-05-20T14:12:00.540170752Z",
+  "closed_at": "2026-05-20T14:12:00.540170752Z",
   "labels": [
     "qa-review"
   ]
