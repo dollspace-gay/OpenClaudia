@@ -1,0 +1,10 @@
+{
+  "uuid": "64e034e1-f277-4f6b-af9b-7788c30f30f5",
+  "issue_uuid": "b95f65d9-80d5-4c03-83be-e72784312e74",
+  "author": "lOrm",
+  "content": "normalize_path now walks up to the deepest existing ancestor, canonicalizes it, and re-appends the missing leaf segments. Returns None when no ancestor exists (rather than storing an ambiguous relative form) and warns via tracing::warn!. The raw-fallback escape hatch is removed.",
+  "created_at": "2026-05-20T12:23:27.244825605Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAxCrAj6IAvcRs3RlTYLtin/7kwFA1PFIRVVL/4Q9lGup0BBqo08TiYfXzJQL+NkcHxlGpcCFzSnkcld0TaMYZAw=="
+}
