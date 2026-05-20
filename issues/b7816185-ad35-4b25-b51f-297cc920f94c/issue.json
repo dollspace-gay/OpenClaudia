@@ -3,12 +3,13 @@
   "display_id": 584,
   "title": "Add agent-scoped background shell cleanup on agent exit (parity with CC killShellTasksForAgent)",
   "description": "## Gap\n\nCC's killShellTasksForAgent (tasks/LocalShellTask/killShellTasks.ts:53-72) kills all running background bash tasks owned by a specific agent when that agent exits. This prevents background processes from outliving their parent agent (zombie prevention).\n\nOC has no agent ownership model for background shells. BackgroundShellManager (src/tools/bash/mod.rs:38-268) tracks shells by shell_id only — there is no agent_id field. When a session or agent finishes, its background shells continue running until the OC process exits or a kill_shell call is made.\n\n## Parity reference\n- CC: tasks/LocalShellTask/killShellTasks.ts:53-72 killShellTasksForAgent\n- OC: missing — BackgroundShellManager has no agent_id field, no per-agent kill\n\n## Acceptance\n- BackgroundShell struct gets optional agent_id field\n- On agent exit, all shells owned by that agent_id are terminated via terminate_process_tree\n- Surfaces as cleanup hook in the session/agent lifecycle\n",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:53:28.672380961Z",
-  "updated_at": "2026-05-18T15:53:31.591225788Z",
+  "updated_at": "2026-05-20T14:37:04.643862169Z",
+  "closed_at": "2026-05-20T14:37:04.643862169Z",
   "labels": [
     "feature",
     "cc-parity"
