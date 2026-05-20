@@ -3,11 +3,12 @@
   "display_id": 833,
   "title": "modes::Modifier::Debug and Preset::Debug share variant names creating display ambiguity",
   "description": "## Severity\nTrivial\n## Dimension\nnaming\n## Location\nsrc/modes/mod.rs:67-104 (Modifier and Preset enums)\n## Violation\nBoth Modifier and Preset have variants Debug, Methodical, Director. The Display impl produces the same string ('debug') for both — log lines like 'mode: debug' are ambiguous. Preset::Debug also reads confusingly close to std::fmt::Debug in match arms.\n## Mandated refactor\nRename Preset::Debug to Preset::Investigate (matches existing doc-comment). Disambiguate Methodical/Director by adding context to the Preset names, OR add serde rename discriminators.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:04:47.985435936Z",
-  "updated_at": "2026-05-18T22:05:17.975502255Z",
+  "updated_at": "2026-05-20T13:24:05.715965406Z",
+  "closed_at": "2026-05-20T13:24:05.715965406Z",
   "labels": [
     "qa-review",
     "naming"
