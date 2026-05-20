@@ -1,0 +1,10 @@
+{
+  "uuid": "18d6552f-02f0-4bb8-9196-beb838845b4f",
+  "issue_uuid": "c28de729-87cb-4388-af6e-6cc38158dcc8",
+  "author": "lOrm",
+  "content": "Fixed in commit 7de5ec96 on branch fix/333-deep-merge-caps. Added MAX_MERGE_DEPTH=32 recursion limit, MAX_ARRAY_CONCAT_LEN=8192 array cap, MAX_TOTAL_SIZE=4MiB post-merge guard, new MergeError enum (DepthExceeded with path, TotalSizeExceeded), and rollback-on-error semantics in merge_settings_file. 7 new regression tests in hooks::merge::tests cover the 1000-level depth bomb, 9000-element array truncation, boundary conditions (depth=32 succeeds, depth=33 fails), and the 4-file malicious-input sequence with rollback verification. cargo clippy --all-targets --all-features exits 0; all 10 hooks::merge tests pass; +7 net passing lib tests vs baseline.",
+  "created_at": "2026-05-20T00:29:26.316126959Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA3cZCZt9/hEdeLxqOzcb4KvafBPN1ISGgIB3cjigEkNq68M/L4Gc9YS4YqO8es9YuNMQLWQNKELjNi6HCOjgsAA=="
+}
