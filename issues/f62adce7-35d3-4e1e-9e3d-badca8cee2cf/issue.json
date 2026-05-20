@@ -3,12 +3,13 @@
   "display_id": 570,
   "title": "Split permission handler by runtime context (interactive / swarm-worker / coordinator) per CC",
   "description": "## Summary\n\nCC dispatches permission handling to three distinct handlers based on runtime context:\n- `hooks/toolPermission/handlers/interactiveHandler.ts` (main interactive agent) — races hooks, classifier, bridge, channel callbacks, and user input via a resolve-once guard\n- `hooks/toolPermission/handlers/swarmWorkerHandler.ts` — awaits classifier, then forwards request to leader via mailbox; falls back to null (caller does interactive)\n- `hooks/toolPermission/handlers/coordinatorHandler.ts` — awaits hooks then classifier sequentially; returns null to fall through to interactive dialog\n\nOC (`src/permissions.rs`) has a single `PermissionManager::check()` for all contexts. There is no runtime dispatch, no swarm-worker mailbox forwarding, and no coordinator sequential-check path.\n\n## Behaviors missing\n- Interactive handler: resolve-once guard preventing double-resolution from concurrent races\n- Swarm worker: forward to leader via mailbox; await response; abort-signal cancel\n- Coordinator: sequential hook-then-classifier with fall-through to interactive\n\n## Parent issue\n#531\n\n## References\n- CC: hooks/toolPermission/handlers/interactiveHandler.ts:57-531\n- CC: hooks/toolPermission/handlers/swarmWorkerHandler.ts:40-156\n- CC: hooks/toolPermission/handlers/coordinatorHandler.ts:26-62\n- OC: src/permissions.rs (single PermissionManager::check, no dispatch)",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:51:47.583419369Z",
-  "updated_at": "2026-05-18T15:51:50.366583849Z",
+  "updated_at": "2026-05-20T14:36:32.659520806Z",
+  "closed_at": "2026-05-20T14:36:32.659520806Z",
   "labels": [
     "feature",
     "cc-parity"
