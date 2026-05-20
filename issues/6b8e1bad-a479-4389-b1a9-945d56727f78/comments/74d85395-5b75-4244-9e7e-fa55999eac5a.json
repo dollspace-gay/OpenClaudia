@@ -1,0 +1,10 @@
+{
+  "uuid": "74d85395-5b75-4244-9e7e-fa55999eac5a",
+  "issue_uuid": "6b8e1bad-a479-4389-b1a9-945d56727f78",
+  "author": "lOrm",
+  "content": "Issue calls for surfacing LSP diagnostics into the conversation without an explicit tool call (parity with CC passiveFeedback). Not addressable in a cleanup pass: depends on #636 LSP server pool and #638 diagnostic registry; surfacing requires turn-loop hook in pipeline.rs (forbidden-files). Parent audit #523.",
+  "created_at": "2026-05-20T14:38:59.244035723Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAfQPcLGXFM3HUr8dmc9J5w1Xn5Rr3TLE/+1m2PEnp+sqQkL9TNNlTojgRK3vVmtnrb2nIQ/oUcZzdywxkjdj1AA=="
+}
