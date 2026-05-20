@@ -1,0 +1,10 @@
+{
+  "uuid": "b23b3c02-518b-477e-a70b-fd0374ab52e7",
+  "issue_uuid": "39eb52db-a257-4d1f-b1b1-63a198eeec51",
+  "author": "lOrm",
+  "content": "Phase 1 behavioral spec for workflow-control tools (Plan/Worktree, TodoWrite, Skill, Sleep, ScheduleCron, ToolSearch). The issue body already contains partial spec text (plan-mode enforcement section). Remaining tools need their contracts pinned down by reading CC TS source. Not addressable in this cleanup session: external-source research. Phase 2 implementations tracked under #574 (task_output), #580 (task_stop), #612 (skill as tool), #614 (tool_search deferred schema loading), #615 (sleep), #621 (CronCreate flags). Owner-level external research.",
+  "created_at": "2026-05-20T14:33:54.143064723Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAKRn0GCtFdEYYPGPQDLK78NpTGbjTodtt9/VEOV8qsDWBhzI0MSzpVLzTSjp2KO+tFkya2/r1Q0QA/cBr1HPvCA=="
+}
