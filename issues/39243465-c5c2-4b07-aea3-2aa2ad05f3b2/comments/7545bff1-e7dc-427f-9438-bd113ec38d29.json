@@ -1,0 +1,10 @@
+{
+  "uuid": "7545bff1-e7dc-427f-9438-bd113ec38d29",
+  "issue_uuid": "39243465-c5c2-4b07-aea3-2aa2ad05f3b2",
+  "author": "lOrm",
+  "content": "Duplicate of #333 (closed 2026-05-20 in commit 7de5ec96). The deep_merge array-concatenation and recursion-depth concerns raised here are addressed by #333: src/hooks/merge.rs now enforces MAX_MERGE_DEPTH=32, MAX_ARRAY_CONCAT_LEN=8192, and MAX_TOTAL_SIZE=4 MiB, with typed MergeError and rollback-on-error in merge_settings_file. Verified at HEAD f0c5612b. The narrower allowlist-amplification angle (explicit replace/union/disallow per top-level key) is not covered by #333 and may be re-filed as a focused issue if still desired, but the underlying DoS / unbounded-merge defect is fixed.",
+  "created_at": "2026-05-20T12:03:32.620506055Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABApsXg3LwKsCjLLLeUpxYA/jTILta2FWt1P3csgkRyF20CcXDeS9X2dUuepYHjogjYH/DoyOsoP6UmOW5UmHpxCA=="
+}
