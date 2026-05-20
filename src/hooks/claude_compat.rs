@@ -11,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
-use super::merge::{merge_claude_hooks, merge_settings_file};
+use super::merge::{enforce_total_size, merge_claude_hooks, merge_settings_file};
 
 /// Claude Code settings.json structure
 #[derive(Debug, Deserialize, Default)]
@@ -156,6 +156,19 @@ pub fn load_claude_settings() -> LayeredSettings {
             "Loading enterprise managed settings - these override all user and project settings"
         );
         merge_settings_file(&mut settings, path);
+    }
+
+    // Post-merge size guard: a hostile combination of the four
+    // settings layers could still pump megabytes of data in even when
+    // each individual file is fine. Fall back to an empty object
+    // rather than handing the harness an oversized blob to walk
+    // (crosslink #333).
+    if let Err(e) = enforce_total_size(&settings) {
+        tracing::error!(
+            error = %e,
+            "Merged Claude settings exceed size cap; falling back to empty settings"
+        );
+        settings = Value::Object(serde_json::Map::default());
     }
 
     // Extract allowedTools from merged settings
