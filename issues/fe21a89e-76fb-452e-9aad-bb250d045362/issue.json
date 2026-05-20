@@ -3,9 +3,10 @@
   "display_id": 847,
   "title": "QA: get_matcher_context exposes full user prompt to regex matchers (ReDoS surface)",
   "description": "## Severity\nMinor\n## Dimension\nsecurity\n## Location\nsrc/hooks/mod.rs:485-495\n## Violation\n`get_matcher_context` falls back to the user prompt as the matcher\ntarget for non-tool events:\n```rust\nfn get_matcher_context(input: &HookInput) -> String {\n    if let Some(tool_name) = &input.tool_name {\n        return tool_name.clone();\n    }\n    if let Some(prompt) = &input.prompt {\n        return prompt.clone();\n    }\n    input.event.config_key().to_string()\n}\n```\nFor a `UserPromptSubmit` event, this means **every configured hook\nmatcher regex is tested against the full user prompt**. The MAX_REGEX_SIZE\nlimit prevents catastrophic regex compilation, but it does not bound\nregex *match* time on a 200 KB prompt against a partially-backtracking\npattern. There is no timeout on `re.is_match(context)` (line 532).\nA malicious user prompt of pathological length combined with any\nhand-written matcher regex creates a ReDoS vector that blocks the hook\ndispatch path.\n## Mandated refactor\nTruncate `context` to a configurable limit (e.g. 8 KB) before matching,\nand explicitly hash-prefix long contexts so matchers cannot rely on\narbitrary-length input. Or use a regex implementation with bounded\nmatch time (the `regex` crate is linear-time only for non-backtracking\npatterns — confirm and document that). Add `debug!` log when truncation\nfires. Consider running `is_match` in a `tokio::time::timeout` wrapper.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:06:14.463584713Z",
-  "updated_at": "2026-05-18T22:06:14.463584713Z"
+  "updated_at": "2026-05-20T13:26:24.609216841Z",
+  "closed_at": "2026-05-20T13:26:24.609216841Z"
 }
