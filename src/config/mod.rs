@@ -24,9 +24,12 @@ pub use guardrails::{
     QualityCheck, QualityGatesConfig, RunAfter,
 };
 pub use hooks::{Hook, HookEntry, HookMatcherTarget, HookPolicy, HooksConfig, SandboxMode};
-pub use keybindings::{
-    parse_chord, ChordResolveResult, KeyAction, KeyContext, KeybindingResolver, KeybindingsConfig,
-    ParsedKeystroke,
+pub use keybindings::KeybindingsConfig;
+// Re-export runtime keybinding logic for backward compatibility with callers
+// that imported these from `crate::config`. The canonical home is
+// `crate::keybindings` — see crosslink #357.
+pub use crate::keybindings::{
+    parse_chord, ChordResolveResult, KeyAction, KeyContext, KeybindingResolver, ParsedKeystroke,
 };
 pub use memory::MemoryConfig;
 pub use path_validation::{validate_persist_path, PathValidationError, ALLOW_OUT_OF_ROOT_ENV};

@@ -20,6 +20,7 @@ pub mod coordinator;
 pub mod file_error;
 pub mod guardrails;
 pub mod hooks;
+pub mod keybindings;
 pub mod mcp;
 pub mod memdir;
 pub mod memory;
