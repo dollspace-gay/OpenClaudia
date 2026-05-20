@@ -1,0 +1,10 @@
+{
+  "uuid": "0c116c50-710e-48d9-a683-8366b78b92b4",
+  "issue_uuid": "46c4da74-c0dc-4d10-a388-5c75c9c8c14b",
+  "author": "lOrm",
+  "content": "Verified: closed by commit c7409ffe (#443). src/auto_learn.rs::prune_old_data now uses typed PruneTable enum with prepared statements; max_rows bound via params![]. Closing as duplicate.",
+  "created_at": "2026-05-20T01:57:47.950834790Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAQtHSJoi2d/xkxO8352Km2IGmsw8BAY5wn7qzGUSHJZPKm3+dob7lDDfAzupkQq12a2WtlcjwE4/dIXPvEq0/BA=="
+}
