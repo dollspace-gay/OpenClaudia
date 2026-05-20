@@ -2,13 +2,12 @@
   "uuid": "0eaf1d85-68e7-41a5-888f-ef675f163bb5",
   "display_id": 655,
   "title": "Add LSP server registration from plugins (parity with CC lspPluginIntegration.ts)",
-  "status": "closed",
+  "status": "open",
   "priority": "high",
   "parent_uuid": "21e13dad-6fac-4ae8-9f1c-62788c0392cb",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:09:57.170067217Z",
-  "updated_at": "2026-05-20T14:42:57.275980346Z",
-  "closed_at": "2026-05-20T14:42:57.275980346Z",
+  "updated_at": "2026-05-20T16:59:08.026466647Z",
   "labels": [
     "parity,cc-plugins-skills,lsp"
   ]
