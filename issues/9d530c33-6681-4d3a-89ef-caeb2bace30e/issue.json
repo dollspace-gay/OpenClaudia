@@ -3,11 +3,12 @@
   "display_id": 768,
   "title": "tool_intercept: unwrap on Option after is_none check uses brittle short-circuit pattern",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/tool_intercept.rs:316-326 (try_extract_shorthand_format)\n## Violation\n```rust\nif let Some(idx) = self.buffer.find(&open_tag) {\n    if earliest_match.is_none() || idx < earliest_match.unwrap().0 {\n        earliest_match = Some((idx, *tool));\n    }\n}\n```\n\nThe condition relies on short-circuit evaluation to avoid panic on `unwrap()`. A future refactor that swaps the order (`idx < earliest_match.unwrap().0 || earliest_match.is_none()`) introduces an unconditional panic; the compiler cannot warn.\n\n## Mandated refactor\nReplace each branch with `let should_replace = earliest_match.map_or(true, |(prev, _)| idx < prev);` or fold both scans into a single `.iter().filter_map(...).min_by_key(|(idx, _)| *idx)`.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:54:41.597898277Z",
-  "updated_at": "2026-05-18T21:55:52.218084676Z",
+  "updated_at": "2026-05-20T08:19:37.720211074Z",
+  "closed_at": "2026-05-20T08:19:37.720211074Z",
   "labels": [
     "qa-review",
     "error-handling"
