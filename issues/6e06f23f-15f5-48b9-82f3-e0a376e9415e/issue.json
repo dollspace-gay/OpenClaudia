@@ -3,12 +3,13 @@
   "display_id": 631,
   "title": "HttpTransport is non-compliant with MCP Streamable HTTP spec (2025-03-26)",
   "description": "CC uses StreamableHTTPClientTransport (client.ts:784-865) which sends Accept: application/json, text/event-stream and supports SSE-multiplexed server push over the same POST connection. OC HttpTransport::request (src/mcp.rs:297-337) sends a plain POST with Content-Type: application/json and deserializes a single JSON body — incompatible with the MCP 2025-03-26 Streamable HTTP transport spec. Any remote MCP server conforming to the current spec will fail to communicate correctly with OC's HTTP transport (it will respond with SSE framing that OC cannot parse). This is a protocol-compliance gap, not just a feature gap. Required: replace HttpTransport with a Streamable-HTTP-compliant implementation (SSE demuxing on POST responses).",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:04:31.264344423Z",
-  "updated_at": "2026-05-20T16:58:37.968263944Z",
+  "updated_at": "2026-05-20T19:54:56.946483759Z",
+  "closed_at": "2026-05-20T19:54:56.946483759Z",
   "labels": [
     "feature",
     "cc-parity"
