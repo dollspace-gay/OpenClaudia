@@ -3,11 +3,12 @@
   "display_id": 962,
   "title": "Worktree path joined with raw branch name allows path traversal via slashes",
   "description": "## Severity\nCritical\n\n## Dimension\nSecurity and Access / Input Handling\n\n## Location\nsrc/tools/worktree.rs:84 (worktree_dir construction) and 60-67 (branch arg extraction)\n\n## Violation\n```rust\nlet branch = args.get(\"branch\").and_then(|v| v.as_str()).unwrap_or(\"\").to_string();\nif branch.is_empty() { return (\"Error: branch name is required\", true); }\n...\nlet worktree_dir = git_root.join(\".worktrees\").join(&branch);\n```\n\nThe branch name is taken verbatim from model input and `.join()`-ed into the worktree path with no validation. A model (or a prompt injector) supplying `branch: \"../../tmp/escape\"` causes `git_root.join(\".worktrees\").join(\"../../tmp/escape\")` to resolve to `/tmp/escape` — completely outside the worktrees directory and outside the project root jail. The strict-mode resolve_path used by file tools is NOT applied here because the worktree path is constructed inside the tool itself.\n\nGit itself ALSO accepts branch names like `..`, slashes, and unicode — `git worktree add /tmp/escape ..` will succeed. From the same input the tool then calls `set_current_dir(&worktree_dir)` — landing the process anywhere on disk.\n\n## Mandated refactor\n1. Validate branch name with a strict allowlist regex: `^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$` AND reject `..`, `//`, leading `/`, leading `-`, and trailing `.lock`. Mirror git's `check-ref-format --branch` (or shell out to `git check-ref-format`).\n2. After computing worktree_dir, run resolve_path-style containment: assert `worktree_dir.starts_with(git_root.join(\".worktrees\"))`. Refuse if not.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:20:45.902794080Z",
-  "updated_at": "2026-05-18T22:20:48.781562383Z",
+  "updated_at": "2026-05-20T04:49:55.281887754Z",
+  "closed_at": "2026-05-20T04:49:55.281887754Z",
   "labels": [
     "qa-review",
     "security"
