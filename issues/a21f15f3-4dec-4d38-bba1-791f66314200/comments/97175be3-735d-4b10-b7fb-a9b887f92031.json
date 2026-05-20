@@ -1,0 +1,10 @@
+{
+  "uuid": "97175be3-735d-4b10-b7fb-a9b887f92031",
+  "issue_uuid": "a21f15f3-4dec-4d38-bba1-791f66314200",
+  "author": "lOrm",
+  "content": "Issue calls for expanding /mcp into interactive add/remove/enable/disable/reconnect UI (CC parity). Not addressable in a cleanup pass: depends on #253 App refactor + #520 overlay framework + #522 LspManager service; requires MCPSettings TUI and sub-command dispatch. Parent spec #539.",
+  "created_at": "2026-05-20T14:43:21.059105113Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABARHZfAqDkClItlCwyyxLIYTABTY9wl3IsItz8ftuWnaFDfsgGWmKhSviuWQSh6hfe4zbyFi+1ul5BJBk3obW1Dw=="
+}
