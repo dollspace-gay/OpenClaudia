@@ -1,0 +1,10 @@
+{
+  "uuid": "eb5f1a9e-7332-4d06-b6ab-ba3d8741d578",
+  "issue_uuid": "8b1a21f2-7f4f-46ad-8108-aeca11053ab8",
+  "author": "lOrm",
+  "content": "schedules_path() now anchors to std::env::current_dir() once per call, producing an absolute path for the duration of the tool call. Falls back to relative path with warn! if current_dir() fails (deleted cwd / FUSE EIO). Tests continue to use set_current_dir before invocation as before.",
+  "created_at": "2026-05-20T12:22:34.325170355Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAd7maYewkyFfHX4NMNBz9l/zug4iGz29h7ufUHtMK2fmupHH6rafrTsjEf2eBYcOk3QA4u3xSqXf1/CIKoQlRBA=="
+}
