@@ -1,0 +1,10 @@
+{
+  "uuid": "d35f0d6a-0fd4-471b-916d-02c09a760be0",
+  "issue_uuid": "765de9dd-d4e4-456d-8b95-a676d99cbc48",
+  "author": "lOrm",
+  "content": "Fixed in worktree: src/skills.rs::load_skills now consults a process-wide LazyLock<RwLock<Option<SkillsCache>>> keyed on (path, Option<SystemTime>) tuples for each scanned dir (project + user). Fast path takes a read lock and clones cached Vec on mtime match; slow path rescans under a write lock and re-checks (thundering-herd protection). Added invalidate_cache() for editor watchers. parse_skill_file now logs tracing::warn! with skill_path + error message on both IO read failure and serde_yaml frontmatter parse failure (previously silent None). Added 4 tests: parse_skill_file_returns_none_on_bad_yaml, load_skills_uncached_dedupes_project_first, current_mtimes_changes_when_dir_mtime_changes, load_skills_populates_and_reuses_cache. All pass; clippy clean.",
+  "created_at": "2026-05-20T00:40:29.726800671Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAF3z+O/9uUjYhMrthbaZx/d0iuukCTJjSYbGFmHU3yu6/TS0uWEcOlRa57QE7Tsmc8pnXV5nfMwCRF9SQR/38BA=="
+}
