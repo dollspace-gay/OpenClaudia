@@ -3,11 +3,12 @@
   "display_id": 990,
   "title": "Speculation engine Phase 2+: OverlaySpeculationEngine, prediction heuristic, acceptance workflow (#166 continuation)",
   "description": "Phase 1 of the speculation engine (#166) landed the trait surface (SpeculationEngine), NoOpSpeculationEngine, build_hint_from_messages, after_turn integration hook, and 23 tests in src/speculation/mod.rs.\n\nRemaining work (Phase 2+):\n\nPhase 2 — OverlaySpeculationEngine\n- In-memory filesystem snapshot (overlay) of relevant paths, populated before the model turn starts\n- Speculative tool calls (read_file, list_files, bash with read-only commands) write results into the overlay\n- Prediction heuristic: pattern-match SpeculationHint::recent_messages to predict the next tool call (e.g., after a write_file, predict read_file on the same path)\n- Requires an overlay-filesystem subsystem (in-memory path-to-content map, copy-on-write semantics)\n- Wire build_engine in SpeculationConfig::enabled = true path to return OverlaySpeculationEngine\n\nPhase 3 — Acceptance workflow\n- When the model's actual tool call matches the prediction (Hit): promote the overlay result without re-running the tool\n- When it does not match (Miss/PartialMiss): discard the overlay silently, run the tool normally\n- Pipeline integration: pipeline::run_turn should call after_turn with actual tool names so the engine records hit/miss metrics\n- Expose hit-rate metric in TUI status bar\n\nIntegration point: src/speculation/mod.rs — all public types and the SpeculationEngine trait are already defined. The factory build_engine has a cfg.enabled branch that logs a warning and falls back to no-op; replace that branch with the real OverlaySpeculationEngine.\n\nConstraint: No unimplemented!() or stubs. Every line shipped must do real work.",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T23:24:17.598717717Z",
-  "updated_at": "2026-05-18T23:24:19.174709939Z",
+  "updated_at": "2026-05-20T12:32:11.748910769Z",
+  "closed_at": "2026-05-20T12:32:11.748910769Z",
   "labels": [
     "enhancement"
   ]
