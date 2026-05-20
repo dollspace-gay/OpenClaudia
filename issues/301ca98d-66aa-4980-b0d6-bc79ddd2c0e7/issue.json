@@ -3,11 +3,12 @@
   "display_id": 926,
   "title": "FileIndex::walk_dir uses unbounded recursion (stack-overflow risk on deep trees)",
   "description": "## Severity\nMinor\n\n## Dimension\nComplexity / Performance / Defensive Programming\n\n## Location\nsrc/tools/file_index.rs:51-78 (FileIndex::walk_dir)\n\n## Violation\n```rust\nfn walk_dir(&mut self, root: &Path, dir: &Path) {\n    let Ok(entries) = std::fs::read_dir(dir) else { return; };\n    for entry in entries.flatten() {\n        ...\n        if path.is_dir() {\n            self.walk_dir(root, &path);   // recursive\n        } else if let Ok(rel) = path.strip_prefix(root) {\n            ...\n        }\n    }\n}\n```\n\nThe directory walk is recursive with no depth limit. On a symlink loop (`/a/b -> /a`) — which is not detected by the hidden/build-artifact filter — recursion is unbounded and the process stack-overflows. On a legitimately deep monorepo (>1000 nested dirs), the recursion can also exhaust the default 8MB stack. Additionally, every directory entry is read sequentially without parallelism — slow on large repos.\n\nThe walker also silently swallows `std::fs::read_dir` errors with `let Ok(entries) = ... else { return; };` — a permission-denied subdirectory truncates the index without surfacing the error. The search results then misleadingly omit files the user expects.\n\n## Mandated refactor\n1. Replace the recursive walker with the `ignore` crate (already maintained by BurntSushi for ripgrep, respects .gitignore exactly, has built-in symlink-cycle detection, parallel walking).\n2. If keeping the bespoke walker: convert to iterative with an explicit VecDeque<PathBuf> work queue, track visited canonical paths in a HashSet to break symlink cycles, and log (don't swallow) read_dir errors with tracing.\n3. The hidden-dir blocklist (`node_modules`, `target`, `__pycache__`, `dist`, `build`) is a partial gitignore reimplementation — strongly prefer reading `.gitignore` directly.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:17:04.693018060Z",
-  "updated_at": "2026-05-18T22:17:39.709919843Z",
+  "updated_at": "2026-05-20T12:04:47.444655985Z",
+  "closed_at": "2026-05-20T12:04:47.444655985Z",
   "labels": [
     "qa-review",
     "complexity"
