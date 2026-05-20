@@ -2,12 +2,13 @@
   "uuid": "ff2170c9-4fd0-4648-ac71-f2a3b0ef0d5f",
   "display_id": 602,
   "title": "Add SSE streaming support for Google Gemini provider (currently non-streaming JSON path only)",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "parent_uuid": "5e625118-78a2-470d-b9fd-644b77070cb7",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:55:03.425200983Z",
-  "updated_at": "2026-05-20T16:58:10.326892459Z",
+  "updated_at": "2026-05-20T18:36:02.651489502Z",
+  "closed_at": "2026-05-20T18:36:02.651489502Z",
   "labels": [
     "cc-parity"
   ]
