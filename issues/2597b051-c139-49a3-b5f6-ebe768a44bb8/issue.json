@@ -3,11 +3,12 @@
   "display_id": 921,
   "title": "subagent: spawn_background loses model_override on tokio::spawn move when config not propagated to inner registration",
   "description": "## Severity\nMinor\n## Dimension\nconcurrency\n## Location\nsrc/subagent.rs:1313-1331 (execute_task_tool background branch)\n## Violation\nThe background-spawn branch executes:\n\n```rust\nif let Ok(handle) = Handle::try_current() {\n    handle.spawn(async move {\n        let result = run_subagent(&config_bg, &app_config_bg, &client_bg).await;\n        if !result.success {\n            BACKGROUND_AGENTS.fail(&agent_id_bg, result.output);\n        }\n    });\n}\n```\n\nThree concurrency hazards:\n\n1. If `Handle::try_current()` returns `Err`, the spawn is silently skipped. The caller has already been told an agent was started, but no tokio task exists. The agent will never finish, never produce a result, never error — the user waits forever on `agent_output`.\n2. The spawned task's `JoinHandle` is dropped on the floor. There is no abort path (see issue #580 referenced in the source) and no way for the leader to know the task panicked: panics inside `handle.spawn` are silent absent a `.join()`.\n3. The successful-completion path does NOT call `BACKGROUND_AGENTS.finish(...)` — finish is only called inside `run_subagent` keyed on the OTHER agent id (see #676 for the double-register bug). So even when the spawn completes successfully, the outer registration's `finished` flag is never flipped.\n\n## Mandated refactor\n- Bail with a user-visible error when `Handle::try_current()` fails — do not pretend the spawn worked.\n- Store the `JoinHandle` inside the `BackgroundAgent` struct so it can be aborted and so panics surface via `JoinError`.\n- After resolving the double-register bug (#676), make sure the outer `finish` path actually flips the registered agent's state on success.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:16:27.660893982Z",
-  "updated_at": "2026-05-18T22:17:23.890169425Z",
+  "updated_at": "2026-05-20T13:26:29.795395117Z",
+  "closed_at": "2026-05-20T13:26:29.795395117Z",
   "labels": [
     "qa-review",
     "concurrency"
