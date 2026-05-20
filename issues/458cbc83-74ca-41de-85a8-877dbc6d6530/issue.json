@@ -3,13 +3,12 @@
   "display_id": 608,
   "title": "Add secondary model distillation step to web_fetch (parity with CC applyPromptToMarkdown)",
   "description": "Gap discovered during spec #529: CC web_fetch applies a secondary Haiku model call (utils.ts:484-530, applyPromptToMarkdown) to distill raw page content against the user's prompt. The tool input has two fields: url and prompt. The result field in the output is the model's answer, not the raw page text.\n\nOC execute_web_fetch (src/tools/web.rs:9-59) accepts only url; there is no prompt parameter. The tool returns raw Jina Reader markdown. The agent must process the full text itself.\n\nDone when: web_fetch accepts a prompt parameter; fetched markdown is passed to a secondary model (configurable, defaulting to the small-fast model) with the prompt; the result field returns the model's distilled answer. Raw page text capped at CC's MAX_MARKDOWN_LENGTH (100,000 chars) before sending to secondary model.\n\nParent spec: #529",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:01:02.876683227Z",
-  "updated_at": "2026-05-20T14:41:19.796603860Z",
-  "closed_at": "2026-05-20T14:41:19.796603860Z",
+  "updated_at": "2026-05-20T16:58:17.975001038Z",
   "labels": [
     "feature",
     "cc-parity"
