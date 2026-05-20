@@ -3,12 +3,11 @@
   "display_id": 678,
   "title": "QA: PoisonError silently swallowed in BackgroundShellManager (corruption masked)",
   "description": "## Severity\nMajor\n## Dimension\nerror-handling\n## Location\nsrc/tools/bash/mod.rs:177, 234, 256\n## Violation\nThree lock acquisitions silently absorb mutex poisoning via `unwrap_or_else(std::sync::PoisonError::into_inner)`. A poisoned mutex means a previous thread panicked while holding the lock — the data structure is in a partially-mutated, unknown-invariant state. Returning the inner data and proceeding as if nothing happened propagates that corruption into observable behaviour (lost shells, stale exit codes, leaked PIDs).\n\nQuoted (mod.rs:173-177):\n```\n    pub(crate) fn get_output(&self, shell_id: &str) -> Result<(String, bool, Option<i32>), String> {\n        let shells = self\n            .shells\n            .lock()\n            .unwrap_or_else(std::sync::PoisonError::into_inner);\n```\n\nSame pattern at mod.rs:230-234 (`kill`) and mod.rs:252-256 (`list`).\n## Mandated refactor\n1. Either propagate the poison as an error (`Err(\"shell manager state poisoned: <e>\")`) so the caller knows the manager is unsafe to use, OR\n2. Document the invariants protected by the lock and prove they remain consistent after every panic site inside the critical sections.\n3. Audit `spawn()` for panic points that could poison the lock (any `Mutex::lock` inside the critical section is a candidate — there are none currently, but the contract should be explicit).\n## Filed from QA review dispatch",
-  "status": "closed",
+  "status": "open",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:46:45.426538062Z",
-  "updated_at": "2026-05-20T14:43:36.212701202Z",
-  "closed_at": "2026-05-20T14:43:36.212701202Z",
+  "updated_at": "2026-05-20T16:59:26.246104802Z",
   "labels": [
     "qa-review",
     "error-handling"
