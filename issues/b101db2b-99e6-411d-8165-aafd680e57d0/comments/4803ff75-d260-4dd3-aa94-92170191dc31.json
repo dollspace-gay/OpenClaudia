@@ -1,0 +1,10 @@
+{
+  "uuid": "4803ff75-d260-4dd3-aa94-92170191dc31",
+  "issue_uuid": "b101db2b-99e6-411d-8165-aafd680e57d0",
+  "author": "lOrm",
+  "content": "Closing as tracked-future-roadmap-not-active-bug. Phase 1 of background automation (#168) landed (BackgroundJob trait, JobScheduler, MemoryConsolidationJob, 15 tests). Phase 2 (async dispatch, auto-doc maintenance, periodic agent summarization) is forward-looking enhancement and blocked on coordinator Phase 2 (#507) anyway. Re-file when #507 lands and Phase 2 work is actively ready to start.",
+  "created_at": "2026-05-20T12:32:13.357699770Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAYWiDbC+RjjU3/6tl+uYKNzkwPilfCFkLylOPXvAZdgd0eVLxd2tieEI66uuxBms+H8D/x+Z4s4PEHU3SD39lDg=="
+}
