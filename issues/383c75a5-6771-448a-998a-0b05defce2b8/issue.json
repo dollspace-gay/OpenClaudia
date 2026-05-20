@@ -2,13 +2,12 @@
   "uuid": "383c75a5-6771-448a-998a-0b05defce2b8",
   "display_id": 614,
   "title": "Add deferred tool-schema loading via tool_search (parity with CC ToolSearchTool)",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:02:15.900853951Z",
-  "updated_at": "2026-05-20T14:41:36.054411076Z",
-  "closed_at": "2026-05-20T14:41:36.054411076Z",
+  "updated_at": "2026-05-20T16:58:25.584161582Z",
   "labels": [
     "feature",
     "cc-parity"
