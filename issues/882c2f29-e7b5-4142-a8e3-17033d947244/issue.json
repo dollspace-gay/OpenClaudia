@@ -3,11 +3,12 @@
   "display_id": 765,
   "title": "TUI run_turn channel-closed errors discard partial work",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/pipeline.rs:19-37, 526-633\n## Violation\nTwo macros (send_event! and send_event_or_break!) both panic-style return when the mpsc Sender is closed. send_event! returns Err(\"TUI channel closed\") from stream_sse_response, discarding the accumulated full_content, stream_usage, and any tool_calls collected so far. The caller that observed a channel-closed error has no way to drain that work. Worse, the macros are not consistent: send_event! returns Err while send_event_or_break! breaks the loop. The function ends up returning Err with no chance to persist tokens consumed by the upstream provider — billing event silently lost.\n## Mandated refactor\nReplace string-typed errors with a TurnError enum (ChannelClosed { partial: TurnResult }, ProviderError, ...). On ChannelClosed return the partial TurnResult so the caller can record usage and clean up. Collapse the two macros into one helper that returns a Result<(), ChannelClosed>.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:55:21.831006959Z",
-  "updated_at": "2026-05-18T21:55:29.186998609Z",
+  "updated_at": "2026-05-20T07:05:09.810879204Z",
+  "closed_at": "2026-05-20T07:05:09.810879204Z",
   "labels": [
     "qa-review",
     "error-handling"
