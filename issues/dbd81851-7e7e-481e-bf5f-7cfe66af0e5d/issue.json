@@ -3,12 +3,13 @@
   "display_id": 627,
   "title": "refresh_tools must respect capabilities.tools gate before issuing tools/list",
   "description": "CC fetchToolsForClient (client.ts:1748-1751) returns [] without making a wire call if capabilities.tools is falsy. OC McpServer::refresh_tools (src/mcp.rs:439-440) calls tools/list unconditionally, ignoring whether the server declared the tools capability. This results in a spurious RPC call and will produce a JSON-RPC error on servers that do not support the tools capability. Required: add a capabilities.tools guard at the start of refresh_tools, returning Ok(()) immediately if tools capability is absent.",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:03:36.475706487Z",
-  "updated_at": "2026-05-18T16:03:39.443314995Z",
+  "updated_at": "2026-05-20T05:33:08.008548615Z",
+  "closed_at": "2026-05-20T05:33:08.008548615Z",
   "labels": [
     "feature",
     "cc-parity"
