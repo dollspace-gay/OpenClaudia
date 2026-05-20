@@ -3,9 +3,10 @@
   "display_id": 897,
   "title": "thinking::has_ultrathink_keyword whole-string lowercase per scan; allocate-per-call hot path",
   "description": "## Severity\nTrivial\n## Dimension\ncomplexity\n## Location\nsrc/thinking.rs:32-39, 68-75 (has_ultrathink_keyword, has_ultrathink_in_messages)\n## Violation\n```rust\npub fn has_ultrathink_keyword(text: &str) -> bool {\n    let lower = text.to_lowercase();\n    if find_whole_word(&lower, \"ultrathink\") { return true; }\n    ULTRATHINK_PHRASES.iter().any(|p| lower.contains(p))\n}\n```\n\nCalled on every user message scan, on every turn, for every provider. `text.to_lowercase()` allocates a full copy of the message — typical user message is small but turns with pasted log dumps or file contents can be 100KB+. Combined with `has_ultrathink_in_messages` iterating ALL messages on every prompt invocation, the cost is O(N · M) allocations per turn where N is messages and M is total bytes.\n\n`find_whole_word` then performs `haystack[start..].find(needle)` in a loop — fine — but operates on the lowercase copy, doubling memory live during the scan.\n## Mandated refactor\nUse case-insensitive matching without allocation: walk the haystack byte-by-byte comparing `b.to_ascii_lowercase()` against the needle bytes. Or use the `memchr` crate's case-insensitive search. Or hoist the lowercase outside the loop (`has_ultrathink_in_messages` should lowercase each message ONCE and pass the lowercased slice to `has_ultrathink_keyword`). For very large messages, limit the scan to the first/last 4KiB — the keyword convention is \"say it in the prompt\", not \"hide it in pasted logs\".\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:12:09.679855160Z",
-  "updated_at": "2026-05-18T22:12:09.679855160Z"
+  "updated_at": "2026-05-20T12:04:19.933889534Z",
+  "closed_at": "2026-05-20T12:04:19.933889534Z"
 }
