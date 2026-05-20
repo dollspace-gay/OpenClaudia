@@ -3,9 +3,10 @@
   "display_id": 915,
   "title": "thinking::has_ultrathink_keyword whole-string lowercase per scan; allocation on hot path",
   "description": "## Severity\nTrivial\n## Dimension\ncomplexity\n## Location\nsrc/thinking.rs:32-39, 68-75 (has_ultrathink_keyword, has_ultrathink_in_messages)\n## Violation\ntext.to_lowercase() allocates a full copy per call. has_ultrathink_in_messages iterates ALL messages on every prompt invocation. find_whole_word operates on lowercase copy, doubling memory live during scan.\n## Mandated refactor\nWalk haystack byte-by-byte comparing b.to_ascii_lowercase() against needle bytes — no allocation. Or hoist lowercase outside the loop (has_ultrathink_in_messages lowercases each message ONCE).\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:15:55.833391952Z",
-  "updated_at": "2026-05-18T22:15:55.833391952Z"
+  "updated_at": "2026-05-20T12:04:14.240635887Z",
+  "closed_at": "2026-05-20T12:04:14.240635887Z"
 }
