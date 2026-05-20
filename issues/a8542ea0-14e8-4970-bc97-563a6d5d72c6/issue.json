@@ -3,11 +3,12 @@
   "display_id": 931,
   "title": "FileIndex score_match uses wrapping_sub(1) on usize creating obscure underflow path",
   "description": "## Severity\nMinor\n\n## Dimension\nCognitive Readability / KISS\n\n## Location\nsrc/tools/file_index.rs:152-158 (CamelCase bonus check inside score_match)\n\n## Violation\n```rust\nif orig_chars[pi].is_uppercase()\n    && orig_chars\n        .get(pi.wrapping_sub(1))\n        .is_some_and(|c| c.is_lowercase())\n{\n    score += BONUS_CAMEL;\n}\n```\n\nThe code is inside a branch guarded by `if pi > 0` (line 146) — so `pi.wrapping_sub(1)` will never actually underflow. The wrapping_sub is therefore a dead defensive measure that obscures intent: a reader has to mentally execute the path to confirm safety. KISS §3.2 demands the obvious form: `orig_chars.get(pi - 1)`. The wrapping arithmetic is a \"clever\" pattern that suggests the programmer was uncertain about the invariant.\n\nWorse, the cast at line 184 uses `#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]` — silencing the lint instead of bounding `path_chars.len()` first. The path_len_penalty division yields zero for very long paths, defeating the \"Prefer shorter paths\" intent for the worst offenders.\n\n## Mandated refactor\n1. Replace `pi.wrapping_sub(1)` with `pi - 1`. The `if pi > 0` guard already enforces safety.\n2. Replace the `#[allow]` casts with `i32::try_from(path_chars.len()).unwrap_or(i32::MAX) / 10` — the value cannot legitimately overflow because paths are bounded by OS PATH_MAX.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:17:47.176200464Z",
-  "updated_at": "2026-05-18T22:17:53.892061891Z",
+  "updated_at": "2026-05-20T12:57:44.938050615Z",
+  "closed_at": "2026-05-20T12:57:44.938050615Z",
   "labels": [
     "qa-review",
     "kiss"
