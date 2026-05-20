@@ -1,0 +1,10 @@
+{
+  "uuid": "b1ddbb68-8718-4a3c-a40c-c6e3e93daff0",
+  "issue_uuid": "0f81bfd8-4adb-4dca-8ac0-ec328269ed52",
+  "author": "lOrm",
+  "content": "Deferred — architectural encapsulation change (Teammate is the coordinator's central type; touches all call sites).\n\n**Fix outline:** Make Teammate::state private (src/coordinator/teammate.rs:119) and replace the field with documented transition methods: pub fn mark_running(&mut self), pub fn mark_idle(&mut self), pub fn mark_dead(&mut self) — each asserts the state precondition (Spawning|Running|Idle → Running, etc.) and either panics in debug + logs in release, or returns Result<(), TeammateError>. Expose pub fn state(&self) -> TeammateState as a Copy getter. Now the documented one-way lifecycle is enforced by the type, not by hope.\n\n**Recommendation:** Owner-level decision on (a) panic vs Result for invalid transitions, (b) whether transitions should be tracing-instrumented for lifecycle observability. Small refactor in surface area but coordinator-central in semantics. Defer.",
+  "created_at": "2026-05-20T14:15:30.253741903Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA3ZCS+cQkwVc4EFjcmBzoZEk1CML4isJIhYwZiCfAYrHKF6rhtBzn4CUlNiEWaaKgeQF5LG/qbHCKdIzp8tVfAA=="
+}
