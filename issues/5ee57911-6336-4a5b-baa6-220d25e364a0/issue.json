@@ -3,11 +3,12 @@
   "display_id": 953,
   "title": "execute_list_files lacks sort by type, pagination, and metadata (single-line dump)",
   "description": "## Severity\nMinor\n\n## Dimension\nFunctional Correctness / KISS / Usability\n\n## Location\nsrc/tools/file/list.rs:7-33 (execute_list_files)\n\n## Violation\nThe tool is a one-paragraph dump:\n\n```rust\nfor entry in entries.flatten() {\n    let name = entry.file_name().to_string_lossy().to_string();\n    let file_type = entry.file_type().map_or(\"\", |ft| if ft.is_dir() { \"/\" } else { \"\" });\n    items.push(format!(\"{name}{file_type}\"));\n}\nitems.sort();\n(items.join(\"\\n\"), false)\n```\n\nProblems:\n1. `entries.flatten()` silently discards per-entry errors (e.g. EACCES on a specific symlink) — the model gets a partial list with no indication of failure.\n2. No pagination — listing a directory with 50k entries produces a 50k-line response, consuming the entire token budget.\n3. Alphabetical sort mixes files and directories — every other CLI sorts dirs first.\n4. No file metadata: no size, mtime, no distinction between symlinks and regular files. A model trying to decide which file to read has zero signal.\n5. No filter args (no glob, no recursive option, no hidden-file toggle).\n\n## Mandated refactor\n1. Accept optional args: `pattern` (glob), `recursive: bool`, `max_entries: usize` (default 200), `show_hidden: bool` (default false).\n2. Return a structured listing: dirs first then files, each line \"name/  \" or \"name (Nbytes, mtime)\".\n3. Surface flatten errors via tracing::warn! and append \"(N entries skipped due to errors)\" if any.\n4. Cap output at max_entries; on truncation return is_error or a clear \"(showing N of M entries — use pattern to narrow)\" suffix.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:19:48.402884461Z",
-  "updated_at": "2026-05-18T22:20:03.508830360Z",
+  "updated_at": "2026-05-20T04:34:34.370064547Z",
+  "closed_at": "2026-05-20T04:34:34.370064547Z",
   "labels": [
     "qa-review",
     "kiss"
