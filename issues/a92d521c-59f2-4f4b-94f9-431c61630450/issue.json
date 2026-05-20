@@ -3,11 +3,12 @@
   "display_id": 876,
   "title": "QA: lsp.rs spawns language server with full inherited env (credential leak)",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/tools/lsp.rs:154-160\n## Violation\nLSP servers spawn without env-scrubbing equivalent to bash's `apply_env_scrub`. Every credential in the parent env (`ANTHROPIC_API_KEY`, `AWS_*`, `OPENAI_API_KEY`) flows into rust-analyzer, pylsp, typescript-language-server. These servers commonly emit telemetry and write logs to disk.\n\nQuoted (lsp.rs:154-160):\n```\n    let mut child = Command::new(server_cmd)\n        .args(server_args)\n        .stdin(Stdio::piped())\n        .stdout(Stdio::piped())\n        .stderr(Stdio::null())\n        .spawn()\n        .map_err(|e| format!(\"Failed to start {server_cmd}: {e}\"))?;\n```\n\nOWASP A04. Bash subsystem has scrub; LSP path treated differently with no justification.\n## Mandated refactor\n1. Lift `apply_env_scrub` into a shared `tools::sandbox` and call from both bash and lsp spawn sites.\n2. Switch to allowlist.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:10:13.108502313Z",
-  "updated_at": "2026-05-18T22:10:50.379620488Z",
+  "updated_at": "2026-05-20T12:04:54.333671773Z",
+  "closed_at": "2026-05-20T12:04:54.333671773Z",
   "labels": [
     "qa-review",
     "security"
