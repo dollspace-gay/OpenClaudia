@@ -3,11 +3,12 @@
   "display_id": 787,
   "title": "READ_TRACKER is process-global Mutex with single contention point across all file ops",
   "description": "## Severity\nMajor\n\n## Dimension\nConcurrency / SOLID-D (DIP) / Decoupling\n\n## Location\nsrc/tools/file/mod.rs:26-72 (`READ_TRACKER` static + `ReadFileTracker` impl)\n\n## Violation\n```rust\npub static READ_TRACKER: std::sync::LazyLock<ReadFileTracker> =\n    std::sync::LazyLock::new(ReadFileTracker::new);\n\npub struct ReadFileTracker {\n    read_files: Mutex<Vec<PathBuf>>,\n}\n```\n\nThis is hardcoded global state. Every read, every edit, every notebook_edit takes the same Mutex (mark_read uses `lock()`; has_been_read also takes the lock). Under concurrent sessions (the multi-session todo design hints at the intent), all file tools serialize through this single lock. Worse:\n\n1. The `read_files: Vec<PathBuf>` is O(N) per `contains()` check (line 63: `files.contains(&check_path)`). With the 10_000 cap, every edit performs up to 10k path comparisons under the lock.\n2. The tracker is shared across all sessions — session A reading `/x` lets session B edit `/x` without reading it. Violates session isolation that `todo.rs` already implements via `CURRENT_SESSION_ID` thread-local.\n3. `clear()` is global — a \"new session\" clear nukes every other session's tracker.\n\nDIP violation: `execute_edit_file` reaches directly into the global static rather than depending on an injected `ReadTrackingPolicy` trait.\n\n## Mandated refactor\n1. Replace `Vec` with `HashSet<PathBuf>` (O(1) membership check; the LRU eviction comment is wrong — the current code does not implement LRU semantics on the read path, only insertion order).\n2. Either drop the LRU pretense (use `HashSet`) or implement actual LRU using `linked_hash_map::LinkedHashMap`.\n3. Bucket the tracker by session id (reuse the `SessionIdGuard` machinery already in `todo.rs`).\n4. Define a `trait ReadTracker { fn mark(&self, p: &Path); fn was_read(&self, p: &Path) -> bool; }` and inject it into `execute_edit_file`/`execute_notebook_edit` so tests can substitute a fake.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:57:42.196204059Z",
-  "updated_at": "2026-05-18T21:59:45.946622114Z",
+  "updated_at": "2026-05-20T07:22:38.279633073Z",
+  "closed_at": "2026-05-20T07:22:38.279633073Z",
   "labels": [
     "qa-review",
     "concurrency"
