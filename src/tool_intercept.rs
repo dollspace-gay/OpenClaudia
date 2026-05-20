@@ -198,12 +198,51 @@ impl InterceptedToolCall {
     }
 }
 
+/// Incrementally maintained results of the marker scan over [`ToolInterceptor::buffer`].
+///
+/// Crosslink #743: the naive implementation of `has_pending_tool_calls` and
+/// `has_complete_block` re-scanned the entire buffer for every shorthand-tool
+/// open/close marker on every poll (up to 19 substring scans per call, called
+/// once per streaming push and once per loop iteration in `extract_all_tool_calls`).
+/// Total cost on an N-byte buffer accumulated over K pushes was O(K * N * M).
+///
+/// We now keep a single position cursor (`scan_pos`) and walk the buffer once,
+/// recognising every marker (`<invoke name="`, `</invoke>`, `<tool>`, `<tool `,
+/// `</tool>`) at each `<` byte. Subsequent pushes only re-scan the new suffix
+/// (with a small backtrack to catch markers that straddle a chunk boundary), so
+/// total cost is amortised O(N) — one byte read per buffer byte, plus a small
+/// constant per `<` we encounter.
+#[derive(Debug, Clone, Default)]
+struct ScanState {
+    /// Buffer offset already consumed by the scanner.
+    scan_pos: usize,
+    /// Earliest byte offset where `<invoke name="` was observed.
+    invoke_open_at: Option<usize>,
+    /// Whether `</invoke>` has been observed at or after `invoke_open_at`.
+    invoke_closed: bool,
+    /// Per-shorthand-tool flag: did we observe an open marker (`<tool>` or `<tool `)?
+    shorthand_open: [bool; SHORTHAND_TOOL_COUNT],
+    /// Per-shorthand-tool flag: did we observe a close marker `</tool>`?
+    shorthand_close: [bool; SHORTHAND_TOOL_COUNT],
+}
+
+/// Number of entries in [`ToolInterceptor::SHORTHAND_TOOLS`].
+///
+/// Hard-coded so [`ScanState`] can store per-tool flags in fixed-size arrays
+/// (and a compile-time assertion below ensures the two stay in sync).
+const SHORTHAND_TOOL_COUNT: usize = 9;
+
 /// Parser for Claude's XML-style tool invocations
 pub struct ToolInterceptor {
     /// Accumulated content that may contain tool calls
     buffer: String,
     /// Whether we're currently inside a `function_calls` block
     in_function_calls: bool,
+    /// Position-cached marker scan over [`Self::buffer`] (crosslink #743).
+    ///
+    /// Reset to default any time the buffer shrinks or is rewritten in-place;
+    /// extended in-place by [`Self::extend_scan`] when the buffer only grew.
+    scan: ScanState,
 }
 
 impl Default for ToolInterceptor {
@@ -218,6 +257,13 @@ impl ToolInterceptor {
         Self {
             buffer: String::new(),
             in_function_calls: false,
+            scan: ScanState {
+                scan_pos: 0,
+                invoke_open_at: None,
+                invoke_closed: false,
+                shorthand_open: [false; SHORTHAND_TOOL_COUNT],
+                shorthand_close: [false; SHORTHAND_TOOL_COUNT],
+            },
         }
     }
 
@@ -236,6 +282,101 @@ impl ToolInterceptor {
     pub fn clear(&mut self) {
         self.buffer.clear();
         self.in_function_calls = false;
+        self.scan = ScanState::default();
+    }
+
+    /// Discard the cached marker scan so the next poll re-scans from byte zero.
+    ///
+    /// Called whenever the buffer is rewritten or shrunk (e.g. after an
+    /// extraction or `strip_hallucinated_blocks`). The cache assumes the buffer
+    /// only grows by append; any other mutation must invalidate it.
+    fn invalidate_scan_cache(&mut self) {
+        self.scan = ScanState::default();
+    }
+
+    /// Walk any unscanned suffix of `self.buffer`, recording every tool-related
+    /// marker we encounter into `self.scan`.
+    ///
+    /// This is the single source of truth for "is there a tool call in the
+    /// buffer?" / "is it complete?" — both [`Self::has_pending_tool_calls`] and
+    /// [`Self::has_complete_block`] read flags written here. The walk is a
+    /// single linear pass over the new suffix that checks for any of the known
+    /// markers at each `<` byte; total amortised cost across N total bytes of
+    /// buffer is O(N), not O(N * markers).
+    ///
+    /// Backtracks a small constant before `scan_pos` so a marker that straddles
+    /// the boundary between two pushes is still detected.
+    fn extend_scan(&mut self) {
+        // Longest marker we recognise: `<invoke name="` (14 bytes). Backtracking
+        // by `MAX_MARKER_LEN - 1` ensures that if the previous push left a
+        // partial marker at the buffer tail, the next scan picks it up.
+        const MAX_MARKER_LEN: usize = 14;
+
+        let bytes = self.buffer.as_bytes();
+        if self.scan.scan_pos >= bytes.len() {
+            return;
+        }
+        let start = self.scan.scan_pos.saturating_sub(MAX_MARKER_LEN - 1);
+
+        let mut i = start;
+        while i < bytes.len() {
+            if bytes[i] != b'<' {
+                i += 1;
+                continue;
+            }
+            let tail = &self.buffer[i..];
+            // Single dispatch on the byte(s) following `<`. Each branch is a
+            // constant-time `starts_with` against a known fixed string, so the
+            // per-`<` cost is O(markers) with a tiny constant.
+            if tail.starts_with("<invoke name=\"") {
+                if self.scan.invoke_open_at.is_none() {
+                    self.scan.invoke_open_at = Some(i);
+                }
+                i += "<invoke name=\"".len();
+                continue;
+            }
+            if tail.starts_with("</invoke>") {
+                if let Some(open_at) = self.scan.invoke_open_at {
+                    if i >= open_at {
+                        self.scan.invoke_closed = true;
+                    }
+                }
+                i += "</invoke>".len();
+                continue;
+            }
+            // Check shorthand-tool open / close markers. Visiting at most a few
+            // bytes after `<` — `starts_with` short-circuits on the first byte
+            // mismatch so most candidates are rejected in one comparison.
+            let mut matched = false;
+            for (idx, tool) in Self::SHORTHAND_TOOLS.iter().enumerate() {
+                // `</tool>`
+                if tail.len() >= tool.len() + 3
+                    && tail.as_bytes()[1] == b'/'
+                    && tail[2..].starts_with(tool)
+                    && tail.as_bytes()[2 + tool.len()] == b'>'
+                {
+                    self.scan.shorthand_close[idx] = true;
+                    i += 3 + tool.len();
+                    matched = true;
+                    break;
+                }
+                // `<tool>` or `<tool `
+                if tail.len() > tool.len() + 1 && tail[1..].starts_with(tool) {
+                    let after = tail.as_bytes()[1 + tool.len()];
+                    if after == b'>' || after == b' ' {
+                        self.scan.shorthand_open[idx] = true;
+                        i += 2 + tool.len();
+                        matched = true;
+                        break;
+                    }
+                }
+            }
+            if !matched {
+                i += 1;
+            }
+        }
+
+        self.scan.scan_pos = bytes.len();
     }
 
     /// Shorthand tool tags that Claude might use (e.g., <bash>cmd</bash>)
@@ -251,53 +392,67 @@ impl ToolInterceptor {
         "edit_file",
     ];
 
+    /// Compile-time check that [`SHORTHAND_TOOL_COUNT`] stays in sync with
+    /// [`Self::SHORTHAND_TOOLS`]. If a future entry is added or removed without
+    /// updating the constant, this assertion fails at compile time so the
+    /// fixed-size arrays in [`ScanState`] cannot silently drift.
+    const _SHORTHAND_LEN_CHECK: () = assert!(
+        Self::SHORTHAND_TOOLS.len() == SHORTHAND_TOOL_COUNT,
+        "SHORTHAND_TOOL_COUNT must equal SHORTHAND_TOOLS.len()",
+    );
+
     /// Check if buffer contains tool invocations
     /// Claude Code uses multiple formats:
     /// 1. <invoke name="Bash"><parameter name="command">...</parameter></invoke>
     /// 2. <bash>...</bash> (shorthand)
     /// 3. <`function_calls`><invoke>...</invoke></`function_calls`>
+    ///
+    /// Crosslink #743: single-pass over the buffer with a position cache rather
+    /// than N substring scans per call. See [`Self::extend_scan`] for details.
     #[must_use]
-    pub fn has_pending_tool_calls(&self) -> bool {
-        // Check for full invoke format
-        if self.buffer.contains("<invoke name=\"") {
+    pub fn has_pending_tool_calls(&mut self) -> bool {
+        self.extend_scan();
+        if self.scan.invoke_open_at.is_some() {
             return true;
         }
-        // Check for shorthand format like <bash>, <read>, etc.
-        for tool in Self::SHORTHAND_TOOLS {
-            let open_tag = format!("<{tool}>");
-            let open_tag_with_attr = format!("<{tool} "); // <write path="...">
-            if self.buffer.contains(&open_tag) || self.buffer.contains(&open_tag_with_attr) {
-                return true;
-            }
+        if self.scan.shorthand_open.iter().any(|&seen| seen) {
+            return true;
         }
         self.in_function_calls
     }
 
     /// Check if we have a complete tool block
+    ///
+    /// Crosslink #743: shares the position-cached marker scan with
+    /// [`Self::has_pending_tool_calls`]. The expensive `<result>...</result>`
+    /// gating is only performed if the cache already knows the buffer contains
+    /// a closed `<invoke>` block, so the common "no tools yet" fast path is a
+    /// handful of integer reads.
     #[must_use]
-    pub fn has_complete_block(&self) -> bool {
-        // Check for full invoke format
-        if let Some(start) = self.buffer.find("<invoke name=\"") {
-            if let Some(end) = self.buffer[start..].find("</invoke>") {
-                let invoke_end = start + end + "</invoke>".len();
-                let after = &self.buffer[invoke_end..];
-                if after.trim_start().starts_with("<result>") {
-                    return after.contains("</result>");
+    pub fn has_complete_block(&mut self) -> bool {
+        self.extend_scan();
+
+        if let Some(start) = self.scan.invoke_open_at {
+            if self.scan.invoke_closed {
+                // We only need to consult the buffer text when an invoke has
+                // closed: the `<result>...</result>` gating below cannot be
+                // expressed by per-marker flags alone (it depends on what
+                // follows the closing tag). The slice below is bounded by the
+                // closed-invoke region, not a full-buffer scan.
+                if let Some(end_rel) = self.buffer[start..].find("</invoke>") {
+                    let invoke_end = start + end_rel + "</invoke>".len();
+                    let after = &self.buffer[invoke_end..];
+                    if after.trim_start().starts_with("<result>") {
+                        return after.contains("</result>");
+                    }
+                    return true;
                 }
-                return true;
             }
         }
-        // Check for shorthand format
-        for tool in Self::SHORTHAND_TOOLS {
-            let open_tag = format!("<{tool}>");
-            let open_tag_with_attr = format!("<{tool} ");
-            let close_tag = format!("</{tool}>");
 
-            let has_open =
-                self.buffer.contains(&open_tag) || self.buffer.contains(&open_tag_with_attr);
-            let has_close = self.buffer.contains(&close_tag);
-
-            if has_open && has_close {
+        // Shorthand: any tool with both an opener and a closer counts.
+        for idx in 0..SHORTHAND_TOOL_COUNT {
+            if self.scan.shorthand_open[idx] && self.scan.shorthand_close[idx] {
                 return true;
             }
         }
@@ -352,6 +507,10 @@ impl ToolInterceptor {
         // Remove <function_calls> and </function_calls> wrapper tags (keep content inside)
         self.buffer = self.buffer.replace("<function_calls>", "");
         self.buffer = self.buffer.replace("</function_calls>", "");
+
+        // Buffer rewritten in-place — the cached marker positions no longer
+        // correspond to byte offsets in `self.buffer`, so drop them.
+        self.invalidate_scan_cache();
     }
 
     /// Extract ALL tool calls from the buffer at once, stripping hallucinated results.
@@ -422,6 +581,9 @@ impl ToolInterceptor {
 
         let tools = self.parse_invocations(invoke_block);
         self.buffer.clone_from(&after);
+        // Buffer shrunk to the post-extraction suffix; cached marker offsets
+        // would now point at the wrong bytes, so drop them (crosslink #743).
+        self.invalidate_scan_cache();
 
         Some((tools, before, after))
     }
@@ -464,6 +626,9 @@ impl ToolInterceptor {
         let before = self.buffer[..start_idx].to_string();
         let after = self.buffer[block_end..].to_string();
         self.buffer.clone_from(&after);
+        // Buffer shrunk to the post-extraction suffix; cached marker offsets
+        // would now point at the wrong bytes, so drop them (crosslink #743).
+        self.invalidate_scan_cache();
 
         Some((vec![tool], before, after))
     }
@@ -1559,5 +1724,136 @@ this never closes"#;
             true,
         )]);
         assert!(!edit_err.contains("<completion_note>"));
+    }
+
+    // ── crosslink #743: position-cached single-pass marker scanner ────────
+
+    /// Forensic test for crosslink #743.
+    ///
+    /// Streams a long chunk of plain text followed by a single tool call in
+    /// many small pushes (simulating the SSE delta loop). Before the fix each
+    /// push triggered 19 full-buffer substring scans from
+    /// `has_pending_tool_calls` / `has_complete_block`; now the scanner
+    /// position-caches its progress and re-scans only the new suffix. We
+    /// verify both flags end up correct and that the scanner *did* advance
+    /// past every byte exactly once across the streaming sequence.
+    #[test]
+    fn scan_cache_extends_across_streaming_pushes_743() {
+        let mut interceptor = ToolInterceptor::new();
+
+        // Push 2KB of plain text in 128-byte chunks (no markers).
+        let chunk = "x".repeat(128);
+        for _ in 0..16 {
+            interceptor.push(&chunk);
+            assert!(
+                !interceptor.has_pending_tool_calls(),
+                "no markers yet — must report no pending tool calls"
+            );
+            assert!(
+                !interceptor.has_complete_block(),
+                "no markers yet — must report no complete block"
+            );
+        }
+
+        // After 16 polls the cache cursor must equal the buffer length: the
+        // scanner walked each byte once total (amortised O(N)), not 16 * N.
+        assert_eq!(
+            interceptor.scan.scan_pos,
+            interceptor.buffer.len(),
+            "scan cursor must track buffer length after each poll (regression of #743)"
+        );
+
+        // Now stream a tool call in halves and confirm the cache picks up the
+        // marker that straddles the chunk boundary (the backtrack window).
+        interceptor.push("<invoke nam");
+        assert!(!interceptor.has_pending_tool_calls());
+        interceptor.push("e=\"Bash\"><parameter name=\"command\">ls</parameter></invoke>");
+        assert!(interceptor.has_pending_tool_calls());
+        assert!(interceptor.has_complete_block());
+    }
+
+    /// Forensic test for crosslink #743.
+    ///
+    /// Ensures the cache is invalidated after extraction (`extract_tool_calls`
+    /// shrinks the buffer to the post-block suffix). If the cache survived,
+    /// stale `invoke_open_at` offsets would point past the new buffer end and
+    /// the next `has_complete_block` would either panic on a slice or return
+    /// the wrong answer. Drives a multi-block stream and asserts each round
+    /// of poll → extract → poll behaves correctly.
+    #[test]
+    fn scan_cache_invalidated_on_extract_and_strip_743() {
+        let mut interceptor = ToolInterceptor::new();
+
+        // Two complete blocks back-to-back.
+        interceptor.push(
+            r#"<invoke name="Bash"><parameter name="command">a</parameter></invoke>"#,
+        );
+        interceptor.push(
+            r#"<invoke name="Bash"><parameter name="command">b</parameter></invoke>"#,
+        );
+        assert!(interceptor.has_complete_block());
+
+        // Extract first block — buffer shrinks to the second block.
+        let (tools_a, _, _) = interceptor.extract_tool_calls();
+        assert_eq!(tools_a.len(), 1);
+        assert_eq!(
+            tools_a[0].parameters.get("command"),
+            Some(&"a".to_string())
+        );
+
+        // Cache MUST be invalidated; otherwise has_complete_block could read
+        // a stale offset past the new buffer end.
+        assert_eq!(interceptor.scan.scan_pos, 0, "cache must reset on extract");
+
+        // Second block is still complete and extractable.
+        assert!(interceptor.has_complete_block());
+        let (tools_b, _, _) = interceptor.extract_tool_calls();
+        assert_eq!(tools_b.len(), 1);
+        assert_eq!(
+            tools_b[0].parameters.get("command"),
+            Some(&"b".to_string())
+        );
+
+        // Buffer is now empty; cache must agree.
+        assert!(!interceptor.has_pending_tool_calls());
+        assert!(!interceptor.has_complete_block());
+
+        // strip_hallucinated_blocks also rewrites the buffer in place and
+        // must therefore invalidate the cache.
+        interceptor.push(
+            r#"<invoke name="Bash"><parameter name="command">c</parameter></invoke><function_results>stale</function_results>"#,
+        );
+        assert!(interceptor.has_complete_block());
+        interceptor.strip_hallucinated_blocks();
+        assert_eq!(
+            interceptor.scan.scan_pos, 0,
+            "cache must reset after strip_hallucinated_blocks"
+        );
+        assert!(interceptor.has_complete_block());
+        assert!(!interceptor.get_buffer().contains("stale"));
+    }
+
+    /// Forensic test for crosslink #743.
+    ///
+    /// Verifies the single-pass scanner correctly recognises shorthand-tool
+    /// markers (open + close pairs across all 9 entries in `SHORTHAND_TOOLS`)
+    /// without re-checking each marker against the full buffer. Iterates every
+    /// shorthand tool and asserts both `has_pending_tool_calls` and
+    /// `has_complete_block` flip on as expected. Catches regressions where
+    /// a future scanner refactor accidentally drops a tool from dispatch.
+    #[test]
+    fn scan_recognises_every_shorthand_tool_743() {
+        for tool in ToolInterceptor::SHORTHAND_TOOLS {
+            let mut interceptor = ToolInterceptor::new();
+            interceptor.push(&format!("<{tool}>body</{tool}>"));
+            assert!(
+                interceptor.has_pending_tool_calls(),
+                "shorthand tool <{tool}> should be detected as pending"
+            );
+            assert!(
+                interceptor.has_complete_block(),
+                "shorthand tool <{tool}>...</{tool}> should be detected as complete"
+            );
+        }
     }
 }

@@ -54,6 +54,55 @@ where
     }
 }
 
+/// Hard cap on the agent-facing fetched-page output string, in bytes.
+///
+/// Both [`execute_web_fetch`] and [`execute_web_browser`] truncate to this
+/// length and append a `(content truncated, N total chars)` marker.
+/// Centralised so the two fetch entry points can never drift (crosslink #807).
+pub const MAX_FETCH_OUTPUT_BYTES: usize = 50_000;
+
+/// Assemble the agent-facing string for a successful page fetch.
+///
+/// Output shape matches the pre-extraction implementation byte-for-byte:
+///
+/// ```text
+/// # <title>           (omitted if title is None)
+///
+/// URL: <url>
+///
+/// <content>
+/// ```
+///
+/// followed by a `...\n\n(content truncated, N total chars)` tail when the
+/// rendered output exceeds [`MAX_FETCH_OUTPUT_BYTES`].
+///
+/// Extracted from `execute_web_fetch` and `execute_web_browser`, which
+/// previously open-coded identical assembly + the `50000` magic constant
+/// (crosslink #807). Both call sites now route through this single function
+/// so a tweak to the format or the cap applies uniformly.
+pub fn format_fetch_output(
+    title: Option<&str>,
+    url: &str,
+    content: &str,
+) -> String {
+    let mut output = String::new();
+    if let Some(title) = title {
+        let _ = write!(output, "# {title}\n\n");
+    }
+    let _ = write!(output, "URL: {url}\n\n");
+    output.push_str(content);
+
+    if output.len() > MAX_FETCH_OUTPUT_BYTES {
+        let total = output.len();
+        format!(
+            "{}...\n\n(content truncated, {total} total chars)",
+            safe_truncate(&output, MAX_FETCH_OUTPUT_BYTES),
+        )
+    } else {
+        output
+    }
+}
+
 /// Fetch a URL using Jina Reader
 pub fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool) {
     // crosslink #675: typed accessor.
@@ -76,25 +125,14 @@ pub fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool) {
     let result = run_blocking(web::fetch_url(url));
 
     match result {
-        Ok(fetch_result) => {
-            let mut output = String::new();
-            if let Some(title) = fetch_result.title {
-                let _ = write!(output, "# {title}\n\n");
-            }
-            let _ = write!(output, "URL: {}\n\n", fetch_result.url);
-            output.push_str(&fetch_result.content);
-
-            // Truncate if too long
-            if output.len() > 50000 {
-                output = format!(
-                    "{}...\n\n(content truncated, {} total chars)",
-                    safe_truncate(&output, 50000),
-                    output.len()
-                );
-            }
-
-            (output, false)
-        }
+        Ok(fetch_result) => (
+            format_fetch_output(
+                fetch_result.title.as_deref(),
+                &fetch_result.url,
+                &fetch_result.content,
+            ),
+            false,
+        ),
         Err(e) => (format!("Failed to fetch URL: {e}"), true),
     }
 }
@@ -211,25 +249,14 @@ pub fn execute_web_browser(args: &HashMap<String, Value>) -> (String, bool) {
     }
 
     match web::fetch_with_browser(url) {
-        Ok(fetch_result) => {
-            let mut output = String::new();
-            if let Some(title) = fetch_result.title {
-                let _ = write!(output, "# {title}\n\n");
-            }
-            let _ = write!(output, "URL: {}\n\n", fetch_result.url);
-            output.push_str(&fetch_result.content);
-
-            // Truncate if too long
-            if output.len() > 50000 {
-                output = format!(
-                    "{}...\n\n(content truncated, {} total chars)",
-                    safe_truncate(&output, 50000),
-                    output.len()
-                );
-            }
-
-            (output, false)
-        }
+        Ok(fetch_result) => (
+            format_fetch_output(
+                fetch_result.title.as_deref(),
+                &fetch_result.url,
+                &fetch_result.content,
+            ),
+            false,
+        ),
         Err(e) => (format!("Browser fetch failed: {e}"), true),
     }
 }
@@ -336,5 +363,83 @@ mod tests {
             assert!(is_err);
             assert!(msg.contains("http://") && msg.contains("https://"));
         }
+    }
+
+    // ── crosslink #807: shared format_fetch_output for both fetch paths ──
+
+    /// Forensic test for crosslink #807.
+    ///
+    /// Pins the exact agent-facing output shape so that any future tweak
+    /// to title / URL / body composition fails one test instead of letting
+    /// the two fetch entry points silently drift. Covers all four branches
+    /// of the formatter (title present / absent × body short / over-cap).
+    #[test]
+    fn format_fetch_output_pins_shape_807() {
+        // Title present + body short of the cap → leading "# title", URL
+        // header, body verbatim, no truncation marker.
+        let out = format_fetch_output(
+            Some("Hello"),
+            "https://example.com/",
+            "the body content",
+        );
+        assert_eq!(out, "# Hello\n\nURL: https://example.com/\n\nthe body content");
+
+        // Title absent → no leading heading at all.
+        let out = format_fetch_output(None, "https://example.com/", "body");
+        assert_eq!(out, "URL: https://example.com/\n\nbody");
+
+        // Body over the cap → truncated to MAX_FETCH_OUTPUT_BYTES then
+        // suffixed with "...\n\n(content truncated, N total chars)" where
+        // N is the *pre-truncation* total length.
+        let body = "x".repeat(MAX_FETCH_OUTPUT_BYTES * 2);
+        let out = format_fetch_output(None, "https://example.com/", &body);
+        let expected_total = "URL: https://example.com/\n\n".len() + body.len();
+        assert!(
+            out.contains(&format!("(content truncated, {expected_total} total chars)")),
+            "truncation marker must echo the pre-truncation total length"
+        );
+        assert!(
+            out.ends_with(" total chars)"),
+            "truncation marker must close the output"
+        );
+        // safe_truncate is UTF-8-boundary safe, so output length is bounded
+        // by cap + suffix; checking it's not exploding to body.len() suffices.
+        assert!(out.len() < MAX_FETCH_OUTPUT_BYTES + 200);
+    }
+
+    /// Forensic test for crosslink #807.
+    ///
+    /// Drives `format_fetch_output` across the boundary of
+    /// [`MAX_FETCH_OUTPUT_BYTES`] from both sides — exactly the cap, one byte
+    /// under, one byte over — and asserts the truncation marker fires iff
+    /// the threshold is crossed. If a future refactor splits the cap between
+    /// the two fetch entry points (the bug #807 originally filed), the two
+    /// would silently disagree; routing both through this helper makes that
+    /// impossible, and this test pins the threshold behaviour itself.
+    #[test]
+    fn format_fetch_output_truncates_at_cap_boundary_807() {
+        // URL prefix consumed by the formatter header.
+        let header_len = "URL: https://example.com/\n\n".len();
+
+        // One byte under the cap → no truncation marker.
+        let body_under = "z".repeat(MAX_FETCH_OUTPUT_BYTES - header_len - 1);
+        let out = format_fetch_output(None, "https://example.com/", &body_under);
+        assert!(!out.contains("content truncated"));
+        assert_eq!(out.len(), MAX_FETCH_OUTPUT_BYTES - 1);
+
+        // Exactly at the cap → no truncation marker.
+        let body_at = "z".repeat(MAX_FETCH_OUTPUT_BYTES - header_len);
+        let out = format_fetch_output(None, "https://example.com/", &body_at);
+        assert!(!out.contains("content truncated"));
+        assert_eq!(out.len(), MAX_FETCH_OUTPUT_BYTES);
+
+        // One byte over the cap → truncation marker present, and the marker
+        // reports the pre-truncation total exactly.
+        let body_over = "z".repeat(MAX_FETCH_OUTPUT_BYTES - header_len + 1);
+        let out = format_fetch_output(None, "https://example.com/", &body_over);
+        let expected_total = header_len + body_over.len();
+        assert!(out.contains(&format!(
+            "(content truncated, {expected_total} total chars)"
+        )));
     }
 }
