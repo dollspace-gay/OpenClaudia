@@ -1,0 +1,10 @@
+{
+  "uuid": "2f63098c-1483-4f90-a7f4-f733ec2aad41",
+  "issue_uuid": "33650c2c-917c-4ae3-bfb6-b19cf3a79e34",
+  "author": "lOrm",
+  "content": "Duplicate of #872 (same QA finding: WorktreeState dead YAGNI). Canonical: #872.",
+  "created_at": "2026-05-20T12:04:02.727941792Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAlwoBWBAiQrUVLHXjUZF13CAR8TtD0YjpqkzEQ+hQngJj4osjqXOzJVwTzLeQMrKlDw+zv6lo9rpfJV2rHh1eDw=="
+}
