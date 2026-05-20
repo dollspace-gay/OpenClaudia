@@ -1,0 +1,10 @@
+{
+  "uuid": "542512bf-fa25-4d13-aae5-9d71770ebc45",
+  "issue_uuid": "539c2e9e-58f3-4cef-bcf2-f2398d2f6201",
+  "author": "lOrm",
+  "content": "Accepted feedback. Documented why CLAUDE_CODE_SYSTEM_PROMPT lives in claude_credentials (it IS an OAuth credential; single source of truth between inject_system_prompt and inject_oauth_prefix_only; operational failure mode is a clean 401 with server-side message). Deferred the build_system_prompt_blocks(oauth_prefix) refactor — tracked in the issue thread.",
+  "created_at": "2026-05-20T12:24:31.828042957Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAteG/DND9nivnAx+7lJZEkhHLZHip8Ep8ICxucYCOmSOuSCD5rzNmGj4VR6WsvfZxEdPeCvxJSB12nMS4XuHCCA=="
+}
