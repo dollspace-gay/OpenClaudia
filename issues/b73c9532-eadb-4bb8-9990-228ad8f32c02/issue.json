@@ -3,11 +3,12 @@
   "display_id": 983,
   "title": "execute_exit_worktree status check uses string equality on git output instead of git plumbing",
   "description": "## Severity\nMinor\n\n## Dimension\nKISS / Decoupling\n\n## Location\nsrc/tools/worktree.rs:186-192 (git-dir vs git-common-dir comparison)\n\n## Violation\n```rust\nif git_dir == common_dir || git_dir == \".git\" {\n    return (\"Not in an isolated worktree. ...\", true);\n}\n```\n\nThe check determines \"am I in the main worktree or a child worktree\" by comparing the string outputs of two separate git rev-parse invocations. The two values can drift in any of: trailing whitespace, relative-vs-absolute paths, case (Windows), the special `.git` literal value. Hardcoding `git_dir == \".git\"` as a second equality check shows the author hit this edge but only patched the specific instance they encountered.\n\nCleaner: `git rev-parse --git-common-dir` and `git rev-parse --is-inside-worktree` return canonical values, but git has a dedicated `git worktree list --porcelain` that lists every worktree and marks the main one explicitly. Use that.\n\nWorse, the git_dir extraction (line 181-184) silently defaults to empty string on error: `.unwrap_or_default()`. If git rev-parse fails entirely (corrupted .git), git_dir == \"\" and common_dir != \"\" so the function FALSELY claims we are in an isolated worktree and proceeds to remove it.\n\n## Mandated refactor\nUse `git worktree list --porcelain`, parse the entries, find the one matching the current cwd, check its position in the list (main is first). This is a single git invocation and gives canonical answers. Drop the dual rev-parse comparison entirely.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:26:44.431643383Z",
-  "updated_at": "2026-05-18T22:26:47.171538820Z",
+  "updated_at": "2026-05-20T04:53:38.714421417Z",
+  "closed_at": "2026-05-20T04:53:38.714421417Z",
   "labels": [
     "qa-review",
     "kiss"
