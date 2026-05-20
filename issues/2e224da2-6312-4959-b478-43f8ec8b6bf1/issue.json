@@ -3,11 +3,12 @@
   "display_id": 919,
   "title": "Plugin::resolve_mcp_servers ignores  and  from inline McpServersSpec::Map but reads them from convention .mcp.json",
   "description": "## Severity\nMinor\n## Dimension\ndry\n## Location\nsrc/plugins/mod.rs:541-613, src/plugins/mod.rs:333-360\n## Violation\nFive distinct branches handle the four MCP-config sources (.mcp.json conventional, manifest Path, manifest Map, manifest Array Path, manifest Array Map). Each branch re-implements `serde_json::from_str::<HashMap<String, McpServerConfig>>(&content)` independently, and only some branches honour the `mcpServers` wrapper key. Quoted lines:\n\n    let mcp_json = self.path.join(\".mcp.json\");\n    if mcp_json.exists() {\n        if let Ok(content) = fs::read_to_string(&mcp_json) {\n            ...\n            if let Ok(servers) = serde_json::from_str::<HashMap<String, McpServerConfig>>(&content) {\n                self.mcp_configs.extend(servers);\n            }\n        }\n    }\n    ...\n    McpServersSpec::Path(p) => {\n        let resolved = self.path.join(p);\n        if resolved.exists() {\n            if let Ok(content) = fs::read_to_string(&resolved) {\n                if let Ok(servers) = serde_json::from_str::<HashMap<String, McpServerConfig>>(&content) {\n                    self.mcp_configs.extend(servers);\n                }\n            }\n        }\n    }\n\nDrift between branches: the conventional path falls back to the bare map if `mcpServers` is missing, but McpServersSpec::Path does NOT — the user gets different behaviour depending on whether they reference the file via convention or via manifest. Same drift in McpServersSpec::Array::Path. Identical 4-line read-and-parse blocks repeat 5 times.\n## Mandated refactor\nExtract `fn load_mcp_file(path: &Path) -> Result<HashMap<String, McpServerConfig>, PluginError>` that handles BOTH the wrapper and the bare-map formats and reuse it from every branch. Reduce the resolve_mcp_servers function to ~25 lines and make the convention/manifest semantics indistinguishable.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:16:22.909492913Z",
-  "updated_at": "2026-05-18T22:17:19.717631326Z",
+  "updated_at": "2026-05-20T12:24:24.378037826Z",
+  "closed_at": "2026-05-20T12:24:24.378037826Z",
   "labels": [
     "qa-review",
     "dry"
