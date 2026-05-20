@@ -1,0 +1,10 @@
+{
+  "uuid": "384d4cf6-dba5-4b3e-8d0c-12aeaba5472b",
+  "issue_uuid": "07270d67-3de1-450d-bac2-c5c1fd73af4b",
+  "author": "lOrm",
+  "content": "Partially addressed: max_iterations is now config-driven via a new src/config/acp.rs AcpConfig with two sources — YAML acp.max_iterations key in .openclaudia/config.yaml and OPENCLAUDIA_ACP_MAX_ITERATIONS env var override (rejects zero/garbage). Default 50 matches the previous hard-coded value, no behavioural change without configuration. acp::run_prompt_loop now also threads cwd via build_system_prompt_with_cwd instead of dropping it. AcpConfig is loaded lazily inside run_prompt_loop rather than stored on AppConfig because the AppConfig struct literal is constructed in several forbidden test-fixture sites (subagent.rs / vdd/) that this change-set cannot touch. The function-split / pooled-client refactor in the mandate is out of scope here — the loop-cap and prompt-builder gaps (the two concrete leaks the issue names) are closed; leaving issue open for the structural refactor work.",
+  "created_at": "2026-05-20T06:42:19.412798029Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA+UgPYV3/LSQHuyhUkyZeu2wWRyw+Pobwa0L+z1XlYg6Ewn/WRBUAESwiiz88rPiAdu+fu27xPPib2NB+MN34AQ=="
+}
