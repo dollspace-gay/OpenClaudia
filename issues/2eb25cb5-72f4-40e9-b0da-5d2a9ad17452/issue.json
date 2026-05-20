@@ -2,12 +2,13 @@
   "uuid": "2eb25cb5-72f4-40e9-b0da-5d2a9ad17452",
   "display_id": 600,
   "title": "Emit structured error event on SSE stream timeout/interruption instead of inline text truncation marker (parity with CC query.ts:955-996)",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "5e625118-78a2-470d-b9fd-644b77070cb7",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:54:48.326062289Z",
-  "updated_at": "2026-05-18T15:54:49.928818982Z",
+  "updated_at": "2026-05-20T05:58:45.582425410Z",
+  "closed_at": "2026-05-20T05:58:45.582425410Z",
   "labels": [
     "cc-parity"
   ]
