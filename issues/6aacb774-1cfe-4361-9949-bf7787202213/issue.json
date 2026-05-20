@@ -3,11 +3,12 @@
   "display_id": 857,
   "title": "coordinator/mod: Coordinator exposes queue_mut publicly, breaking encapsulation invariants",
   "description": "## Severity\nMinor\n## Dimension\nsolid\n## Location\nsrc/coordinator/mod.rs:69-73 (Coordinator::queue_mut)\n## Violation\n```rust\npub const fn queue_mut(&mut self) -> &mut TaskQueue {\n    &mut self.queue\n}\n```\n\n`pub` on a leak-the-inner-field accessor is the same anti-pattern as making the field itself `pub`. The doc acknowledges it should be `pub(crate)` but does not follow through. This blocks any future invariant the Coordinator might want to enforce, e.g. \"you can't submit while dispatch is running\"; Phase 2's dispatcher will either bypass the type entirely or duplicate the API.\n\n## Mandated refactor\nChange `pub` to `pub(crate)`. Add `pub fn submit(&mut self, task: Task) -> Result<TaskId, ...>` as the stable external API. Tests inside the crate continue to use `queue_mut`.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:07:49.274682957Z",
-  "updated_at": "2026-05-18T22:07:56.864359889Z",
+  "updated_at": "2026-05-20T12:31:37.506985439Z",
+  "closed_at": "2026-05-20T12:31:37.506985439Z",
   "labels": [
     "qa-review",
     "solid"
