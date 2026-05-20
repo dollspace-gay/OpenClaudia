@@ -2,12 +2,11 @@
   "uuid": "6b8e1bad-a479-4389-b1a9-945d56727f78",
   "display_id": 640,
   "title": "Surface LSP diagnostics into conversation without explicit tool call (parity with CC passiveFeedback)",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:08:33.108774298Z",
-  "updated_at": "2026-05-20T14:42:31.973030790Z",
-  "closed_at": "2026-05-20T14:42:31.973030790Z",
+  "updated_at": "2026-05-20T16:58:51.882747612Z",
   "labels": [
     "parity,cc-lsp"
   ]
