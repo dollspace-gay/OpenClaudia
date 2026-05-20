@@ -1,0 +1,10 @@
+{
+  "uuid": "835d37c2-6bcc-40db-827b-072dc9a81965",
+  "issue_uuid": "ee03c7b9-c5e3-4ad5-ac00-fbbc3e44b82f",
+  "author": "lOrm",
+  "content": "Fixed: HttpTransport::request now includes error.data in the surfaced McpError::Protocol message, mirroring StdioTransport's existing '(data: {d})' suffix verbatim. Cross-transport parity test (fix626_http_and_stdio_error_data_formatting_matches) asserts the two transports produce byte-identical error strings. Two further tests cover the with-data and without-data shapes. All 1666 lib tests pass, cargo clippy --all-targets --all-features -D warnings exits 0, no #[allow]/#[ignore]/clippy.toml.",
+  "created_at": "2026-05-20T05:32:54.445787501Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAvctpwZdiBv7PEdeJg03t/7sogOfLuk6omio3eejMO+VSU3sC0+8W0FdDNnWpFc74e7DuJOnSg48+zMDEPliFCw=="
+}
