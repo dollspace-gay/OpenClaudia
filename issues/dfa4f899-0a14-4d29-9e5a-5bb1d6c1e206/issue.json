@@ -3,11 +3,12 @@
   "display_id": 955,
   "title": "QA: LSP server availability check uses 'which' subprocess (PATH hijack + cost)",
   "description": "## Severity\nMinor\n## Dimension\nsecurity\n## Location\nsrc/tools/lsp.rs:101-110\n## Violation\nChecks whether the LSP binary is installed by spawning `which <binary>`. Same PATH-hijack class as kill.rs — `which` itself can be shadowed. Also: a subprocess fork+exec per LSP call just to probe a binary that will be exec'd a few lines later anyway is wasteful. The spawn call would have produced an equally useful error.\n\nQuoted (lsp.rs:101-110):\n```\n    if Command::new(\"which\")\n        .arg(server_cmd)\n        .output()\n        .map_or(true, |o| !o.status.success())\n    {\n        return (\n            format!(\"Language server '{server_cmd}' not found. Install it to use LSP features.\"),\n            true,\n        );\n    }\n```\n\n`map_or(true, ...)` also fails OPEN on \"which itself failed\" — interpreted as \"server not found\" which is wrong but at least benign.\n## Mandated refactor\n1. Remove the `which` shell-out; let `Command::new(server_cmd).spawn()` produce the not-found error and map `io::ErrorKind::NotFound` into the user-facing message.\n2. If a pre-check is genuinely needed, walk `PATH` ourselves (use the `which` crate which does this with no fork) and cache the result per binary.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:20:03.636092015Z",
-  "updated_at": "2026-05-18T22:20:07.720783790Z",
+  "updated_at": "2026-05-20T04:34:42.648757420Z",
+  "closed_at": "2026-05-20T04:34:42.648757420Z",
   "labels": [
     "qa-review",
     "security"
