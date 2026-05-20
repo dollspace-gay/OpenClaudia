@@ -1,0 +1,10 @@
+{
+  "uuid": "3f8ce6f2-d755-4d05-9a53-9d80ea7cd35d",
+  "issue_uuid": "21e13dad-6fac-4ae8-9f1c-62788c0392cb",
+  "author": "lOrm",
+  "content": "Phase 1 behavioral spec for plugins + skills (loader, marketplace, MCP/LSP integration, autoupdate, blocklist) — read CC pluginLoader.ts (~3302), marketplaceManager.ts (~2643), installedPluginsManager.ts (~1268). Not addressable in this cleanup session: external-source research over very large CC files. Phase 2 implementations tracked under #652 (autoupdate), #654 (mcp plugin integration), #655 (lsp plugin integration), #656 (zipCache offline distribution), #658 (delisting detection), #660 (skill frontmatter parity), #661 (project-dirs-up-to-home discovery), #664 (managed skills layer), #665 (conditional skills). Owner-level external research.",
+  "created_at": "2026-05-20T14:34:13.089427758Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA/pjQ0Lg29/pmB8ojzTfwWM8+1bXRZrTf7CdiZnzva5EP4cFQd7OGJCOB40P3t/S+P2+o0geHeUYW4+zyQX78Cw=="
+}
