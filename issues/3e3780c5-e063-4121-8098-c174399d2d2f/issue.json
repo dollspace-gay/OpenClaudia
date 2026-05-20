@@ -3,12 +3,13 @@
   "display_id": 616,
   "title": "Add MCP XAA/IdP OAuth login flow",
   "description": "CC implements RFC 8693 token-exchange + RFC 7523 JWT-bearer grant (xaa.ts:1-511, xaaIdpLogin.ts:1-487) for headless enterprise SSO (Cross-App Access / SEP-990). OC has no OAuth token management of any kind. Required: implement PRM discovery (RFC 9728), AS metadata fetch (RFC 8414), token-exchange call, JWT-bearer grant, and token caching.",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:02:20.947060610Z",
-  "updated_at": "2026-05-20T16:58:28.599557729Z",
+  "updated_at": "2026-05-20T18:37:14.023717784Z",
+  "closed_at": "2026-05-20T18:37:14.023717784Z",
   "labels": [
     "feature",
     "cc-parity"
