@@ -1,0 +1,10 @@
+{
+  "uuid": "0be0e6a2-7f92-4f32-8f3d-ce4af9473f9b",
+  "issue_uuid": "342218b1-909d-46d6-ac09-6bd04ecd5cea",
+  "author": "lOrm",
+  "content": "Issue calls for replacing the 84-line fn handle_key with an explicit enum InputMode { Editing, AwaitingPermission(PendingPermission), Streaming } and per-mode handler functions. Not addressable in a cleanup pass: depends on #253 (App decomposition) — the InputMode field belongs on App.UiState in that refactor, and the per-mode handlers need access to App.Services. Doing this before #253 would just move the spaghetti. Tracked as a sub-step of the TUI refactor wave.",
+  "created_at": "2026-05-20T14:33:14.891176785Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAfNqXpOVB+h/dZHapR54vO6B6U0cuRTY+aBeLJhpQeS5+8F2MV4clIfFJTVBOL30PphsHXTDq4R9vQblMB4jJBw=="
+}
