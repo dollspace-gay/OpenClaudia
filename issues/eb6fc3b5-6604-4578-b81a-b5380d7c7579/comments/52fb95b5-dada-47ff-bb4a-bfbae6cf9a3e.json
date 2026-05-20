@@ -1,0 +1,10 @@
+{
+  "uuid": "52fb95b5-dada-47ff-bb4a-bfbae6cf9a3e",
+  "issue_uuid": "eb6fc3b5-6604-4578-b81a-b5380d7c7579",
+  "author": "lOrm",
+  "content": "Issue calls for offline plugin distribution via zip cache (parity with CC zipCache.ts). Not addressable in a cleanup pass: depends on #538 plugin spec; requires cache schema, integrity check, and offline install fallback path. Parent #538.",
+  "created_at": "2026-05-20T14:39:51.835714673Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAyOhS1HRqJbGh1ajMI85Pu1puNqGsvjWdZspN26NHG/AodcIvlxLg0O3Ckz0R5jUdDHGtlr1c89RmmrCpntCrCQ=="
+}
