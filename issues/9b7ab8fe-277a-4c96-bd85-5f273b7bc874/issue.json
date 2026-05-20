@@ -3,12 +3,13 @@
   "display_id": 589,
   "title": "Expand bash command security validation to match CC depth (parity with bashCommandIsSafe_DEPRECATED)",
   "description": "## Gap\n\nCC's bashCommandIsSafe_DEPRECATED (tools/BashTool/bashSecurity.ts:2257-2420) applies ~15 security validators beyond OC's 16-pattern substring/regex denylist:\n\n1. Control-character injection (non-printable chars that bypass validators)\n2. Shell-quote single-quote backslash bug exploitation\n3. IFS injection (validateIFSInjection, line 1017)\n4. /proc/*/environ access (validateProcEnvironAccess, line 1041)\n5. Carriage-return tokenization differential (shell-quote vs bash parse differently on CR)\n6. Unicode whitespace smuggling (validateUnicodeWhitespace, line 1902)\n7. Obfuscated flags (validateObfuscatedFlags, line 1130)\n8. Brace expansion (validateBraceExpansion, line 1751)\n9. Backslash-escaped operators (validateBackslashEscapedOperators, line 1696)\n10. Mid-word hash comment injection (validateMidWordHash, line 1919)\n11. Quoted-newline desync (validateCommentQuoteDesync, line 1990 / validateQuotedNewline, line 2109)\n12. Process substitution >(...) / <(...) (pathValidation.ts:1028)\n13. Windows UNC path injection (readOnlyValidation.ts:1903)\n14. git + cd compound command sandbox escape (readOnlyValidation.ts:1917)\n15. Malformed token injection (validateMalformedTokenInjection, line 1082)\n\nOC only blocks 16 catastrophic fixed substrings + pipe-to-shell regex (src/tools/bash/policy.rs:89-133).\n\n## Parity reference\n- CC: tools/BashTool/bashSecurity.ts:2257-2420 (validator chain)\n- OC: src/tools/bash/policy.rs:89-133 (minimal denylist only)\n\n## Acceptance\n- Implement the missing validators or a Rust equivalent of the validation chain\n- Each validator has unit tests matching CC's test suite patterns\n- Prefer AST-based analysis (see tree-sitter gap issue) over regex for structural patterns\n",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:53:47.180292435Z",
-  "updated_at": "2026-05-18T15:53:53.418536188Z",
+  "updated_at": "2026-05-20T04:16:08.949349329Z",
+  "closed_at": "2026-05-20T04:16:08.949349329Z",
   "labels": [
     "feature",
     "cc-parity"
