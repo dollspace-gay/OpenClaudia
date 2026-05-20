@@ -1,0 +1,10 @@
+{
+  "uuid": "c4320fda-3780-44f0-8b7b-58c346962f0f",
+  "issue_uuid": "637ea469-ddc5-46d4-a6b7-370879e25af4",
+  "author": "lOrm",
+  "content": "Fixed in src/tools/file/notebook.rs::apply_replace: index == cells.len() is now silently promoted to apply_insert (CC parity). Promotion requires cell_type since the new cell needs a kind; missing cell_type yields a specific error that names the missing field rather than the generic out-of-bounds. Index strictly past len still errors. Replaced the pinned test with three split tests: _at_len_without_cell_type_errors, _at_len_with_cell_type_appends, _strictly_past_end_still_errors. 1821/1821 lib tests pass.",
+  "created_at": "2026-05-20T06:42:10.379886807Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA1UDSgs3R1O7+xS1+e5yRfvR7Px8yYgA8v2nRfKpdPuNsAUH8gkJB83JKoVtJhaPDOnXVZQd0Ubh0axUbGhBcBw=="
+}
