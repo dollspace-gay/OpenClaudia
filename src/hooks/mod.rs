@@ -526,8 +526,31 @@ impl HookEngine {
             }
         }
 
-        // Run hooks in parallel
-        let input_json = serde_json::to_string(input).unwrap_or_default();
+        // Run hooks in parallel.
+        //
+        // Crosslink #835: a serialization failure here previously fell
+        // through to String::default() and sent empty stdin to every
+        // hook — silently neutralising the entire hook batch. Surface
+        // the error via tracing::error! and abort the run with a
+        // deny-shaped HookResult so callers see the failure instead of
+        // a misleading "hooks ran cleanly" signal.
+        let input_json = match serde_json::to_string(input) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(
+                    target: "openclaudia::hooks",
+                    event = "hook_input_serialize_failed",
+                    error = %e,
+                    "failed to serialize HookInput; aborting hook batch \
+                     (see crosslink #835)"
+                );
+                let mut failed = HookResult::allowed();
+                failed.errors.push(HookError::ParseError(format!(
+                    "hook input serialize failed: {e}"
+                )));
+                return failed;
+            }
+        };
         let futures: Vec<_> = hooks_to_run
             .iter()
             .map(|(hook, timeout_secs)| self.run_hook(hook, &input_json, *timeout_secs))

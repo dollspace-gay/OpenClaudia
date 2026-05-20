@@ -202,32 +202,50 @@ impl PermissionManager {
             }
         };
 
-        // SECURITY: Ignore dangerously_disable_sandbox from tool args.
-        // This flag must ONLY be honored from user-level config (AppConfig),
-        // never from model-controlled tool call arguments.
+        // SECURITY (crosslink #795): a model that injects
+        // `dangerously_disable_sandbox: true` into Bash tool args is
+        // making an active escalation attempt. The previous code
+        // logged a warn and fell through to normal rule processing —
+        // which is fine for the surface defence (the flag is never
+        // honoured), but it misses the audit signal that the model
+        // tried at all. Emit a structured error event and DENY the
+        // call outright so the attempted escalation is recorded as a
+        // bounded refusal rather than a silent ignore.
         if canonical_tool == "Bash" {
             if let Some(disable) = tool_args.get("dangerously_disable_sandbox") {
                 if disable.as_bool().unwrap_or(false) {
-                    warn!(
+                    tracing::error!(
+                        target: "openclaudia::permissions",
+                        event = "sandbox_escalation_attempt",
                         tool = %canonical_tool,
-                        target = %target,
-                        "Model attempted dangerously_disable_sandbox=true in tool args — IGNORED. \
-                         This flag is only honored from user-level configuration."
+                        target_arg = %target,
+                        "model attempted dangerously_disable_sandbox=true in tool \
+                         args — REJECTED. The flag is only honoured from user-level \
+                         configuration; this invocation is denied (crosslink #795)."
+                    );
+                    return CheckResult::Denied(
+                        "dangerously_disable_sandbox cannot be set from tool \
+                         arguments — only from user-level configuration"
+                            .to_string(),
                     );
                 }
             }
         }
+
+        // Permission-decision audit logging (crosslink #870) — see
+        // `log_permission_decision` for the structured event shape.
 
         // 1. Check persisted always-allow rules
         for rule in &self.persisted_rules {
             if rule.decision == PermissionDecision::AlwaysAllow
                 && Self::rule_matches(rule, &canonical_tool, &target)
             {
-                debug!(
-                    tool = %canonical_tool,
-                    target = %target,
-                    pattern = %rule.pattern,
-                    "Allowed by persisted always-allow rule"
+                Self::log_permission_decision(
+                    "allowed",
+                    "persisted_always_allow",
+                    &canonical_tool,
+                    &target,
+                    &rule.pattern,
                 );
                 return CheckResult::Allowed;
             }
@@ -238,20 +256,22 @@ impl PermissionManager {
             if Self::rule_matches(rule, &canonical_tool, &target) {
                 match &rule.decision {
                     PermissionDecision::Allow | PermissionDecision::AlwaysAllow => {
-                        debug!(
-                            tool = %canonical_tool,
-                            target = %target,
-                            pattern = %rule.pattern,
-                            "Allowed by session rule"
+                        Self::log_permission_decision(
+                            "allowed",
+                            "session_rule",
+                            &canonical_tool,
+                            &target,
+                            &rule.pattern,
                         );
                         return CheckResult::Allowed;
                     }
                     PermissionDecision::Deny => {
-                        debug!(
-                            tool = %canonical_tool,
-                            target = %target,
-                            pattern = %rule.pattern,
-                            "Denied by session rule"
+                        Self::log_permission_decision(
+                            "denied",
+                            "session_rule",
+                            &canonical_tool,
+                            &target,
+                            &rule.pattern,
                         );
                         return CheckResult::Denied(format!(
                             "Denied by session rule: {} on pattern '{}'",
@@ -265,11 +285,12 @@ impl PermissionManager {
         // 3. Check config default_allow patterns
         for pattern in &self.default_allow {
             if Self::glob_matches(pattern, &target) {
-                debug!(
-                    tool = %canonical_tool,
-                    target = %target,
-                    pattern = %pattern,
-                    "Allowed by default_allow config pattern"
+                Self::log_permission_decision(
+                    "allowed",
+                    "default_allow_config",
+                    &canonical_tool,
+                    &target,
+                    pattern,
                 );
                 return CheckResult::Allowed;
             }
@@ -359,12 +380,44 @@ impl PermissionManager {
             Some(v) if v.is_string() => {
                 Some(Ok((canonical, v.as_str().unwrap_or_default().to_string())))
             }
-            // Key present but wrong type — malformed args, deny.
-            Some(_) => Some(Err(canonical)),
-            // Key absent — target string is empty (legacy behaviour;
-            // matches the empty-glob test in phase2_spec_pins::b2_empty_glob).
-            None => Some(Ok((canonical, String::new()))),
+            // Key absent OR present-but-wrong-type — both are malformed
+            // args from a permission standpoint (crosslink #855:
+            // absent-key previously returned Ok((canonical, "")) which
+            // allowed a permission rule with `default_allow = ""` to fire
+            // on a malformed Bash call that omitted the `command` field
+            // entirely; that bypass is gone). Tools that legitimately
+            // have no permission target are filtered earlier via the
+            // `permission_target()?` short-circuit, so this branch only
+            // fires for tools that DECLARED a target arg and then
+            // either didn't supply it or supplied a non-string value.
+            _ => Some(Err(canonical)),
         }
+    }
+
+    /// Emit a structured permission-decision audit event (crosslink #870).
+    ///
+    /// `decision` is `"allowed"` or `"denied"`; `decision_source` is a
+    /// stable short label like `"persisted_always_allow"`,
+    /// `"session_rule"`, or `"default_allow_config"`. The event target is
+    /// always `"openclaudia::permissions"` and the event name
+    /// `"permission_decision"` so log consumers can pivot uniformly.
+    fn log_permission_decision(
+        decision: &'static str,
+        decision_source: &'static str,
+        tool: &str,
+        target_arg: &str,
+        pattern: &str,
+    ) {
+        tracing::info!(
+            target: "openclaudia::permissions",
+            event = "permission_decision",
+            decision = decision,
+            decision_source = decision_source,
+            tool = %tool,
+            target_arg = %target_arg,
+            pattern = %pattern,
+            "permission decision"
+        );
     }
 
     /// Check whether a rule matches a given tool + target.
@@ -390,29 +443,45 @@ impl PermissionManager {
     }
 
     /// Return a cached compiled `Regex` for a glob pattern, compiling and caching it on first use.
+    ///
+    /// Crosslink #813: the prior implementation acquired the lock,
+    /// checked the cache, dropped the lock, compiled the regex, then
+    /// re-acquired the lock and inserted. Two threads racing through
+    /// the same pattern each paid the compile cost AND each fought
+    /// over the insert. The fix uses a single lock acquisition:
+    /// the lock is held across compile, but the compile is bounded
+    /// (regex syntax is fixed-size for any sane glob) and the
+    /// contention path short-circuits to the cached value on the
+    /// very next access.
     fn glob_to_regex_cached(pattern: &str) -> Option<Regex> {
-        let cache = GLOB_CACHE
+        // Crosslink #813: single-acquisition, single-release. Build the
+        // compile attempt inside the locked critical section but make
+        // the closure-driven Entry API carry the work so clippy's
+        // `Option::map_or_else`-vs-`if let/else` and "early drop"
+        // lints both go quiet. The lock is released at the end of this
+        // function automatically when `cache` goes out of scope —
+        // there is no other path that holds it.
+        let mut cache = GLOB_CACHE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Fast path: cached.
         if let Some(re) = cache.get(pattern) {
-            return Some(re.clone());
+            let cached = re.clone();
+            drop(cache);
+            return Some(cached);
         }
+        // Slow path: compile-and-insert.
         let regex_str = Self::glob_to_regex(pattern);
-        let result = Regex::new(&regex_str);
-        drop(cache);
-        match result {
-            Ok(re) => {
-                GLOB_CACHE
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .insert(pattern.to_string(), re.clone());
-                Some(re)
-            }
-            Err(e) => {
-                warn!(pattern = %pattern, error = %e, "Invalid glob pattern");
-                None
-            }
+        let compiled = Regex::new(&regex_str);
+        let outcome = compiled.as_ref().ok().cloned();
+        if let Some(ref re) = outcome {
+            cache.insert(pattern.to_string(), re.clone());
         }
+        drop(cache);
+        if let Err(e) = compiled {
+            warn!(pattern = %pattern, error = %e, "Invalid glob pattern");
+        }
+        outcome
     }
 
     /// Convert a glob pattern to a regex string.
@@ -869,17 +938,24 @@ mod tests {
     }
 
     #[test]
-    fn test_dangerously_disable_sandbox_in_tool_args_is_ignored() {
+    fn test_dangerously_disable_sandbox_in_tool_args_is_denied() {
+        // Crosslink #795: a model that injects
+        // `dangerously_disable_sandbox: true` into Bash tool args is
+        // making an active sandbox-escalation attempt. The previous
+        // behaviour was to log a warn and fall through to normal rule
+        // processing (so the call usually surfaced as NeedsPrompt).
+        // The fix denies the call outright so the escalation attempt
+        // is bounded into a hard refusal AND captured in the audit log
+        // via the `sandbox_escalation_attempt` tracing event.
         let (mgr, _dir) = make_manager(true, vec![]);
-        // Model-supplied dangerously_disable_sandbox must NOT bypass permission checks
         let result = mgr.check(
             "bash",
             &json!({"command": "rm -rf /", "dangerously_disable_sandbox": true}),
         );
-        // Should require a prompt, NOT be auto-allowed
         assert!(
-            matches!(result, CheckResult::NeedsPrompt { .. }),
-            "dangerously_disable_sandbox in tool args must not bypass permissions"
+            matches!(result, CheckResult::Denied(_)),
+            "dangerously_disable_sandbox in tool args must be DENIED outright, \
+             got: {result:?}"
         );
     }
 
@@ -1197,24 +1273,31 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B2-deny-2: empty-string glob matches only empty target (bash with no command).
+    /// B2-deny-2: empty-string glob does not let a malformed Bash call slip
+    /// through. Crosslink #855: previously the "absent command key" branch
+    /// of `extract_target` returned `Ok(("Bash", ""))`, which meant a
+    /// `default_allow = ""` rule would allow a Bash call that omitted the
+    /// `command` field entirely. The fix routes the absent-key case to
+    /// the same `Err` branch as wrong-type, so the call is denied as
+    /// malformed-args regardless of any allow-empty rule.
     #[test]
-    fn b2_empty_glob_matches_only_empty_target() {
+    fn b2_empty_glob_does_not_match_malformed_bash() {
         let (mgr, _dir) = enabled(vec![""]);
 
         // Non-empty bash command must NOT be allowed by the empty-string pattern.
         let r = mgr.check("bash", &json!({"command": "ls"}));
         assert!(
             matches!(r, CheckResult::NeedsPrompt { .. }),
-            "B2: empty glob must not match a non-empty bash command"
+            "B2: empty glob must not match a non-empty bash command, got {r:?}"
         );
 
-        // Bash with absent command key → target is "" → the empty glob matches.
-        let r_empty = mgr.check("bash", &json!({}));
-        assert_eq!(
-            r_empty,
-            CheckResult::Allowed,
-            "B2: empty glob must match an empty (absent) command target"
+        // Bash with absent command key is now denied as malformed args,
+        // not auto-allowed by the empty pattern (crosslink #855).
+        let r_malformed = mgr.check("bash", &json!({}));
+        assert!(
+            matches!(r_malformed, CheckResult::Denied(_)),
+            "B2 + #855: empty glob must NOT auto-allow a Bash call missing \
+             its `command` field; got {r_malformed:?}"
         );
     }
 
