@@ -3,11 +3,12 @@
   "display_id": 902,
   "title": "QA: lsp.rs child.wait() after shutdown has no timeout",
   "description": "## Severity\nMinor\n## Dimension\nconcurrency\n## Location\nsrc/tools/lsp.rs:226-229\n## Violation\nAfter issuing `shutdown` + `exit`, `run_lsp_request` calls `child.wait()` with no timeout. A wedged language server will block this call forever — and because `execute_lsp` is synchronous from the tool dispatch loop, the agent stalls.\n\nQuoted (lsp.rs:226-229):\n```\n    send_lsp_message(&mut stdin, \"shutdown\", 3, json!(null))?;\n    send_lsp_notification(&mut stdin, \"exit\", json!(null))?;\n    let _ = child.wait();\n```\n\n`let _` also discards exit status.\n## Mandated refactor\n1. Spawn a watchdog thread that `child.kill()`s after a bounded shutdown deadline (~2s).\n2. Use `wait_timeout` crate / `nix::sys::wait::waitpid(WNOHANG)` polling.\n3. Surface the wait result.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:13:46.219139567Z",
-  "updated_at": "2026-05-18T22:14:50.445274151Z",
+  "updated_at": "2026-05-20T12:04:33.336966082Z",
+  "closed_at": "2026-05-20T12:04:33.336966082Z",
   "labels": [
     "qa-review",
     "concurrency"
