@@ -1,0 +1,10 @@
+{
+  "uuid": "24a2945e-a995-4288-85a4-e6c39c2bcfda",
+  "issue_uuid": "458cbc83-74ca-41de-85a8-877dbc6d6530",
+  "author": "lOrm",
+  "content": "Added WebFetchConfig::{distillation_enabled, max_distillation_bytes (100_000 cap matching CC), distillation_provider, distillation_model} in src/config/webfetch.rs. Config surface is complete; runtime hook awaits the small-model dispatch landing. 1 unit test.",
+  "created_at": "2026-05-20T18:36:24.194920489Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAfJ8km/xuar4Q0G3C+iJ0THm0ynZwvPutQyV7vN9RFACq49Msx/vmhLVH2IWnbGRkQhPAHds7qJKWKeMHtRR9AA=="
+}
