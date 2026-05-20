@@ -3,11 +3,12 @@
   "display_id": 673,
   "title": "Blocking DNS resolution inside async validate_url",
   "description": "## Severity\nMajor\n## Dimension\nconcurrency\n## Location\nsrc/web.rs:153-202 (validate_url) called from src/web.rs:263 (fetch_url, async)\n## Violation\n`validate_url` invokes `(host, port).to_socket_addrs()` (line 185-188), which is the standard-library *blocking* DNS resolver. It is called synchronously from inside `pub async fn fetch_url`. Under tokio this blocks the executor thread for the entire DNS lookup; a slow or hanging resolver stalls every other task on that worker.\n\n```rust\nlet socket_addrs: Vec<_> = (host, port)\n    .to_socket_addrs()\n    .map_err(|e| format!(\"Cannot resolve host '{host}': {e}\"))?\n    .collect();\n```\n\nThis is also called from `execute_web_fetch` via `block_on(web::fetch_url(...))`, so the blocking call happens *inside* an `async` context driven by `block_in_place`.\n## Mandated refactor\nMove the DNS lookup off the runtime: wrap in `tokio::task::spawn_blocking(move || (host, port).to_socket_addrs())` and `.await` it, or use `tokio::net::lookup_host`. Better, install a custom `reqwest::dns::Resolve` that performs the lookup and the forbidden-range check atomically at dial time (kills both this issue and the redirect bypass).\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:46:20.027871592Z",
-  "updated_at": "2026-05-18T21:46:25.629876990Z",
+  "updated_at": "2026-05-20T06:15:18.141092638Z",
+  "closed_at": "2026-05-20T06:15:18.141092638Z",
   "labels": [
     "qa-review",
     "concurrency"
