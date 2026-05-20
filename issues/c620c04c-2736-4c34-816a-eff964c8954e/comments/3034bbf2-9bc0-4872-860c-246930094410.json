@@ -1,0 +1,10 @@
+{
+  "uuid": "3034bbf2-9bc0-4872-860c-246930094410",
+  "issue_uuid": "c620c04c-2736-4c34-816a-eff964c8954e",
+  "author": "lOrm",
+  "content": "Added MAX_CRON_JOBS=50 cap enforcement in src/tools/cron.rs execute_cron_create_at. Pre-existing gap-pin test cron_create_has_no_max_jobs_cap_gap621 replaced with positive regression cron_create_below_cap_succeeds + new cron_create_at_cap_returns_max_jobs_error.",
+  "created_at": "2026-05-20T18:37:29.343357433Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAQFbfLvctAn7LnhrrA9AyrgMSkCmTQGF/BfeyPg0w4EZYWYahELgSA8X0Jv8FeicIC+viCgYyni4swJEnRu21BA=="
+}
