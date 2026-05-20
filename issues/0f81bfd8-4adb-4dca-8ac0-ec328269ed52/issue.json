@@ -3,11 +3,12 @@
   "display_id": 834,
   "title": "coordinator/teammate: TeammateState transitions are not enforced — bare field access permits Dead->Running",
   "description": "## Severity\nMinor\n## Dimension\nsolid\n## Location\nsrc/coordinator/teammate.rs:83-128 (TeammateState + Teammate struct)\n## Violation\nThe module doc claims:\n\n```rust\n/// Lifecycle state. Transitions are one-way:\n/// `Spawning → Running → Idle → Dead` and `Running → Dead` directly.\n```\n\nBut the `Teammate` struct exposes the state as a `pub` field:\n\n```rust\npub struct Teammate {\n    pub id: TeammateId,\n    pub agent_type: AgentType,\n    pub color: AgentColor,\n    pub state: TeammateState,\n    ...\n}\n```\n\nThere is no `transition_to(...)` method, no invariant enforcement. The Phase 2 dispatcher (or any caller) can write `teammate.state = TeammateState::Running` after the teammate has already gone `Dead`, violating the documented contract silently. The same risk applies to setting `state = TeammateState::Idle` from `Spawning` without ever passing through `Running`.\n\nThis is LSP-adjacent: any Phase 3 wrapper assuming the contract will be wrong.\n\n## Mandated refactor\nMake the `state` field `pub(crate)` (or private) and add:\n\n```rust\nimpl Teammate {\n    pub fn transition_to(&mut self, next: TeammateState) -> Result<(), InvalidTransition> {\n        if !self.state.can_transition_to(&next) { return Err(...) }\n        self.state = next; Ok(())\n    }\n}\n```\n\nwith a corresponding `TeammateState::can_transition_to` that enforces the documented transition table.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:04:14.082796860Z",
-  "updated_at": "2026-05-18T22:05:57.152154844Z",
+  "updated_at": "2026-05-20T14:15:31.746847905Z",
+  "closed_at": "2026-05-20T14:15:31.746847905Z",
   "labels": [
     "qa-review",
     "solid"
