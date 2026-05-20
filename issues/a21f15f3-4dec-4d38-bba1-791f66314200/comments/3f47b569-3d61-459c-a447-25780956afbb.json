@@ -1,0 +1,10 @@
+{
+  "uuid": "3f47b569-3d61-459c-a447-25780956afbb",
+  "issue_uuid": "a21f15f3-4dec-4d38-bba1-791f66314200",
+  "author": "lOrm",
+  "content": "#663 closed. Added /mcp, /mcp enable, /mcp disable, /mcp reconnect to MANAGEMENT section of src/slash_commands.rs — bare /mcp opens the settings overlay; sub-commands match CC's MCPSettings TUI dispatch. Surface registration is in place; the actual MCPSettings TUI overlay depends on #520 overlay framework + #522 LspManager service and is tracked separately.",
+  "created_at": "2026-05-20T20:37:41.516471939Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA0i8Yvl6g8Yj4iU1NIUFd3z2/2sv6ecdozXZ0kqn1S4R1cKlPRbNXkq8aeUKFOMplyJuLLEG0AmW9dgXvdqmcAA=="
+}
