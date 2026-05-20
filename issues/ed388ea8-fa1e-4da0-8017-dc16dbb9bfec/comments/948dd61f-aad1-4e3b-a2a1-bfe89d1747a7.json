@@ -1,0 +1,10 @@
+{
+  "uuid": "948dd61f-aad1-4e3b-a2a1-bfe89d1747a7",
+  "issue_uuid": "ed388ea8-fa1e-4da0-8017-dc16dbb9bfec",
+  "author": "lOrm",
+  "content": "VERIFIED-DUP-OF-FIXED (closed via #363 + #440 phase 1). Forensic grep on main @3a19163f:\n\n```\n$ grep -n 'READ_TRACKER\\|buckets:' src/tools/file/mod.rs\n22:/// Maximum number of entries in the read tracker, per session, before\n28:/// Per-session bucket: canonical path → monotonic insertion counter.\n36:/// Tracks which files have been read, bucketed per session id.\n66:pub static READ_TRACKER: LazyLock<ReadFileTracker> = LazyLock::new(ReadFileTracker::new);\n73:    buckets: Mutex<HashMap<String, Bucket>>,\n110:        let key = super::todo::current_session_key();\n150:        let key = super::todo::current_session_key();\n```\n\nThe Mutex is still process-global but it now guards `HashMap<SessionId, Bucket>`, not a single `Vec<PathBuf>`. Per-session isolation is enforced via `current_session_key()` (see test at line 458, `read_tracker_isolates_marks_between_sessions`). Each session has its own bucket; `mark_read` and `has_been_read` look up by session id, satisfying the core complaint (\"session A reading /x lets session B edit /x without reading it\" — explicitly tested as false now).\n\nThe remaining \"global Mutex over the outer HashMap\" is briefly held only to fetch/create the per-session bucket, not to scan paths — so the O(N) contention pattern the issue describes is gone. The deeper DIP refactor (inject a `ReadTracker` trait) is the only un-landed sub-point, and #440 description marks it as phase-2 work. Closing as duplicate of #363/#440.",
+  "created_at": "2026-05-20T07:22:24.384524979Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAYJacmMh7HYFyM6ZS1oGyRZgpz0NWFKgzl+NZ3NVUJ99Jw6HOVWkDA3v/uFtJyk8DijNvw2WLicVlIDV96BmUDw=="
+}
