@@ -1,0 +1,10 @@
+{
+  "uuid": "2304d70e-9ce6-4cf6-8fc0-7eb6fc2151ac",
+  "issue_uuid": "56ef6e6e-8f37-450f-8e2c-cff01808c859",
+  "author": "lOrm",
+  "content": "Issue calls for not silently absorbing PoisonError at three lock-acquisition sites in src/tools/bash/mod.rs:177/234/256 (currently unwrap_or_else(PoisonError::into_inner) hides post-panic data-structure corruption). The mandated fix is either propagating the poison as an error or documenting the panic-free invariants. Not addressable in this cleanup pass: src/tools/bash/mod.rs is in the change-set's forbidden-files list (also noted in #682 / #686 result comments referencing the same forbidden-files policy on src/subagent.rs and src/pipeline.rs). Real bug — should be revisited in a future change-set that includes bash/mod.rs in scope.",
+  "created_at": "2026-05-20T14:40:58.364208941Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAepikXMi+bnPtgCltgkhajh5N65F68b6HJRTW8tD9V/EVndhtTyKiStQQGauTdt+ca1UNqulZOkFAw65suMyqDg=="
+}
