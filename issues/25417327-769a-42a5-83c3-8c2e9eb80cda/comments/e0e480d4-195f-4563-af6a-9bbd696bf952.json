@@ -1,0 +1,10 @@
+{
+  "uuid": "e0e480d4-195f-4563-af6a-9bbd696bf952",
+  "issue_uuid": "25417327-769a-42a5-83c3-8c2e9eb80cda",
+  "author": "lOrm",
+  "content": "Partial mitigation via #877 (closed today): SCHEDULES_FILE is now resolved via current_dir().join(...) in schedules_path() at cron.rs:204-222, so the production path no longer drifts per-worktree. HOWEVER, the test cwd dance #984 calls out is still present: tests at cron.rs lines 707, 739, 778, 819, 856, 965, 1014 all std::env::set_current_dir(tmp.path()). The mandated refactor (introduce ScheduleStore::with_path(...) constructor so tests pass storage path directly, drop cwd_lock) has NOT landed. Leaving open as actionable on cron.rs (not on the FORBIDDEN file list for this pass, just out-of-scope here).",
+  "created_at": "2026-05-20T13:26:16.578968736Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAN1si6yUdlgDIhpHVeNzr+ZIll7oXUHVGTWx3M16SyUbOZ1aGbYRPHAZ83K6SjVItoWT0ewLC4yGizrthXgVJDg=="
+}
