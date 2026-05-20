@@ -518,12 +518,28 @@ impl BlastRadiusGuard {
         let normalized = normalize_path(path);
         if let Ok(mut files) = self.files_this_turn.lock() {
             files.insert(normalized);
-            if u32::try_from(files.len()).unwrap_or(u32::MAX) > self.config.max_files_per_turn {
-                let msg = format!(
-                    "Blast radius: exceeded max files per turn ({}/{})",
-                    files.len(),
-                    self.config.max_files_per_turn
-                );
+            // Crosslink #840: previously `u32::try_from(files.len()).unwrap_or(u32::MAX)`
+            // silently saturated when `files.len() > u32::MAX`. The comparison
+            // against `max_files_per_turn` (also `u32`) would still trigger
+            // — but a single combined "exceeded max" message can't tell an
+            // operator whether the cap was breached by a representable count
+            // (the normal case) or by a count so absurd it required pinning
+            // to `u32::MAX` (a likely bug or attack signal). Surface the
+            // overflow distinctly so monitoring dashboards can flag it.
+            let count = files.len();
+            let cap = self.config.max_files_per_turn;
+            let overflowed = u32::try_from(count).is_err();
+            let breached = overflowed || u32::try_from(count).is_ok_and(|n| n > cap);
+
+            if breached {
+                let msg = if overflowed {
+                    format!(
+                        "Blast radius: file count {count} overflowed u32 \
+                         (cap {cap}/turn) — likely a bug or attack signal"
+                    )
+                } else {
+                    format!("Blast radius: exceeded max files per turn ({count}/{cap})")
+                };
                 return match self.config.mode {
                     GuardrailMode::Strict => {
                         warn!("{} (BLOCKED)", msg);
@@ -1498,6 +1514,33 @@ mod tests {
         assert!(guard.record_access("file3.rs").is_err());
     }
 
+    /// Crosslink #840: when the breach is by a representable count, the
+    /// error message is the plain `(count/cap)` form — not the overflow
+    /// form — so monitoring dashboards can distinguish the two cases.
+    #[test]
+    fn blast_radius_breach_reports_distinct_message_for_representable_count() {
+        let config = BlastRadiusConfig {
+            enabled: true,
+            mode: GuardrailMode::Strict,
+            allowed_paths: vec![],
+            denied_paths: vec![],
+            max_files_per_turn: 1,
+        };
+        let guard = BlastRadiusGuard::new(config);
+        assert!(guard.record_access("a.rs").is_ok());
+        let err = guard
+            .record_access("b.rs")
+            .expect_err("must reject second file under cap=1");
+        assert!(
+            err.contains("exceeded max files per turn"),
+            "representable breach must use the plain message; got: {err}"
+        );
+        assert!(
+            !err.contains("overflowed"),
+            "representable breach must NOT use the overflow message; got: {err}"
+        );
+    }
+
     #[test]
     fn test_blast_radius_reset_turn() {
         let config = BlastRadiusConfig {
@@ -2127,10 +2170,7 @@ mod tests {
     #[test]
     fn cl395_run_shell_success_captures_stderr_alongside_stdout() {
         // sh -c 'echo out; echo err >&2' — both streams populated, exit 0.
-        let outcome = run_shell_command_sync(
-            "sh -c \"echo out; echo err 1>&2\"",
-            5,
-        );
+        let outcome = run_shell_command_sync("sh -c \"echo out; echo err 1>&2\"", 5);
         match outcome {
             ShellResult::Success { stdout, stderr } => {
                 assert!(stdout.contains("out"), "stdout missing payload: {stdout:?}");

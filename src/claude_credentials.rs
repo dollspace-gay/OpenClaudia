@@ -191,8 +191,8 @@ pub async fn load_credentials() -> Result<LoadedCredentials, String> {
     // because `load_credentials` still returns `Result<_, String>` for
     // backwards-compat with existing callers; the rendered message now
     // always names the file and the source chain.
-    let content =
-        crate::file_error::read_file(&path).map_err(|e: crate::file_error::FileError| e.to_string())?;
+    let content = crate::file_error::read_file(&path)
+        .map_err(|e: crate::file_error::FileError| e.to_string())?;
 
     let creds: CredentialsFile = serde_json::from_str(&content)
         .map_err(crate::file_error::FileError::json_with_path(&path))
@@ -273,6 +273,38 @@ async fn call_token_refresh_api(
         .map_err(|e| format!("Failed to parse refresh response: {e}"))
 }
 
+/// Resolve the `refresh_token` to persist after a successful refresh.
+///
+/// Returns the response's `refresh_token` field when present. When absent,
+/// requires `OPENCLAUDIA_ALLOW_REFRESH_TOKEN_REUSE=1` to be set before
+/// silently reusing the old one — see crosslink #825.
+fn resolve_new_refresh_token(
+    response_field: Option<&str>,
+    previous_refresh_token: &str,
+) -> Result<String, String> {
+    if let Some(s) = response_field {
+        return Ok(s.to_string());
+    }
+    let allow_reuse = std::env::var("OPENCLAUDIA_ALLOW_REFRESH_TOKEN_REUSE")
+        .ok()
+        .as_deref()
+        == Some("1");
+    if !allow_reuse {
+        return Err(
+            "Refresh response omitted 'refresh_token' field; refusing to reuse \
+             the previous one (set OPENCLAUDIA_ALLOW_REFRESH_TOKEN_REUSE=1 to \
+             opt in if your provider uses non-rotating refresh tokens)"
+                .to_string(),
+        );
+    }
+    tracing::warn!(
+        "Refresh response omitted 'refresh_token' field; reusing previous \
+         refresh token under OPENCLAUDIA_ALLOW_REFRESH_TOKEN_REUSE=1 — if your \
+         provider rotates refresh tokens this will break on the next refresh"
+    );
+    Ok(previous_refresh_token.to_string())
+}
+
 async fn refresh_and_load(
     path: &PathBuf,
     oauth: &ClaudeAiOauth,
@@ -293,10 +325,16 @@ async fn refresh_and_load(
         .ok_or("No access_token in refresh response")?
         .to_string();
 
-    let new_refresh_token = refresh_response["refresh_token"]
-        .as_str()
-        .unwrap_or(refresh_token)
-        .to_string();
+    // Crosslink #825: when the refresh response omits the `refresh_token`
+    // field, the OAuth server may either (a) be using non-rotating refresh
+    // tokens — in which case reusing the old one is intentional — or (b) be
+    // returning a partial / broken response. Silently reusing the old token
+    // under (b) means we could lose the ability to refresh on the *next*
+    // cycle without any operator-visible signal. Require an explicit
+    // opt-in (`OPENCLAUDIA_ALLOW_REFRESH_TOKEN_REUSE=1`) before reusing,
+    // and `warn!` so it shows up in logs either way.
+    let new_refresh_token =
+        resolve_new_refresh_token(refresh_response["refresh_token"].as_str(), refresh_token)?;
 
     // `expires_in` is required by the OAuth spec — refuse to silently
     // default to 3600 when the field is missing or malformed. A missing
@@ -562,6 +600,60 @@ pub fn inject_system_prompt(request: &mut serde_json::Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- Crosslink #825: refresh_token rotation policy ---
+
+    /// Spec — when the OAuth response carries a `refresh_token`, the helper
+    /// returns it verbatim (this is the rotating-token happy path). This
+    /// path doesn't touch env vars so it can run in parallel with anything.
+    #[test]
+    fn resolve_new_refresh_token_uses_response_field_when_present() {
+        let result = resolve_new_refresh_token(Some("new-rotated-token"), "old-token");
+        assert_eq!(result.as_deref(), Ok("new-rotated-token"));
+    }
+
+    /// Spec — both env-var-sensitive branches of [`resolve_new_refresh_token`]
+    /// folded into one test so they cannot race each other or other tests in
+    /// this binary on the shared `OPENCLAUDIA_ALLOW_REFRESH_TOKEN_REUSE` slot.
+    /// Saves and restores the ambient value on the way in and out so a parent
+    /// process that legitimately set the var observes no side effect.
+    #[test]
+    fn resolve_new_refresh_token_optin_policy() {
+        const VAR: &str = "OPENCLAUDIA_ALLOW_REFRESH_TOKEN_REUSE";
+        let prev = std::env::var(VAR).ok();
+        // SAFETY (both `unsafe` calls below): this single test owns the env
+        // var for its duration — the only other site that reads it is the
+        // production code under test, called synchronously from here. No
+        // background thread in this binary writes to this var.
+        unsafe {
+            std::env::remove_var(VAR);
+        }
+        let err_result = resolve_new_refresh_token(None, "old-token");
+        // SAFETY: see comment above.
+        unsafe {
+            std::env::set_var(VAR, "1");
+        }
+        let reuse_result = resolve_new_refresh_token(None, "old-token");
+        // Restore before any assertion that might unwind.
+        // SAFETY: see comment above.
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var(VAR, v),
+                None => std::env::remove_var(VAR),
+            }
+        }
+
+        let err = err_result.expect_err("must refuse silent reuse without explicit opt-in");
+        assert!(
+            err.contains(VAR),
+            "error must name the opt-in env var; got: {err}"
+        );
+        assert_eq!(
+            reuse_result.as_deref(),
+            Ok("old-token"),
+            "with opt-in set, helper must return the previous token"
+        );
+    }
 
     #[test]
     fn test_credentials_path() {

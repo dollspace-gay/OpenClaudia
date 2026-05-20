@@ -67,17 +67,9 @@ impl VddEngine {
         builder_provider: &str,
         builder_api_key: Option<&ApiKey>,
     ) -> Result<VddAdvisoryResult, VddError> {
-        if !self.config.enabled {
-            return Ok(VddAdvisoryResult {
-                findings: vec![],
-                context_injection: String::new(),
-                static_analysis: vec![],
-                tokens_used: TokenUsage::default(),
-            });
-        }
-
-        // Skip VDD for very short responses (likely simple answers, not code)
-        if builder_text.len() < 100 {
+        if !self.config.enabled || builder_text.len() < 100 {
+            // Disabled, or response too short to be code worth reviewing —
+            // return an empty result rather than spending an adversary call.
             return Ok(VddAdvisoryResult {
                 findings: vec![],
                 context_injection: String::new(),
@@ -92,6 +84,27 @@ impl VddEngine {
             "VDD: Starting adversarial review"
         );
 
+        self.single_pass_review(builder_text, user_task, builder_provider, builder_api_key)
+            .await
+    }
+
+    /// Run a single adversarial pass: static analysis + adversary request +
+    /// triage + context-injection formatting. Shared between [`Self::review_text`]
+    /// (chat-loop entry, takes the user task directly) and [`Self::advisory_review`]
+    /// (proxy entry, derives the user task from the upstream request).
+    ///
+    /// Callers are responsible for short-circuiting on disabled/empty inputs and
+    /// for emitting the "starting review" log line — both arms historically had
+    /// different conditions around those.
+    ///
+    /// Crosslink #746: previously duplicated verbatim across the two callers.
+    async fn single_pass_review(
+        &self,
+        builder_text: &str,
+        user_task: &str,
+        builder_provider: &str,
+        builder_api_key: Option<&ApiKey>,
+    ) -> Result<VddAdvisoryResult, VddError> {
         // Run static analysis
         let static_results = self.run_static_analysis().await;
 
@@ -233,6 +246,11 @@ impl VddEngine {
     }
 
     /// Advisory mode: single adversary pass, return findings for context injection.
+    ///
+    /// Thin wrapper over [`Self::single_pass_review`] — extracts the user task
+    /// from the upstream `ChatCompletionRequest` and forwards. The disabled /
+    /// short-text gate is already enforced by [`Self::process_response`] before
+    /// this is called, so we do not re-check it here.
     async fn advisory_review(
         &self,
         builder_text: &str,
@@ -240,63 +258,14 @@ impl VddEngine {
         builder_provider: &str,
         builder_api_key: Option<&ApiKey>,
     ) -> Result<VddAdvisoryResult, VddError> {
-        // Run static analysis
-        let static_results = self.run_static_analysis().await;
-
-        // Extract original task from request
         let original_task = extract_user_task(original_request);
-
-        // Build and send adversary request
-        let adversary_request = build_adversary_request(
-            &self.config,
-            &self.app_config,
+        self.single_pass_review(
             builder_text,
             &original_task,
-            &static_results,
-            1,
-        );
-
-        let (adversary_text, tokens_used) = send_to_adversary(
-            &self.client,
-            &self.config,
-            &self.app_config,
-            &adversary_request,
-        )
-        .await?;
-
-        // Parse and triage findings (AI verifier uses builder's provider)
-        let mut findings = parse_findings(&adversary_text, 1);
-        let triage_ctx = TriageContext {
-            client: &self.client,
-            config: &self.config,
-            app_config: &self.app_config,
-            previous_fps: &[],
-            builder_code: builder_text,
             builder_provider,
             builder_api_key,
-        };
-        triage_findings(&mut findings, &triage_ctx).await;
-
-        // Build context injection string
-        let context_injection = format_findings_for_injection(&findings, &static_results);
-
-        let genuine_count = findings
-            .iter()
-            .filter(|f| f.status == FindingStatus::Genuine)
-            .count();
-
-        info!(
-            total = findings.len(),
-            genuine = genuine_count,
-            "VDD advisory: review complete"
-        );
-
-        Ok(VddAdvisoryResult {
-            findings,
-            context_injection,
-            static_analysis: static_results,
-            tokens_used,
-        })
+        )
+        .await
     }
 
     /// Blocking mode: full adversarial loop until convergence.

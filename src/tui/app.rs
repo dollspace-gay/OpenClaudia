@@ -1906,6 +1906,124 @@ async fn run_preturn_hooks(
     true
 }
 
+/// Send an event to the TUI event channel, capturing partial in-flight state
+/// when the channel has been closed (e.g. user pressed Esc or the app is
+/// shutting down).
+///
+/// Crosslink #765: previously every `tx.send(...)` site was `let _ = ...`,
+/// which silently dropped both the event and any unflushed work — for
+/// `SyncMessages` that meant the entire accumulated `session_messages` vector
+/// vanished, leaving the next turn to retry from a stale baseline. We now
+/// `tracing::warn!` with the event kind and any partial-state counts so an
+/// operator running with `RUST_LOG=warn` has a forensic trail. We also
+/// best-effort persist the messages to disk so a subsequent run can recover.
+fn send_or_warn(
+    tx: &std::sync::mpsc::Sender<super::events::AppEvent>,
+    event: super::events::AppEvent,
+    session_id: &str,
+) {
+    // Snapshot kind/sizes BEFORE moving the event into `send`, so the warn
+    // path can describe what was lost without owning the value.
+    let descriptor = describe_event(&event);
+    let partial_messages: Option<Vec<serde_json::Value>> = match &event {
+        super::events::AppEvent::SyncMessages(msgs) => Some(msgs.clone()),
+        _ => None,
+    };
+    if tx.send(event).is_err() {
+        tracing::warn!(
+            event = %descriptor,
+            session_id = %session_id,
+            "TUI event channel closed; partial turn state being persisted to recovery file"
+        );
+        if let Some(msgs) = partial_messages {
+            persist_orphan_messages(session_id, &msgs);
+        }
+    }
+}
+
+/// One-line human-readable description of an `AppEvent` for the
+/// channel-closed warning. We avoid `Debug` since `AppEvent` doesn't derive
+/// it and adding the derive would ripple through the rest of the file.
+fn describe_event(event: &super::events::AppEvent) -> String {
+    match event {
+        super::events::AppEvent::SyncMessages(msgs) => {
+            format!("SyncMessages(n={})", msgs.len())
+        }
+        super::events::AppEvent::ResponseDone => "ResponseDone".to_string(),
+        super::events::AppEvent::ApiError(e) => {
+            let snippet: String = e.chars().take(80).collect();
+            format!("ApiError({snippet:?})")
+        }
+        super::events::AppEvent::StreamText(_) => "StreamText".to_string(),
+        super::events::AppEvent::StreamThinking(_) => "StreamThinking".to_string(),
+        super::events::AppEvent::ToolStart { name, .. } => format!("ToolStart({name})"),
+        super::events::AppEvent::ToolDone { name, success, .. } => {
+            format!("ToolDone({name}, ok={success})")
+        }
+        super::events::AppEvent::FollowUp => "FollowUp".to_string(),
+        super::events::AppEvent::PermissionRequest { tool_name, .. } => {
+            format!("PermissionRequest({tool_name})")
+        }
+        super::events::AppEvent::Key(_) => "Key".to_string(),
+        super::events::AppEvent::Resize(w, h) => format!("Resize({w},{h})"),
+        super::events::AppEvent::Tick => "Tick".to_string(),
+        super::events::AppEvent::ShellDone { target, .. } => {
+            format!("ShellDone({target:?})")
+        }
+    }
+}
+
+/// Best-effort persist orphaned session messages to a recovery file so the
+/// next run can recover the in-flight turn instead of silently losing it.
+/// Failures here are logged but not propagated — we are already on the
+/// shutdown path.
+fn persist_orphan_messages(session_id: &str, msgs: &[serde_json::Value]) {
+    let Some(data_dir) = dirs::data_dir() else {
+        tracing::warn!("no data_dir available; cannot persist orphan session state");
+        return;
+    };
+    let dir = data_dir.join("openclaudia").join("orphan-turns");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(error = %e, dir = %dir.display(), "failed to create orphan-turn dir");
+        return;
+    }
+    let ts = chrono::Utc::now().timestamp_millis();
+    let safe_id: String = session_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let path = dir.join(format!("{safe_id}-{ts}.json"));
+    match serde_json::to_string_pretty(msgs) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&path, json) {
+                tracing::warn!(
+                    error = %e,
+                    path = %path.display(),
+                    "failed to write orphan session state"
+                );
+            } else {
+                tracing::warn!(
+                    path = %path.display(),
+                    n_messages = msgs.len(),
+                    "persisted orphan session state to recovery file"
+                );
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "failed to serialize orphan session state for recovery"
+            );
+        }
+    }
+}
+
 /// Drive the agentic follow-up loop until the model stops requesting tools
 /// or `MAX_ITER` iterations are exhausted.
 async fn run_agentic_loop(ctx: &AgenticCtx<'_>, session_messages: &mut Vec<serde_json::Value>) {
@@ -1915,9 +2033,13 @@ async fn run_agentic_loop(ctx: &AgenticCtx<'_>, session_messages: &mut Vec<serde
         iteration += 1;
         tracing::debug!(iteration, "Agentic loop iteration");
         if iteration > MAX_ITER {
-            let _ = ctx.tx.send(super::events::AppEvent::ApiError(
-                "Reached maximum tool iterations (25)".to_string(),
-            ));
+            send_or_warn(
+                ctx.tx,
+                super::events::AppEvent::ApiError(
+                    "Reached maximum tool iterations (25)".to_string(),
+                ),
+                ctx.session_id,
+            );
             break;
         }
         let body = crate::pipeline::build_request(
@@ -1968,7 +2090,10 @@ async fn run_agentic_loop(ctx: &AgenticCtx<'_>, session_messages: &mut Vec<serde
             }
             Err(e) => {
                 tracing::error!(error = %e, "Agentic follow-up failed");
-                let _ = ctx.tx.send(super::events::AppEvent::ApiError(e));
+                send_or_warn(ctx.tx, super::events::AppEvent::ApiError(e), ctx.session_id);
+                // The caller's `SyncMessages` send after the loop will trigger
+                // recovery persistence if the channel is closed — no extra
+                // action needed here for partial-state capture.
                 break;
             }
         }
@@ -2022,53 +2147,115 @@ async fn run_api_turn_async(p: ApiTurnParams) {
     .await
     {
         Ok(turn_result) => {
-            tracing::debug!(
-                content_len = turn_result.content.len(),
-                tool_calls = turn_result.tool_calls.len(),
-                needs_followup = turn_result.needs_followup,
-                "Turn result"
-            );
-            if turn_result.needs_followup {
-                let asst = crate::pipeline::build_assistant_message_with_tools(
-                    &turn_result.content,
-                    &turn_result.tool_calls,
-                    &provider,
-                );
-                session_messages.push(asst);
-                session_messages.extend(turn_result.tool_results.iter().cloned());
-                tracing::info!(
-                    tool_count = turn_result.tool_calls.len(),
-                    result_count = turn_result.tool_results.len(),
-                    "Starting agentic follow-up loop"
-                );
-                let ctx = AgenticCtx {
+            handle_turn_result(
+                turn_result,
+                session_messages,
+                TurnContext {
                     client: &client,
                     endpoint: &endpoint,
                     headers: &headers,
                     provider: &provider,
                     model: &model,
-                    effort_level: effort_level.as_str(),
+                    effort_level,
                     claude_code_token: claude_code_token.as_deref(),
                     prompt_blocks: prompt_blocks.as_ref(),
-                    memory_db: memory_db.clone(),
-                    permission_mgr: permission_mgr.clone(),
-                    hook_engine: hook_engine.clone(),
+                    memory_db,
+                    permission_mgr,
+                    hook_engine,
                     session_id: &session_id,
                     tx: &tx,
-                };
-                run_agentic_loop(&ctx, &mut session_messages).await;
-                let _ = tx.send(super::events::AppEvent::SyncMessages(session_messages));
-                let _ = tx.send(super::events::AppEvent::ResponseDone);
-            } else if !turn_result.content.is_empty() {
-                session_messages.push(
-                    serde_json::json!({ "role": "assistant", "content": turn_result.content }),
-                );
-                let _ = tx.send(super::events::AppEvent::SyncMessages(session_messages));
-            }
+                },
+            )
+            .await;
         }
         Err(e) => {
-            let _ = tx.send(super::events::AppEvent::ApiError(e));
+            send_or_warn(&tx, super::events::AppEvent::ApiError(e), &session_id);
         }
+    }
+}
+
+/// Borrowed context bundle for [`handle_turn_result`] — purely a plumbing
+/// struct to keep `run_api_turn_async` under the line-count lint while
+/// preserving the per-iteration data each branch needs.
+struct TurnContext<'a> {
+    client: &'a reqwest::Client,
+    endpoint: &'a str,
+    headers: &'a [(String, String)],
+    provider: &'a str,
+    model: &'a str,
+    effort_level: EffortLevel,
+    claude_code_token: Option<&'a str>,
+    prompt_blocks: Option<&'a crate::prompt::SystemPromptBlocks>,
+    memory_db: Option<std::sync::Arc<crate::memory::MemoryDb>>,
+    permission_mgr: Option<std::sync::Arc<crate::permissions::PermissionManager>>,
+    hook_engine: Option<std::sync::Arc<crate::hooks::HookEngine>>,
+    session_id: &'a str,
+    tx: &'a std::sync::mpsc::Sender<super::events::AppEvent>,
+}
+
+/// Handle the successful `Ok(turn_result)` branch of the first `run_turn`:
+/// either drive the agentic follow-up loop (when tool calls are present) or
+/// push the plain assistant content. Channel-closed errors on the resulting
+/// `SyncMessages` / `ResponseDone` sends go through [`send_or_warn`] so
+/// partial in-flight state is persisted instead of silently dropped.
+async fn handle_turn_result(
+    turn_result: crate::pipeline::TurnResult,
+    mut session_messages: Vec<serde_json::Value>,
+    ctx: TurnContext<'_>,
+) {
+    tracing::debug!(
+        content_len = turn_result.content.len(),
+        tool_calls = turn_result.tool_calls.len(),
+        needs_followup = turn_result.needs_followup,
+        "Turn result"
+    );
+    if turn_result.needs_followup {
+        let asst = crate::pipeline::build_assistant_message_with_tools(
+            &turn_result.content,
+            &turn_result.tool_calls,
+            ctx.provider,
+        );
+        session_messages.push(asst);
+        session_messages.extend(turn_result.tool_results.iter().cloned());
+        tracing::info!(
+            tool_count = turn_result.tool_calls.len(),
+            result_count = turn_result.tool_results.len(),
+            "Starting agentic follow-up loop"
+        );
+        let agentic = AgenticCtx {
+            client: ctx.client,
+            endpoint: ctx.endpoint,
+            headers: ctx.headers,
+            provider: ctx.provider,
+            model: ctx.model,
+            effort_level: ctx.effort_level.as_str(),
+            claude_code_token: ctx.claude_code_token,
+            prompt_blocks: ctx.prompt_blocks,
+            memory_db: ctx.memory_db,
+            permission_mgr: ctx.permission_mgr,
+            hook_engine: ctx.hook_engine,
+            session_id: ctx.session_id,
+            tx: ctx.tx,
+        };
+        run_agentic_loop(&agentic, &mut session_messages).await;
+        send_or_warn(
+            ctx.tx,
+            super::events::AppEvent::SyncMessages(session_messages),
+            ctx.session_id,
+        );
+        send_or_warn(
+            ctx.tx,
+            super::events::AppEvent::ResponseDone,
+            ctx.session_id,
+        );
+    } else if !turn_result.content.is_empty() {
+        session_messages
+            .push(serde_json::json!({ "role": "assistant", "content": turn_result.content }));
+        send_or_warn(
+            ctx.tx,
+            super::events::AppEvent::SyncMessages(session_messages),
+            ctx.session_id,
+        );
     }
 }
 
