@@ -1,0 +1,10 @@
+{
+  "uuid": "eaf4d23b-b294-4196-9447-eabf647ed835",
+  "issue_uuid": "e32edae7-d1a5-4f9d-82a7-1bd084d8258f",
+  "author": "lOrm",
+  "content": "Phase 1 behavioral spec for coordinator + tasks subsystem (LocalMainSession/Dream/InProcessTeammate/LocalShell/RemoteAgent) — read CC coordinatorMode.ts (~369), LocalMainSessionTask.ts (~479), DreamTask.ts (~157). Not addressable in this cleanup session: external-source research, not Rust. Phase 2 implementations tracked under #606 (DreamTask), #607 (InProcessTeammateTask), #609 (LocalMainSessionTask background semantics), #611 (LocalShellTask). Parent feature #507 covers the umbrella. Owner-level external research.",
+  "created_at": "2026-05-20T14:33:57.293549595Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAast0DdxV6HpG2sSD2D1xw5LNxjZ89hOsrWyqJbtemWk3CpzTMn9GVIcK0GB9YD6GfAsX3AqwkX/DyRstG/3HAQ=="
+}
