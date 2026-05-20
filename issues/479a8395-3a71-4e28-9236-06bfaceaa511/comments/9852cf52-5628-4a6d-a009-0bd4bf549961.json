@@ -1,0 +1,10 @@
+{
+  "uuid": "9852cf52-5628-4a6d-a009-0bd4bf549961",
+  "issue_uuid": "479a8395-3a71-4e28-9236-06bfaceaa511",
+  "author": "lOrm",
+  "content": "Landed slash_doctor_plugins() in src/cli/repl/slash.rs and routed via /doctor plugins in command_registry. Iterates PluginManager::all(), reports per-plugin: name [enabled/disabled] (source: marketplace/local), directory existence with check/cross glyph, and counts for hooks/commands/mcp/agents/skills. Discovery errors (manifest parse failures, missing files) listed separately. Bare /doctor still routes to the legacy environment doctor. 3 tests pin: /doctor returns Handled / /doctor plugins returns Handled / slash_doctor_plugins() empty state doesn't panic. Note: issue title references tree-sitter bash parser adoption which is a separate multi-day track; this landing addresses the 'doctor plugins' tool surface that was referenced alongside #579 in the kickoff brief.",
+  "created_at": "2026-05-20T18:19:08.489474767Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAUIrUP2Op/FA8P7jWSkWr9gE8NeNYOyTjWtRing0dEb2VGYmEo7px9Mv8kI5BCseZlelSkGv6AmqAa9ZF8GDDBw=="
+}
