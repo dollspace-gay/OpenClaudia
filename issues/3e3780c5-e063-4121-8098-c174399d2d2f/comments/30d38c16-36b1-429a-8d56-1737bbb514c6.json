@@ -1,0 +1,10 @@
+{
+  "uuid": "30d38c16-36b1-429a-8d56-1737bbb514c6",
+  "issue_uuid": "3e3780c5-e063-4121-8098-c174399d2d2f",
+  "author": "lOrm",
+  "content": "Added MCP XAA/IdP OAuth state-machine skeleton in src/mcp_oauth.rs covering OAuthState (NoCredentials->Discovering->FetchingAS->ExchangingToken->Authenticated/Refreshing) + ResourceServerMetadata + AsMetadata + TokenBundle types. Concrete JWT signing / PRM HTTP deferred per scope. 6 unit tests.",
+  "created_at": "2026-05-20T18:37:12.420279088Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAinh+AA2KPLiGf1MFXPVnPXSDTAK9bAlViKm+GOxglGz+F9E5s1ObMHSYM5lAI+2j0znMF1fin71EKIGPPuTICQ=="
+}
