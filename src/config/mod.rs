@@ -9,6 +9,7 @@
 mod guardrails;
 mod hooks;
 mod keybindings;
+mod path_validation;
 mod permissions;
 mod provider;
 mod proxy;
@@ -24,6 +25,7 @@ pub use keybindings::{
     parse_chord, ChordResolveResult, KeyAction, KeyContext, KeybindingResolver, KeybindingsConfig,
     ParsedKeystroke,
 };
+pub use path_validation::{validate_persist_path, PathValidationError, ALLOW_OUT_OF_ROOT_ENV};
 pub use permissions::PermissionsConfig;
 pub use provider::{ProviderConfig, ThinkingConfig};
 pub use proxy::ProxyConfig;
@@ -208,7 +210,7 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
     // ASCII, and control-char-free keys. The whitespace-only normalization
     // previously performed post-load is redundant — the newtype simply
     // refuses to exist in an invalid state. See crosslink #256.
-    let config: AppConfig = builder.build()?.try_deserialize()?;
+    let mut config: AppConfig = builder.build()?.try_deserialize()?;
 
     // Validate VDD config (adversary must differ from builder provider, etc.)
     if let Err(e) = config.vdd.validate(&config.proxy.target) {
@@ -226,6 +228,24 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
             )));
         }
     }
+
+    // Validate filesystem paths that flow into `std::fs::write` /
+    // `create_dir_all` from user / managed-settings input. Closes
+    // crosslink #342: a malicious managed-settings file specifying
+    // `vdd.tracking.path: /etc/cron.d` previously made the VDD logger
+    // write to system-privileged directories under elevated privileges.
+    //
+    // `project_root` is the current working directory at config load
+    // time — the same anchor used by the existing default `.openclaudia/…`
+    // relative paths, so behaviour is unchanged for the happy path.
+    let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    config.session.persist_path =
+        validate_persist_path(&config.session.persist_path, &project_root)
+            .map_err(|e| ConfigError::Message(format!("session.persist_path rejected: {e}")))?;
+
+    config.vdd.tracking.path = validate_persist_path(&config.vdd.tracking.path, &project_root)
+        .map_err(|e| ConfigError::Message(format!("vdd.tracking.path rejected: {e}")))?;
 
     Ok(config)
 }
