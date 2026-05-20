@@ -1,0 +1,10 @@
+{
+  "uuid": "08cd2d47-a186-4c65-a5c3-1fac017763b3",
+  "issue_uuid": "be4d8977-1279-4a7b-8864-03cc8ec32769",
+  "author": "lOrm",
+  "content": "Landed native GrepTool at src/tools/file/grep.rs (#568). Args: pattern (required regex), path (default .), context_lines (default 0), case_insensitive (default false). Backed by the regex crate; outputs file:line:match with ±N context emitted as file-line-text. Caps: 200 matches, 5MB/file, 50k walked entries. Skips vendor dirs. Registered as 'grep' in registry, added to KNOWN_SAFE. 5 tests: file:line:match emission, ±1 context, invalid regex error, missing pattern error, case_insensitive flag. NOT parity: ripgrep file-type filters, glob filters, output_mode toggle, head_limit — left for a future expansion under the cc-parity label.",
+  "created_at": "2026-05-20T17:43:12.367259128Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAXaTE+cEANkmqWh3cfGNX7PXrJlvQ2/+wnVYBQ8PEzE1DXvpmZNnzrPlmBHOIkX4mMxWURWaSanajh/nJPRsPDw=="
+}
