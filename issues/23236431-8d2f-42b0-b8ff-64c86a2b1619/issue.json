@@ -3,11 +3,12 @@
   "display_id": 965,
   "title": "QA: lsp.rs sends 'shutdown' as a request but ignores the response (protocol violation)",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/tools/lsp.rs:227-228\n## Violation\nPer the LSP specification, `shutdown` is a request and the server MUST respond before `exit` is sent. OC sends `shutdown` then immediately sends `exit` without reading the shutdown response. Well-behaved servers will sometimes hold input until they respond; OC's `exit` message can be buffered/dropped if stdin closes before the server picks it up, leaving an orphan.\n\nQuoted (lsp.rs:227-228):\n```\n    send_lsp_message(&mut stdin, \"shutdown\", 3, json!(null))?;\n    send_lsp_notification(&mut stdin, \"exit\", json!(null))?;\n    let _ = child.wait();\n```\n\nCompare to the documented LSP shutdown handshake: `shutdown -> ShutdownResponse -> exit`.\n## Mandated refactor\n1. Insert `let _shutdown_resp = read_lsp_response(&mut reader, 3)?;` between the two sends.\n2. Bound the wait with a timeout (see related shutdown-deadlock issue).\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:21:07.879956337Z",
-  "updated_at": "2026-05-18T22:21:12.325720754Z",
+  "updated_at": "2026-05-20T04:53:05.526151557Z",
+  "closed_at": "2026-05-20T04:53:05.526151557Z",
   "labels": [
     "qa-review",
     "error-handling"
