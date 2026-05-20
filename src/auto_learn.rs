@@ -2,10 +2,51 @@
 //!
 //! Captures knowledge automatically from tool execution signals,
 //! user corrections, and session patterns. No model discretion required.
+//!
+//! # SQL discipline (crosslink #443)
+//!
+//! **`format!`-based SQL construction is FORBIDDEN in this module.**
+//!
+//! Earlier revisions interpolated both table names and row-limit values
+//! directly into `DELETE` strings via `format!("... {table} ... {max_rows}")`
+//! and then handed the result to `execute_raw`. Although every interpolated
+//! value was a compile-time constant at the time, the pattern set a
+//! dangerous precedent: a future contributor passing a computed table name
+//! or a config-derived limit would silently introduce SQL injection.
+//!
+//! Discipline enforced here:
+//!
+//! 1. Table identities are expressed through the [`PruneTable`] enum (a
+//!    re-export of [`crate::memory::AutoLearnTable`]). The enum is the
+//!    single source of truth for prunable tables — each variant maps to a
+//!    compile-time-known prepared statement string inside
+//!    [`MemoryDb::prune_auto_learn_table`]. Adding a new prunable table
+//!    forces the compiler to update every `match` site, so no caller can
+//!    smuggle a string through.
+//! 2. Row counts (`max_rows` / `keep`) are bound via `params![keep]`,
+//!    never formatted into the SQL string. The only `?` parameter in the
+//!    `DELETE` is the `LIMIT` value, which `SQLite` treats as an integer
+//!    literal — there is no parser surface a hostile value can reach.
+//! 3. Direct calls to `format!(...)` followed by `execute_raw` /
+//!    `conn.execute` are prohibited anywhere in this module. Logging
+//!    helpers that use `format!` to build a *log label* (not SQL) are
+//!    permitted; any future use must include a comment justifying that
+//!    the formatted string is never passed to a SQL-executing function.
 
 use crate::memory::MemoryDb;
 use std::collections::HashSet;
 use tracing::debug;
+
+/// Allowlist of tables that the auto-learning prune sweep is permitted to
+/// touch. Re-exported from [`crate::memory::AutoLearnTable`] so the
+/// `auto_learn` module's vocabulary matches the security mandate from
+/// crosslink #443 ("define `enum PruneTable`") while preserving a single
+/// source of truth in the storage layer.
+///
+/// Adding a new variant requires updating the exhaustive `match` in
+/// [`MemoryDb::prune_auto_learn_table`], which forces a compile-time-known
+/// prepared statement to exist for every prunable table.
+pub use crate::memory::AutoLearnTable as PruneTable;
 
 /// Tracks pending error context for resolution matching
 struct PendingError {
@@ -96,25 +137,31 @@ impl<'a> AutoLearner<'a> {
     /// Prune auto-learned data to prevent unbounded growth.
     /// Keeps the most recent entries in each table.
     ///
-    /// Each table is addressed through the [`crate::memory::MemoryDb::AutoLearnTable`]
-    /// enum allowlist so no string interpolation reaches SQL (crosslink #255).
+    /// Each table is addressed through the [`PruneTable`] enum allowlist so
+    /// no caller-controlled string can reach SQL (crosslink #255, #443).
+    /// `max_rows` is bound as a `?` parameter inside
+    /// [`MemoryDb::prune_auto_learn_table`] — never interpolated.
+    ///
+    /// The `format!` call below builds a *log label only*; the resulting
+    /// string is never handed to a SQL-executing function. This is the one
+    /// permitted `format!` use in this module per the discipline at the top
+    /// of the file.
     fn prune_old_data(&self) {
-        use crate::memory::AutoLearnTable;
-
         const MAX_CODING_PATTERNS: u32 = 500;
         const MAX_ERROR_PATTERNS: u32 = 200;
         const MAX_PREFERENCES: u32 = 100;
         const MAX_FILE_RELATIONSHIPS: u32 = 500;
 
-        let prune_targets = [
-            (AutoLearnTable::CodingPatterns, MAX_CODING_PATTERNS),
-            (AutoLearnTable::ErrorPatterns, MAX_ERROR_PATTERNS),
-            (AutoLearnTable::LearnedPreferences, MAX_PREFERENCES),
-            (AutoLearnTable::FileRelationships, MAX_FILE_RELATIONSHIPS),
+        let prune_targets: [(PruneTable, u32); 4] = [
+            (PruneTable::CodingPatterns, MAX_CODING_PATTERNS),
+            (PruneTable::ErrorPatterns, MAX_ERROR_PATTERNS),
+            (PruneTable::LearnedPreferences, MAX_PREFERENCES),
+            (PruneTable::FileRelationships, MAX_FILE_RELATIONSHIPS),
         ];
 
         for (table, keep) in prune_targets {
             if let Err(e) = self.db.prune_auto_learn_table(table, keep) {
+                // `format!` here builds a log label, NOT SQL — see module docs.
                 self.log_db_error(&format!("prune_{table:?}"), &e);
             }
         }
@@ -924,5 +971,216 @@ mod tests {
 
         assert!(!is_idiomatic_non_preference("never panic in library code"));
         assert!(!is_idiomatic_non_preference("always use snake_case"));
+    }
+
+    // === Crosslink #443 regression coverage =================================
+    //
+    // `prune_old_data` previously assembled DELETE statements via
+    //   format!("DELETE FROM {table} ... LIMIT {max_rows}")
+    // and dispatched them through `execute_raw`. Even though every
+    // interpolated value was a compile-time constant, the pattern set a
+    // precedent for future SQL injection. The fix routes every table through
+    // the [`PruneTable`] enum allowlist (re-exported from `memory::AutoLearnTable`)
+    // and binds `max_rows` as a `?` query parameter. The tests below prove:
+    //
+    //   1. Each variant executes a real, syntactically valid DELETE.
+    //   2. `keep = 0` truncates the table (parameter binding is honoured,
+    //      not silently replaced by some default).
+    //   3. `keep` larger than the row count is a no-op (LIMIT clamps).
+    //   4. The variant set is exhaustive — every `PruneTable` discriminant
+    //      has a compiled prepared statement (compile-time enforcement via
+    //      an unreachable arm-less `match`, plus a runtime smoke-test that
+    //      every variant returns Ok).
+
+    /// Insert N rows into every auto-learn table so prune behaviour can be
+    /// observed. Returns the per-table row count after population so tests
+    /// can assert against a known baseline.
+    fn populate_all_tables(db: &MemoryDb, rows: u32) {
+        for i in 0..rows {
+            db.save_coding_pattern(
+                &format!("src/f{i}.rs"),
+                "convention",
+                &format!("pattern-{i}"),
+            )
+            .unwrap();
+            db.save_error_pattern(&format!("err-sig-{i}"), Some(&format!("src/f{i}.rs")), None)
+                .unwrap();
+            db.save_learned_preference("style", &format!("pref-{i}"), Some("test"))
+                .unwrap();
+        }
+        // file_relationships requires two distinct files.
+        for i in 0..rows {
+            db.save_file_relationship(&format!("src/a{i}.rs"), &format!("src/b{i}.rs"))
+                .unwrap();
+        }
+    }
+
+    /// #443 — Every [`PruneTable`] variant routes through
+    /// `prune_old_data` without a SQL syntax error or panic.
+    ///
+    /// `prune_old_data` calls `prune_auto_learn_table` for every variant in
+    /// sequence; if any variant emitted malformed SQL or a missing
+    /// prepared statement, the inner `MemoryDb` call would push an error
+    /// onto `error_count`. We seed the DB with rows below the prune cap
+    /// (which is 100+ for every table) so the DELETE is a structural
+    /// exercise — no rows should actually be removed.
+    #[test]
+    fn fix443_prune_old_data_each_variant_succeeds() {
+        let (_dir, db) = create_test_db();
+        let mut learner = AutoLearner::new(&db);
+
+        populate_all_tables(&db, 3);
+        let before = db.auto_learn_stats().unwrap();
+        assert_eq!(before.coding_patterns, 3);
+        assert_eq!(before.error_patterns, 3);
+        assert_eq!(before.learned_preferences, 3);
+        assert_eq!(before.file_relationships, 3);
+
+        learner.on_session_end(); // exercises prune_old_data + compute_file_relationships
+
+        assert_eq!(
+            learner.error_count(),
+            0,
+            "prune_old_data must not record any DB error — got {} errors",
+            learner.error_count()
+        );
+
+        // Row counts must be unchanged (well below each table's keep cap).
+        let after = db.auto_learn_stats().unwrap();
+        assert_eq!(after.coding_patterns, before.coding_patterns);
+        assert_eq!(after.error_patterns, before.error_patterns);
+        assert_eq!(after.learned_preferences, before.learned_preferences);
+    }
+
+    /// #443 — `prune_auto_learn_table(table, 0)` truncates the table.
+    ///
+    /// This proves the `?1` parameter actually reaches `SQLite` — if the
+    /// binding were dropped (e.g. silently replaced with the LIMIT cap of
+    /// `-1` / unlimited), the DELETE would remove zero rows instead of all
+    /// of them. Each variant is checked independently so any future regression
+    /// in a single arm of the `match` is caught.
+    #[test]
+    fn fix443_prune_with_keep_zero_truncates_table() {
+        let (_dir, db) = create_test_db();
+        populate_all_tables(&db, 5);
+
+        let stats_before = db.auto_learn_stats().unwrap();
+        assert_eq!(stats_before.coding_patterns, 5);
+        assert_eq!(stats_before.error_patterns, 5);
+        assert_eq!(stats_before.learned_preferences, 5);
+        assert_eq!(stats_before.file_relationships, 5);
+
+        for table in [
+            PruneTable::CodingPatterns,
+            PruneTable::ErrorPatterns,
+            PruneTable::LearnedPreferences,
+            PruneTable::FileRelationships,
+        ] {
+            db.prune_auto_learn_table(table, 0)
+                .unwrap_or_else(|e| panic!("prune {table:?} keep=0 failed: {e}"));
+        }
+
+        let stats_after = db.auto_learn_stats().unwrap();
+        assert_eq!(
+            stats_after.coding_patterns, 0,
+            "keep=0 must clear coding_patterns"
+        );
+        assert_eq!(
+            stats_after.error_patterns, 0,
+            "keep=0 must clear error_patterns"
+        );
+        assert_eq!(
+            stats_after.learned_preferences, 0,
+            "keep=0 must clear learned_preferences"
+        );
+        assert_eq!(
+            stats_after.file_relationships, 0,
+            "keep=0 must clear file_relationships"
+        );
+    }
+
+    /// #443 — `keep` much larger than the table size is a no-op.
+    ///
+    /// `SQLite`'s `LIMIT N` clamps when `N` exceeds the row count; the prune
+    /// DELETE's subquery should therefore name every row as "to keep" and
+    /// delete nothing. If the parameter were ignored, every row would be
+    /// removed instead.
+    #[test]
+    fn fix443_prune_with_huge_keep_leaves_table_intact() {
+        let (_dir, db) = create_test_db();
+        populate_all_tables(&db, 4);
+
+        for table in [
+            PruneTable::CodingPatterns,
+            PruneTable::ErrorPatterns,
+            PruneTable::LearnedPreferences,
+            PruneTable::FileRelationships,
+        ] {
+            // 1_000_000 ≫ 4 rows; LIMIT must clamp, DELETE must be a no-op.
+            db.prune_auto_learn_table(table, 1_000_000).unwrap();
+        }
+
+        let stats = db.auto_learn_stats().unwrap();
+        assert_eq!(stats.coding_patterns, 4);
+        assert_eq!(stats.error_patterns, 4);
+        assert_eq!(stats.learned_preferences, 4);
+        assert_eq!(stats.file_relationships, 4);
+    }
+
+    /// #443 — Every `PruneTable` variant has a compiled prepared statement.
+    ///
+    /// The `match _v { PruneTable::X => () }` block below is the
+    /// compile-time half of this test: if a future contributor adds a new
+    /// variant to `AutoLearnTable` (= `PruneTable`) without extending the
+    /// match in [`MemoryDb::prune_auto_learn_table`], this match will fail
+    /// non-exhaustively at compile time. The runtime half iterates the
+    /// known variants and asserts each one returns `Ok(())` against a
+    /// fresh, empty database — proving each variant maps to real,
+    /// executable SQL rather than a stub or panic macro.
+    #[test]
+    fn fix443_every_prune_table_variant_has_prepared_statement() {
+        // Compile-time exhaustiveness probe. If a new PruneTable variant is
+        // added, this match becomes non-exhaustive and the build fails,
+        // forcing the author to (a) extend this test AND (b) extend the
+        // prepared-statement match inside prune_auto_learn_table.
+        fn _exhaustive_probe(v: PruneTable) {
+            match v {
+                PruneTable::CodingPatterns
+                | PruneTable::ErrorPatterns
+                | PruneTable::LearnedPreferences
+                | PruneTable::FileRelationships => {}
+            }
+        }
+
+        let (_dir, db) = create_test_db();
+
+        // Runtime half: every known variant must execute without error.
+        // Run twice — once on an empty DB, once on a populated one — to
+        // exercise both code paths through the DELETE.
+        let variants = [
+            PruneTable::CodingPatterns,
+            PruneTable::ErrorPatterns,
+            PruneTable::LearnedPreferences,
+            PruneTable::FileRelationships,
+        ];
+
+        for table in variants {
+            db.prune_auto_learn_table(table, 10)
+                .unwrap_or_else(|e| panic!("empty-DB prune {table:?} failed: {e}"));
+        }
+
+        populate_all_tables(&db, 2);
+
+        for table in variants {
+            db.prune_auto_learn_table(table, 10)
+                .unwrap_or_else(|e| panic!("populated-DB prune {table:?} failed: {e}"));
+        }
+
+        // Sanity: no variant silently dropped rows when keep > row count.
+        let stats = db.auto_learn_stats().unwrap();
+        assert_eq!(stats.coding_patterns, 2);
+        assert_eq!(stats.error_patterns, 2);
+        assert_eq!(stats.learned_preferences, 2);
+        assert_eq!(stats.file_relationships, 2);
     }
 }
