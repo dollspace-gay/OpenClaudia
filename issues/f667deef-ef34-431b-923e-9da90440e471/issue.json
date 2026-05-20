@@ -3,11 +3,12 @@
   "display_id": 819,
   "title": "extract_extensions_from_messages regex captures dotted file paths without bound",
   "description": "## Severity\nTrivial\n## Dimension\ncomplexity\n## Location\nsrc/proxy.rs:410-440\n## Violation\nextract_extensions_from_messages runs a regex over every message text and clones it eagerly: for Text it clones, for Parts it filter_maps and joins. A 1 MB user message triggers O(N) regex over 1 MB. Per-request CPU and memory amplification; the function runs once per request. No cap on total scanned bytes; no early-exit when extensions.len() exceeds a sensible cap.\n## Mandated refactor\nCap total scanned text per request (first 64 KiB). Cap unique extensions to top-K via a bounded HashMap. Borrow text instead of cloning.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:01:59.566285980Z",
-  "updated_at": "2026-05-18T22:03:45.143742969Z",
+  "updated_at": "2026-05-20T07:36:53.062546411Z",
+  "closed_at": "2026-05-20T07:36:53.062546411Z",
   "labels": [
     "qa-review",
     "complexity"
