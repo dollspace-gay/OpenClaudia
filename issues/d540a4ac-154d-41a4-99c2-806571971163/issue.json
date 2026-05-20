@@ -3,13 +3,12 @@
   "display_id": 633,
   "title": "Persist extracted memories during compaction (parity with CC sessionMemoryCompact.ts)",
   "description": "## Goal\nImplement sessionMemoryCompact.ts behavior: extract session memory during compaction and use it as the summary, instead of always calling the summarization LLM.\n\n## CC behaviors (sessionMemoryCompact.ts ~630 lines)\n- shouldUseSessionMemoryCompaction(): gated by feature flags tengu_session_memory + tengu_sm_compact, env overrides ENABLE/DISABLE_CLAUDE_CODE_SM_COMPACT\n- SessionMemoryCompactConfig: minTokens=10_000, minTextBlockMessages=5, maxTokens=40_000; remote-configurable via GrowthBook tengu_sm_compact_config\n- calculateMessagesToKeepIndex(): starts after lastSummarizedMessageId, expands backward to meet min thresholds, stops at maxTokens cap, floors at previous compact boundary\n- adjustIndexToPreserveAPIInvariants(): prevents splitting tool_use/tool_result pairs and thinking blocks sharing message.id\n- trySessionMemoryCompaction(): waits for in-progress extraction, checks autoCompactThreshold before accepting result, handles resumed-session case (no lastSummarizedMessageId)\n- createCompactionResultFromSessionMemory(): builds CompactionResult with truncated session memory as summary, no LLM call needed\n- autoCompactIfNeeded() tries sessionMemoryCompact first, falls back to full compactConversation\n- setLastSummarizedMessageId() reset after successful SM compact\n\n## OC counterpart\nNone. OC's memory.rs has SQLite-based archival/core memory but no sessionMemoryCompact integration with the compaction pipeline.\n\n## Parent\n#523. Phase 1 spec tracked in #534.",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:07:32.233056535Z",
-  "updated_at": "2026-05-20T14:42:09.395402026Z",
-  "closed_at": "2026-05-20T14:42:09.395402026Z",
+  "updated_at": "2026-05-20T16:58:41.145906233Z",
   "labels": [
     "feature",
     "cc-parity"
