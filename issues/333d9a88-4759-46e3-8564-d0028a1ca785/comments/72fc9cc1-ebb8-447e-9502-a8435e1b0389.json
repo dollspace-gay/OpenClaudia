@@ -1,0 +1,10 @@
+{
+  "uuid": "72fc9cc1-ebb8-447e-9502-a8435e1b0389",
+  "issue_uuid": "333d9a88-4759-46e3-8564-d0028a1ca785",
+  "author": "lOrm",
+  "content": "Reviewed claim — not a bug. rest.find(\"---\") returns the BYTE OFFSET of the start of \"---\", which is 3 ASCII bytes (0x2D). The bytes at positions end, end+1, end+2 are therefore ALL ASCII dashes; end+3 lands on the byte immediately after the last dash, which is a valid UTF-8 char boundary by construction (the next codepoint MUST start there). Verified with rustc: parsing `---\\n吉\\n---𠮷` succeeds with body=\"𠮷\". The QA report's scenario \"find(\\\"---\\\") byte offset sits before non-ASCII content, splitting a codepoint\" is impossible: find returns the position WHERE the matched substring begins, and the matched substring is itself 3 ASCII bytes. The only way end+3 could split a codepoint is if find returned an offset inside a multi-byte char, but Rust's str::find guarantees char-boundary offsets. Closing as not-a-bug — no code change warranted.",
+  "created_at": "2026-05-20T04:33:47.103416656Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAFp2cEM9P2mKWNDLcUZbgNvVUVhUHj7VvxdTsThWlBjlmQy7jy81RhKJatiHtNYamfynvrVyxOCqiI7bGq73dBw=="
+}
