@@ -3,11 +3,12 @@
   "display_id": 797,
   "title": "cmd_tui returns Ok(()) on configuration errors making scripts unable to detect failure",
   "description": "## Severity\nMajor\n## Dimension\nerror-handling\n## Location\nsrc/main.rs:255-303 (cmd_tui), 791-841 (resolve_chat_auth)\n## Violation\ncmd_tui prints user-facing errors to stderr but always returns Ok(()) — exit code 0. This breaks `set -e` shell wrappers and any orchestration that branches on exit status.\n\n```rust\nasync fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {\n    let mut config = match config::load_config() {\n        Ok(c) => c,\n        Err(e) => {\n            ...\n            eprintln!(\"Failed to parse configuration: {e}\");\n            ...\n            return Ok(());  // Exit 0 despite error\n        }\n    };\n    ...\n    let Some(provider) = config.active_provider() else {\n        eprintln!(\"No provider configured for target '{}'\", config.proxy.target);\n        return Ok(());  // Exit 0\n    };\n    let Some(ChatAuth { ... }) = resolve_chat_auth(...).await? else {\n        return Ok(());  // Exit 0 — resolve_chat_auth printed the error\n    };\n```\n\ncmd_chat has the same pattern in resolve_chat_auth: returns Ok(None) for \"we already printed an error\" and Err(_) only for \"unexpected I/O\", which the caller then maps with `else { return Ok(()) }`. The error-vs-non-error distinction is collapsed at the exit boundary, defeating the perimeter-defense rule.\n\n## Mandated refactor\nReturn anyhow::Error with descriptive messages and let `?` propagate to main(). main() can map specific error categories to specific exit codes via std::process::ExitCode if user-friendly messaging is the concern (anyhow's `Display` already provides clean output). The eprintln messages can stay for human readability while the exit code reflects actual failure.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:59:36.147586586Z",
-  "updated_at": "2026-05-18T22:00:38.002544395Z",
+  "updated_at": "2026-05-20T08:19:45.518609629Z",
+  "closed_at": "2026-05-20T08:19:45.518609629Z",
   "labels": [
     "qa-review",
     "error-handling"
