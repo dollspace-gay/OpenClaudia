@@ -1,0 +1,10 @@
+{
+  "uuid": "619c2568-06eb-4e29-8ce7-117a751ebf3e",
+  "issue_uuid": "6e06f23f-15f5-48b9-82f3-e0a376e9415e",
+  "author": "lOrm",
+  "content": "Issue calls for replacing HttpTransport with an MCP-Streamable-HTTP-spec-compliant implementation (Accept: application/json, text/event-stream multiplexed, SSE demuxing on POST responses). Not addressable in a cleanup pass: protocol-compliance gap requiring SSE chunk parsing on the response side and rework of src/mcp.rs:297-337 request flow. Multi-day work. Parent audit #523.",
+  "created_at": "2026-05-20T14:38:25.085262122Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA0YqUaHaQY0FFsVYZjb1hpi22M7ONWEUWbJEHt40MJCALYCvq+siI/HXxCp09K+SP/rw2I+WtPOMpCEU15yvZBQ=="
+}
