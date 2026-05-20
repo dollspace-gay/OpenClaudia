@@ -1,0 +1,10 @@
+{
+  "uuid": "367733f9-cfba-480c-bf1b-dd55fe53a0ad",
+  "issue_uuid": "8de5caaf-be57-4083-bc07-c9f33e5e7759",
+  "author": "lOrm",
+  "content": "Issue calls for task_stop tool to abort running background tokio task and mark status stopped (parity with CC TaskStopTool). Not addressable in a cleanup pass: depends on #507 coordinator subsystem and on task-tracking infrastructure. Parent audit #523.",
+  "created_at": "2026-05-20T14:39:58.726824313Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA4oyXW3Dc7XMbtabxOaDoXiGPN71OUKDsbeRLsI2Z1JzlW29bXj/oNuZD813l8m7WyEB6U04B9NdFozwGebMZAw=="
+}
