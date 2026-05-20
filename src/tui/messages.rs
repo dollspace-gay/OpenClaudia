@@ -303,6 +303,24 @@ impl DisplayMessage {
 /// Scrollable message list with streaming support.
 pub struct MessageList {
     pub messages: Vec<DisplayMessage>,
+    /// Vertical scroll position, measured **in rendered rows backwards from
+    /// the bottom of the buffer** — *not* from the top.
+    ///
+    /// - `scroll_offset == 0`  → the viewport is anchored to the bottom, so the
+    ///   newest content (the tail of [`Self::messages`] plus any in-flight
+    ///   `streaming_text`) is fully visible. This is the resting/streaming
+    ///   state and is what [`Self::scroll_to_bottom`] restores.
+    /// - `scroll_offset > 0`   → the viewport has been moved `scroll_offset`
+    ///   rows *back in time* (toward older messages). [`Self::scroll_up`]
+    ///   increases this value; [`Self::scroll_down`] decreases it.
+    ///
+    /// This is deliberately a bottom-anchored coordinate because chat UIs
+    /// stream new rows at the bottom — rebasing the offset every time a delta
+    /// arrives would cause the viewport to drift. Callers that need a
+    /// conventional top-anchored row index (where `0 == first row`) should use
+    /// [`Self::rows_from_top`] instead of touching this field directly.
+    ///
+    /// See crosslink #482.
     pub scroll_offset: u16,
     pub streaming_text: String,
     pub is_streaming: bool,
@@ -415,6 +433,34 @@ impl MessageList {
 
     pub const fn scroll_to_bottom(&mut self) {
         self.scroll_offset = 0;
+    }
+
+    /// Convert the bottom-anchored [`Self::scroll_offset`] into a
+    /// **top-anchored** row index, given `total` rendered rows in the buffer.
+    ///
+    /// Callers that think top-down ("how many rows down from row 0 are we?")
+    /// can use this instead of inverting the offset by hand. The returned
+    /// index is the row number, counted from the top (`0` = first row),
+    /// of the *last visible row* — i.e. the bottom edge of the viewport.
+    /// The two views describe the same scroll position:
+    ///
+    /// ```text
+    /// scroll_offset == 0          ⇒ rows_from_top(total) == total
+    /// scroll_offset == k (k>0)    ⇒ rows_from_top(total) == total - k
+    /// ```
+    ///
+    /// The result saturates at `0` if `scroll_offset` is larger than `total`
+    /// — the caller already scrolled past the available content and the
+    /// viewport is clamped against it.
+    ///
+    /// `total` is the total number of *rendered* rows after wrapping/padding;
+    /// the caller already knows that quantity at render time, so this helper
+    /// stays pure and side-effect free.
+    ///
+    /// See crosslink #482.
+    #[must_use]
+    pub fn rows_from_top(&self, total: usize) -> usize {
+        total.saturating_sub(usize::from(self.scroll_offset))
     }
 
     /// Append styled lines for the welcome banner system message.
@@ -860,5 +906,64 @@ mod tests {
         assert_eq!(ml.scroll_offset, 2);
         ml.scroll_to_bottom();
         assert_eq!(ml.scroll_offset, 0);
+    }
+
+    // ── crosslink #482: scroll_offset semantics contract ────────────────────
+    //
+    // These tests pin down BOTH coordinate systems for the same scroll state:
+    // - The native bottom-anchored `scroll_offset` (0 = newest at bottom).
+    // - The top-anchored view exposed via `rows_from_top(total)`.
+
+    #[test]
+    fn test_scroll_offset_zero_means_bottom() {
+        // Native semantics: offset 0 anchors to the bottom; the top-anchored
+        // view reports the full `total` because the last visible row is the
+        // very last row of the buffer.
+        let ml = MessageList::new();
+        assert_eq!(ml.scroll_offset, 0, "fresh list starts at bottom");
+        assert_eq!(
+            ml.rows_from_top(100),
+            100,
+            "offset=0 ⇒ last visible row index is `total` (bottom edge)"
+        );
+    }
+
+    #[test]
+    fn test_scroll_offset_positive_means_back_in_time() {
+        // Scrolling up increases `scroll_offset` and decreases the
+        // top-anchored row index, because we are looking at older rows.
+        let mut ml = MessageList::new();
+        ml.scroll_up(7);
+        assert_eq!(ml.scroll_offset, 7, "scroll_up moves the offset away from 0");
+        assert_eq!(
+            ml.rows_from_top(50),
+            43,
+            "offset=7 of total=50 ⇒ bottom edge is row 43 (50-7)"
+        );
+
+        // And both views snap back together at the bottom.
+        ml.scroll_to_bottom();
+        assert_eq!(ml.scroll_offset, 0);
+        assert_eq!(ml.rows_from_top(50), 50);
+    }
+
+    #[test]
+    fn test_rows_from_top_saturates_when_scrolled_past_top() {
+        // If the caller scrolled past the available content (e.g. the buffer
+        // shrunk after a `pop_last`) the top-anchored helper saturates at 0
+        // rather than wrapping, so it stays a valid index.
+        let mut ml = MessageList::new();
+        ml.scroll_up(200);
+        assert_eq!(ml.scroll_offset, 200);
+        assert_eq!(
+            ml.rows_from_top(10),
+            0,
+            "offset > total ⇒ top-anchored index clamps at 0"
+        );
+        // And the conventional "no scrolling needed" case (total fits in
+        // viewport, offset is 0) reports `total`, not 0.
+        ml.scroll_to_bottom();
+        assert_eq!(ml.rows_from_top(0), 0);
+        assert_eq!(ml.rows_from_top(3), 3);
     }
 }
