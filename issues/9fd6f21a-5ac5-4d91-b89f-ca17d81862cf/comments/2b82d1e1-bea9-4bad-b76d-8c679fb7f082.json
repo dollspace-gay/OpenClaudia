@@ -1,0 +1,10 @@
+{
+  "uuid": "2b82d1e1-bea9-4bad-b76d-8c679fb7f082",
+  "issue_uuid": "9fd6f21a-5ac5-4d91-b89f-ca17d81862cf",
+  "author": "lOrm",
+  "content": "SKIP — emission site is `src/pipeline.rs:392-394` (`tx.send(AppEvent::StreamText(format!(\"\\n(Retrying in {wait_secs}s — {status}...)\\n\")))`). `src/pipeline.rs` is FORBIDDEN in this batch. The replacement (typed `tracing::warn!(target = \"openclaudia::retry\", attempt, max, error_kind, ...)` plus a structured AppEvent variant) cannot be applied without editing pipeline.rs. Deferred.",
+  "created_at": "2026-05-20T05:32:32.156813075Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAMDmHIYLxBYx4wDt+8u25tR1wL6aZMWlpX3UXcnkB/YhngVLz9o8CKrCKz4o1vRBEWhGzFsUmX2+MZTgS8y/LAg=="
+}
