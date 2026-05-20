@@ -1,0 +1,10 @@
+{
+  "uuid": "385e67a0-2b3f-48ea-aa4c-e25e580a6a1e",
+  "issue_uuid": "a95e7c46-fefa-417d-8d8a-450481b615fa",
+  "author": "lOrm",
+  "content": "Issue calls for adding 5 missing LSP operations (workspaceSymbol, goToImplementation, prepareCallHierarchy, incomingCalls, outgoingCalls) — parity with CC LSPTool.ts:62-73. Not addressable in a cleanup pass: depends on #636 LSP server pool. Five distinct operation handlers in the LSPTool. Multi-day feature. Parent audit #523.",
+  "created_at": "2026-05-20T14:42:39.858647613Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABARSaUaz2XcoXqNMaadIJ0qvj6cJVv1CtsJWPKlAN/0YHPhQjE8yJQn1jwwuzWS4tcRaxas9qrmEOMxAB4lLqZDg=="
+}
