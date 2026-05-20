@@ -3,11 +3,12 @@
   "display_id": 777,
   "title": "transcript::sanitize_path produces filesystem collisions for distinct paths",
   "description": "## Severity\nMajor\n## Dimension\nsecurity\n## Location\nsrc/transcript.rs:88-101 (sanitize_path, project_dir_for)\n## Violation\n```rust\npub fn sanitize_path(name: &str) -> String {\n    name.chars()\n        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })\n        .collect()\n}\n```\n\nReplacing every non-alphanumeric byte with `-` is information-destroying. `/home/doll/Open-Claudia` and `/home/doll/Open Claudia` and `/home/doll/Open/Claudia` all collapse to `-home-doll-Open-Claudia`. The resulting directory `project_dir_for(cwd)` is shared by every collision target. Two distinct projects therefore write transcripts into the same directory, and `list_transcripts` will surface them as a single project's sessions — including their `gitBranch` and first-prompt text. For multi-tenant home directories or path-similar repos (`~/work/foo` vs `~/work/foo-bar` where the dash-target collides), this leaks one project's session metadata into another.\n\nThere is also no length cap: `sanitize_path(\"/very/long/path/...\")` produces an arbitrarily long directory name. On Linux ext4 the path-component limit is 255 bytes; longer values fail at `create_dir_all` with no recovery, breaking transcript persistence silently.\n## Mandated refactor\nAppend a short stable hash of the original `cwd` to the sanitized name (e.g. `-home-doll-OpenClaudia-d41d8cd98f00b204` using a 16-char hex of `blake3(cwd)`). This preserves human-readability AND uniqueness. Cap the prefix component at 200 bytes so the hash-suffixed total stays under filesystem limits. Add a regression test for the collision case (`/foo/bar` vs `/foo-bar`) and the long-path case.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:57:07.768245261Z",
-  "updated_at": "2026-05-18T21:57:18.999737465Z",
+  "updated_at": "2026-05-20T08:19:39.291511703Z",
+  "closed_at": "2026-05-20T08:19:39.291511703Z",
   "labels": [
     "qa-review",
     "security"
