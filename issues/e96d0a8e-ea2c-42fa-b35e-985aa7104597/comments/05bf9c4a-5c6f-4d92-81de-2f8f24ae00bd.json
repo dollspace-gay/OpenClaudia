@@ -1,0 +1,10 @@
+{
+  "uuid": "05bf9c4a-5c6f-4d92-81de-2f8f24ae00bd",
+  "issue_uuid": "e96d0a8e-ea2c-42fa-b35e-985aa7104597",
+  "author": "lOrm",
+  "content": "Deferred — requires unrestricted access to src/permissions.rs (FORBIDDEN under current cleanup scope).\n\n**Fix outline:** In extract_target for the 'bash' family, treat the (None, None) case — command key absent — as Err('Bash'), not as Ok with empty target. That fixes the security regression where an empty target slips into the default_allow loop and a default_allow pattern of '' (or a pattern that happens to glob-match empty) could authorise an unspecified bash invocation. The two-line patch: change (None, None) => Some(Ok(('Bash'.into(), String::new()))) to (None, None) => Some(Err('Bash'.into())). Also add a unit test that asserts a tool_args without 'command' returns Denied.\n\n**Blocking:** src/permissions.rs is reserved scope. High-priority security correctness — schedule early in the next unrestricted pass.",
+  "created_at": "2026-05-20T14:12:54.897416464Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAnROPg3A6rvMa2JlBCkMk/jDlZVYgbEE0QBh6LtRGqiFuNEABENA/p67GUatWyNHUv+xp/G5se4QUlvuIiHZ/Cg=="
+}
