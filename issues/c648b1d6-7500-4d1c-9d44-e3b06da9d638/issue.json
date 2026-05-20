@@ -3,9 +3,10 @@
   "display_id": 762,
   "title": "estimate_tokens uses magic constants *2, /3, *13/10 with no derivation or test pin",
   "description": "## Severity\nTrivial\n## Dimension\nnaming\n## Location\nsrc/compaction.rs:208-230 (estimate_tokens)\n## Violation\nThe estimator mixes three magic numbers with no symbolic name or rationale:\n\n```rust\nlet char_estimate = char_count / 4;\nlet word_estimate = word_count * 13 / 10;\nlet base_estimate = (char_estimate * 2 + word_estimate) / 3;\nlet non_ascii_adjustment = non_ascii_count / 2;\nbase_estimate + non_ascii_adjustment\n```\n\n`/ 4`, `* 13 / 10` (= 1.3 tokens per word), `* 2 + ... / 3` (weighted average biased toward char count), and `/ 2` (half of non-ASCII count) are all unjustified. The accuracy gap relative to a real tokenizer is the proximate cause of #321 (compaction firing late on CJK input). The doc comment says \"approximate\" but does not cite a corpus or tolerance.\n\nTwo specific concerns:\n1. Future maintainers cannot tell which constant to nudge when accuracy needs to improve — `4` vs `1.3` vs `1/2` are all related guesses with no derivation.\n2. No property test asserts the estimate is within ±N% of a known-truth tokenizer for the calibration corpus, so adjustments will be flying blind.\n## Mandated refactor\n1. Promote the constants to named, doc-commented consts: `CHAR_TO_TOKEN_DIVISOR`, `WORD_TO_TOKEN_NUMERATOR/DENOMINATOR`, `NON_ASCII_TOKEN_BOOST_DIVISOR`, `CHAR_WEIGHT_NUMERATOR/DENOMINATOR`.\n2. Cite the source (anthropic-tokenizer empirical run, etc.) in the doc comment.\n3. Add a property test fixture (`tests/fixtures/tokenizer_corpus.json`) with text→ground-truth-token-count pairs and assert estimate is within ±20%.\n4. Long-term tracked by #321 (tiktoken integration); this issue is the cleanup that makes #321's calibration safer.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:54:47.132350190Z",
-  "updated_at": "2026-05-18T21:54:47.132350190Z"
+  "updated_at": "2026-05-20T14:03:57.044084332Z",
+  "closed_at": "2026-05-20T14:03:57.044084332Z"
 }
