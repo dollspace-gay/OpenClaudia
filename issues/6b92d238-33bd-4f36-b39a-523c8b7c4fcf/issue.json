@@ -3,11 +3,12 @@
   "display_id": 837,
   "title": "AnthropicAdapter convert_messages serializes ChatMessages via to_value introducing inefficiency",
   "description": "## Severity\nTrivial\n## Dimension\ncomplexity\n## Location\nsrc/providers/anthropic.rs:44-50\n## Violation\nconvert_messages serializes typed ChatMessage into serde_json::Value via to_value before passing to convert_messages_to_anthropic which then re-parses Value back into individual fields via get(...).and_then(...). A typed-to-Value-to-typed dance with allocation on every request:\n\n  let as_values: Vec<Value> = messages.iter().filter_map(|m| serde_json::to_value(m).ok()).collect();\n  convert_messages_to_anthropic(&as_values)\n\nThe fix for crosslink #475 used to_value() as the easy unification, but it costs O(messages) allocations per request and silently drops messages that fail to_value (filter_map .ok()).\n## Mandated refactor\nRefactor convert_messages_to_anthropic to accept an iterator over a trait (MessageView) that both Value and ChatMessage implement. Or split into two impls. At minimum, replace filter_map(.ok()) with expect-or-log so serialization failures (which should be impossible for ChatMessage) are not silently dropped.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:04:57.920753503Z",
-  "updated_at": "2026-05-18T22:05:51.568722521Z",
+  "updated_at": "2026-05-20T14:04:16.679677386Z",
+  "closed_at": "2026-05-20T14:04:16.679677386Z",
   "labels": [
     "qa-review",
     "complexity"
