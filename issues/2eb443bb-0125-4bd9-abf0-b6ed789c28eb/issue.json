@@ -3,9 +3,10 @@
   "display_id": 754,
   "title": "get_context_window uses substring if/else cascade — OCP violation, no allowlist",
   "description": "## Severity\nMinor\n## Dimension\nsolid\n## Location\nsrc/compaction.rs:166-195 (get_context_window)\n## Violation\nModel→context-size lookup is a 10-branch `if-else` chain on `model_lower.contains(...)`:\n\n```rust\nif model_lower.contains(\"opus\") { CLAUDE_OPUS_CONTEXT }\nelse if model_lower.contains(\"sonnet\") { CLAUDE_SONNET_CONTEXT }\n...\nelse if model_lower.contains(\"o1\") || model_lower.contains(\"o3\") || model_lower.contains(\"o4\") {\n    GPT4O_CONTEXT\n} else { DEFAULT_CONTEXT }\n```\n\nProblems:\n1. Adding a new provider requires editing this function (OCP violation — the rules call for polymorphism or a data table).\n2. Substring matching is fragile: `model.contains(\"gpt-4\")` matches `gpt-4o`, `gpt-4-vision`, `gpt-4-turbo`, and any future `gpt-4xxx` accidentally. Today the order saves us (gpt-4o is checked first), but a future model name like `claude-sonnet-gpt-bridge` would silently get sonnet's context window.\n3. The default branch silently maps unknown models to `DEFAULT_CONTEXT = 128_000`, which is wrong for `gpt-3.5` if the model name shape changes upstream.\n4. Each adapter in providers.rs already owns model metadata — duplicating context-window knowledge here violates SSOT.\n## Mandated refactor\n1. Move context-window data into a `static MODEL_CONTEXT_TABLE: &[(MatchRule, usize)]` with explicit prefix/suffix/exact rules, ordered most-specific-first.\n2. Provide a trait method `ProviderAdapter::context_window(model: &str) -> Option<usize>` and ask the adapter directly.\n3. Hard-fail (or log warn + return None) on unknown models so the operator notices, instead of silently using 128k.\n4. Add tests: `gpt-4-vision` does not match `gpt-4o`, `claude-sonnet-bridge` does not match gpt-4.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:53:59.522871528Z",
-  "updated_at": "2026-05-18T21:53:59.522871528Z"
+  "updated_at": "2026-05-20T14:03:50.867407142Z",
+  "closed_at": "2026-05-20T14:03:50.867407142Z"
 }
