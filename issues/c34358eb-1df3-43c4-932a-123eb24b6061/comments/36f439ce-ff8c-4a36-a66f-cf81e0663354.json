@@ -1,0 +1,10 @@
+{
+  "uuid": "36f439ce-ff8c-4a36-a66f-cf81e0663354",
+  "issue_uuid": "c34358eb-1df3-43c4-932a-123eb24b6061",
+  "author": "lOrm",
+  "content": "Phase 1 behavioral spec for MCP tools subsystem (MCPTool, McpAuth, List/ReadMcpResource + services/mcp). Goal is to update the issue body with a markdown spec by reading Claude Code TS source (~3348-line client.ts, ~1578-line config.ts, ~1141-line useManageMCPConnections.ts). Not addressable in this cleanup session: the deliverable is external-source research, not Rust code, and the CC source is not accessible to this agent in scope. Phase 2 implementations are tracked separately (#613 elicitation, #616 XAA/IdP OAuth, #619 channel permissions, #622 in-process transport, #630 SSE/WS transports, #631 Streamable HTTP compliance, #663 /mcp UI). The MCP spec work is owner-level external research.",
+  "created_at": "2026-05-20T14:33:47.364425727Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAfmtNoCEEkB4yKlYAqsLZrlSLZhFz9ZlN2Nn1Vl6chGOPyeiGLSdg0DEBIo6l/b2obYgVYMHcfhF34MInSJ76AQ=="
+}
