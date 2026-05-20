@@ -1,0 +1,10 @@
+{
+  "uuid": "d3588f4a-4619-49f7-8967-0c8f1ac4199a",
+  "issue_uuid": "9feafe7b-76ea-4a4b-a946-8a451b6d9366",
+  "author": "lOrm",
+  "content": "Fixed: extension_to_language and known_languages consolidated into single LANGUAGES table in src/rules.rs. New test_languages_table_consistency enforces bidirectional consistency (every (lang, exts) entry round-trips through extension_to_language; names are lowercase/kebab-case; all entries have at least one extension). Refactor closes mandated points 1, 2, 4. Point 3 (compile-time assertion) addressed at test-time. Point 5 (rename to context_rules) is independent cosmetic — leaving for another pass.",
+  "created_at": "2026-05-20T00:17:20.940529622Z",
+  "kind": "resolution",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA/T4tDx1CmacqxJDpU8PwH7KWXJh28/mzc+EjPqA8IZdS3Yh0lz3yyNRoe8bKqMkL2fcfYsPsAdnMVC1iL6mBBQ=="
+}
