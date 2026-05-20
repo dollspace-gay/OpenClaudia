@@ -1,0 +1,10 @@
+{
+  "uuid": "0c2a18d2-dbb1-4c0b-99d4-f4dc28f95395",
+  "issue_uuid": "793df03a-05c0-42cf-8904-cc5c5615abf7",
+  "author": "lOrm",
+  "content": "Capped session_files_modified at MAX_FILES_PER_SESSION=50. Bounds pair generation at 1225 rows/session, eliminating the O(N^2) blowup. New entries past the cap log at debug and are dropped.",
+  "created_at": "2026-05-20T12:21:58.130781546Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAhMAZPxx0ZLVzckjte6XllSByOszQh600UFCMNbaf9nKHS9MUtFwgRIJe9UcZ+QXKjlkicYdnw9vr9Ni+1ctEAw=="
+}
