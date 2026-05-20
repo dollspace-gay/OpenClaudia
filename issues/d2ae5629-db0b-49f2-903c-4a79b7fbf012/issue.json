@@ -3,11 +3,12 @@
   "display_id": 702,
   "title": "Notebook code-cell replace does not reset execution_count or outputs",
   "description": "## Severity\nMajor\n\n## Dimension\nFunctional Correctness / State Management (Tell, Don't Ask)\n\n## Location\nsrc/tools/file/notebook.rs:165-187 (replace branch of `execute_notebook_edit`)\n\n## Violation\nOn a code-cell replace, only `source` and optionally `cell_type` are updated:\n\n```rust\ncells[index][\"source\"] = source_to_line_array(new_source);\nif let Some(ct) = cell_type {\n    cells[index][\"cell_type\"] = json!(ct);\n}\n```\n\nThe stale `outputs` array and `execution_count` from the previous source remain attached to the new source. Re-saving a notebook with `print('hello')` as source but `outputs: [{\"text\": [\"world\\n\"]}]` produces a corrupted notebook where output is from code that no longer exists. The test `notebook_replace_code_cell_does_not_reset_outputs` (line 524) explicitly pins this as a current bug.\n\n## Mandated refactor\nIn the replace branch, after assigning `source` (and when the resolved cell is type code, or when `cell_type` is being changed to code), set `cells[index][\"outputs\"] = json!([])` and `cells[index][\"execution_count\"] = Value::Null`. Add a regression test that asserts both fields are reset after a code-cell replace.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:49:17.673007629Z",
-  "updated_at": "2026-05-18T21:49:22.069774981Z",
+  "updated_at": "2026-05-20T06:42:26.557676259Z",
+  "closed_at": "2026-05-20T06:42:26.557676259Z",
   "labels": [
     "qa-review",
     "kiss"
