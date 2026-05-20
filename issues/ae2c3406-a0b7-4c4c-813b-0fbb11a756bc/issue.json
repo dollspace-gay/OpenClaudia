@@ -3,11 +3,12 @@
   "display_id": 909,
   "title": "ScheduleStore save is non-atomic — partial write corrupts schedules.json",
   "description": "## Severity\nMajor\n\n## Dimension\nError Orchestration / Functional Correctness\n\n## Location\nsrc/tools/cron.rs:46-55 (ScheduleStore::save)\n\n## Violation\n```rust\nfn save(&self) -> Result<(), String> {\n    let path = PathBuf::from(SCHEDULES_FILE);\n    if let Some(parent) = path.parent() {\n        std::fs::create_dir_all(parent).map_err(...)?;\n    }\n    let json = serde_json::to_string_pretty(self).map_err(...)?;\n    std::fs::write(&path, json).map_err(|e| format!(\"Failed to write: {e}\"))\n}\n```\n\n`std::fs::write` is not atomic — it truncates then writes. A process kill, OOM, or filesystem-full mid-write leaves schedules.json half-empty, which load() will then silently overwrite with Default on next start (line 39: `.unwrap_or_default()`). Every schedule the user created is permanently lost. The CompletionLedger non-atomic save problem already has issue #741 filed — same root cause class here.\n\n## Mandated refactor\n1. Write to `{SCHEDULES_FILE}.tmp` first, fsync the tmp file, then `rename` it over the target. `rename` is atomic on POSIX filesystems within the same directory.\n2. Reuse a helper if one exists in the codebase; otherwise add `src/util/atomic_write.rs` and call it from both ScheduleStore and CompletionLedger (cross-reference issue #741).\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:15:14.848410271Z",
-  "updated_at": "2026-05-18T22:15:54.127698687Z",
+  "updated_at": "2026-05-20T12:13:14.890639132Z",
+  "closed_at": "2026-05-20T12:13:14.890639132Z",
   "labels": [
     "qa-review",
     "error-handling"
