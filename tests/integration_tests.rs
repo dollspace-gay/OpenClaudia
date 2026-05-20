@@ -2958,9 +2958,8 @@ mod vdd_tests {
     };
     use openclaudia::hooks::{HookEngine, HookEvent};
     use openclaudia::session::{SessionManager, TokenUsage};
-    use openclaudia::vdd::{
-        ConfabulationTracker, Finding, FindingStatus, Severity, VddEngine, VddSession,
-    };
+    use openclaudia::vdd::confabulation::ConfabulationTracker;
+    use openclaudia::vdd::{Finding, FindingStatus, Severity, VddEngine, VddSession};
     use std::collections::HashMap;
     use tempfile::TempDir;
 

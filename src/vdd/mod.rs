@@ -37,7 +37,6 @@ mod transport;
 mod triage;
 
 // Re-exports for public API
-pub use confabulation::ConfabulationTracker;
 pub use engine::VddEngine;
 pub use error::{VddAdvisoryResult, VddBlockingResult, VddError, VddResult};
 pub use finding::{Finding, FindingStatus, Severity};

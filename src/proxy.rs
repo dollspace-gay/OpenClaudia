@@ -944,7 +944,6 @@ async fn transform_and_forward(
     forward_to_provider_raw_reqwest(
         &state.client,
         provider,
-        api_key,
         &adapter.chat_endpoint(&request.model),
         &transformed_request,
         is_stream,
@@ -1682,7 +1681,6 @@ async fn forward_to_provider<T: Serialize + Sync>(
 async fn forward_to_provider_raw_reqwest(
     client: &Client,
     provider: &ProviderConfig,
-    _api_key: &ApiKey,
     path: &str,
     body: &Value,
     is_stream: bool,
