@@ -3,9 +3,10 @@
   "display_id": 938,
   "title": "PermissionsConfig::default_allow Vec<String> globs are loaded but never validated",
   "description": "## Severity\nMinor\n## Dimension\nsecurity\n## Location\nsrc/config/permissions.rs:7-17\n## Violation\n```rust\n#[derive(Debug, Deserialize, Clone, Default)]\npub struct PermissionsConfig {\n    #[serde(default)]\n    pub enabled: bool,\n    #[serde(default)]\n    pub default_allow: Vec<String>,\n}\n```\n\nThe `default_allow` field accepts arbitrary glob strings from YAML with no validation: a typo (`/etc/**` instead of `./etc/**`) silently pre-allows access to system paths. An unbounded glob like `**` or `*` permits ALL operations matching the tool's primary argument — effectively disabling the permission system while LOOKING enabled. A regex-style entry like `.*` is treated as a literal glob (probably matching nothing) so a user copying a regex pattern from another tool gets silent failure.\n\nThere is no per-tool scoping in this type: a glob applies to whatever tool is running, with no way to say \"this path is allowed for Read but not Write\". The current PermissionManager docstring (acp.rs:135) suggests \"matched against the tool's primary argument\" — but the config type does not enforce or document that contract.\n## Mandated refactor\nMake `default_allow` a `Vec<AllowEntry>` where `AllowEntry { tool: Option<String>, pattern: String, mode: AllowMode }`, with `Deserialize` validating that `pattern` is a parseable glob via the `globset` crate. Reject unbounded patterns (`**`, `*`) at parse time unless the config also includes `permissions.allow_unbounded_globs = true`. Emit a warning at load if `default_allow` is non-empty but `enabled = false` — almost certainly a misconfiguration.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:18:29.054368883Z",
-  "updated_at": "2026-05-18T22:18:29.054368883Z"
+  "updated_at": "2026-05-20T14:04:36.896800175Z",
+  "closed_at": "2026-05-20T14:04:36.896800175Z"
 }
