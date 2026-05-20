@@ -109,12 +109,155 @@ pub fn resolve_head_sha(dir: &Path) -> Result<String, PluginError> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// Pull latest changes in a git repository.
+/// Read the `remote.origin.url` configured in a git repo by running
+/// `git remote get-url origin` inside `dir`. Uses the cached absolute
+/// `GIT_BIN` so PATH cannot redirect the lookup (crosslink #679).
 ///
 /// # Errors
 ///
-/// Returns an error if git is not available or the pull operation fails.
-pub fn git_pull(dir: &Path) -> Result<(), PluginError> {
+/// Returns [`PluginError::IoError`] if git cannot be invoked or if
+/// `git remote get-url origin` returns a non-success status (e.g. no
+/// `origin` remote configured).
+pub fn git_remote_url(dir: &Path) -> Result<String, PluginError> {
+    let output = std::process::Command::new(git_bin()?)
+        .arg("remote")
+        .arg("get-url")
+        .arg("origin")
+        .current_dir(dir)
+        .output()
+        .map_err(|e| PluginError::IoError(format!("Failed to run git remote get-url: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(PluginError::IoError(format!(
+            "git remote get-url origin failed in {}: {}",
+            dir.display(),
+            stderr.trim()
+        )));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Filename of the origin-URL sidecar (see crosslink #715).
+///
+/// Records the canonical add-time origin URL of a cloned
+/// marketplace/plugin directory. Placed at the *root* of the clone
+/// (outside `.git/`) so that an attacker who poisons `.git/config`
+/// cannot also silently move the recorded URL.
+pub const ORIGIN_URL_SIDECAR: &str = ".openclaudia-origin-url";
+
+/// Write the add-time origin URL into the sidecar at the root of `dir`.
+///
+/// Called immediately after a successful [`git_clone`] so that future
+/// [`git_pull`] invocations can compare the live remote URL against the
+/// URL that the operator originally vetted. See crosslink #715.
+///
+/// # Errors
+///
+/// Returns [`PluginError::IoError`] if the sidecar cannot be written.
+pub fn write_origin_url_sidecar(dir: &Path, url: &str) -> Result<(), PluginError> {
+    let path = dir.join(ORIGIN_URL_SIDECAR);
+    std::fs::write(&path, url.as_bytes()).map_err(|e| {
+        PluginError::IoError(format!(
+            "failed to write origin-URL sidecar {}: {}",
+            path.display(),
+            e
+        ))
+    })
+}
+
+/// Read the recorded add-time origin URL from the sidecar at the root of
+/// `dir`. Returns `Ok(None)` if no sidecar is present (e.g. legacy clone
+/// that pre-dates crosslink #715).
+///
+/// # Errors
+///
+/// Returns [`PluginError::IoError`] if the sidecar exists but cannot be
+/// read.
+pub fn read_origin_url_sidecar(dir: &Path) -> Result<Option<String>, PluginError> {
+    let path = dir.join(ORIGIN_URL_SIDECAR);
+    match std::fs::read_to_string(&path) {
+        Ok(s) => Ok(Some(s.trim().to_string())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(PluginError::IoError(format!(
+            "failed to read origin-URL sidecar {}: {}",
+            path.display(),
+            e
+        ))),
+    }
+}
+
+/// Pull latest changes in a git repository, re-validating the live remote
+/// URL against an expected value before invoking `git pull`.
+///
+/// # Crosslink #715
+///
+/// Pre-fix `git_pull` invoked `git pull` blindly. An attacker that could
+/// write into `.git/config` (filesystem race, supply-chain compromise of
+/// a nested plugin, or social-engineered `/plugin marketplace add` of a
+/// malicious local dir whose `.git/config` is then mutated) could repoint
+/// `origin` to an attacker-controlled URL. The next
+/// `/plugin marketplace update` would silently pull and execute arbitrary
+/// content, bypassing `strict_known_marketplaces` (which only runs at
+/// add time, not at pull time).
+///
+/// Post-fix: when `expected_url` is `Some`, the live `remote.origin.url`
+/// is read via [`git_remote_url`], validated through
+/// [`super::validate::validate_source_url`], and compared byte-for-byte
+/// against `expected_url`. Any mismatch returns
+/// [`PluginError::PolicyRejected`] with `scope = "marketplace"` and an
+/// explanation that the remote was tampered with.
+///
+/// When `expected_url` is `None`, the validation step is skipped — this
+/// is the legacy code path retained only for backward compatibility with
+/// callers that have no recorded URL to compare against. New callers
+/// MUST pass `Some(url)`.
+///
+/// # Errors
+///
+/// Returns an error if git is not available, the remote URL was
+/// tampered with, the live remote URL is invalid, or the pull operation
+/// fails.
+pub fn git_pull(dir: &Path, expected_url: Option<&str>) -> Result<(), PluginError> {
+    // Re-validation: read the live remote URL and compare against the
+    // recorded add-time URL. Closes crosslink #715.
+    //
+    // The recorded URL was validated by `validate_source_url` at add
+    // time (in `add_marketplace_from_git`); a byte-equal live URL is
+    // therefore implicitly re-validated. When the URLs differ, we
+    // additionally run the live URL through `validate_source_url` so
+    // that a malicious mutation to a syntactically-invalid scheme
+    // (e.g. `file:///etc/passwd`) is surfaced as a *validation*
+    // failure rather than a generic mismatch — the operator sees
+    // exactly what was rejected.
+    if let Some(expected) = expected_url {
+        let live = git_remote_url(dir)?;
+
+        if live != expected {
+            // Best-effort re-validation of the diverged live URL. Surfaces
+            // a scheme/credential rejection if applicable, otherwise falls
+            // through to the equality-mismatch error below.
+            if let Err(e) = super::validate::validate_source_url(&live) {
+                return Err(PluginError::PolicyRejected {
+                    reason: format!(
+                        "remote URL tampered: live `{live}` does not match recorded \
+                         `{expected}` AND fails re-validation ({e})"
+                    ),
+                    scope: "marketplace",
+                });
+            }
+            return Err(PluginError::PolicyRejected {
+                reason: format!(
+                    "remote URL tampered: live `{live}` does not match recorded `{expected}`. \
+                     Refusing to pull — the remote was changed since this marketplace was added. \
+                     Remove and re-add it after verifying the source."
+                ),
+                scope: "marketplace",
+            });
+        }
+    }
+
     // SECURITY: absolute path via [`GIT_BIN`] — see crosslink #679.
     let output = std::process::Command::new(git_bin()?)
         .arg("pull")
@@ -249,7 +392,10 @@ mod tests {
     //!    is observable to callers instead of falling back to a bare
     //!    `Command::new("git")`.
 
-    use super::{git_bin, git_clone, PluginError};
+    use super::{
+        git_bin, git_clone, git_pull, read_origin_url_sidecar, write_origin_url_sidecar,
+        PluginError, ORIGIN_URL_SIDECAR,
+    };
     use std::path::Path;
 
     /// (1) The cached `GIT_BIN` resolves to an absolute filesystem path
@@ -375,5 +521,212 @@ mod tests {
                 panic!("expected PluginError::IoError with the missing-git message, got: {other:?}")
             }
         }
+    }
+
+    // ── Crosslink #715 — git_pull re-validates remote URL ─────────────────────
+    //
+    // Pre-fix `git_pull(dir)` invoked `git pull` blindly inside the marketplace
+    // directory. An attacker that could write to `.git/config` (filesystem
+    // race, supply-chain compromise of a nested plugin, or social-engineered
+    // `/plugin marketplace add` of a malicious local dir whose `.git/config`
+    // is later mutated) could repoint `origin` to an attacker-controlled URL.
+    // The next `/plugin marketplace update` would silently pull and execute
+    // arbitrary content.
+    //
+    // Post-fix `git_pull(dir, expected_url)` reads the live `remote.origin.url`,
+    // re-runs `validate_source_url` on it, and refuses to pull when the live
+    // URL diverges from the URL recorded at add time. The recorded URL lives
+    // in a sidecar (`.openclaudia-origin-url`) at the *root* of the clone —
+    // outside `.git/` — so poisoning `.git/config` alone is insufficient to
+    // hide the change.
+
+    /// Build a bare local git "remote" repository at `path`, commit a single
+    /// file in it, and return the path. Used as a stable URL target for the
+    /// #715 tests so we can exercise the live-pull path without network IO.
+    #[cfg(unix)]
+    fn make_local_git_remote(path: &Path) -> std::path::PathBuf {
+        // 1. Create a regular working repo with one commit
+        let work = path.join("source-work");
+        std::fs::create_dir_all(&work).expect("mkdir source-work");
+        let git = git_bin().expect("git on PATH").to_path_buf();
+        let run = |args: &[&str], cwd: &Path| {
+            let out = std::process::Command::new(&git)
+                .args(args)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .current_dir(cwd)
+                .output()
+                .expect("spawn git");
+            assert!(
+                out.status.success(),
+                "git {args:?} failed in {}: {}",
+                cwd.display(),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        run(&["init", "-q", "-b", "main"], &work);
+        std::fs::write(work.join("README.md"), "hello\n").expect("write");
+        run(&["add", "README.md"], &work);
+        run(&["commit", "-q", "-m", "initial"], &work);
+
+        // 2. Clone --bare into a sibling so it can serve as `origin`.
+        let bare = path.join("source.git");
+        let out = std::process::Command::new(&git)
+            .args(["clone", "--bare", "-q"])
+            .arg(&work)
+            .arg(&bare)
+            .output()
+            .expect("spawn git clone --bare");
+        assert!(
+            out.status.success(),
+            "git clone --bare failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        bare
+    }
+
+    /// Clone `remote_url` into `dest` using `git_bin` directly (skipping
+    /// `git_clone`'s URL validation, which rejects local paths). Mirrors
+    /// the post-clone steps `add_marketplace_from_git` would otherwise
+    /// perform — including writing the origin-URL sidecar.
+    #[cfg(unix)]
+    fn clone_and_record(
+        remote_url: &str,
+        dest: &Path,
+        recorded_url: &str,
+    ) -> Result<(), PluginError> {
+        let git = git_bin()?.to_path_buf();
+        let out = std::process::Command::new(&git)
+            .args(["clone", "-q"])
+            .arg(remote_url)
+            .arg(dest)
+            .output()
+            .map_err(|e| PluginError::IoError(format!("clone spawn: {e}")))?;
+        assert!(
+            out.status.success(),
+            "git clone failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        write_origin_url_sidecar(dest, recorded_url)?;
+        Ok(())
+    }
+
+    /// (#715-a) Pull on a marketplace with an unchanged remote succeeds.
+    /// Establishes the happy path: live `remote.origin.url` matches the
+    /// recorded sidecar URL byte-for-byte → pull proceeds.
+    #[test]
+    #[cfg(unix)]
+    fn fix715_pull_with_unchanged_remote_succeeds() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bare = make_local_git_remote(tmp.path());
+        let bare_url = bare.to_string_lossy().to_string();
+
+        let clone_dest = tmp.path().join("marketplace-clone");
+        clone_and_record(&bare_url, &clone_dest, &bare_url).expect("clone+record");
+
+        let recorded = read_origin_url_sidecar(&clone_dest)
+            .expect("read sidecar")
+            .expect("sidecar present");
+        assert_eq!(recorded, bare_url, "sidecar round-trips the add-time URL");
+
+        // Pull with matching recorded URL → must succeed.
+        git_pull(&clone_dest, Some(&recorded)).expect("pull with unchanged remote must succeed");
+    }
+
+    /// (#715-b) Pull is rejected when `.git/config` was tampered with to
+    /// point at a different URL.
+    #[test]
+    #[cfg(unix)]
+    fn fix715_pull_rejected_when_remote_url_changed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bare = make_local_git_remote(tmp.path());
+        let bare_url = bare.to_string_lossy().to_string();
+
+        let clone_dest = tmp.path().join("marketplace-clone");
+        clone_and_record(&bare_url, &clone_dest, &bare_url).expect("clone+record");
+
+        // Simulate `.git/config` tampering: repoint origin to a new URL.
+        let git = git_bin().expect("git on PATH").to_path_buf();
+        let attacker_url = format!("{bare_url}-attacker");
+        let out = std::process::Command::new(&git)
+            .args(["remote", "set-url", "origin", &attacker_url])
+            .current_dir(&clone_dest)
+            .output()
+            .expect("spawn git remote set-url");
+        assert!(out.status.success(), "tamper setup failed");
+
+        let err = git_pull(&clone_dest, Some(&bare_url))
+            .expect_err("#715-b: tampered remote must be rejected");
+        match err {
+            PluginError::PolicyRejected { reason, scope } => {
+                assert_eq!(scope, "marketplace");
+                assert!(
+                    reason.contains("tampered"),
+                    "#715-b: rejection reason must mention tamper; got: {reason}"
+                );
+            }
+            other => panic!("#715-b: expected PolicyRejected, got {other:?}"),
+        }
+    }
+
+    /// (#715-c) Pull is rejected when the remote URL points at a different
+    /// HOST than the recorded one (even if both URLs are well-formed).
+    /// Distinct from (b) because the URL is changed to a syntactically
+    /// valid https URL, not a sibling local-path string — exercises the
+    /// "different host than original" prong of the contract.
+    #[test]
+    #[cfg(unix)]
+    fn fix715_pull_rejected_when_remote_points_to_different_host() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bare = make_local_git_remote(tmp.path());
+        let original_url = "https://github.com/orig/marketplace.git";
+        let attacker_url = "https://evil.example.invalid/attacker/marketplace.git";
+
+        // Clone from the local bare, but RECORD the well-formed https URL
+        // (simulates the operator having originally added the marketplace
+        // by its public https endpoint).
+        let clone_dest = tmp.path().join("marketplace-clone");
+        clone_and_record(&bare.to_string_lossy(), &clone_dest, original_url)
+            .expect("clone+record");
+
+        // Repoint origin to a different host.
+        let git = git_bin().expect("git on PATH").to_path_buf();
+        let out = std::process::Command::new(&git)
+            .args(["remote", "set-url", "origin", attacker_url])
+            .current_dir(&clone_dest)
+            .output()
+            .expect("spawn git remote set-url");
+        assert!(out.status.success(), "tamper setup failed");
+
+        let err = git_pull(&clone_dest, Some(original_url))
+            .expect_err("#715-c: cross-host tamper must be rejected");
+        let PluginError::PolicyRejected { reason, scope } = err else {
+            panic!("#715-c: expected PolicyRejected");
+        };
+        assert_eq!(scope, "marketplace");
+        assert!(
+            reason.contains("evil.example.invalid") || reason.contains("tampered"),
+            "#715-c: reason must mention the offending URL or tamper; got: {reason}"
+        );
+    }
+
+    /// (#715-d) Sidecar round-trip — explicit pinning that the sidecar is
+    /// at the documented filename so future refactors don't silently move it.
+    #[test]
+    fn fix715_sidecar_filename_is_stable() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_origin_url_sidecar(tmp.path(), "https://example.invalid/x.git")
+            .expect("write sidecar");
+        let path = tmp.path().join(ORIGIN_URL_SIDECAR);
+        assert!(
+            path.exists(),
+            "sidecar must be written under the documented filename {ORIGIN_URL_SIDECAR}"
+        );
+        let contents = std::fs::read_to_string(&path).expect("read sidecar back");
+        assert_eq!(contents, "https://example.invalid/x.git");
     }
 }

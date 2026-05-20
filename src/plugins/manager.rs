@@ -5,7 +5,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
-use super::git::{copy_dir_recursive_within, git_clone, git_pull};
+use super::git::{
+    copy_dir_recursive_within, git_clone, git_pull, read_origin_url_sidecar,
+    write_origin_url_sidecar,
+};
 use super::install::{InstallScope, InstalledPlugins, PluginInstallEntry};
 use super::marketplace::{
     GitHubSource, MarketplaceManifest, MarketplacePlugin, MarketplaceSource, PluginSource,
@@ -745,6 +748,16 @@ impl PluginManager {
         // plugin installs carry the commit SHA.
         let _ = git_clone(url, &clone_dest, git_ref)?;
 
+        // Record the canonical add-time origin URL so future
+        // `update_marketplace` calls can re-validate against `.git/config`
+        // tampering. See crosslink #715. Failure to write the sidecar
+        // means we cannot safely update later — surface the error rather
+        // than leave an un-validatable clone on disk.
+        if let Err(e) = write_origin_url_sidecar(&clone_dest, url) {
+            let _ = fs::remove_dir_all(&clone_dest);
+            return Err(e);
+        }
+
         // Validate the cloned repo has a marketplace manifest
         let manifest_path = clone_dest.join(".claude-plugin").join("marketplace.json");
         let alt_path = clone_dest.join("marketplace.json");
@@ -798,7 +811,22 @@ impl PluginManager {
 
         // Check if it's a git repo
         if dir.join(".git").exists() {
-            git_pull(&dir)?;
+            // Crosslink #715: re-validate the live `remote.origin.url`
+            // against the recorded add-time URL before pulling. The
+            // sidecar is written by `add_marketplace_from_git`; missing
+            // sidecar means the clone pre-dates this fix and we refuse
+            // to pull because we cannot prove the remote is the same
+            // one the operator originally vetted.
+            let expected_url = read_origin_url_sidecar(&dir)?.ok_or_else(|| {
+                PluginError::PolicyRejected {
+                    reason: format!(
+                        "marketplace '{name}' has no recorded origin URL. \
+                         Remove and re-add it to enable safe updates."
+                    ),
+                    scope: "marketplace",
+                }
+            })?;
+            git_pull(&dir, Some(&expected_url))?;
         } else {
             return Err(PluginError::InvalidManifest(
                 "Non-git marketplaces cannot be updated automatically. Remove and re-add."
