@@ -3,11 +3,12 @@
   "display_id": 940,
   "title": "QA: BackgroundShell struct mixes I/O buffers, lifecycle flags, and command metadata",
   "description": "## Severity\nTrivial\n## Dimension\nsolid\n## Location\nsrc/tools/bash/mod.rs:24-35\n## Violation\n`BackgroundShell` packs 7 unrelated fields: two Arc<Mutex<Vec<String>>> buffers, a command string, two AtomicBools (finished, output_retrieved_after_finish), an Arc<Mutex<Option<i32>>> exit_status, and a PID. Each field has its own concurrency story; SRP smell — the struct is the union of \"child process handle\", \"captured output\", and \"GC bookkeeping\".\n\nQuoted (mod.rs:24-35):\n```\nstruct BackgroundShell {\n    stdout_buffer: Arc<Mutex<Vec<String>>>,\n    stderr_buffer: Arc<Mutex<Vec<String>>>,\n    command: String,\n    finished: Arc<AtomicBool>,\n    exit_status: Arc<Mutex<Option<i32>>>,\n    /// PID of the spawned process, used to send SIGTERM on kill\n    pid: u32,\n    /// Whether output has been retrieved at least once after the process finished\n    output_retrieved_after_finish: AtomicBool,\n}\n```\n## Mandated refactor\n1. `ProcessHandle { pid: u32, finished: Arc<AtomicBool>, exit_status: Arc<Mutex<Option<i32>>> }`\n2. `OutputBuffers { stdout: Arc<Mutex<Vec<String>>>, stderr: Arc<Mutex<Vec<String>>> }`\n3. `GcState { output_retrieved_after_finish: AtomicBool }`\n4. `BackgroundShell { command: String, handle: ProcessHandle, buffers: OutputBuffers, gc: GcState }`\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:18:39.441907911Z",
-  "updated_at": "2026-05-18T22:19:04.497514358Z",
+  "updated_at": "2026-05-20T13:26:33.139772878Z",
+  "closed_at": "2026-05-20T13:26:33.139772878Z",
   "labels": [
     "qa-review",
     "solid"
