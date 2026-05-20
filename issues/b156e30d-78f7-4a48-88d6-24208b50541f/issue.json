@@ -3,11 +3,12 @@
   "display_id": 772,
   "title": "Cross-provider abstraction leakage: build_request branches on provider string",
   "description": "## Severity\nMajor\n## Dimension\ndecoupling\n## Location\nsrc/pipeline.rs:210-233, 506-629\n## Violation\nbuild_request and stream_sse_response both branch on raw provider name strings (\"anthropic\", \"google\", _) rather than dispatching via the ProviderAdapter trait that exists in src/providers/mod.rs. Pipeline duplicates request-shaping (build_anthropic_request, build_openai_request, build_google_request) and SSE handling (stream_sse_response checks if provider == \"anthropic\" to choose tool accumulator). This breaks Open/Closed — adding a 7th provider requires editing pipeline.rs AND providers.rs in lockstep. Proxy.rs already has the abstraction correct via adapter.transform_request_with_thinking and adapter.get_headers; pipeline.rs reinvents the dispatch.\n\n\n## Mandated refactor\nExtend ProviderAdapter trait with build_streaming_request(model, messages, effort, prompt_blocks) -> Value and stream_response(response, tx) -> TurnResult. Move per-provider logic into each adapter file. pipeline.rs should only orchestrate.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:55:50.522106486Z",
-  "updated_at": "2026-05-18T21:56:45.626298154Z",
+  "updated_at": "2026-05-20T14:11:46.668483695Z",
+  "closed_at": "2026-05-20T14:11:46.668483695Z",
   "labels": [
     "qa-review"
   ]
