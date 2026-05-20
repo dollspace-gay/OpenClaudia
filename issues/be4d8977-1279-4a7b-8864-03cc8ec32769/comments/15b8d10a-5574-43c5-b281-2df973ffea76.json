@@ -1,0 +1,10 @@
+{
+  "uuid": "15b8d10a-5574-43c5-b281-2df973ffea76",
+  "issue_uuid": "be4d8977-1279-4a7b-8864-03cc8ec32769",
+  "author": "lOrm",
+  "content": "Issue calls for a native GrepTool with regex + context lines, parity with CC tools/GrepTool/GrepTool.ts. Not addressable in a cleanup pass: requires new tool implementation, ripgrep-style regex engine choice (regex vs ripgrep crate), -A/-B/-C context window handling, line-range output formatting, system-prompt update. Multi-day feature work. Parent audit #523.",
+  "created_at": "2026-05-20T14:36:27.771869402Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABApz0xR4gqheZIZb2T7WqtMfiehsLjrxfm4W79/maY1Gcz6rXeG4gGCIHA6qkC3fgLbKRTY8DLWUMHZbR9eMpfDA=="
+}
