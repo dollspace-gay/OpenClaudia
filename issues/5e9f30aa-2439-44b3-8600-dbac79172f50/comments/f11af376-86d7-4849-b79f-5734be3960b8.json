@@ -1,0 +1,10 @@
+{
+  "uuid": "f11af376-86d7-4849-b79f-5734be3960b8",
+  "issue_uuid": "5e9f30aa-2439-44b3-8600-dbac79172f50",
+  "author": "lOrm",
+  "content": "Phase 1 behavioral spec for LSP service + LSPTool (server pool, diagnostics, passive feedback) — read CC LSPServerManager.ts (~420), LSPServerInstance.ts (~511), LSPDiagnosticRegistry.ts (~386). Not addressable in this cleanup session: external-source research. Phase 2 implementations tracked under #636 (server pool), #638 (diagnostic registry), #640 (passive feedback), #643 (LocationLink), #644 (gitignore filter), #645 (5 missing ops), #651 (workspace/configuration reverse-request). Owner-level external research.",
+  "created_at": "2026-05-20T14:34:06.876735127Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAjJJeSuTlFkhpC+uGvOe0ENEIixknSYnOVxVWRjO1E769rM8gNlUk9+Rf9PTwt+aKBkceBIpHfMsZs7+pAOwGAw=="
+}
