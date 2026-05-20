@@ -3,11 +3,12 @@
   "display_id": 825,
   "title": "claude_credentials::refresh_and_load parses response field-by-field; silent refresh-token reuse",
   "description": "## Severity\nMinor\n## Dimension\nerror-handling\n## Location\nsrc/claude_credentials.rs:253-271 (refresh_and_load)\n## Violation\nThe refresh response is read field-by-field via Value indexing. `refresh_response[\\\"access_token\\\"].as_str().ok_or(\\\"No access_token in refresh response\\\")?` elides the upstream's actual content. `refresh_response[\\\"expires_in\\\"].as_i64()` returns None for `expires_in` returned as a STRING. The `unwrap_or(refresh_token)` (line 260) silently re-uses the OLD refresh token if the response field is absent — if Anthropic rotates refresh tokens, missing the new value here surfaces as 401-loops days later with no log trail.\n## Mandated refactor\nParse the entire response into a typed RefreshResponse struct via serde_json::from_value. Accept expires_in as i64 or string via custom deserializer. Make refresh_token rotation explicit: log when rotated vs reused. Surface upstream body via redact_oauth_error_body on field-missing errors.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:03:12.306921221Z",
-  "updated_at": "2026-05-18T22:03:47.776222821Z",
+  "updated_at": "2026-05-20T07:05:11.475105744Z",
+  "closed_at": "2026-05-20T07:05:11.475105744Z",
   "labels": [
     "qa-review"
   ]
