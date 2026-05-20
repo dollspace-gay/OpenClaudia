@@ -3,9 +3,10 @@
   "display_id": 810,
   "title": "SessionId::from_raw accepts any string bypassing the UUID invariant of the newtype",
   "description": "## Severity\nMinor\n## Dimension\nkiss\n## Location\nsrc/state/categories.rs:42-46\n## Violation\nThe SessionId newtype claims to be UUID-shaped:\n\n```rust\n/// Session identifier — UUID-shaped string.\n///\n/// Newtype so session ids don't get confused with teammate / agent / transcript\n/// ids at call sites...\n#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]\n#[serde(transparent)]\npub struct SessionId(String);\n```\n\nBut `from_raw` accepts any String:\n\n```rust\n/// Wrap a caller-supplied string without re-validating. Used by\n/// persist.rs when deserializing v1 files written before this\n/// newtype existed.\n#[must_use]\npub fn from_raw(s: impl Into<String>) -> Self {\n    Self(s.into())\n}\n```\n\nThe test `session_id_round_trips_from_raw` explicitly stores `\"abcd-1234\"` — not a UUID. The \"make invalid states unrepresentable\" guideline is violated: SessionId promises UUID, but `from_raw(\"\")` or `from_raw(\"../../etc/passwd\")` produce SessionId values that propagate through logging, paths (session_project_dir uses session_id), and database queries.\n\nWorse, since `#[serde(transparent)]` is on the type, a malicious or corrupted on-disk session file with `\"session_id\": \"../../etc/passwd\"` is silently accepted by from_raw — and `session_project_dir.join(session_id.as_str())` is a path traversal vector if any caller composes paths this way.\n\n## Mandated refactor\n1. Rename `from_raw` to `from_legacy_v1_blob` and gate it behind `pub(crate)` plus a clarifying doc comment that it is only safe to call on input that was previously a uuid::Uuid::to_string() output.\n2. Add a `try_parse(s: &str) -> Result<Self, uuid::Error>` for the deserialization path that validates the input is a valid UUID string.\n3. The serde derive should use try_parse via a custom impl rather than transparent; transparent allows any string through.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:01:39.135062742Z",
-  "updated_at": "2026-05-18T22:01:39.135062742Z"
+  "updated_at": "2026-05-20T07:00:41.875030856Z",
+  "closed_at": "2026-05-20T07:00:41.875030856Z"
 }
