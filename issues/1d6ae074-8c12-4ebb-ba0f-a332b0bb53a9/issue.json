@@ -3,11 +3,12 @@
   "display_id": 956,
   "title": "git_with_timeout busy-polls try_wait every 100ms blocking sync worker",
   "description": "## Severity\nMajor\n\n## Dimension\nConcurrency / Performance\n\n## Location\nsrc/tools/worktree.rs:25-46 (git_with_timeout polling loop)\n\n## Violation\n```rust\nloop {\n    match child.try_wait() {\n        Ok(Some(_)) => return child.wait_with_output()...,\n        Ok(None) => {\n            if Instant::now() >= deadline { ... }\n            std::thread::sleep(Duration::from_millis(100));\n        }\n        Err(e) => return Err(...),\n    }\n}\n```\n\n`std::thread::sleep` on a sync function called from a tokio runtime blocks the OS thread for 100ms per iteration. For a 5-second git command that's 50 wasted thread-block cycles. tools::cron.rs is also called from the same dispatcher. Under concurrent agent sessions the tokio worker pool is saturated by polling sleepers. Additionally, busy-polling adds up to 100ms of latency on EVERY git command even when git would have exited in 1ms.\n\n## Mandated refactor\nReplace the polling loop with one of:\n1. `wait_timeout::ChildExt::wait_timeout(deadline_remaining)` from the wait_timeout crate (POSIX-safe, no polling).\n2. If keeping the polling approach: lift the function to async, use `tokio::process::Child` + `tokio::time::timeout` so the wait is non-blocking. The dispatcher that called this function is async-served anyway.\n3. Backoff polling (10ms → 20ms → 50ms → 100ms) reduces tail latency for fast commands.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:20:09.990323610Z",
-  "updated_at": "2026-05-18T22:20:17.400915365Z",
+  "updated_at": "2026-05-20T04:34:54.541710105Z",
+  "closed_at": "2026-05-20T04:34:54.541710105Z",
   "labels": [
     "qa-review",
     "concurrency"
