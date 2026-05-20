@@ -1,0 +1,10 @@
+{
+  "uuid": "3c5b5b5e-825c-4bc9-ac44-52aa36041696",
+  "issue_uuid": "3fbffe53-effc-4a1f-ae84-56c7bc30a077",
+  "author": "lOrm",
+  "content": "BlastRadiusGuard::record_access now distinguishes 'representable breach' (count fits in u32 but exceeds the cap) from 'u32 overflow' (count cannot even be represented — likely a bug or attack signal). Two distinct warn! messages; the overflow form names the overflow explicitly. Pre-existing test_blast_radius_max_files still passes; added blast_radius_breach_reports_distinct_message_for_representable_count to lock in the message-distinguishability contract.",
+  "created_at": "2026-05-20T07:05:01.616498350Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAuXxTjNLc/wLk1KaVvXsNyuByp54mNJyOw74M7FCS/4NJh3yt6yNpuUWUNblIT5GSYefShLhI5O0J87/cRdM+Dg=="
+}
