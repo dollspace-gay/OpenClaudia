@@ -3,11 +3,12 @@
   "display_id": 870,
   "title": "QA: PermissionManager logs decisions at debug level; audit trail invisible in production",
   "description": "## Severity\nMinor\n## Dimension\nsecurity\n## Location\nsrc/permissions.rs:172-226, 254-262\n## Violation\nAll permission decisions log at `debug!` level:\n```rust\ndebug!(\n    tool = %canonical_tool, target = %target, pattern = %rule.pattern,\n    \"Allowed by persisted always-allow rule\"\n);\n...\ndebug!(\"Allowed by session rule\");\n...\ndebug!(\"Allowed by default_allow config pattern\");\n```\nProduction deployments typically run at `info` or `warn`. The result:\n**every successful permission grant is invisible**. There is no\ndefault-visible audit trail of which tool calls were allowed, by which\nrule, against which target. OWASP A09 — security logging failure for\nauthorization decisions. Only `warn!` (malformed args, sandbox bypass\nattempt) reaches default-level logs.\n## Mandated refactor\nPromote `Allowed by ...` decisions to `info!` (or `audit!` if a\ndedicated channel exists) so production logs always capture\nauthorization outcomes. Emit one structured field per decision: tool,\ntarget, decision (allow/deny/prompt), rule_tier (persisted/session/\ndefault_allow/safety), and pattern. Consider routing security-relevant\nlogs to a separate sink (file or syslog) so they survive log rotation\nor app-level log-level changes.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:09:27.379750392Z",
-  "updated_at": "2026-05-18T22:10:00.745115202Z",
+  "updated_at": "2026-05-20T13:26:28.034682738Z",
+  "closed_at": "2026-05-20T13:26:28.034682738Z",
   "labels": [
     "qa-review",
     "security"
