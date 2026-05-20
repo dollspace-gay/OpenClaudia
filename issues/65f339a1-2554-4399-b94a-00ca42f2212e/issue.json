@@ -3,9 +3,10 @@
   "display_id": 924,
   "title": "Anthropic and Google extract_system silently drop additional system messages",
   "description": "## Severity\nTrivial\n## Dimension\nerror-handling\n## Location\nsrc/providers/anthropic.rs:22-34, src/providers/google.rs:79-91\n## Violation\nBoth AnthropicAdapter::extract_system and GoogleAdapter::extract_system call .iter().find(|m| m.role == 'system') which picks only the FIRST system message — any subsequent system messages are silently dropped. For Parts content, image_url parts are also silently dropped (filter_map(|p| p.text.clone())). No warning emitted.\n## Mandated refactor\nReject requests with multiple system messages (ProviderError::InvalidRequest) or concatenate ALL system message texts with documented separators. Surface dropped non-text parts via warn! log.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:17:11.655282209Z",
-  "updated_at": "2026-05-18T22:17:11.655282209Z"
+  "updated_at": "2026-05-20T12:24:41.363342699Z",
+  "closed_at": "2026-05-20T12:24:41.363342699Z"
 }
