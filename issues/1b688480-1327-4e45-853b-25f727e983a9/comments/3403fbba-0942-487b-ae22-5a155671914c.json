@@ -1,0 +1,10 @@
+{
+  "uuid": "3403fbba-0942-487b-ae22-5a155671914c",
+  "issue_uuid": "1b688480-1327-4e45-853b-25f727e983a9",
+  "author": "lOrm",
+  "content": "Issue calls for LocalMainSessionTask backgrounding semantics (Ctrl+B foreground/background, sidechain transcript). Not addressable in a cleanup pass: depends on #507 coordinator task framework, TUI keybinding wiring (forbidden during #253 App refactor), and sidechain transcript schema. Parent audit #523.",
+  "created_at": "2026-05-20T14:37:45.381271380Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABALgvB7hY1cSGjigjvPFIun8fnOc8bKJ1fzeeJ/stbCkaZ1yykF+pKr3h3MBRSL9V1jTdJp6TudZViK0YTid9ZBw=="
+}
