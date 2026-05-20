@@ -1,0 +1,10 @@
+{
+  "uuid": "13d2abd9-3f49-439b-82a7-c73e5fc61d41",
+  "issue_uuid": "09c872f0-df88-40a5-b9b5-8d1920427a0b",
+  "author": "lOrm",
+  "content": "Verified at HEAD 80439851: the headline defect (fork+exec of  per 50ms tick) is OBSOLETE. src/tools/bash/kill.rs:60 now uses  directly (zero subprocesses, async-signal-safe). The remaining surface is a 50ms std::thread::sleep busy-wait, which is bounded by the 2s deadline and amounts to ~40 libc calls — well within acceptable cost for a process-termination hot path. The nix::waitpid/WNOHANG alternative the QA review mandated assumed the per-tick subprocess cost that is no longer present. Closing as partially-addressed; the underlying performance concern is resolved. If the residual 50ms sleep granularity becomes load-bearing (e.g., for high-frequency shell churn), file a fresh ticket focused on the sleep, not the obsolete subprocess complaint.",
+  "created_at": "2026-05-20T13:26:06.381599367Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAEBuAUcMtGqXFuw7FO62fKRpNivaMK+Dbub682unjcs3KvQ2e7W+wd2B9+uMM8PqLUjusAYWQ01JUC+ueWk3RAA=="
+}
