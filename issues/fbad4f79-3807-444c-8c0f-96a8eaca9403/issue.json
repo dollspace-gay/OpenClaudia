@@ -3,11 +3,12 @@
   "display_id": 858,
   "title": "execute_exit_worktree apply_changes path swallows merge conflicts and force-removes the worktree",
   "description": "## Severity\nCritical\n\n## Dimension\nError Orchestration / Functional Correctness\n\n## Location\nsrc/tools/worktree.rs:201-252 (execute_exit_worktree, apply_changes branch)\n\n## Violation\nApply-changes branch executes a sequence of operations whose failures are discarded with `let _`:\n\n- line 203: `let _ = git_with_timeout(&[\"add\", \"-A\"]);`  (silently ignores add failure)\n- line 213: `let _ = std::env::set_current_dir(main_path);`  (silently ignores cd failure)\n- lines 231/232 and 243/244: `let _ = git_with_timeout(&[\"worktree\", \"remove\", cwd..., \"--force\"]);`\n\nThe --force flag on worktree remove discards uncommitted changes WITHOUT verification. If the commit on line 204 failed (commit.is_ok_and is false → falls into \"No changes to commit\" branch line 244-251), the code STILL force-removes the worktree, deleting the user's uncommitted work.\n\nAdditionally, the merge-conflict branch (line 223) does NOT abort the merge or restore state — it reports \"Merge had conflicts\" then force-removes the worktree (line 232) leaving the main worktree in a half-merged state.\n\nTest exit_worktree_discard_path_has_no_safety_guard_gap623 explicitly pins the discard branch as having no safety guard (line 487).\n\n## Mandated refactor\n1. Replace each `let _ = git_with_timeout(...)` with proper error propagation; the function is already returning a tuple — surface the error to the model.\n2. Before `worktree remove --force`, run `git status --porcelain` in the worktree; if non-empty AND commit failed, refuse to remove (return error suggesting either commit manually or pass `discard_changes:true`).\n3. On merge conflict, run `git merge --abort` in the main worktree before any cleanup so the user is left in a clean state.\n4. Add explicit `discard_changes:bool` arg (with default false) that the discard branch requires before force-removing.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:08:10.461545308Z",
-  "updated_at": "2026-05-18T22:29:06.814235156Z",
+  "updated_at": "2026-05-20T12:57:40.202311716Z",
+  "closed_at": "2026-05-20T12:57:40.202311716Z",
   "labels": [
     "error-handling",
     "qa-review"
