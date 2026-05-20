@@ -2,12 +2,13 @@
   "uuid": "01a1fe0d-4577-44ae-bc63-6bf24380cddc",
   "display_id": 637,
   "title": "Add enterprise policy enforcement (token caps, tool caps, model allowlist) — parity with CC services/policyLimits/index.ts",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:08:25.772862441Z",
-  "updated_at": "2026-05-20T16:58:47.207141104Z",
+  "updated_at": "2026-05-20T19:55:06.171790300Z",
+  "closed_at": "2026-05-20T19:55:06.171790300Z",
   "labels": [
     "feature",
     "cc-parity"
