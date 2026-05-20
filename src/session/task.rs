@@ -340,6 +340,17 @@ impl TaskManager {
     ) -> Result<(), String> {
         let index = self.build_id_index();
 
+        // Crosslink #366: cycle detection must consider the combined
+        // graph of (current edges) + (every pending edge from this call)
+        // simultaneously. The prior implementation checked each pending
+        // edge in isolation against the CURRENT graph, so a single call
+        // passing add_blocks=[B] and add_blocked_by=[B] both passed (no
+        // existing edges) yet together formed an A↔B cycle. Build a
+        // pending-edge set and pass it to would_create_cycle_with_pending
+        // so all checks see the combined graph.
+        let mut pending: std::collections::HashMap<&str, Vec<&str>> =
+            std::collections::HashMap::new();
+
         if let Some(block_ids) = add_blocks {
             for bid in block_ids {
                 if bid == task_id {
@@ -348,11 +359,7 @@ impl TaskManager {
                 if !index.contains_key(bid.as_str()) {
                     return Err(format!("Referenced task '{bid}' not found"));
                 }
-                if self.would_create_cycle(task_id, bid) {
-                    return Err(format!(
-                        "Adding '{task_id}' blocks '{bid}' would create a circular dependency"
-                    ));
-                }
+                pending.entry(task_id).or_default().push(bid.as_str());
             }
         }
         if let Some(blocked_ids) = add_blocked_by {
@@ -363,15 +370,62 @@ impl TaskManager {
                 if !index.contains_key(bid.as_str()) {
                     return Err(format!("Referenced task '{bid}' not found"));
                 }
-                if self.would_create_cycle(bid, task_id) {
+                // `bid blocks task_id` translates to the reverse edge:
+                // a `blocks` edge from `bid` -> `task_id`.
+                pending.entry(bid.as_str()).or_default().push(task_id);
+            }
+        }
+
+        // Now check that the combined graph (current + pending) is
+        // acyclic from every pending edge.
+        for (from, tos) in &pending {
+            for to in tos {
+                if Self::would_create_cycle_with_pending(self, from, to, &pending) {
                     return Err(format!(
-                        "Adding '{bid}' blocks '{task_id}' would create a circular dependency"
+                        "Adding '{from}' blocks '{to}' would create a circular dependency"
                     ));
                 }
             }
         }
 
         Ok(())
+    }
+
+    /// Cycle-check variant that considers both current `blocks` edges
+    /// AND every edge in `pending`. Used by `validate_dependency_edges`
+    /// to catch cycles formed by edges added in the SAME call (crosslink
+    /// #366) — e.g. `update_task(A, add_blocks=[B], add_blocked_by=[B])`
+    /// would have passed both per-edge checks against the empty current
+    /// graph yet produced an A↔B cycle.
+    fn would_create_cycle_with_pending(
+        &self,
+        from_id: &str,
+        to_id: &str,
+        pending: &std::collections::HashMap<&str, Vec<&str>>,
+    ) -> bool {
+        let mut visited = std::collections::HashSet::new();
+        let mut stack: Vec<String> = vec![to_id.to_string()];
+        while let Some(current) = stack.pop() {
+            if current == from_id {
+                return true;
+            }
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+            // Current persisted out-edges.
+            if let Some(task) = self.get_task(&current) {
+                for blocked in &task.blocks {
+                    stack.push(blocked.clone());
+                }
+            }
+            // Pending out-edges added in this call.
+            if let Some(pending_outs) = pending.get(current.as_str()) {
+                for blocked in pending_outs {
+                    stack.push((*blocked).to_string());
+                }
+            }
+        }
+        false
     }
 
     /// Apply the validated scalar / edge updates to a single task. Operates
@@ -1026,6 +1080,76 @@ mod tests {
             TaskStatus::InProgress
         );
         assert_eq!(tm.get_task("task-2").unwrap().status, TaskStatus::Pending);
+    }
+
+    /// Crosslink #366: a single `update_task` call that adds BOTH
+    /// `add_blocks=[B]` and `add_blocked_by=[B]` forms an A↔B cycle.
+    /// Each edge passes the old per-edge check in isolation against
+    /// the empty current graph; the combined-graph check catches it.
+    #[test]
+    fn issue_366_combined_pending_edges_cycle_is_detected() {
+        let mut tm = TaskManager::new();
+        let a = tm
+            .create_task("A".to_string(), "a".to_string(), None)
+            .id
+            .clone();
+        let b = tm
+            .create_task("B".to_string(), "b".to_string(), None)
+            .id
+            .clone();
+
+        let result = tm.update_task(
+            &a,
+            TaskUpdateParams {
+                status: None,
+                subject: None,
+                description: None,
+                active_form: None,
+                add_blocks: Some(vec![b.clone()]),
+                add_blocked_by: Some(vec![b]),
+            },
+        );
+        assert!(
+            result.is_err(),
+            "combined A->B + B->A in one call must be rejected as a cycle, \
+             got: {result:?}"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("circular dependency"),
+            "error must mention the cycle, got: {msg}"
+        );
+    }
+
+    /// Crosslink #366: a single edge that does NOT form a cycle still
+    /// passes (regression guard for the new combined-graph check).
+    #[test]
+    fn issue_366_single_edge_with_no_cycle_succeeds() {
+        let mut tm = TaskManager::new();
+        let a = tm
+            .create_task("A".to_string(), "a".to_string(), None)
+            .id
+            .clone();
+        let b = tm
+            .create_task("B".to_string(), "b".to_string(), None)
+            .id
+            .clone();
+
+        let result = tm.update_task(
+            &a,
+            TaskUpdateParams {
+                status: None,
+                subject: None,
+                description: None,
+                active_form: None,
+                add_blocks: Some(vec![b]),
+                add_blocked_by: None,
+            },
+        );
+        assert!(
+            result.is_ok(),
+            "A->B alone (no reverse edge) must be accepted, got: {result:?}"
+        );
     }
 
     /// Spec — `format_task_detail` contains all key fields.
