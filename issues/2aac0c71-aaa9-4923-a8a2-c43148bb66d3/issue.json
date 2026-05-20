@@ -3,11 +3,12 @@
   "display_id": 933,
   "title": "plan_mode unwrap_or_default on allowed_prompts silently accepts non-array shapes",
   "description": "## Severity\nMinor\n\n## Dimension\nPerimeter Defense / Functional Correctness\n\n## Location\nsrc/tools/plan_mode.rs:18-22 (execute_exit_plan_mode)\n\n## Violation\n```rust\nlet allowed_prompts = args\n    .get(\"allowed_prompts\")\n    .and_then(|v| v.as_array())\n    .cloned()\n    .unwrap_or_default();\n```\n\nIf `allowed_prompts` is supplied but is not an array (e.g. the model returns a JSON object or a string), `as_array()` returns None, `cloned()` returns None, and `unwrap_or_default()` returns Vec::new(). The tool silently treats \"malformed input\" identically to \"no input.\" The model gets no feedback that its argument was rejected. This is precisely the perimeter-defense violation in §3.4 — \"Reject invalid inputs and throw immediate exceptions. Do not return default/null values to mask errors.\"\n\n## Mandated refactor\nSplit the lookup:\n```rust\nlet allowed_prompts = match args.get(\"allowed_prompts\") {\n    None => Vec::new(),\n    Some(Value::Array(arr)) => arr.clone(),\n    Some(other) => return (format!(\"allowed_prompts must be an array, got {}\", other.type_name()), true),\n};\n```\nThe existing validation loop already returns is_error=true for malformed entries — be consistent and return is_error=true for a malformed container.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:18:11.496427275Z",
-  "updated_at": "2026-05-18T22:18:16.232759609Z",
+  "updated_at": "2026-05-20T12:57:48.225648097Z",
+  "closed_at": "2026-05-20T12:57:48.225648097Z",
   "labels": [
     "qa-review",
     "error-handling"
