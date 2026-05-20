@@ -1,0 +1,10 @@
+{
+  "uuid": "afe998cc-c696-436d-81f5-8c17268e5b20",
+  "issue_uuid": "dbd81851-7e7e-481e-bf5f-7cfe66af0e5d",
+  "author": "lOrm",
+  "content": "Fixed: refresh_tools now gates on capabilities.tools before issuing tools/list. Added public accessor McpServer::has_tools_capability(&self) -> bool (const fn, mirrors has_resources). When the gate is false, refresh_tools logs a debug message and returns Ok(()) without touching the wire, matching CC fetchToolsForClient (client.ts:1748-1751). Three tests: positive-path (capability present → RPC issued, tools list populated), negative-path (capability absent → wire call skipped, tripwire reply unconsumed, tools list empty), and the accessor's two-state contract under both handshake shapes. All 1666 lib tests pass, cargo clippy --all-targets --all-features -D warnings exits 0, no #[allow]/#[ignore]/clippy.toml.",
+  "created_at": "2026-05-20T05:33:06.514115545Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAiVro5LcF7hzS9O9nDhRFPwMFsEoWmLORlqY/4rRTsmyvMNQQlTmfYT8OuR58lNMG9qqsSbWPUGIY3V/M3pmfBA=="
+}
