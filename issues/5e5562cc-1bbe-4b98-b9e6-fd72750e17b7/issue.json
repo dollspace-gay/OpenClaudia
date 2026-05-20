@@ -3,11 +3,12 @@
   "display_id": 934,
   "title": "TUI event loop has no cancellation signal for in-flight API tasks at quit",
   "description": "## Severity\nMajor\n## Dimension\nconcurrency\n## Location\nsrc/tui/app.rs:526-589, 1488-1557\n## Violation\nThe run() event loop terminates on should_quit and breaks immediately. Background tasks from spawn_api_turn keep running with no cancellation signal — tools mid-execution have no way to know the user quit. The agentic follow-up loop in run_api_turn_async (line 1518) has no cancellation token. A 25-iteration chain continues billing.\n\n## Mandated refactor\nAdd tokio_util::sync::CancellationToken on App, cloned into ApiTurnParams. Check token.is_cancelled() each iteration. On should_quit, cancel before breaking the loop; await spawned tasks up to 2s before tearing down.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "high",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:18:16.056198651Z",
-  "updated_at": "2026-05-18T22:18:27.110324238Z",
+  "updated_at": "2026-05-20T12:31:43.794850824Z",
+  "closed_at": "2026-05-20T12:31:43.794850824Z",
   "labels": [
     "qa-review",
     "concurrency"
