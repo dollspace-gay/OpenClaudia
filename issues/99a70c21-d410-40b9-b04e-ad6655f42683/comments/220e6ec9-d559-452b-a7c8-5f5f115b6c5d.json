@@ -1,0 +1,10 @@
+{
+  "uuid": "220e6ec9-d559-452b-a7c8-5f5f115b6c5d",
+  "issue_uuid": "99a70c21-d410-40b9-b04e-ad6655f42683",
+  "author": "lOrm",
+  "content": "#659 closed. Added /thinkback to TIME_TRAVEL section of src/slash_commands.rs. Surfaces in /help and cheatsheet. Implementation of the thinking-replay animation depends on #538 plugin spec (CC delegates to the 'thinkback' plugin); this issue tracked surface registration only.",
+  "created_at": "2026-05-20T20:37:08.198101993Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAJucpsbKdkvfk4u15lsjkG1/tD7rJtTnc3QaOXc5sVouGAeV57w1FEuLJqKUMlhkzzo/cM/AXF+UXge7oiMkRDQ=="
+}
