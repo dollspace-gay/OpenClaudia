@@ -1,0 +1,10 @@
+{
+  "uuid": "1fdfee6e-6c18-4169-a975-f5e4fe366168",
+  "issue_uuid": "3354eb96-fb85-4a87-83db-6129ae9b0bb5",
+  "author": "lOrm",
+  "content": "Deferred — requires unrestricted access to src/hooks/mod.rs (FORBIDDEN under current cleanup scope).\n\n**Fix outline:** Replace serde_json::to_string(input).unwrap_or_default() at src/hooks/mod.rs:411 with a match on the Result. On Err(e): tracing::error!(error = %e, hook = %entry.command, 'Failed to serialize HookInput; refusing to run hook') and return HookResult::denied for pre-tool-use events, or a typed error variant for post-tool events. Better still: change the function signature so callers must handle the serialization error and the hook can never silently get empty stdin.\n\n**Blocking:** src/hooks/mod.rs is reserved scope. Defer to a future unrestricted pass.",
+  "created_at": "2026-05-20T14:12:38.753980068Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABARpjpW8GvsWX6FQzN7Uq6/7t99MKHD1vroApatmdzXjva9CNu9ETL+pcUTNoHIXooKiAd3tq5J+Ihu2kV3ShwDA=="
+}
