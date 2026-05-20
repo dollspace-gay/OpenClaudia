@@ -3,12 +3,13 @@
   "display_id": 604,
   "title": "Add shared team memory directory (parity with CC teamMemPaths.ts)",
   "description": "## Goal\n\nImplement shared team memory directory support, porting CC's `teamMemPaths.ts` (CC ~292 lines) and `teamMemPrompts.ts` (CC ~100 lines).\n\n## CC source behavior\n\n- `getTeamMemPath()` → `<autoMemPath>/team/` (trailing separator, NFC-normalized)\n- `getTeamMemEntrypoint()` → `<autoMemPath>/team/MEMORY.md`\n- `isTeamMemoryEnabled()` → false if autoMemory disabled; otherwise gated on feature flag\n- `isTeamMemPath(filePath)` → string-level containment check (resolves `..` via `path.resolve`)\n- `validateTeamMemWritePath(filePath)` → two-pass validation: (1) resolve `..` + string containment, (2) `realpath` deepest-existing-ancestor + confirm within real teamDir (catches symlink escapes)\n- `validateTeamMemKey(relativeKey)` → sanitize null bytes, URL-encoded traversals, Unicode NFKC-normalized traversals, backslashes, absolute paths; then same two-pass as above\n- Path traversal security: `PathTraversalError` on: null byte, URL-encoded `../`, Unicode NFKC `．．／`, backslash, dangling symlink, symlink loop (`ELOOP`), unresolvable ancestor\n- `buildCombinedMemoryPrompt()` → combined auto+team prompt with scope guidance (two-directory system, `## Memory scope` section)\n- Team MEMORY.md index is loaded and injected alongside private MEMORY.md (both truncated via same `truncateEntrypointContent`)\n\n## OC counterpart\n\nNone. No team memory directory support exists in `src/memdir/`. This is a CC parity gap tracked here.\n\n## Done when\n\n- `src/memdir/team_paths.rs` implements `get_team_mem_path`, `is_team_mem_path`, `validate_team_mem_write_path`, `validate_team_mem_key` with equivalent security properties\n- Path traversal test matrix covers: null byte, URL-encoded `../`, Unicode `．．／`, backslash, dangling symlink, real symlink escape\n- `src/memdir/team_prompts.rs` implements `build_combined_memory_prompt` matching CC structure\n- Feature-flagged behind config (team memory opt-in)\n\n## Related\n\n- Parent audit: #523\n- Spec issue: #533\n- Phase 1 spec: this gap was discovered during #533 spec extraction",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:00:29.552464525Z",
-  "updated_at": "2026-05-18T16:00:57.233353494Z",
+  "updated_at": "2026-05-20T05:42:29.751263287Z",
+  "closed_at": "2026-05-20T05:42:29.751263287Z",
   "labels": [
     "feature",
     "cc-parity"
