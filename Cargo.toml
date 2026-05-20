@@ -85,7 +85,7 @@ ed25519-dalek = "2"
 urlencoding = "2"
 
 # CLI enhancements
-rustyline = { version = "17", features = ["derive"] }
+rustyline = { version = "18", features = ["derive"] }
 indicatif = "0.18"
 crossterm = "0.29"
 arboard = "3"
