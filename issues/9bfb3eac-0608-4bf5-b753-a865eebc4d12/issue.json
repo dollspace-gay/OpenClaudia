@@ -2,12 +2,13 @@
   "uuid": "9bfb3eac-0608-4bf5-b753-a865eebc4d12",
   "display_id": 578,
   "title": "Add team_create and team_delete tools (parity with CC TeamCreateTool/TeamDeleteTool)",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T15:52:56.922590731Z",
-  "updated_at": "2026-05-18T15:52:59.763956661Z",
+  "updated_at": "2026-05-20T14:36:51.823589155Z",
+  "closed_at": "2026-05-20T14:36:51.823589155Z",
   "labels": [
     "feature",
     "cc-parity"
