@@ -3,11 +3,12 @@
   "display_id": 975,
   "title": "FileIndex paths and lower_paths are two parallel Vecs invariant must be maintained by hand",
   "description": "## Severity\nMinor\n\n## Dimension\nType Safety / Data Modeling\n\n## Location\nsrc/tools/file_index.rs:28-32 (FileIndex struct), 72-76 (walk_dir push), 89-104 (search zip)\n\n## Violation\n```rust\npub struct FileIndex {\n    paths: Vec<String>,\n    lower_paths: Vec<String>,\n}\n```\n\nTwo parallel Vecs that MUST stay index-synchronized. Every push to `paths` MUST also push to `lower_paths`; every read from one MUST zip with the other. The invariant is enforced only by the convention that walk_dir does both pushes (line 74-75). Search uses `self.paths.iter().zip(self.lower_paths.iter())` (line 91). If a future maintainer adds a path to one Vec but not the other (e.g. in a hypothetical `remove` method, or during incremental updates), index returns drift silently — search would skip files or score the wrong file.\n\n## Mandated refactor\n```rust\nstruct IndexedPath { display: String, lower: String }\npub struct FileIndex { paths: Vec<IndexedPath> }\n```\nOne push per file, one iteration per search. The invariant is enforced by the type system. Performance is identical (struct of strings = same allocation pattern as paired Vecs).\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:24:11.001593344Z",
-  "updated_at": "2026-05-18T22:24:14.171531159Z",
+  "updated_at": "2026-05-20T04:53:20.778576138Z",
+  "closed_at": "2026-05-20T04:53:20.778576138Z",
   "labels": [
     "qa-review",
     "solid"
