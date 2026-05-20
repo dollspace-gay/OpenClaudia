@@ -1,0 +1,10 @@
+{
+  "uuid": "f96d95de-8450-4fc4-95a8-ae6aad161f08",
+  "issue_uuid": "56ea4dfe-2e7e-49cf-849c-5fa766bfb291",
+  "author": "lOrm",
+  "content": "Fixed in commit 07a3dd1e (src/prompt.rs). Extracted 12288 -> PREFIX_CAPACITY_BYTES = 12 * 1024 and 4096 -> SUFFIX_CAPACITY_BYTES = 4 * 1024 with doc comments explaining the empirical derivation (prefix ~10 KiB across shipped presets, suffix ~2-3 KiB; aligns with slab/page boundaries to avoid realloc churn).",
+  "created_at": "2026-05-20T00:02:57.272149511Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAv2yeji7GzwFgL9ICYGiw592JFTAhugGihIv86iHWUjBgaBtsKHWD5e9VErrR6OrfP0vSfbD5m5uyPwHK/CbyDw=="
+}
