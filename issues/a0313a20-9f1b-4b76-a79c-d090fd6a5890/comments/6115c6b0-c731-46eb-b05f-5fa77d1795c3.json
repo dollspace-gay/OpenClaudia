@@ -1,0 +1,10 @@
+{
+  "uuid": "6115c6b0-c731-46eb-b05f-5fa77d1795c3",
+  "issue_uuid": "a0313a20-9f1b-4b76-a79c-d090fd6a5890",
+  "author": "lOrm",
+  "content": "Re-confirmed clean in d4168fab: src/coordinator/mod.rs has no #[allow], doc bullets indent correctly, and the stale '(this commit)' phrasing in the Phase 1 bullet is now '(landed)'.",
+  "created_at": "2026-05-20T06:20:52.490021474Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAuBft1/pWEELJZ90RqGMhb2I1VdBxErxIo5S1kE3jxsa25WbmT3QYtRQ9u6yOhQG8p5VEdeBtUEqyNhIAMsphDg=="
+}
