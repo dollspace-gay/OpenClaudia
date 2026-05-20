@@ -1,0 +1,10 @@
+{
+  "uuid": "220bb544-4d77-47f4-8c52-d41a4a0723a9",
+  "issue_uuid": "17222638-e7bf-4b07-b426-51fcec7b4c2c",
+  "author": "lOrm",
+  "content": "Issue calls for a native GlobTool with parity to CC tools/GlobTool/GlobTool.ts (glob-pattern file matching as a first-class tool, distinct from filesystem read/grep). Not addressable in a cleanup pass: requires a new tool under src/tools/, parameter schema, glob crate integration with proper gitignore handling, system-prompt update, and tests. Multi-day feature work tracked under cc-parity label. Parent audit #523.",
+  "created_at": "2026-05-20T14:36:24.319889017Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAePhwa2I/sJPeQo6Fh3rlR/aiOJT6QevbCGs8BAOGWJYgP9b7ayfpOV61Xty7sfT25UhurgASS/lEsHe07hcSDA=="
+}
