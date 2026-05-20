@@ -3,13 +3,12 @@
   "display_id": 603,
   "title": "Add hardcoded domain allowlist for web_fetch sandbox bypass (parity with CC preapproved.ts)",
   "description": "Gap: CC tools/WebFetchTool/preapproved.ts defines ~130 code-documentation domains (docs.python.org, react.dev, doc.rust-lang.org, etc.) that bypass the user-permission prompt for web_fetch (GET-only). Preapproved hosts skip checkPermissions and go directly to fetch.\n\nCC source: preapproved.ts:14-131 (PREAPPROVED_HOSTS Set), preapproved.ts:154-166 (isPreapprovedHost with path-scoped entries using segment-boundary matching), WebFetchTool.ts:108-121 (checkPermissions returns behavior:'allow' immediately).\n\nOC counterpart: None. Every web_fetch requires user-granted permission or explicit allow-rule.\n\nSecurity note: preapproval is GET-only and deliberately NOT shared with sandbox network restrictions (per preapproved.ts:1-12 comment). Domains like huggingface.co allow file uploads and would be dangerous for unrestricted network access.\n\nDone when: OC has a static list matching CC's set; isPreapprovedHost handles bare-hostname and path-scoped entries with segment-boundary enforcement; web_fetch skips permission prompt for preapproved URLs; list is NOT applied to network egress restrictions.\n\nParent spec: #529",
-  "status": "closed",
+  "status": "open",
   "priority": "medium",
   "parent_uuid": "59f5166e-466b-48d4-bc9a-668b2ed08aee",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:00:25.667155034Z",
-  "updated_at": "2026-05-20T14:41:00.085552115Z",
-  "closed_at": "2026-05-20T14:41:00.085552115Z",
+  "updated_at": "2026-05-20T16:58:11.911378392Z",
   "labels": [
     "feature",
     "cc-parity"
