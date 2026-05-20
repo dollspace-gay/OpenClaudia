@@ -2,11 +2,12 @@
   "uuid": "d3836b91-c7e1-4991-8cab-09afd4e29a80",
   "display_id": 643,
   "title": "Handle LocationLink responses in goToDefinition/goToImplementation (parity with CC LSPTool.ts:616-631)",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T16:08:50.970227686Z",
-  "updated_at": "2026-05-20T16:58:53.647488346Z",
+  "updated_at": "2026-05-20T19:55:12.340164356Z",
+  "closed_at": "2026-05-20T19:55:12.340164356Z",
   "labels": [
     "parity,cc-lsp"
   ]
