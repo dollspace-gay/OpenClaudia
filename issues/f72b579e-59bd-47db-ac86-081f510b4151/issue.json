@@ -3,9 +3,10 @@
   "display_id": 922,
   "title": "QA: execute_bash mixes cfg branches sync/async output handling (SRP/cyclomatic)",
   "description": "## Severity\nMinor\n## Dimension\ncomplexity\n## Location\nsrc/tools/bash/mod.rs:319-401\n## Violation\n`execute_bash` is 83 lines, branches on `run_in_background`, then again on `#[cfg(windows)]` vs `#[cfg(not(windows))]`, then constructs output, then truncates, then sets `is_error` from exit status. SRP violation — argument extraction, OS-specific spawn, output assembly, truncation, and error-mapping all live in one function. Cyclomatic complexity sits around 12.\n\nQuoted (mod.rs:319-401, abridged):\n```\npub fn execute_bash(args: &HashMap<String, Value>) -> (String, bool) {\n    let Some(command) = args.get(\"command\").and_then(|v| v.as_str()) else { ... };\n    if let Err(msg) = validate_command(command) { ... }\n    let run_in_background = args.get(\"run_in_background\")...\n    if run_in_background { ... } else {\n        let cwd = std::env::current_dir()...;\n        #[cfg(windows)] let output = { ... };\n        #[cfg(not(windows))] let output = { ... };\n        match output { Ok(output) => { ... if result.len() > 50000 { ... } ... }, Err(e) => ... }\n    }\n}\n```\n## Mandated refactor\n1. Split into: `parse_bash_args(&HashMap) -> BashRequest`, `spawn_sync(cmd, cwd) -> Output`, `spawn_async(cmd) -> ShellId`, `render_output(output, max_len) -> String`.\n2. Move OS-specific spawn logic into a `platform::spawn(cmd, cwd) -> io::Result<Output>` helper with separate `cfg` blocks at definition site, not at use site.\n3. Replace the 50_000-char magic literal with a named const.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:16:27.500852231Z",
-  "updated_at": "2026-05-18T22:16:27.500852231Z"
+  "updated_at": "2026-05-20T12:29:12.647665998Z",
+  "closed_at": "2026-05-20T12:29:12.647665998Z"
 }
