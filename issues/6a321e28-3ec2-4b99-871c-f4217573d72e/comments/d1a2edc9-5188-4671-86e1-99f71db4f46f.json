@@ -1,0 +1,10 @@
+{
+  "uuid": "d1a2edc9-5188-4671-86e1-99f71db4f46f",
+  "issue_uuid": "6a321e28-3ec2-4b99-871c-f4217573d72e",
+  "author": "lOrm",
+  "content": "Issue calls for wiring plugin-declared mcp_configs into ServiceRegistry on plugin load (parity with CC mcpPluginIntegration.ts). Not addressable in a cleanup pass: depends on #538 plugin spec and existing plugin manifest schema; requires ServiceRegistry mutation on plugin load/unload. Parent #538.",
+  "created_at": "2026-05-20T14:39:40.874080080Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAiMbhRVPrAuxAb6MjtdkOVnuP0q4Dzx3SLLEegpnJ6lDMsto73EUts8f/Gu/TVRUPBtqTfh+EaiwcO7G/jd3FDg=="
+}
