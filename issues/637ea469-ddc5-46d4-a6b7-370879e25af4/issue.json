@@ -3,11 +3,12 @@
   "display_id": 704,
   "title": "Out-of-bounds notebook replace errors instead of promoting to insert (CC parity gap)",
   "description": "## Severity\nMinor\n\n## Dimension\nFunctional Correctness / Cognitive Readability\n\n## Location\nsrc/tools/file/notebook.rs:173-181 (replace branch out-of-bounds check)\n\n## Violation\n```rust\nif index >= cells.len() {\n    return (format!(\"Cell {target_desc} is out of bounds. Notebook has {} cells ...\"), true);\n}\n```\n\nWhen the requested index equals cells.len() (i.e. one past the end), CC silently promotes the replace to an insert. OC errors out. This isn't necessarily wrong — but the test `notebook_replace_out_of_bounds_returns_error_not_insert` pins it as a deliberate parity gap. Either the gap must be closed, or the semantic decision documented in code comments alongside the error message so future maintainers do not \"fix\" it without intent.\n\n## Mandated refactor\nDecide explicitly: either (a) promote `replace` at `index == cells.len()` to `insert` (mirror CC) AND require `cell_type`, or (b) add an `///` doc comment to the function and a comment inline at the bounds check stating \"OC intentionally rejects index == cells.len(); CC promotes silently — divergence is intentional, see issue #XXX.\" Without one of these two, the divergence is undiscoverable from source.\n\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T21:49:25.720382622Z",
-  "updated_at": "2026-05-18T21:49:30.188843963Z",
+  "updated_at": "2026-05-20T06:42:28.172005109Z",
+  "closed_at": "2026-05-20T06:42:28.172005109Z",
   "labels": [
     "qa-review",
     "kiss"
