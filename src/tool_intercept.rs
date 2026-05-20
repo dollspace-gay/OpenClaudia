@@ -9,7 +9,145 @@
 use crate::tools::{safe_truncate, FunctionCall, ToolCall};
 use std::collections::HashMap;
 use std::fmt::Write;
+use std::sync::LazyLock;
 use uuid::Uuid;
+
+/// Per-tool alias metadata used by the interceptor.
+///
+/// Each entry carries both the canonical (internal) tool name and the set of
+/// parameter-name aliases the tool accepts, keyed by the *aliased* parameter
+/// name with the canonical parameter name as the value.
+///
+/// This is the single source of truth for tool-name and parameter-name
+/// translation in proxy-mode interception (see crosslink #477).
+pub struct ToolAliasInfo {
+    /// Canonical internal tool name (e.g. `read_file`, `list_files`).
+    pub canonical: &'static str,
+    /// Parameter-name aliases: `aliased_name -> canonical_name`.
+    ///
+    /// Entries where the alias equals the canonical name are included so
+    /// callers do not need a separate "passthrough" code path.
+    pub parameter_aliases: HashMap<&'static str, &'static str>,
+}
+
+/// Single source of truth mapping Claude-Code-style tool names (lowercased)
+/// to their canonical internal name and per-tool parameter-name aliases.
+///
+/// Keys are the *aliased* (Claude-Code) tool names in lowercase. The canonical
+/// internal tool name is also included as a key so the table is self-consistent
+/// when a model emits the canonical name directly.
+pub static TOOL_ALIASES: LazyLock<HashMap<&'static str, ToolAliasInfo>> = LazyLock::new(|| {
+    let mut table: HashMap<&'static str, ToolAliasInfo> = HashMap::new();
+
+    // --- bash ---
+    let bash_params: HashMap<&'static str, &'static str> = [("command", "command")].into();
+    table.insert(
+        "bash",
+        ToolAliasInfo {
+            canonical: "bash",
+            parameter_aliases: bash_params,
+        },
+    );
+
+    // --- read / read_file ---
+    let read_params: HashMap<&'static str, &'static str> =
+        [("file_path", "path"), ("path", "path")].into();
+    for name in ["read", "read_file"] {
+        table.insert(
+            name,
+            ToolAliasInfo {
+                canonical: "read_file",
+                parameter_aliases: read_params.clone(),
+            },
+        );
+    }
+
+    // --- write / write_file ---
+    let write_params: HashMap<&'static str, &'static str> = [
+        ("file_path", "path"),
+        ("path", "path"),
+        ("content", "content"),
+        ("contents", "content"),
+    ]
+    .into();
+    for name in ["write", "write_file"] {
+        table.insert(
+            name,
+            ToolAliasInfo {
+                canonical: "write_file",
+                parameter_aliases: write_params.clone(),
+            },
+        );
+    }
+
+    // --- edit / edit_file ---
+    let edit_params: HashMap<&'static str, &'static str> = [
+        ("file_path", "path"),
+        ("path", "path"),
+        ("old_string", "old_string"),
+        ("new_string", "new_string"),
+    ]
+    .into();
+    for name in ["edit", "edit_file"] {
+        table.insert(
+            name,
+            ToolAliasInfo {
+                canonical: "edit_file",
+                parameter_aliases: edit_params.clone(),
+            },
+        );
+    }
+
+    // --- glob / list_files ---
+    let glob_params: HashMap<&'static str, &'static str> =
+        [("path", "path"), ("pattern", "pattern")].into();
+    for name in ["glob", "list_files"] {
+        table.insert(
+            name,
+            ToolAliasInfo {
+                canonical: "list_files",
+                parameter_aliases: glob_params.clone(),
+            },
+        );
+    }
+
+    // --- grep ---
+    let grep_params: HashMap<&'static str, &'static str> =
+        [("path", "path"), ("pattern", "pattern")].into();
+    table.insert(
+        "grep",
+        ToolAliasInfo {
+            canonical: "grep",
+            parameter_aliases: grep_params,
+        },
+    );
+
+    // --- web_fetch / webfetch ---
+    let web_fetch_params: HashMap<&'static str, &'static str> = HashMap::new();
+    for name in ["webfetch", "web_fetch"] {
+        table.insert(
+            name,
+            ToolAliasInfo {
+                canonical: "web_fetch",
+                parameter_aliases: web_fetch_params.clone(),
+            },
+        );
+    }
+
+    // --- web_search / websearch ---
+    let web_search_params: HashMap<&'static str, &'static str> = HashMap::new();
+    for name in ["websearch", "web_search"] {
+        table.insert(
+            name,
+            ToolAliasInfo {
+                canonical: "web_search",
+                parameter_aliases: web_search_params.clone(),
+            },
+        );
+    }
+
+    table
+});
 
 /// A parsed tool invocation from Claude's response
 #[derive(Debug, Clone)]
@@ -23,39 +161,26 @@ pub struct InterceptedToolCall {
 }
 
 impl InterceptedToolCall {
-    /// Convert to a `ToolCall` that can be executed by our tool system
+    /// Convert to a `ToolCall` that can be executed by our tool system.
+    ///
+    /// Both the tool name and parameter names are resolved through a single
+    /// source of truth: [`TOOL_ALIASES`]. Unknown tool names pass through
+    /// lowercased; unknown parameter names pass through unchanged. This means
+    /// any tool that does not appear in [`TOOL_ALIASES`] (for example
+    /// `ask_user_question`, `task_*`, MCP tools) still routes by its bare name
+    /// without a silent rename.
     #[must_use]
     pub fn to_tool_call(&self) -> ToolCall {
-        // Map Claude Code tool names to our internal names
         let name_lower = self.name.to_lowercase();
-        let internal_name = match name_lower.as_str() {
-            "bash" => "bash",
-            "read" | "read_file" => "read_file",
-            "write" | "write_file" => "write_file",
-            "edit" | "edit_file" => "edit_file",
-            "glob" | "list_files" => "list_files", // Our internal name is list_files
-            "grep" => "grep",
-            "webfetch" | "web_fetch" => "web_fetch",
-            "websearch" | "web_search" => "web_search",
-            _ => &name_lower,
-        };
+        let alias_info = TOOL_ALIASES.get(name_lower.as_str());
 
-        // Map Claude Code parameter names to our internal names
+        let internal_name = alias_info.map_or(name_lower.as_str(), |info| info.canonical);
+
         let mut args = serde_json::Map::new();
         for (key, value) in &self.parameters {
-            let internal_key = match (name_lower.as_str(), key.as_str()) {
-                ("bash", "command") => "command",
-                (
-                    "read" | "write" | "write_file" | "edit" | "edit_file" | "read_file",
-                    "file_path" | "path",
-                )
-                | ("glob" | "grep", "path") => "path",
-                ("write" | "write_file", "content" | "contents") => "content",
-                ("edit" | "edit_file", "old_string") => "old_string",
-                ("edit" | "edit_file", "new_string") => "new_string",
-                ("glob" | "grep", "pattern") => "pattern",
-                (_, k) => k,
-            };
+            let internal_key = alias_info
+                .and_then(|info| info.parameter_aliases.get(key.as_str()).copied())
+                .unwrap_or(key.as_str());
             args.insert(
                 internal_key.to_string(),
                 serde_json::Value::String(value.clone()),
@@ -1132,6 +1257,190 @@ And run tests.
         assert!(tools.is_empty());
         assert_eq!(text_parts.len(), 1);
         assert!(text_parts[0].contains("Just some text"));
+    }
+
+    #[test]
+    fn test_tool_aliases_roundtrip_name_resolves_to_canonical() {
+        // Issue #477: aliased Claude-Code names must resolve to canonical
+        // internal names via the single TOOL_ALIASES table.
+        let cases = [
+            ("read", "read_file"),
+            ("write", "write_file"),
+            ("edit", "edit_file"),
+            ("glob", "list_files"),
+            ("webfetch", "web_fetch"),
+            ("websearch", "web_search"),
+            ("bash", "bash"),
+            ("grep", "grep"),
+        ];
+        for (alias, canonical) in cases {
+            let info = TOOL_ALIASES
+                .get(alias)
+                .unwrap_or_else(|| panic!("alias {alias} missing from TOOL_ALIASES"));
+            assert_eq!(
+                info.canonical, canonical,
+                "alias {alias} should resolve to {canonical}"
+            );
+        }
+
+        // End-to-end: round-trip via to_tool_call.
+        let tool = InterceptedToolCall {
+            name: "Read".to_string(),
+            parameters: [("file_path".to_string(), "/tmp/x".to_string())].into(),
+            id: "id-1".to_string(),
+        };
+        let tc = tool.to_tool_call();
+        assert_eq!(tc.function.name, "read_file");
+    }
+
+    #[test]
+    fn test_tool_aliases_parameter_resolves_via_same_table() {
+        // Issue #477: parameter-name aliases live in the same table as
+        // tool-name aliases. Verify file_path -> path and contents -> content
+        // are translated by the per-tool parameter_aliases map.
+        let read_info = TOOL_ALIASES.get("read").expect("read alias");
+        assert_eq!(read_info.parameter_aliases.get("file_path"), Some(&"path"));
+        assert_eq!(read_info.parameter_aliases.get("path"), Some(&"path"));
+
+        let write_info = TOOL_ALIASES.get("write_file").expect("write_file alias");
+        assert_eq!(
+            write_info.parameter_aliases.get("contents"),
+            Some(&"content")
+        );
+        assert_eq!(
+            write_info.parameter_aliases.get("content"),
+            Some(&"content")
+        );
+
+        // End-to-end: contents -> content via to_tool_call.
+        let tool = InterceptedToolCall {
+            name: "Write".to_string(),
+            parameters: [
+                ("file_path".to_string(), "out.txt".to_string()),
+                ("contents".to_string(), "hello".to_string()),
+            ]
+            .into(),
+            id: "id-2".to_string(),
+        };
+        let tc = tool.to_tool_call();
+        assert_eq!(tc.function.name, "write_file");
+        let parsed: serde_json::Value = serde_json::from_str(&tc.function.arguments).unwrap();
+        assert_eq!(parsed.get("path").and_then(|v| v.as_str()), Some("out.txt"));
+        assert_eq!(
+            parsed.get("content").and_then(|v| v.as_str()),
+            Some("hello")
+        );
+        // Original aliased keys must NOT survive translation.
+        assert!(parsed.get("file_path").is_none());
+        assert!(parsed.get("contents").is_none());
+    }
+
+    #[test]
+    fn test_tool_aliases_unknown_tool_is_none_no_panic() {
+        // Issue #477: TOOL_ALIASES.get for an unknown tool returns None and
+        // does NOT panic; to_tool_call passes the name through (lowercased)
+        // and leaves parameter keys untouched.
+        assert!(TOOL_ALIASES.get("ask_user_question").is_none());
+        assert!(TOOL_ALIASES.get("definitely_not_a_real_tool").is_none());
+
+        let tool = InterceptedToolCall {
+            name: "Ask_User_Question".to_string(),
+            parameters: [("question".to_string(), "why?".to_string())].into(),
+            id: "id-3".to_string(),
+        };
+        let tc = tool.to_tool_call();
+        // Lowercased passthrough — no silent rename for unknown tools.
+        assert_eq!(tc.function.name, "ask_user_question");
+        let parsed: serde_json::Value = serde_json::from_str(&tc.function.arguments).unwrap();
+        // Parameter key untouched for unknown tools.
+        assert_eq!(
+            parsed.get("question").and_then(|v| v.as_str()),
+            Some("why?")
+        );
+    }
+
+    #[test]
+    fn test_tool_aliases_property_every_old_alias_in_new_table() {
+        // Issue #477: property check — every (tool_alias, canonical) pair
+        // from the previous hand-written match in to_tool_call and every
+        // (tool_alias, param_alias, canonical_param) triple from the
+        // previous parameter-name match MUST be expressible via the new
+        // TOOL_ALIASES table. If any drift is introduced, this test fails.
+
+        // Tool-name aliases that existed in the old match block.
+        let old_tool_aliases: &[(&str, &str)] = &[
+            ("bash", "bash"),
+            ("read", "read_file"),
+            ("read_file", "read_file"),
+            ("write", "write_file"),
+            ("write_file", "write_file"),
+            ("edit", "edit_file"),
+            ("edit_file", "edit_file"),
+            ("glob", "list_files"),
+            ("list_files", "list_files"),
+            ("grep", "grep"),
+            ("webfetch", "web_fetch"),
+            ("web_fetch", "web_fetch"),
+            ("websearch", "web_search"),
+            ("web_search", "web_search"),
+        ];
+        for (alias, canonical) in old_tool_aliases {
+            let info = TOOL_ALIASES.get(*alias).unwrap_or_else(|| {
+                panic!("old tool alias {alias} missing from new TOOL_ALIASES table")
+            });
+            assert_eq!(
+                info.canonical, *canonical,
+                "tool alias {alias} drifted: expected {canonical}, got {}",
+                info.canonical
+            );
+        }
+
+        // Parameter-name aliases that existed in the old match block,
+        // expressed as (tool_alias, aliased_param, canonical_param).
+        let old_param_aliases: &[(&str, &str, &str)] = &[
+            ("bash", "command", "command"),
+            // (read|write|write_file|edit|edit_file|read_file, file_path|path) -> path
+            ("read", "file_path", "path"),
+            ("read", "path", "path"),
+            ("read_file", "file_path", "path"),
+            ("read_file", "path", "path"),
+            ("write", "file_path", "path"),
+            ("write", "path", "path"),
+            ("write_file", "file_path", "path"),
+            ("write_file", "path", "path"),
+            ("edit", "file_path", "path"),
+            ("edit", "path", "path"),
+            ("edit_file", "file_path", "path"),
+            ("edit_file", "path", "path"),
+            // (glob|grep, path) -> path
+            ("glob", "path", "path"),
+            ("grep", "path", "path"),
+            // (write|write_file, content|contents) -> content
+            ("write", "content", "content"),
+            ("write", "contents", "content"),
+            ("write_file", "content", "content"),
+            ("write_file", "contents", "content"),
+            // (edit|edit_file, old_string/new_string) -> identity
+            ("edit", "old_string", "old_string"),
+            ("edit", "new_string", "new_string"),
+            ("edit_file", "old_string", "old_string"),
+            ("edit_file", "new_string", "new_string"),
+            // (glob|grep, pattern) -> pattern
+            ("glob", "pattern", "pattern"),
+            ("grep", "pattern", "pattern"),
+        ];
+        for (tool_alias, aliased_param, canonical_param) in old_param_aliases {
+            let info = TOOL_ALIASES
+                .get(*tool_alias)
+                .unwrap_or_else(|| panic!("tool alias {tool_alias} missing"));
+            let resolved = info.parameter_aliases.get(*aliased_param).copied();
+            assert_eq!(
+                resolved,
+                Some(*canonical_param),
+                "param alias drifted for ({tool_alias}, {aliased_param}): \
+                 expected Some({canonical_param}), got {resolved:?}"
+            );
+        }
     }
 
     #[test]
