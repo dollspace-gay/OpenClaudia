@@ -1,0 +1,10 @@
+{
+  "uuid": "251ebd2b-8c61-48e2-aa6a-52340a41c2d2",
+  "issue_uuid": "10c2bf7d-b5c3-4907-83b1-41c194fbd771",
+  "author": "lOrm",
+  "content": "Issue calls for in-process MCP transport (embedded server via createLinkedTransportPair channel-based message passing — parity with CC InProcessTransport.ts). Not addressable in a cleanup pass: requires a new McpTransport impl using tokio mpsc channels, paired-half construction, and integration with the McpTransport trait at src/mcp.rs:123. Used for Computer Use MCP, Chrome MCP, SDK-mode servers. Parent audit #523.",
+  "created_at": "2026-05-20T14:41:54.577335639Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAs+kQ6K3UqUMVQawkeRmKdJI9Y0+JXRHD2/nFVTctblGfDYR/U3YXfhEKD/5W1yziwL0ZgsyPYVwEPac9SWp0AA=="
+}
