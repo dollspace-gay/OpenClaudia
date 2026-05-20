@@ -3,11 +3,12 @@
   "display_id": 854,
   "title": "Session.total_tokens, cumulative_usage, and turn_metrics maintained as parallel state",
   "description": "## Severity\nMajor\n## Dimension\nsolid\n## Location\nsrc/session/mod.rs:93-101, 152-192\n## Violation\nSession carries three overlapping representations of token usage: total_tokens (u64 legacy), cumulative_usage (TokenUsage), and turn_metrics[].actual_usage (Vec<Option<TokenUsage>>). record_actual_usage updates all three; record_turn_estimate updates only turn_metrics. add_tokens updates only total_tokens. Whoever calls add_tokens bypasses cumulative_usage. The doc comment ('Total tokens used (approximate) - kept for backward compat') is the kind of YAGNI debt that compounds; nothing prevents future code from updating one and not the others, and getters expose all three.\n## Mandated refactor\nDelete total_tokens and add_tokens. Make total_tokens() a computed property that sums cumulative_usage.input + output. Migrate any persisted JSON via a serde 'default' or a migration helper. Document that turn_metrics is the source of truth for per-turn and cumulative_usage is the cached sum.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "medium",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:07:22.974042918Z",
-  "updated_at": "2026-05-18T22:07:50.905497639Z",
+  "updated_at": "2026-05-20T14:04:32.686318904Z",
+  "closed_at": "2026-05-20T14:04:32.686318904Z",
   "labels": [
     "qa-review",
     "solid"
