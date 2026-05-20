@@ -1,0 +1,10 @@
+{
+  "uuid": "5033d836-364a-44ad-a402-9b723ace3534",
+  "issue_uuid": "eccf1cc7-8993-4eac-a444-d11b5c18765c",
+  "author": "lOrm",
+  "content": "Phase 1 behavioral spec for settings sync + policy limits + rate-limit mocking + cost tracker — read CC settingsSync (~581), policyLimits (~663), remoteManagedSettings (~638). Not addressable in this cleanup session: external-source research. Phase 2 implementations tracked under #637 (policy enforcement), #639 (rate-limit mocking). Owner-level external research.",
+  "created_at": "2026-05-20T14:34:10.031765932Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAeIhTXj1++K+n67kb+cEQs0Z2IZfMrbQH+YxKeD9mDOS7vsFwa3cBJnVQU7negnL5CTDL05OASBvrSdi8nDTWBg=="
+}
