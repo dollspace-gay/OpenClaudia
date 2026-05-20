@@ -1,0 +1,10 @@
+{
+  "uuid": "fc4de7dd-844b-4099-8f88-cf868ca7dea5",
+  "issue_uuid": "070b1c02-9b5a-4b73-8274-e3233ea0ef05",
+  "author": "lOrm",
+  "content": "Issue calls for three additional services under the ServiceRegistry framework (already shipped in 815230c): LspManager, RemoteConfig (Claude Code feature-flag bundles), ExtractMemories worker. Not addressable in a cleanup pass: each is a multi-day feature. LspManager has its own family of tickets (#535 spec, #636 server pool, #638 diagnostics registry, #640 passive feedback, #643/#644/#645/#651 LSPTool ops). ExtractMemories ties to memdir (#508/#533). RemoteConfig has no implementation prerequisite but requires GrowthBook-shaped feature-flag client design. Tracked individually.",
+  "created_at": "2026-05-20T14:33:44.041548887Z",
+  "kind": "note",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA1i8ryGTFwPZtjORYfUTzbZ0Sy+Du1xB+BSbad528eWcMuicQ051GSaAonAErsrDgUa9NThmqEA7LrCw1juXqCg=="
+}
