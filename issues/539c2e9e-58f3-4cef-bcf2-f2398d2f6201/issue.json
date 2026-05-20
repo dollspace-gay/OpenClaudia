@@ -3,9 +3,10 @@
   "display_id": 923,
   "title": "claude_credentials::CLAUDE_CODE_SYSTEM_PROMPT constant tightly couples openclaudia identity to upstream API check",
   "description": "## Severity\nMinor\n## Dimension\ndecoupling\n## Location\nsrc/claude_credentials.rs:378-423 (CLAUDE_CODE_SYSTEM_PROMPT, inject_system_prompt)\n## Violation\n```rust\npub const CLAUDE_CODE_SYSTEM_PROMPT: &str =\n    \"You are Claude Code, Anthropic's official CLI for Claude.\";\n...\nlet prefix_block = serde_json::json!({\"type\": \"text\", \"text\": CLAUDE_CODE_SYSTEM_PROMPT});\n```\n\nThis hard-codes Anthropic's identity-attestation string for OAuth model access. The doc-comment says \"The Anthropic API validates this exact string\". So `inject_system_prompt` lies to the upstream API about which client the request comes from — Claudia masquerades as Claude Code to gain access to subscription-gated models.\n\nTwo problems:\n1. Architectural: a `claude_credentials` MODULE injects content into the SYSTEM PROMPT that the prompt-builder is unaware of. Block ordering and identity content are spread across `prompt.rs`, `claude_credentials.rs`, and `context.rs` with no single owner. The `inject_system_prompt` mutation also happens AFTER `build_system_prompt_blocks` has already produced a \"stable_prefix\" — so the cache marker on the original prefix block is invalidated by this prepend.\n2. Operational: if Anthropic ever changes its OAuth identity-attestation string, this constant breaks silently and every user with an OAuth token sees 401s with no clear remediation path. The string is also undocumented in user-facing docs; users discovering it via grep will rightly wonder if they're violating terms of service.\n## Mandated refactor\nMove the OAuth prefix-block requirement into the prompt builder: `build_system_prompt_blocks` accepts an `Option<&str> oauth_prefix` parameter and emits it as block 0 when present. Delete `inject_system_prompt` and have the provider adapter (or the OAuth-authenticated path in `pipeline.rs`) supply the prefix at request construction time. Document the constant's purpose and origin in the doc comment with a link to Anthropic's policy.\n## Filed from QA review dispatch",
-  "status": "open",
+  "status": "closed",
   "priority": "low",
   "created_by": "lOrm",
   "created_at": "2026-05-18T22:16:45.797587273Z",
-  "updated_at": "2026-05-18T22:16:45.797587273Z"
+  "updated_at": "2026-05-20T12:24:33.715519727Z",
+  "closed_at": "2026-05-20T12:24:33.715519727Z"
 }
