@@ -1,0 +1,10 @@
+{
+  "uuid": "798962e9-09fc-413e-bc94-5d263505a434",
+  "issue_uuid": "a151dc01-8c62-435c-bf9f-878c393db1a7",
+  "author": "lOrm",
+  "content": "Verified: Cargo.toml line 111-121 already contains '[lints.clippy] multiple_crate_versions = \"allow\"' — the policy decision was made in a prior session. cargo clippy --all-targets --all-features exits 0. Issue remains closed (was already closed 2026-05-18).",
+  "created_at": "2026-05-20T03:48:55.113134222Z",
+  "kind": "result",
+  "signed_by": "SHA256:eHpbrpU/tOUroPHQwwGZTQKY+0tU0E2rZw5zFEs1jHE",
+  "signature": "U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgqj5+UR1olg7w0+zZwuWbsWpzM2FlVsxso1l+rn8dSfAAAAARY3Jvc3NsaW5rLWNvbW1lbnQAAAAAAAAABnNoYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAjq1AKvajSIIojQ4njOcvDgT3WDUhk3u6bUX+GgUkYLw0cSZ01GArBC3rsNYR1BZq9/7pwgTmUfXk6uM3sLWSCA=="
+}
