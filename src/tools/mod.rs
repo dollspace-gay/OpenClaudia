@@ -31,6 +31,12 @@ mod cron;
 /// reach these via the module path.
 pub use cron::{execute_cron_create, execute_cron_delete, execute_cron_list};
 mod file;
+/// Re-export the notebook-source-to-line-array helper so the
+/// E2E test suite (`tests/notebook_edit_e2e.rs`) can construct
+/// nbformat-compatible test fixtures without re-implementing
+/// the splitting convention. Internal call sites reach this via
+/// the module path.
+pub use file::source_to_line_array;
 pub mod file_index;
 pub mod lsp;
 mod plan_mode;

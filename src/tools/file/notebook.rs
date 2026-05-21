@@ -28,6 +28,7 @@ fn open_notebook_nofollow(path: &Path) -> std::io::Result<std::fs::File> {
 
 /// Split source text into a JSON array of line strings for notebook cell source format.
 /// Each line except possibly the last ends with '\n'.
+#[must_use]
 pub fn source_to_line_array(source: &str) -> Value {
     if source.is_empty() {
         return json!([]);
