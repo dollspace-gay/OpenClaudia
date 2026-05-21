@@ -25,6 +25,11 @@ mod chainlink;
 pub use chainlink::execute_chainlink;
 pub(crate) mod command;
 mod cron;
+/// Re-export the cron command entry points so the E2E test suite
+/// (`tests/cron_e2e.rs`) can drive create/list/delete + the
+/// validator perimeter directly. Internal call sites continue to
+/// reach these via the module path.
+pub use cron::{execute_cron_create, execute_cron_delete, execute_cron_list};
 mod file;
 pub mod file_index;
 pub mod lsp;

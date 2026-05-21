@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Write;
+use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -363,7 +364,8 @@ fn validate_cron(expr: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn execute_cron_create(args: &HashMap<String, Value>) -> (String, bool) {
+#[must_use]
+pub fn execute_cron_create<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String, bool) {
     execute_cron_create_at(args, &schedules_path())
 }
 
@@ -375,7 +377,10 @@ pub fn execute_cron_create(args: &HashMap<String, Value>) -> (String, bool) {
 /// tests run in parallel. This inner helper takes the schedule store
 /// path as a parameter so tests thread an absolute path through
 /// without ever touching the process cwd.
-fn execute_cron_create_at(args: &HashMap<String, Value>, path: &Path) -> (String, bool) {
+fn execute_cron_create_at<S: BuildHasher>(
+    args: &HashMap<String, Value, S>,
+    path: &Path,
+) -> (String, bool) {
     // crosslink #675: typed accessors replace per-site
     // `args.get(k).and_then(|v| v.as_str())` extraction. Error wording
     // normalises from "Error: name is required" to "Missing 'name' argument".
@@ -467,13 +472,17 @@ fn execute_cron_create_at(args: &HashMap<String, Value>, path: &Path) -> (String
     )
 }
 
-pub fn execute_cron_delete(args: &HashMap<String, Value>) -> (String, bool) {
+#[must_use]
+pub fn execute_cron_delete<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String, bool) {
     execute_cron_delete_at(args, &schedules_path())
 }
 
 /// Path-explicit variant of [`execute_cron_delete`] — see
 /// [`execute_cron_create_at`] for the #984 rationale.
-fn execute_cron_delete_at(args: &HashMap<String, Value>, path: &Path) -> (String, bool) {
+fn execute_cron_delete_at<S: BuildHasher>(
+    args: &HashMap<String, Value, S>,
+    path: &Path,
+) -> (String, bool) {
     // crosslink #987: `name` is the primary identifier. `index` (1-based
     // position in the `cron_list` output) is a human-friendly fallback so a
     // user reading the listing can say "delete #2" without typing a name.
@@ -539,13 +548,17 @@ fn execute_cron_delete_at(args: &HashMap<String, Value>, path: &Path) -> (String
     (format!("Deleted schedule '{target_name}'"), false)
 }
 
-pub fn execute_cron_list(args: &HashMap<String, Value>) -> (String, bool) {
+#[must_use]
+pub fn execute_cron_list<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String, bool) {
     execute_cron_list_at(args, &schedules_path())
 }
 
 /// Path-explicit variant of [`execute_cron_list`] — see
 /// [`execute_cron_create_at`] for the #984 rationale.
-fn execute_cron_list_at(_args: &HashMap<String, Value>, path: &Path) -> (String, bool) {
+fn execute_cron_list_at<S: BuildHasher>(
+    _args: &HashMap<String, Value, S>,
+    path: &Path,
+) -> (String, bool) {
     let path = path.to_path_buf();
     // Hold the same exclusive lock as writers so a list cannot observe
     // a partial mid-update state — combined with the atomic rename in
