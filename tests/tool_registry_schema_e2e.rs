@@ -1,0 +1,344 @@
+//! End-to-end tests for the tool-registry JSON schema emitted by
+//! `get_tool_definitions()`. This is the exact JSON the model
+//! sees on every chat-completion request, so schema invariants
+//! are model-correctness contracts.
+//!
+//! Sprint 30 of the verification effort. The registry has
+//! per-tool unit tests but no integration check that the
+//! aggregate output is well-formed.
+//!
+//! Coverage shape:
+//!
+//!   - **Well-formed `OpenAI` tool shape** — every entry is an
+//!     object with `type: "function"` and a `function` object
+//!     containing `name`, `description`, `parameters`.
+//!   - **No name collisions** — the set of tool names is
+//!     pairwise distinct.
+//!   - **`snake_case` naming** — every tool name matches
+//!     `[a-z][a-z0-9_]*` (model-friendly identifier shape).
+//!   - **Required fields are subsets of properties** — for
+//!     every tool with `parameters.required`, every name in
+//!     that list MUST exist in `parameters.properties`.
+//!   - **Documented core tools present** — `bash`, `read_file`,
+//!     `write_file`, `edit_file`, `glob`, `grep` all
+//!     registered (regression guard against accidental
+//!     removal).
+//!   - **Deterministic dispatch** — `registry().get(name)`
+//!     returns the same handler reference across calls
+//!     (static singleton invariant).
+
+#![allow(clippy::missing_panics_doc)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::unwrap_used)]
+
+use openclaudia::tools::{get_tool_definitions, registry::registry, ToolHandler};
+use serde_json::Value;
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section A — aggregate shape
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn get_tool_definitions_returns_non_empty_array() {
+    let defs = get_tool_definitions();
+    let arr = defs.as_array().expect("definitions must be a JSON array");
+    assert!(
+        !arr.is_empty(),
+        "tool registry MUST register at least one tool"
+    );
+}
+
+#[test]
+fn every_tool_entry_is_well_formed_function_object() {
+    let defs = get_tool_definitions();
+    let arr = defs.as_array().expect("array");
+    let mut malformed = Vec::new();
+    for (i, entry) in arr.iter().enumerate() {
+        // Top-level: `type: "function"` + `function` object.
+        if entry.get("type") != Some(&Value::String("function".to_string())) {
+            malformed.push(format!("#{i}: missing or wrong `type` field"));
+            continue;
+        }
+        let Some(func) = entry.get("function").and_then(Value::as_object) else {
+            malformed.push(format!("#{i}: missing `function` object"));
+            continue;
+        };
+        // function: name + description + parameters
+        for field in &["name", "description", "parameters"] {
+            if !func.contains_key(*field) {
+                malformed.push(format!("#{i}: function missing field {field:?}"));
+            }
+        }
+        if let Some(name) = func.get("name").and_then(Value::as_str) {
+            if name.is_empty() {
+                malformed.push(format!("#{i}: empty function name"));
+            }
+        }
+    }
+    assert!(
+        malformed.is_empty(),
+        "{} malformed tool entries:\n  {}",
+        malformed.len(),
+        malformed.join("\n  ")
+    );
+}
+
+#[test]
+fn tool_names_are_pairwise_distinct() {
+    let defs = get_tool_definitions();
+    let arr = defs.as_array().expect("array");
+    let mut names: Vec<&str> = arr
+        .iter()
+        .filter_map(|e| e.pointer("/function/name").and_then(Value::as_str))
+        .collect();
+    let original_len = names.len();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(
+        names.len(),
+        original_len,
+        "tool names MUST be pairwise distinct; dedup removed {} entries",
+        original_len - names.len()
+    );
+}
+
+#[test]
+fn every_tool_name_matches_snake_case_identifier_shape() {
+    let defs = get_tool_definitions();
+    let arr = defs.as_array().expect("array");
+    let mut wrong = Vec::new();
+    for entry in arr {
+        let name = entry
+            .pointer("/function/name")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        // Tool names must be `[a-z][a-z0-9_]*` — the shape every
+        // provider (OpenAI, Anthropic, Google) accepts as a
+        // function identifier.
+        let valid = !name.is_empty()
+            && name.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+        if !valid {
+            wrong.push(name.to_string());
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{} tool names violate snake_case identifier shape:\n  {:?}",
+        wrong.len(),
+        wrong
+    );
+}
+
+#[test]
+fn required_fields_are_subsets_of_properties() {
+    let defs = get_tool_definitions();
+    let arr = defs.as_array().expect("array");
+    let mut violations = Vec::new();
+    for entry in arr {
+        let name = entry
+            .pointer("/function/name")
+            .and_then(Value::as_str)
+            .unwrap_or("?");
+        let Some(params) = entry.pointer("/function/parameters") else {
+            continue;
+        };
+        let Some(required) = params.get("required").and_then(Value::as_array) else {
+            continue; // no required list — vacuously fine
+        };
+        let Some(properties) = params.get("properties").and_then(Value::as_object) else {
+            // required-without-properties is itself a bug class.
+            violations.push(format!(
+                "{name}: required list present but no properties object"
+            ));
+            continue;
+        };
+        for req in required {
+            let Some(req_name) = req.as_str() else {
+                violations.push(format!("{name}: required entry is not a string: {req:?}"));
+                continue;
+            };
+            if !properties.contains_key(req_name) {
+                violations.push(format!(
+                    "{name}: required field {req_name:?} not in properties"
+                ));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "{} required-vs-properties violations:\n  {}",
+        violations.len(),
+        violations.join("\n  ")
+    );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section B — documented core tools present
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Core tools that MUST always be registered. A regression that
+/// un-registers any of these would silently strip a major model
+/// capability — pinning the list by name surfaces which one.
+const CORE_TOOLS: &[&str] = &[
+    "bash",
+    "bash_output",
+    "kill_shell",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "notebook_edit",
+    "list_files",
+    "glob",
+    "grep",
+    "web_fetch",
+    "web_search",
+    "todo_write",
+    "todo_read",
+];
+
+#[test]
+fn documented_core_tools_all_registered() {
+    let defs = get_tool_definitions();
+    let arr = defs.as_array().expect("array");
+    let names: Vec<&str> = arr
+        .iter()
+        .filter_map(|e| e.pointer("/function/name").and_then(Value::as_str))
+        .collect();
+    let mut missing = Vec::new();
+    for tool in CORE_TOOLS {
+        if !names.contains(tool) {
+            missing.push(*tool);
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "{} core tool(s) MISSING from registry: {:?}\n\
+         Full registered set: {:?}",
+        missing.len(),
+        missing,
+        names
+    );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section C — registry handler dispatch
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn registry_get_returns_same_handler_reference_across_calls() {
+    // The registry is a process-global static; repeated lookups
+    // for the same name MUST return the same pointer.
+    let a = registry().get("bash").expect("bash registered");
+    let b = registry().get("bash").expect("bash still registered");
+    let a_ptr = std::ptr::from_ref::<dyn ToolHandler>(a);
+    let b_ptr = std::ptr::from_ref::<dyn ToolHandler>(b);
+    assert_eq!(
+        a_ptr, b_ptr,
+        "registry().get('bash') MUST return the same handler reference twice"
+    );
+}
+
+#[test]
+fn registry_get_returns_none_for_unknown_tool() {
+    let outcome = registry().get("absolutely-not-a-real-tool-xyz-9999");
+    assert!(
+        outcome.is_none(),
+        "registry().get(unknown) MUST return None; got handler with name={:?}",
+        outcome.map(ToolHandler::name)
+    );
+}
+
+#[test]
+fn every_registered_handler_reports_a_non_empty_name() {
+    // Each handler's `name()` method must match the registry
+    // key it's stored under. We can't iterate from outside the
+    // crate (iter_handlers is pub(crate)), so we drive via the
+    // definitions array and ensure every advertised name
+    // resolves back through registry().get(name) to a handler
+    // whose name() matches.
+    let defs = get_tool_definitions();
+    let arr = defs.as_array().expect("array");
+    for entry in arr {
+        let advertised = entry
+            .pointer("/function/name")
+            .and_then(Value::as_str)
+            .expect("advertised name");
+        let handler = registry().get(advertised).unwrap_or_else(|| {
+            panic!("advertised tool {advertised:?} not resolvable via registry().get()")
+        });
+        assert_eq!(
+            handler.name(),
+            advertised,
+            "handler.name() must equal the advertised name; got {} vs {advertised}",
+            handler.name()
+        );
+    }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section D — parameters.type is "object"
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn every_tool_parameters_has_type_object() {
+    // OpenAI/Anthropic function-calling schemas require
+    // `parameters.type == "object"`. A regression that drops
+    // this would silently break every provider's parser.
+    let defs = get_tool_definitions();
+    let arr = defs.as_array().expect("array");
+    let mut wrong = Vec::new();
+    for entry in arr {
+        let name = entry
+            .pointer("/function/name")
+            .and_then(Value::as_str)
+            .unwrap_or("?");
+        let type_field = entry.pointer("/function/parameters/type");
+        if type_field != Some(&Value::String("object".to_string())) {
+            wrong.push(format!(
+                "{name}: parameters.type={type_field:?} (expected \"object\")"
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{} tools have wrong parameters.type:\n  {}",
+        wrong.len(),
+        wrong.join("\n  ")
+    );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section E — description content discipline
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn every_tool_description_is_non_trivial() {
+    // A tool with an empty / one-word description starves the
+    // model of context. Pin a minimum length so a future PR
+    // that strips descriptions fails loudly.
+    let defs = get_tool_definitions();
+    let arr = defs.as_array().expect("array");
+    let mut thin = Vec::new();
+    for entry in arr {
+        let name = entry
+            .pointer("/function/name")
+            .and_then(Value::as_str)
+            .unwrap_or("?");
+        let desc = entry
+            .pointer("/function/description")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if desc.trim().len() < 20 {
+            thin.push(format!("{name}: description {desc:?} is <20 chars"));
+        }
+    }
+    assert!(
+        thin.is_empty(),
+        "{} tools have thin (<20 char) descriptions:\n  {}",
+        thin.len(),
+        thin.join("\n  ")
+    );
+}
