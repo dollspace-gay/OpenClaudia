@@ -80,6 +80,7 @@ pub const MAX_FETCH_OUTPUT_BYTES: usize = 50_000;
 /// previously open-coded identical assembly + the `50000` magic constant
 /// (crosslink #807). Both call sites now route through this single function
 /// so a tweak to the format or the cap applies uniformly.
+#[must_use]
 pub fn format_fetch_output(title: Option<&str>, url: &str, content: &str) -> String {
     let mut output = String::new();
     if let Some(title) = title {

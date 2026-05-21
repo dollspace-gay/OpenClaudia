@@ -96,6 +96,12 @@ pub use registry::{PermissionTarget, ToolContext, ToolHandler, ToolRegistry};
 pub use todo::{
     clear_all_todo_lists, clear_todo_list, get_todo_list, SessionIdGuard, TodoItem, TodoStatus,
 };
+/// Web-fetch output formatter + cap constant. Curated re-export so the
+/// content-extraction E2E tests (`tests/web_content_extraction_e2e.rs`,
+/// sprint 41) can drive `format_fetch_output` directly without spawning
+/// real HTTP traffic. The full `web` submodule stays private to avoid
+/// surfacing internal request-construction helpers.
+pub use web::{format_fetch_output, MAX_FETCH_OUTPUT_BYTES};
 pub use worktree::cwd_cache_generation;
 
 use crate::config::AppConfig;
