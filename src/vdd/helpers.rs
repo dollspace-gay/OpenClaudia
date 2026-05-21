@@ -46,6 +46,7 @@ pub fn truncate_output(text: &str, max_len: usize) -> String {
 }
 
 /// Format findings for injection into the next turn's context (advisory mode).
+#[must_use]
 pub fn format_findings_for_injection(
     findings: &[Finding],
     static_analysis: &[StaticAnalysisResult],

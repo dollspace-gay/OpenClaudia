@@ -42,3 +42,14 @@ pub use error::{VddAdvisoryResult, VddBlockingResult, VddError, VddResult};
 pub use finding::{Finding, FindingStatus, Severity};
 pub use review::{AdversaryReview, VddIteration, VddSession};
 pub use static_analysis::StaticAnalysisResult;
+
+/// Triage entry points re-exported for the VDD-pipeline E2E test
+/// suite (`tests/vdd_triage_e2e.rs`, sprint 54). Curated to avoid
+/// surfacing the internal `RawFinding` / `AdversaryResponse` types
+/// that the parser uses internally.
+pub use triage::{parse_findings, parse_findings_detailed, ParseErrorKind, ParseFindingsOutcome};
+
+/// Advisory-formatting helper re-exported for the same test suite.
+/// Pure function over `Finding` + `StaticAnalysisResult` — no
+/// hidden state, no async surface.
+pub use helpers::format_findings_for_injection;
