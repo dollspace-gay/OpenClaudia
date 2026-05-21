@@ -164,7 +164,14 @@ fn grep_one(path: &Path, regex: &Regex, context: usize) -> std::io::Result<Vec<H
         if regex.is_match(line) {
             let line_no = idx + 1;
             let before_start = idx.saturating_sub(context);
-            let after_end = (idx + context + 1).min(lines.len());
+            // crosslink #149-fix: `idx + context + 1` overflowed when
+            // `context_lines` was coerced to `usize::MAX` from a huge
+            // u64. Saturating arithmetic prevents the panic and still
+            // yields the correct end-of-file cap via `.min(lines.len())`.
+            let after_end = idx
+                .saturating_add(context)
+                .saturating_add(1)
+                .min(lines.len());
             let context_before: Vec<String> = lines[before_start..idx]
                 .iter()
                 .map(|s| (*s).to_string())
