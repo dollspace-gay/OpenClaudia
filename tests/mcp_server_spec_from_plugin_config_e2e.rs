@@ -1,0 +1,258 @@
+//! End-to-end tests for `services::McpServerSpec::from_plugin_config`
+//! — the manifest → registry mirroring step, plus
+//! `McpServerSpec` Eq/Clone/Debug invariants and the
+//! transport field defaults from `McpServerConfig`.
+//!
+//! Sprint 203 of the verification effort. Sprint 117/etc.
+//! covered the registry surface; this file pins the
+//! manifest-to-registry transform specifically.
+
+#![allow(clippy::missing_panics_doc)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::unwrap_used)]
+
+use openclaudia::plugins::manifest::McpServerConfig;
+use openclaudia::services::McpServerSpec;
+use std::collections::HashMap;
+
+fn default_cfg() -> McpServerConfig {
+    McpServerConfig {
+        command: None,
+        args: Vec::new(),
+        env: HashMap::new(),
+        transport: "stdio".to_string(),
+        url: None,
+    }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section A — from_plugin_config field-by-field mirroring
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn from_plugin_config_propagates_command() {
+    let cfg = McpServerConfig {
+        command: Some("npx".to_string()),
+        ..default_cfg()
+    };
+    let spec = McpServerSpec::from_plugin_config(&cfg);
+    assert_eq!(spec.command.as_deref(), Some("npx"));
+}
+
+#[test]
+fn from_plugin_config_propagates_args() {
+    let cfg = McpServerConfig {
+        args: vec![
+            "-y".to_string(),
+            "@modelcontextprotocol/server-x".to_string(),
+        ],
+        ..default_cfg()
+    };
+    let spec = McpServerSpec::from_plugin_config(&cfg);
+    assert_eq!(spec.args.len(), 2);
+    assert_eq!(spec.args[0], "-y");
+}
+
+#[test]
+fn from_plugin_config_propagates_env() {
+    let mut env = HashMap::new();
+    env.insert("MY_VAR".to_string(), "value".to_string());
+    let cfg = McpServerConfig {
+        env: env.clone(),
+        ..default_cfg()
+    };
+    let spec = McpServerSpec::from_plugin_config(&cfg);
+    assert_eq!(spec.env.get("MY_VAR"), Some(&"value".to_string()));
+}
+
+#[test]
+fn from_plugin_config_propagates_transport_stdio() {
+    let cfg = McpServerConfig {
+        transport: "stdio".to_string(),
+        ..default_cfg()
+    };
+    let spec = McpServerSpec::from_plugin_config(&cfg);
+    assert_eq!(spec.transport, "stdio");
+}
+
+#[test]
+fn from_plugin_config_propagates_transport_http() {
+    let cfg = McpServerConfig {
+        transport: "http".to_string(),
+        url: Some("https://mcp.example.com".to_string()),
+        ..default_cfg()
+    };
+    let spec = McpServerSpec::from_plugin_config(&cfg);
+    assert_eq!(spec.transport, "http");
+    assert_eq!(spec.url.as_deref(), Some("https://mcp.example.com"));
+}
+
+#[test]
+fn from_plugin_config_command_none_stays_none() {
+    let cfg = default_cfg();
+    let spec = McpServerSpec::from_plugin_config(&cfg);
+    assert!(spec.command.is_none());
+}
+
+#[test]
+fn from_plugin_config_url_none_stays_none() {
+    let cfg = default_cfg();
+    let spec = McpServerSpec::from_plugin_config(&cfg);
+    assert!(spec.url.is_none());
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section B — Default values from McpServerConfig serde defaults
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn mcp_server_config_default_transport_is_stdio() {
+    // PINS DOC: default transport from manifest is "stdio".
+    let yaml = "{}";
+    let cfg: McpServerConfig = serde_yaml::from_str(yaml).expect("de");
+    assert_eq!(cfg.transport, "stdio");
+}
+
+#[test]
+fn mcp_server_config_with_only_command_uses_default_transport() {
+    let yaml = "command: npx";
+    let cfg: McpServerConfig = serde_yaml::from_str(yaml).expect("de");
+    assert_eq!(cfg.command.as_deref(), Some("npx"));
+    assert_eq!(cfg.transport, "stdio");
+}
+
+#[test]
+fn mcp_server_config_args_default_to_empty_vec() {
+    let yaml = "{}";
+    let cfg: McpServerConfig = serde_yaml::from_str(yaml).expect("de");
+    assert!(cfg.args.is_empty());
+}
+
+#[test]
+fn mcp_server_config_env_defaults_to_empty_map() {
+    let yaml = "{}";
+    let cfg: McpServerConfig = serde_yaml::from_str(yaml).expect("de");
+    assert!(cfg.env.is_empty());
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section C — McpServerSpec PartialEq + Clone
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn spec_clone_preserves_all_5_fields() {
+    let original = McpServerSpec {
+        command: Some("npx".to_string()),
+        args: vec!["-y".to_string()],
+        env: HashMap::from([("K".to_string(), "V".to_string())]),
+        transport: "stdio".to_string(),
+        url: None,
+    };
+    let cloned = original.clone();
+    assert_eq!(cloned, original);
+    assert_eq!(cloned.command.as_deref(), Some("npx"));
+    assert_eq!(cloned.args.len(), 1);
+}
+
+#[test]
+fn spec_partial_eq_distinguishes_different_commands() {
+    let a = McpServerSpec {
+        command: Some("npx".to_string()),
+        args: Vec::new(),
+        env: HashMap::new(),
+        transport: "stdio".to_string(),
+        url: None,
+    };
+    let b = McpServerSpec {
+        command: Some("python".to_string()),
+        ..a.clone()
+    };
+    assert_ne!(a, b);
+}
+
+#[test]
+fn spec_partial_eq_distinguishes_different_args() {
+    let a = McpServerSpec {
+        command: None,
+        args: vec!["a".to_string()],
+        env: HashMap::new(),
+        transport: "stdio".to_string(),
+        url: None,
+    };
+    let b = McpServerSpec {
+        args: vec!["b".to_string()],
+        ..a.clone()
+    };
+    assert_ne!(a, b);
+}
+
+#[test]
+fn spec_partial_eq_distinguishes_different_transports() {
+    let a = McpServerSpec {
+        command: None,
+        args: Vec::new(),
+        env: HashMap::new(),
+        transport: "stdio".to_string(),
+        url: None,
+    };
+    let b = McpServerSpec {
+        transport: "http".to_string(),
+        ..a.clone()
+    };
+    assert_ne!(a, b);
+}
+
+#[test]
+fn spec_debug_format_includes_field_names() {
+    let spec = McpServerSpec {
+        command: Some("npx".to_string()),
+        args: vec!["-y".to_string()],
+        env: HashMap::new(),
+        transport: "stdio".to_string(),
+        url: None,
+    };
+    let d = format!("{spec:?}");
+    assert!(d.contains("command"));
+    assert!(d.contains("transport"));
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section D — Round-trip via from_plugin_config
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn from_plugin_config_called_twice_yields_equal_specs() {
+    let cfg = McpServerConfig {
+        command: Some("npx".to_string()),
+        args: vec!["-y".to_string()],
+        env: HashMap::from([("X".to_string(), "Y".to_string())]),
+        transport: "stdio".to_string(),
+        url: None,
+    };
+    let s1 = McpServerSpec::from_plugin_config(&cfg);
+    let s2 = McpServerSpec::from_plugin_config(&cfg);
+    assert_eq!(s1, s2);
+}
+
+#[test]
+fn from_plugin_config_with_full_config_propagates_every_field() {
+    let mut env = HashMap::new();
+    env.insert("API_KEY".to_string(), "secret".to_string());
+    let cfg = McpServerConfig {
+        command: Some("uvx".to_string()),
+        args: vec![
+            "server".to_string(),
+            "--port".to_string(),
+            "8080".to_string(),
+        ],
+        env,
+        transport: "stdio".to_string(),
+        url: None,
+    };
+    let spec = McpServerSpec::from_plugin_config(&cfg);
+    assert_eq!(spec.command.as_deref(), Some("uvx"));
+    assert_eq!(spec.args, vec!["server", "--port", "8080"]);
+    assert_eq!(spec.env.get("API_KEY"), Some(&"secret".to_string()));
+    assert_eq!(spec.transport, "stdio");
+    assert!(spec.url.is_none());
+}
