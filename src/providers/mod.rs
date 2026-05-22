@@ -335,7 +335,11 @@ static OLLAMA: OllamaAdapter = OllamaAdapter::new();
 /// Canonical names accepted by [`get_adapter`]. Aliases are listed in the
 /// same order they appear in the dispatch `match` so the error message hint
 /// matches what the function actually resolves.
-const SUPPORTED_PROVIDERS: &[&str] = &[
+///
+/// Re-exported so `main.rs` can wire this into clap's `PossibleValuesParser`
+/// for `--target`, ensuring CLI validation matches runtime dispatch
+/// (closes the gap surfaced by the binary-verification audit).
+pub const SUPPORTED_PROVIDERS: &[&str] = &[
     "anthropic",
     "openai",
     "google",

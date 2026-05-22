@@ -16,10 +16,10 @@ pub async fn cmd_acp(
             if config::config_file_exists() {
                 eprintln!("Failed to parse configuration: {e}");
                 eprintln!("Check your .openclaudia/config.yaml for syntax errors.");
-            } else {
-                eprintln!("No configuration found. Run 'openclaudia init' first.");
+                anyhow::bail!("invalid configuration: {e}");
             }
-            return Ok(());
+            eprintln!("No configuration found. Run 'openclaudia init' first.");
+            anyhow::bail!("no configuration found; run `openclaudia init` first");
         }
     };
 
@@ -28,7 +28,10 @@ pub async fn cmd_acp(
             "No provider configured for target '{}'",
             config.proxy.target
         );
-        return Ok(());
+        anyhow::bail!(
+            "no provider configured for target '{}'",
+            config.proxy.target
+        );
     };
 
     let api_key = if let Some(k) = &provider.api_key {
@@ -47,7 +50,11 @@ pub async fn cmd_acp(
             "No API key configured for '{}'. Set {} or add to config.",
             config.proxy.target, env_var
         );
-        return Ok(());
+        anyhow::bail!(
+            "no API key configured for '{}'; set {} or add to config",
+            config.proxy.target,
+            env_var
+        );
     };
 
     let model = model_override

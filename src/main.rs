@@ -21,7 +21,7 @@ use openclaudia::{
     tui, vdd,
 };
 
-use clap::{Parser, Subcommand};
+use clap::{builder::PossibleValuesParser, Parser, Subcommand};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 // Re-import the extracted helpers still used by main.rs after the
@@ -71,7 +71,11 @@ struct Cli {
     tui_mode: bool,
 
     /// Behavioral mode preset (create, extend, safe, refactor, explore, debug, methodical, director)
-    #[arg(long, value_name = "PRESET")]
+    #[arg(
+        long,
+        value_name = "PRESET",
+        value_parser = PossibleValuesParser::new(openclaudia::modes::SUPPORTED_PRESETS),
+    )]
     mode: Option<String>,
 }
 
@@ -105,8 +109,12 @@ enum Commands {
         #[arg(long)]
         host: Option<String>,
 
-        /// Target provider (anthropic, openai, google)
-        #[arg(short, long)]
+        /// Target provider (anthropic, openai, google, gemini, deepseek, qwen, alibaba, zai, glm, zhipu, ollama, local, lmstudio, localai, text-generation-webui)
+        #[arg(
+            short,
+            long,
+            value_parser = PossibleValuesParser::new(openclaudia::providers::SUPPORTED_PROVIDERS),
+        )]
         target: Option<String>,
     },
 
@@ -119,7 +127,11 @@ enum Commands {
     /// Start ACP server on stdin/stdout for agent interoperability (acpx)
     Acp {
         /// Target provider (overrides config)
-        #[arg(short, long)]
+        #[arg(
+            short,
+            long,
+            value_parser = PossibleValuesParser::new(openclaudia::providers::SUPPORTED_PROVIDERS),
+        )]
         target: Option<String>,
 
         /// Model to use
@@ -137,8 +149,12 @@ enum Commands {
         #[arg(short, long)]
         port: Option<u16>,
 
-        /// Target provider (anthropic, openai, google)
-        #[arg(short, long)]
+        /// Target provider (anthropic, openai, google, gemini, deepseek, qwen, alibaba, zai, glm, zhipu, ollama, local, lmstudio, localai, text-generation-webui)
+        #[arg(
+            short,
+            long,
+            value_parser = PossibleValuesParser::new(openclaudia::providers::SUPPORTED_PROVIDERS),
+        )]
         target: Option<String>,
     },
 }
@@ -596,7 +612,20 @@ fn render_welcome_or_fallback(target: &str, model: &str) {
 
 /// Construct the library-layer `PermissionManager` with the config's
 /// `default_allow` patterns. Extracted from `cmd_chat` per #262.
-fn init_permission_manager(config: &config::AppConfig) -> PermissionManager {
+fn init_permission_manager(
+    config: &config::AppConfig,
+    dangerously_skip_permissions: bool,
+) -> PermissionManager {
+    // `--dangerously-skip-permissions` is the documented bypass. Lift it all
+    // the way to the lower-level gate by constructing a permission manager
+    // with `enabled = false`, which short-circuits `check()` to `Allowed`
+    // (see `PermissionManager::unrestricted` + sprint-211 tests). Previously
+    // the flag only affected the higher-level REPL gate and the inner
+    // `execute_tool_with_*` path kept producing `PERMISSION_PROMPT` results
+    // that the model could not satisfy in a non-interactive run.
+    if dangerously_skip_permissions {
+        return PermissionManager::unrestricted();
+    }
     PermissionManager::new(
         std::path::PathBuf::from(".openclaudia/permissions.json"),
         true,

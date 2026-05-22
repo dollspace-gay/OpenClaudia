@@ -10,7 +10,13 @@ pub fn cmd_init(force: bool) -> anyhow::Result<()> {
 
     if config_file.exists() && !force {
         tracing::error!("Configuration already exists. Use --force to overwrite.");
-        return Ok(());
+        // Refuse-to-overwrite MUST exit non-zero so scripts checking $?
+        // can detect the failure. Previously this returned Ok(()) and
+        // exited 0, silently hiding the no-op from callers.
+        anyhow::bail!(
+            "Configuration already exists at .openclaudia/config.yaml. \
+             Re-run with --force to overwrite."
+        );
     }
 
     // Create directories

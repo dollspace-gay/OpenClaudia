@@ -253,6 +253,26 @@ impl FromStr for Modifier {
     }
 }
 
+/// Canonical CLI-accepted names for `--mode`.
+///
+/// Mirrors the lowercased keys in [`Preset::from_str`] so clap's
+/// `PossibleValuesParser` can reject typos at parse time instead of
+/// letting them flow into the runtime mode-resolution path.
+///
+/// Re-exported so `main.rs` can wire this into clap (closes the gap
+/// surfaced by the binary-verification audit where `--mode bogusmode`
+/// was silently accepted).
+pub const SUPPORTED_PRESETS: &[&str] = &[
+    "create",
+    "extend",
+    "safe",
+    "refactor",
+    "explore",
+    "debug",
+    "methodical",
+    "director",
+];
+
 impl FromStr for Preset {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {

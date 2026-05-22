@@ -234,7 +234,7 @@ impl ChatRepl {
 
         let audit_logger = openclaudia::session::AuditLogger::new(&chat_session.id)?;
         let memory_db: Option<memory::MemoryDb> = init_memory_with_banner();
-        let permission_mgr = init_permission_manager(&config);
+        let permission_mgr = init_permission_manager(&config, args.dangerously_skip_permissions);
         let vdd_engine: Option<vdd::VddEngine> = init_vdd_engine_if_enabled(&config);
 
         Ok(Some(Self {
