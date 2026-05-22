@@ -3139,11 +3139,11 @@ fn openai_activity_type(tool_call: &tools::ToolCall) -> &'static str {
         "write_file" => "file_write",
         "edit_file" => "file_edit",
         "bash" => "bash_command",
-        "chainlink" => serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments)
-            .map_or("chainlink", |args| {
+        "crosslink" => serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments)
+            .map_or("crosslink", |args| {
                 args.get("command")
                     .and_then(|v| v.as_str())
-                    .map_or("chainlink", |cmd| {
+                    .map_or("crosslink", |cmd| {
                         if cmd.starts_with("create") {
                             "issue_created"
                         } else if cmd.starts_with("close") {
@@ -3151,7 +3151,7 @@ fn openai_activity_type(tool_call: &tools::ToolCall) -> &'static str {
                         } else if cmd.starts_with("comment") {
                             "issue_comment"
                         } else {
-                            "chainlink"
+                            "crosslink"
                         }
                     })
             }),

@@ -64,5 +64,5 @@ pub struct VddAdvisoryResult {
 pub struct VddBlockingResult {
     pub final_response: Value,
     pub session: VddSession,
-    pub chainlink_issues: Vec<String>,
+    pub crosslink_issues: Vec<String>,
 }

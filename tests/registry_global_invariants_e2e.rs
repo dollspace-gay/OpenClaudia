@@ -32,7 +32,7 @@ const DOCUMENTED_TOOL_NAMES: &[&str] = &[
     "list_files",
     "glob",
     "grep",
-    "chainlink",
+    "crosslink",
     "web_fetch",
     "web_search",
     "web_browser",

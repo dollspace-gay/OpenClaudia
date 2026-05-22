@@ -17,15 +17,9 @@ mod accumulator;
 pub(crate) mod args;
 mod ask_user;
 mod bash;
-mod chainlink;
-pub(crate) mod crosslink;
-/// Re-export the chainlink command entry point so the security E2E
-/// suite (`tests/chainlink_e2e.rs`) can drive the argv allowlist and
-/// shell-injection defences directly. Internal call sites continue
-/// to reach this via the module path.
-pub use chainlink::execute_chainlink;
 pub(crate) mod command;
 mod cron;
+pub(crate) mod crosslink;
 /// Re-export the cron command entry points so the E2E test suite
 /// (`tests/cron_e2e.rs`) can drive create/list/delete + the
 /// validator perimeter directly. Internal call sites continue to
@@ -865,7 +859,7 @@ mod tests {
             "list_files",
             "glob",
             "grep",
-            "chainlink",
+            "crosslink",
             "web_fetch",
             "web_search",
             "todo_write",

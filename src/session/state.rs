@@ -311,7 +311,7 @@ pub const PLAN_MODE_ALLOWED_TOOLS: &[&str] = &[
     "task",
     "agent_output",
     "todo_read",
-    "chainlink",
+    "crosslink",
     "bash_output",
 ];
 

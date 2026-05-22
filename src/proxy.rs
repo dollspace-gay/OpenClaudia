@@ -827,7 +827,7 @@ async fn apply_vdd_review(
                 iterations = blocking.session.iterations.len(),
                 genuine = blocking.session.total_genuine,
                 converged = blocking.session.converged,
-                chainlink_issues = blocking.chainlink_issues.len(),
+                crosslink_issues = blocking.crosslink_issues.len(),
                 "VDD blocking loop complete"
             );
             serde_json::to_vec(&blocking.final_response).unwrap_or_else(|_| response_bytes.to_vec())

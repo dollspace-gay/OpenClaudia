@@ -135,8 +135,7 @@ impl ToolRegistry {
 
 use super::crosslink as crosslink_tool;
 use super::{
-    ask_user, bash, chainlink, cron, file, lsp, plan_mode, skill, task, todo, tool_search, web,
-    worktree,
+    ask_user, bash, cron, file, lsp, plan_mode, skill, task, todo, tool_search, web, worktree,
 };
 
 // ── bash ─────────────────────────────────────────────────────────────────────
@@ -530,37 +529,6 @@ impl ToolHandler for GrepHandler {
     }
 }
 
-// ── chainlink ─────────────────────────────────────────────────────────────────
-
-struct ChainlinkHandler;
-impl ToolHandler for ChainlinkHandler {
-    fn name(&self) -> &'static str {
-        "chainlink"
-    }
-    fn definition(&self) -> Value {
-        json!({
-            "type": "function",
-            "function": {
-                "name": "chainlink",
-                "description": "Task management tool for tracking issues and work. Commands: 'create \"title\" -p priority' (create issue), 'close ID' (close issue), 'comment ID \"text\"' (add comment), 'label ID label' (add label), 'list' (show open issues), 'show ID' (show issue details), 'subissue ID \"title\"' (create subissue), 'session start/end/work ID' (session management).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "args": {
-                            "type": "string",
-                            "description": "The chainlink command arguments (e.g., 'create \"Fix bug\" -p high' or 'close 5')"
-                        }
-                    },
-                    "required": ["args"]
-                }
-            }
-        })
-    }
-    fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
-        chainlink::execute_chainlink(args)
-    }
-}
-
 // ── crosslink ─────────────────────────────────────────────────────────────────
 //
 // Deep library-backed replacement for the legacy `chainlink` tool. Same
@@ -773,7 +741,7 @@ impl ToolHandler for TodoWriteHandler {
             "type": "function",
             "function": {
                 "name": "todo_write",
-                "description": "Create and manage a structured task list. Use this as a fallback when chainlink is unavailable. Helps track progress and show the user what you're working on. Only one task should be 'in_progress' at a time.",
+                "description": "Create and manage a structured task list. Use this as a fallback when crosslink is unavailable. Helps track progress and show the user what you're working on. Only one task should be 'in_progress' at a time.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1609,10 +1577,8 @@ static HANDLERS: &[&dyn ToolHandler] = &[
     &ListFilesHandler,
     &GlobHandler,
     &GrepHandler,
-    // chainlink (legacy — superseded by crosslink, kept temporarily for
-    // prompt back-compat until existing prompts/skills migrate).
-    &ChainlinkHandler,
     // crosslink — library-backed issue tracker / session memory.
+    // (Phase 4: legacy ChainlinkHandler removed; see commit history.)
     &CrosslinkHandler,
     // web
     &WebFetchHandler,

@@ -132,7 +132,7 @@ fn dispatch_tuple_message_non_empty_for_every_known_tool_with_empty_args() {
         "list_files",
         "glob",
         "grep",
-        "chainlink",
+        "crosslink",
         "web_fetch",
         "web_search",
         "todo_write",

@@ -119,7 +119,7 @@ fn get_session_context_starts_with_header_marker() {
 fn plan_mode_allowed_tools_includes_documented_read_only_tools() {
     // Read-only inspection tools that plan mode permits.
     // (Authoring discovery: catalog includes read_file/list_files/grep/web_*
-    // plus task/chainlink/bash_output/todo_read — but NOT glob.)
+    // plus task/crosslink/bash_output/todo_read — but NOT glob.)
     for tool in &["read_file", "list_files", "grep", "web_fetch", "web_search"] {
         assert!(
             PLAN_MODE_ALLOWED_TOOLS.contains(tool),

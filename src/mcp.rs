@@ -1362,7 +1362,7 @@ pub fn install_manager(mgr: std::sync::Arc<tokio::sync::RwLock<McpManager>>) -> 
 
 /// Fetch the process-wide MCP manager, if one has been installed via
 /// [`install_manager`]. Returns `None` from contexts that never
-/// initialised MCP (the docs / config / chainlink subcommands).
+/// initialised MCP (the docs / config / read-only subcommands).
 #[must_use]
 pub fn registered_manager() -> Option<&'static std::sync::Arc<tokio::sync::RwLock<McpManager>>> {
     REGISTERED_MANAGER.get()

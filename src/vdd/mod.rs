@@ -17,7 +17,7 @@
 //! - [`transport`] — HTTP plumbing to adversary + builder providers
 //! - [`prompts`] — system prompts and request-template builders
 //! - [`triage`] — three-layer finding triage (duplicate, pattern, AI verification)
-//! - [`sink`] — chainlink issue creation + on-disk session persistence
+//! - [`sink`] — crosslink issue creation + on-disk session persistence
 //! - [`helpers`] — small utilities (truncation, task extraction, advisory formatting)
 //! - [`error`] — `VddError` and result enums
 //! - [`finding`], [`review`], [`parsing`], [`static_analysis`], [`confabulation`] —

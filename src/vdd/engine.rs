@@ -377,12 +377,12 @@ impl VddEngine {
         }
 
         self.finalize_unconverged_session(&mut session);
-        let chainlink_issues = self.create_issues_and_persist(&session).await;
+        let crosslink_issues = self.create_issues_and_persist(&session).await;
 
         Ok(VddBlockingResult {
             final_response: current_builder_response,
             session,
-            chainlink_issues,
+            crosslink_issues,
         })
     }
 
@@ -585,7 +585,7 @@ impl VddEngine {
             .filter(|f| f.status == FindingStatus::Genuine)
             .collect();
 
-        let chainlink_issues = if all_genuine.is_empty() {
+        let crosslink_issues = if all_genuine.is_empty() {
             Vec::new()
         } else {
             match create_crosslink_issues(&all_genuine).await {
@@ -603,7 +603,7 @@ impl VddEngine {
             }
         }
 
-        chainlink_issues
+        crosslink_issues
     }
 
     /// Run configured static analysis commands.

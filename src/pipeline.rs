@@ -1228,7 +1228,7 @@ const SAFE_TOOLS: &[&str] = &[
     "lsp",
     "memory_search",
     "core_memory_get",
-    "chainlink",
+    "crosslink",
 ];
 
 /// Check if a tool needs permission before execution.
@@ -1473,7 +1473,7 @@ fn describe_tool_call(tool_name: &str, arguments: &str) -> String {
             .get("url")
             .and_then(|v| v.as_str())
             .map_or_else(|| "Fetching URL".to_string(), |u| format!("Fetching {u}")),
-        "chainlink" => args.get("args").and_then(|v| v.as_str()).map_or_else(
+        "crosslink" => args.get("args").and_then(|v| v.as_str()).map_or_else(
             || "Running crosslink".to_string(),
             |a| format!("crosslink {a}"),
         ),
