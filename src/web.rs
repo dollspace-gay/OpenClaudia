@@ -704,29 +704,194 @@ pub async fn search_web(
     config: &WebConfig,
     limit: usize,
 ) -> Result<Vec<SearchResult>, String> {
-    // Try DuckDuckGo first (free, no API key required)
-    // Fall back to paid APIs only if DDG fails or browser feature disabled
+    // Tier 1 — DuckDuckGo via headless Chromium (free, no API key).
+    // DDG aggressively flags headless browsers and serves a CAPTCHA;
+    // we detect that case inside `search_duckduckgo` and surface a
+    // specific "bot-blocked" error so the chain knows to keep trying.
     let ddg_error = match search_duckduckgo(query, limit) {
         Ok(results) => return Ok(results),
         Err(e) => {
-            tracing::warn!("DuckDuckGo search failed: {}", e);
+            tracing::warn!("DuckDuckGo search failed: {e}");
             e
         }
     };
 
-    // Fall back to Tavily if configured
+    // Tier 2 — Bing HTML scrape via headless Chromium. Different
+    // bot-detection stack from DDG; sometimes lets the browser
+    // through where DDG doesn't.
+    let bing_error = match search_bing(query, limit) {
+        Ok(results) if !results.is_empty() => return Ok(results),
+        Ok(_) => "Bing returned zero results (likely bot-challenged)".to_string(),
+        Err(e) => {
+            tracing::warn!("Bing search failed: {e}");
+            e
+        }
+    };
+
+    // Tier 3 — Tavily API (requires TAVILY_API_KEY).
     if let Some(api_key) = &config.tavily_api_key {
         return search_tavily(query, api_key, limit).await;
     }
 
-    // Fall back to Brave if configured
+    // Tier 4 — Brave API (requires BRAVE_API_KEY).
     if let Some(api_key) = &config.brave_api_key {
         return search_brave(query, api_key, limit).await;
     }
 
+    // All free scrape tiers were bot-blocked AND no paid API key is
+    // configured. Surface a specific, actionable error chain so the
+    // agent can tell the user what to do next.
     Err(format!(
-        "Web search failed. DuckDuckGo error: {ddg_error}. No fallback API keys configured (TAVILY_API_KEY or BRAVE_API_KEY)."
+        "Web search failed: every free scrape backend was bot-blocked AND \
+         no API key is configured.\n  \
+         DuckDuckGo: {ddg_error}\n  \
+         Bing: {bing_error}\n\
+         To enable reliable search, set one of: TAVILY_API_KEY (https://tavily.com) \
+         or BRAVE_API_KEY (https://api.search.brave.com)."
     ))
+}
+
+/// Resolve a Bing `ck/a?` tracking redirect to its destination URL.
+///
+/// Bing rewrites every result anchor to
+/// `https://www.bing.com/ck/a?...&u=a1<base64-padded>&...`. The
+/// `u=a1...` parameter carries the real destination, base64-encoded
+/// after a literal `a1` prefix (Bing's format marker). Anything
+/// else — a non-`ck/a` Bing URL or a missing `u=` parameter — is
+/// returned unchanged so the SSRF guard can still reject it.
+fn decode_bing_ck_url(href: &str) -> String {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine as _;
+
+    if !href.contains("bing.com/ck/a") {
+        return href.to_string();
+    }
+    let Some(u_start) = href.find("&u=a1") else {
+        return href.to_string();
+    };
+    let after = &href[u_start + "&u=a1".len()..];
+    let payload = after.split('&').next().unwrap_or(after);
+    URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()
+        .and_then(|bytes| {
+            String::from_utf8(bytes)
+                .ok()
+                .filter(|s| s.starts_with("http"))
+        })
+        .unwrap_or_else(|| href.to_string())
+}
+
+/// Search Bing via headless Chromium and parse the result list.
+///
+/// Bing fronts its search page with a Cloudflare Turnstile challenge
+/// for known automation UAs; headless Chrome can sometimes execute
+/// the challenge JS and reach the actual results, where direct HTTP
+/// cannot. The function still returns an empty list when the
+/// challenge wins — the caller treats that as a recoverable
+/// "try the next backend" signal.
+///
+/// # Errors
+///
+/// Returns a descriptive message if Chromium cannot be launched, if
+/// navigation times out, or if the rendered DOM exceeds
+/// [`MAX_WEB_FETCH_BYTES`].
+#[cfg(feature = "browser")]
+pub fn search_bing(query: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
+    use scraper::{Html, Selector};
+
+    let browser = launch_browser_for_scraping()?;
+
+    let tab = browser
+        .new_tab()
+        .map_err(|e| format!("Failed to create browser tab: {e}"))?;
+
+    let search_url = format!(
+        "https://www.bing.com/search?q={}",
+        urlencoding::encode(query)
+    );
+
+    tab.navigate_to(&search_url)
+        .map_err(|e| format!("Failed to navigate to Bing: {e}"))?;
+    tab.wait_until_navigated()
+        .map_err(|e| format!("Navigation timeout: {e}"))?;
+    // Give Cloudflare Turnstile (when present) a chance to settle.
+    std::thread::sleep(Duration::from_millis(1500));
+
+    let html = tab
+        .get_content()
+        .map_err(|e| format!("Failed to get page content: {e}"))?;
+
+    if html.len() > MAX_WEB_FETCH_BYTES {
+        return Err(format!(
+            "Response too large: {} bytes exceeds cap {} at URL {}",
+            html.len(),
+            MAX_WEB_FETCH_BYTES,
+            search_url
+        ));
+    }
+
+    // Detect Cloudflare Turnstile / Bing CAPTCHA wall. The result
+    // page won't have `b_algo` anchors when challenged; surface a
+    // specific error so the chain knows we're bot-blocked vs.
+    // truly empty.
+    if html.contains("captcha_header") || html.contains("challenges.cloudflare.com/turnstile") {
+        return Err(
+            "Bing served its Cloudflare Turnstile challenge (no results returned).".to_string(),
+        );
+    }
+
+    let document = Html::parse_document(&html);
+    let result_selector =
+        Selector::parse("li.b_algo").map_err(|e| format!("Invalid selector: {e:?}"))?;
+    let title_selector = Selector::parse("h2 a").map_err(|e| format!("Invalid selector: {e:?}"))?;
+    let snippet_selector =
+        Selector::parse("p, .b_caption p").map_err(|e| format!("Invalid selector: {e:?}"))?;
+
+    let mut results = Vec::new();
+    for el in document.select(&result_selector).take(limit) {
+        let Some(a) = el.select(&title_selector).next() else {
+            continue;
+        };
+        let title = a.text().collect::<String>().trim().to_string();
+        let raw_href = a.value().attr("href").unwrap_or_default().to_string();
+        if raw_href.is_empty() || !raw_href.starts_with("http") {
+            continue;
+        }
+        // Bing wraps every result URL in
+        // `https://www.bing.com/ck/a?...&u=a1<base64>&...`. Decode to
+        // the real destination so the agent sees a URL it can pass
+        // straight to `web_fetch` instead of a redirect blob.
+        let url = decode_bing_ck_url(&raw_href);
+        // SSRF guard — same threat model as the DDG path.
+        if let Err(reason) = validate_url(&url) {
+            tracing::debug!(url = %url, reason = %reason, "Bing result URL dropped by SSRF guard");
+            continue;
+        }
+        let snippet = el
+            .select(&snippet_selector)
+            .next()
+            .map(|s| s.text().collect::<String>().trim().to_string())
+            .unwrap_or_default();
+        if !title.is_empty() {
+            results.push(SearchResult {
+                title,
+                url,
+                snippet,
+            });
+        }
+    }
+    Ok(results)
+}
+
+/// Stub Bing search for builds without the browser feature.
+///
+/// # Errors
+///
+/// Always returns an error; the caller falls through to the API tiers.
+#[cfg(not(feature = "browser"))]
+pub fn search_bing(_query: &str, _limit: usize) -> Result<Vec<SearchResult>, String> {
+    Err("Bing search requires the browser feature".to_string())
 }
 
 /// Search using Tavily API
@@ -912,6 +1077,22 @@ pub fn search_duckduckgo(query: &str, limit: usize) -> Result<Vec<SearchResult>,
             MAX_WEB_FETCH_BYTES,
             search_url
         ));
+    }
+
+    // Detect DDG's bot-challenge / anomaly page BEFORE parsing for
+    // result selectors. When DDG flags the headless browser as a bot
+    // (which it does aggressively for known automation UAs), it
+    // serves a CAPTCHA modal — "Unfortunately, bots use DuckDuckGo
+    // too." — with NO `.result` elements. The legacy code path then
+    // misreported "no results found / HTML structure may have
+    // changed", which is wrong AND unactionable. The correct
+    // diagnosis is "DDG blocked us as a bot"; the caller can then
+    // fall through to a different backend.
+    if html.contains("anomaly-modal") || html.contains("Unfortunately, bots use DuckDuckGo") {
+        return Err("DuckDuckGo served its bot-challenge / anomaly page (no \
+             results returned). Headless-Chrome scraping has been \
+             rate-limited or fingerprinted by DDG."
+            .to_string());
     }
 
     // Parse HTML and extract results
