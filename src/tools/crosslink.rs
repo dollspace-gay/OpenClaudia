@@ -58,15 +58,60 @@ fn token_has_metachar(tok: &str) -> bool {
     tok.chars().any(|c| matches!(c, '\n' | '\r' | '\0'))
 }
 
+/// Legacy chainlink data directory. Migrated on first use — see
+/// [`migrate_chainlink_if_needed`].
+const LEGACY_CHAINLINK_DIR: &str = ".chainlink";
+
 /// Resolve the crosslink DB path under the current working directory.
 /// Creates `.crosslink/` if missing so `Database::open` succeeds
-/// without a separate `crosslink init` step.
+/// without a separate `crosslink init` step. When `.chainlink/issues.db`
+/// exists and `.crosslink/issues.db` does not, copies the legacy DB
+/// into the new location so existing project history survives the
+/// chainlink→crosslink migration.
 fn db_path_for_cwd() -> Result<PathBuf, String> {
     let cwd =
         std::env::current_dir().map_err(|e| format!("Failed to read current directory: {e}"))?;
     let dir = cwd.join(CROSSLINK_DIR);
     std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create {CROSSLINK_DIR}/: {e}"))?;
-    Ok(dir.join("issues.db"))
+    let db = dir.join("issues.db");
+    migrate_chainlink_if_needed(&cwd, &db);
+    Ok(db)
+}
+
+/// One-shot import of the legacy `.chainlink/issues.db` (if present)
+/// into `.crosslink/issues.db` (if absent). The schema shape is a
+/// superset — crosslink's `Database::open` runs idempotent
+/// `IF NOT EXISTS` + `ALTER TABLE ADD COLUMN` migrations on first
+/// open, so a byte-copy of the chainlink `SQLite` file is enough;
+/// the `schema_version` gap is filled in on the next call.
+///
+/// Safety: only runs when the destination does NOT exist. We never
+/// overwrite an existing `.crosslink/issues.db`. Failures are
+/// non-fatal — they log a warning and let the agent continue with a
+/// fresh DB.
+fn migrate_chainlink_if_needed(cwd: &std::path::Path, dest_db: &PathBuf) {
+    if dest_db.exists() {
+        return; // already migrated or freshly created
+    }
+    let legacy = cwd.join(LEGACY_CHAINLINK_DIR).join("issues.db");
+    if !legacy.exists() {
+        return; // nothing to migrate
+    }
+    if let Err(e) = std::fs::copy(&legacy, dest_db) {
+        tracing::warn!(
+            legacy = %legacy.display(),
+            dest = %dest_db.display(),
+            "Failed to migrate chainlink DB to crosslink: {e}; \
+             starting with an empty crosslink store."
+        );
+        return; // best-effort — do not block the tool
+    }
+    tracing::info!(
+        legacy = %legacy.display(),
+        dest = %dest_db.display(),
+        "Migrated legacy chainlink DB into crosslink store. \
+         Crosslink will apply incremental schema migrations on next open."
+    );
 }
 
 /// Open a fresh `Database` handle for one tool invocation.
