@@ -1,4 +1,4 @@
-//! Persistence sinks for VDD findings: Chainlink issues + on-disk session JSON.
+//! Persistence sinks for VDD findings: Crosslink issues + on-disk session JSON.
 
 use std::path::Path;
 
@@ -8,10 +8,15 @@ use crate::vdd::error::VddError;
 use crate::vdd::finding::Finding;
 use crate::vdd::helpers::truncate_output;
 use crate::vdd::review::VddSession;
-use crate::vdd::static_analysis::run_chainlink_create;
+use crate::vdd::static_analysis::create_crosslink_issue;
 
-/// Create Chainlink issues for genuine findings.
-pub async fn create_chainlink_issues(findings: &[&Finding]) -> Result<Vec<String>, VddError> {
+/// Create Crosslink issues for genuine findings.
+///
+/// Library-backed (no subprocess): each finding lands in
+/// `.crosslink/issues.db` via `crosslink::db::Database`, matching the
+/// store the agent-facing `crosslink` tool writes to. The previous
+/// `chainlink` shell-out has been removed entirely.
+pub async fn create_crosslink_issues(findings: &[&Finding]) -> Result<Vec<String>, VddError> {
     let mut issue_ids = Vec::new();
 
     for finding in findings {
@@ -39,13 +44,13 @@ pub async fn create_chainlink_issues(findings: &[&Finding]) -> Result<Vec<String
             finding.adversary_reasoning,
         );
 
-        match run_chainlink_create(&title, label, &comment).await {
+        match create_crosslink_issue(&title, label, &comment).await {
             Ok(id) => {
-                info!(issue_id = %id, severity = %finding.severity, "VDD: Created Chainlink issue");
+                info!(issue_id = %id, severity = %finding.severity, "VDD: Created Crosslink issue");
                 issue_ids.push(id);
             }
             Err(e) => {
-                warn!(error = %e, "VDD: Failed to create Chainlink issue");
+                warn!(error = %e, "VDD: Failed to create Crosslink issue");
             }
         }
     }

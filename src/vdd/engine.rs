@@ -18,7 +18,7 @@ use crate::vdd::finding::{Finding, FindingStatus};
 use crate::vdd::helpers::{extract_user_task, format_findings_for_injection};
 use crate::vdd::prompts::{build_adversary_request, build_revision_request};
 use crate::vdd::review::{AdversaryReview, VddIteration, VddSession};
-use crate::vdd::sink::{create_chainlink_issues, persist_session};
+use crate::vdd::sink::{create_crosslink_issues, persist_session};
 use crate::vdd::static_analysis::{run_shell_command, StaticAnalysisResult};
 use crate::vdd::transport::{send_to_adversary, send_to_builder};
 use crate::vdd::triage::{parse_findings, triage_findings, TriageContext};
@@ -588,10 +588,10 @@ impl VddEngine {
         let chainlink_issues = if all_genuine.is_empty() {
             Vec::new()
         } else {
-            match create_chainlink_issues(&all_genuine).await {
+            match create_crosslink_issues(&all_genuine).await {
                 Ok(ids) => ids,
                 Err(e) => {
-                    warn!("VDD: Chainlink issue creation failed: {}", e);
+                    warn!("VDD: Crosslink issue creation failed: {}", e);
                     Vec::new()
                 }
             }

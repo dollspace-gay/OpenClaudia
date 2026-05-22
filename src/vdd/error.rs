@@ -26,8 +26,8 @@ pub enum VddError {
     #[error("Static analysis command failed: {command} (timeout: {timeout}s)")]
     StaticAnalysisTimeout { command: String, timeout: u64 },
 
-    #[error("Chainlink issue creation failed: {0}")]
-    ChainlinkError(String),
+    #[error("Crosslink issue creation failed: {0}")]
+    CrosslinkError(String),
 
     #[error("Configuration error: {0}")]
     ConfigError(String),
