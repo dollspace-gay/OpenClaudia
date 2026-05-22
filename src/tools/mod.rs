@@ -18,6 +18,7 @@ pub(crate) mod args;
 mod ask_user;
 mod bash;
 mod chainlink;
+pub(crate) mod crosslink;
 /// Re-export the chainlink command entry point so the security E2E
 /// suite (`tests/chainlink_e2e.rs`) can drive the argv allowlist and
 /// shell-injection defences directly. Internal call sites continue

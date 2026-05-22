@@ -94,7 +94,17 @@ arboard = "3"
 ratatui = "0.30"
 
 # SQLite for stateful memory
-rusqlite = { version = "0.39", features = ["bundled"] }
+rusqlite = { version = "0.38", features = ["bundled"] }
+
+# Crosslink — local-first issue tracker + session memory + handoff
+# notes. Deep integration replaces the legacy shell-out `chainlink`
+# tool: we call the library's `db::*` API directly (no subprocess)
+# and expose multiple OpenClaudia tools backed by the same store.
+# Pinned to a published version on crates.io
+# (https://crates.io/crates/crosslink). The native `sqlite3` link
+# is shared via `rusqlite = "0.38"` above — both crates must agree
+# on the libsqlite3-sys major version or cargo refuses to link.
+crosslink = "0.5"
 
 # Headless browser for web scraping (optional, heavy dependency).
 # `fetch` enables auto-download of a vendored Chromium revision when no

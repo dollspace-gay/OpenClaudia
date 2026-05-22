@@ -133,6 +133,7 @@ impl ToolRegistry {
 
 // ─── Handler implementations ──────────────────────────────────────────────────
 
+use super::crosslink as crosslink_tool;
 use super::{
     ask_user, bash, chainlink, cron, file, lsp, plan_mode, skill, task, todo, tool_search, web,
     worktree,
@@ -557,6 +558,41 @@ impl ToolHandler for ChainlinkHandler {
     }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         chainlink::execute_chainlink(args)
+    }
+}
+
+// ── crosslink ─────────────────────────────────────────────────────────────────
+//
+// Deep library-backed replacement for the legacy `chainlink` tool. Same
+// argv-string contract for prompt compatibility, but the underlying calls
+// go through `crosslink::db::Database::*` instead of forking a subprocess.
+
+struct CrosslinkHandler;
+impl ToolHandler for CrosslinkHandler {
+    fn name(&self) -> &'static str {
+        "crosslink"
+    }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "crosslink",
+                "description": "Persistent issue tracker + session memory backed by the crosslink library (local SQLite, no subprocess). Subcommands: 'create \"<title>\" [-p priority] [-l label] [-d desc]', 'close <id>', 'reopen <id>', 'comment <id> \"<text>\"', 'label <id> <label>' / 'unlabel <id> <label>', 'list [-s status] [-l label] [-p priority]', 'show <id>', 'search \"<query>\"', 'subissue <parent_id> \"<title>\" [-p priority]', 'relate <id1> <id2>', 'block <blocker_id> <blocked_id>' / 'unblock ...', 'session start | end [--notes \"...\"] | work <id> | action \"...\" | status', 'next' (suggest highest-priority ready issue), 'tree [<root_id>]', 'update <id> [-t title] [-d desc] [-p priority]'. Use this for cross-session memory: track open work, leave handoff notes, mark dependencies. Survives context compression and session restarts.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "args": {
+                            "type": "string",
+                            "description": "The crosslink subcommand + arguments (e.g. 'create \"Fix auth bug\" -p high -l bug' or 'session end --notes \"PR ready for review\"')."
+                        }
+                    },
+                    "required": ["args"]
+                }
+            }
+        })
+    }
+    fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
+        crosslink_tool::execute_crosslink(args)
     }
 }
 
@@ -1573,8 +1609,11 @@ static HANDLERS: &[&dyn ToolHandler] = &[
     &ListFilesHandler,
     &GlobHandler,
     &GrepHandler,
-    // chainlink
+    // chainlink (legacy — superseded by crosslink, kept temporarily for
+    // prompt back-compat until existing prompts/skills migrate).
     &ChainlinkHandler,
+    // crosslink — library-backed issue tracker / session memory.
+    &CrosslinkHandler,
     // web
     &WebFetchHandler,
     &WebSearchHandler,

@@ -2259,7 +2259,8 @@ mod phase2_spec_pins {
             "list_files",         // pure read
             "glob",               // pure read (#567)
             "grep",               // pure read (#568)
-            "chainlink",          // delegates to crosslink CLI sandbox
+            "chainlink",          // delegates to chainlink CLI sandbox (legacy)
+            "crosslink",          // library-backed issue tracker; writes only to .crosslink/issues.db
             "web_fetch",          // network read
             "web_search",         // network read
             "web_browser",        // network read
