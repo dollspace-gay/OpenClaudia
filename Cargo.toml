@@ -104,7 +104,7 @@ rusqlite = { version = "0.38", features = ["bundled"] }
 # (https://crates.io/crates/crosslink). The native `sqlite3` link
 # is shared via `rusqlite = "0.38"` above — both crates must agree
 # on the libsqlite3-sys major version or cargo refuses to link.
-crosslink = "0.5"
+crosslink = "0.8"
 
 # Headless browser for web scraping (optional, heavy dependency).
 # `fetch` enables auto-download of a vendored Chromium revision when no

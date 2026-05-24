@@ -722,15 +722,17 @@ checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
 name = "crosslink"
-version = "0.5.2"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cfb43ddce8801c0bfab9d653d882e65dd9215bd73c3197e9dcf49865a4e6738"
+checksum = "251fe2a7aacf7b2872a5b935f345dbf6111c901ce6c03e713307e1b6bd25c5fb"
 dependencies = [
  "anyhow",
  "axum",
  "chrono",
  "clap",
  "crossterm",
+ "hex",
+ "hmac",
  "notify",
  "ratatui",
  "rusqlite",
