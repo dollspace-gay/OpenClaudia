@@ -638,7 +638,12 @@ impl ToolHandler for WebSearchHandler {
     }
 }
 
+// Only registered when the `browser` feature is compiled in — offering the
+// model a tool whose every invocation fails ("rebuild with --features
+// browser") pollutes tool selection and wastes a turn.
+#[cfg(feature = "browser")]
 struct WebBrowserHandler;
+#[cfg(feature = "browser")]
 impl ToolHandler for WebBrowserHandler {
     fn name(&self) -> &'static str {
         "web_browser"
@@ -1583,6 +1588,7 @@ static HANDLERS: &[&dyn ToolHandler] = &[
     // web
     &WebFetchHandler,
     &WebSearchHandler,
+    #[cfg(feature = "browser")]
     &WebBrowserHandler,
     // todo
     &TodoWriteHandler,
@@ -1600,7 +1606,8 @@ static HANDLERS: &[&dyn ToolHandler] = &[
     // plan_mode
     &EnterPlanModeHandler,
     &ExitPlanModeHandler,
-    // mcp resources (schema-only stubs; see handler comment)
+    // mcp resources — dispatch into the registered async MCP manager
+    // (src/mcp.rs); they error at runtime if no `mcp.servers` are configured.
     &ListMcpResourcesHandler,
     &ReadMcpResourceHandler,
     // lsp

@@ -35,6 +35,7 @@ fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool) {
         .expect("web_fetch must be registered")
 }
 
+#[cfg(feature = "browser")]
 fn execute_web_browser(args: &HashMap<String, Value>) -> (String, bool) {
     let mut ctx = ToolContext {
         memory_db: None,
@@ -61,6 +62,7 @@ fn execute_web_fetch_missing_url_arg_returns_error() {
     );
 }
 
+#[cfg(feature = "browser")]
 #[test]
 fn execute_web_browser_missing_url_arg_returns_error() {
     let (msg, is_err) = execute_web_browser(&HashMap::new());
@@ -112,6 +114,7 @@ fn execute_web_fetch_rejects_data_scheme() {
     assert!(is_err);
 }
 
+#[cfg(feature = "browser")]
 #[test]
 fn execute_web_browser_rejects_ftp_scheme() {
     let args = args_with(&[("url", json!("ftp://example.com"))]);
@@ -123,6 +126,7 @@ fn execute_web_browser_rejects_ftp_scheme() {
     );
 }
 
+#[cfg(feature = "browser")]
 #[test]
 fn execute_web_browser_rejects_javascript_scheme() {
     let args = args_with(&[("url", json!("javascript:void(0)"))]);
@@ -141,6 +145,7 @@ fn execute_web_fetch_rejects_empty_url() {
     assert!(is_err, "empty url MUST be rejected pre-network");
 }
 
+#[cfg(feature = "browser")]
 #[test]
 fn execute_web_browser_rejects_empty_url() {
     let args = args_with(&[("url", json!(""))]);

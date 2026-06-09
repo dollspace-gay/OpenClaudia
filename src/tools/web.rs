@@ -274,6 +274,7 @@ pub fn execute_web_search(args: &HashMap<String, Value>) -> (String, bool) {
 /// (e.g. for JS-heavy SPAs or Cloudflare-fronted sites). For everyday
 /// fetches prefer `web_fetch`, which uses the browser only as a
 /// fallback after the cheaper direct HTTP path.
+#[cfg(feature = "browser")]
 pub fn execute_web_browser(args: &HashMap<String, Value>) -> (String, bool) {
     // crosslink #675: typed accessor.
     let url = match args.arg_str("url") {

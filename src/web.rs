@@ -759,6 +759,7 @@ pub async fn search_web(
 /// after a literal `a1` prefix (Bing's format marker). Anything
 /// else — a non-`ck/a` Bing URL or a missing `u=` parameter — is
 /// returned unchanged so the SSRF guard can still reject it.
+#[cfg(feature = "browser")]
 fn decode_bing_ck_url(href: &str) -> String {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine as _;
@@ -1184,6 +1185,11 @@ pub fn search_duckduckgo(query: &str, limit: usize) -> Result<Vec<SearchResult>,
     Ok(results)
 }
 
+/// `DuckDuckGo` search (stub when the browser feature is disabled).
+///
+/// # Errors
+///
+/// Always returns an error when the browser feature is not enabled.
 #[cfg(not(feature = "browser"))]
 pub fn search_duckduckgo(_query: &str, _limit: usize) -> Result<Vec<SearchResult>, String> {
     Err("DuckDuckGo search requires the browser feature. Rebuild with `cargo build --features browser` or set TAVILY_API_KEY/BRAVE_API_KEY.".to_string())
