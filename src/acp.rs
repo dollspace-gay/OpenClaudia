@@ -372,6 +372,38 @@ async fn pre_tool_use_gate(
     None
 }
 
+fn parse_acp_tool_arguments(
+    tool_name: &str,
+    arguments_json: &str,
+) -> Result<(HashMap<String, Value>, Value), AcpToolResult> {
+    let value = serde_json::from_str::<Value>(arguments_json).map_err(|err| AcpToolResult {
+        content: format!("Invalid tool arguments JSON for '{tool_name}': {err}"),
+        is_error: true,
+    })?;
+    let Value::Object(map) = value else {
+        return Err(AcpToolResult {
+            content: format!(
+                "Invalid tool arguments JSON for '{tool_name}': expected a JSON object, got {}",
+                value_type_name(&value)
+            ),
+            is_error: true,
+        });
+    };
+    let args = map.clone().into_iter().collect();
+    Ok((args, Value::Object(map)))
+}
+
+const fn value_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
 /// Upper bound on the number of ACP-session-id → openclaudia-id
 /// entries the server keeps in memory. Long-lived stdio sessions can
 /// otherwise leak unbounded memory (crosslink #759). 64 is the bound
@@ -1426,8 +1458,10 @@ impl AcpServer {
     ///    post-tool side effects (logging, audit, learn hooks) observe
     ///    ACP-driven calls the same way they observe proxy-driven calls.
     async fn execute_tool_via_acp(&self, tool_name: &str, arguments_json: &str) -> AcpToolResult {
-        let args: HashMap<String, Value> = serde_json::from_str(arguments_json).unwrap_or_default();
-        let tool_input: Value = serde_json::from_str(arguments_json).unwrap_or(Value::Null);
+        let (args, tool_input) = match parse_acp_tool_arguments(tool_name, arguments_json) {
+            Ok(parsed) => parsed,
+            Err(result) => return result,
+        };
 
         // ── PreToolUse gate ─────────────────────────────────────────────
         if let Some(blocked) = pre_tool_use_gate(&self.hook_engine, tool_name, &tool_input).await {
@@ -2590,6 +2624,50 @@ mod search_security_tests {
 // the regression is impossible without removing the hook engine wiring from
 // `execute_tool_via_acp`.
 // ============================================================================
+
+#[cfg(test)]
+mod tool_argument_tests {
+    use super::parse_acp_tool_arguments;
+
+    #[test]
+    fn malformed_json_returns_tool_error() {
+        let err =
+            parse_acp_tool_arguments("bash", "not json {{").expect_err("malformed JSON must error");
+        assert!(err.is_error);
+        assert!(
+            err.content.contains("Invalid tool arguments JSON"),
+            "diagnostic must name malformed arguments: {:?}",
+            err.content
+        );
+    }
+
+    #[test]
+    fn non_object_json_returns_tool_error() {
+        let err = parse_acp_tool_arguments("bash", "[]").expect_err("array args must error");
+        assert!(err.is_error);
+        assert!(
+            err.content.contains("expected a JSON object"),
+            "diagnostic must reject non-object args: {:?}",
+            err.content
+        );
+    }
+
+    #[test]
+    fn object_json_returns_hash_map_and_hook_input_value() {
+        let (args, tool_input) = parse_acp_tool_arguments("bash", r#"{"command":"pwd"}"#)
+            .expect("object args must parse");
+        assert_eq!(
+            args.get("command").and_then(serde_json::Value::as_str),
+            Some("pwd")
+        );
+        assert_eq!(
+            tool_input
+                .get("command")
+                .and_then(serde_json::Value::as_str),
+            Some("pwd")
+        );
+    }
+}
 
 #[cfg(test)]
 mod pre_tool_gate_tests {

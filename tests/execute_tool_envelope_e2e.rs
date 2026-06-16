@@ -159,13 +159,9 @@ fn execute_tool_unknown_tool_id_still_propagates_to_result() {
 
 #[test]
 fn execute_tool_with_invalid_json_arguments_does_not_panic() {
-    // AUTHORING DISCOVERY: malformed JSON in arguments is
-    // handled leniently (treated as empty args / unknown
-    // fields and the tool runs with whatever defaults its
-    // arg accessor returns). The exact is_error depends on
-    // whether the tool has required args. We pin the
-    // no-panic contract here; no panic means the dispatcher
-    // survives garbage input from the model.
+    // Malformed JSON in arguments must be surfaced as a tool error instead of
+    // being treated as empty args. Empty-arg fallback can bypass permission
+    // target extraction and produces misleading missing-field diagnostics.
     let tc = ToolCall {
         id: "c1".to_string(),
         call_type: "function".to_string(),
@@ -177,6 +173,12 @@ fn execute_tool_with_invalid_json_arguments_does_not_panic() {
     let result = execute_tool(&tc);
     // tool_call_id round-trips regardless of arg parse outcome.
     assert_eq!(result.tool_call_id, "c1");
+    assert!(result.is_error);
+    assert!(
+        result.content.contains("Invalid tool arguments JSON"),
+        "malformed arguments must be named directly; got {:?}",
+        result.content
+    );
 }
 
 #[test]
@@ -190,8 +192,34 @@ fn execute_tool_with_empty_arguments_string_handled_gracefully() {
             arguments: String::new(),
         },
     };
-    let _result = execute_tool(&tc);
-    // Either treated as {} or as error — both no-panic.
+    let result = execute_tool(&tc);
+    assert_eq!(result.tool_call_id, "c1");
+    assert!(result.is_error);
+    assert!(
+        result.content.contains("Invalid tool arguments JSON"),
+        "empty arguments string is malformed JSON; got {:?}",
+        result.content
+    );
+}
+
+#[test]
+fn execute_tool_with_non_object_json_arguments_errors() {
+    let tc = ToolCall {
+        id: "c-array".to_string(),
+        call_type: "function".to_string(),
+        function: FunctionCall {
+            name: "list_files".to_string(),
+            arguments: "[]".to_string(),
+        },
+    };
+    let result = execute_tool(&tc);
+    assert_eq!(result.tool_call_id, "c-array");
+    assert!(result.is_error);
+    assert!(
+        result.content.contains("expected a JSON object"),
+        "non-object arguments must be rejected; got {:?}",
+        result.content
+    );
 }
 
 // ───────────────────────────────────────────────────────────────────────────

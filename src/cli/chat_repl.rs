@@ -719,18 +719,29 @@ impl ChatRepl {
     }
 
     fn toggle_vim(&mut self) {
-        use rustyline::{Config, DefaultEditor, EditMode, Editor};
-        self.vim_enabled = !self.vim_enabled;
-        let edit_mode = if self.vim_enabled {
+        use rustyline::EditMode;
+
+        let next_vim_enabled = !self.vim_enabled;
+        let edit_mode = if next_vim_enabled {
             EditMode::Vi
         } else {
             EditMode::Emacs
         };
-        self.rl = Editor::with_config(Config::builder().edit_mode(edit_mode).build())
-            .unwrap_or_else(|_| {
-                DefaultEditor::new().expect("Failed to initialize terminal editor")
-            });
-        let _ = self.rl.load_history(&self.history_path);
+
+        let mut next_editor = match new_rustyline_editor(edit_mode) {
+            Ok(editor) => editor,
+            Err(err) => {
+                eprintln!(
+                    "Failed to switch editor mode ({err}). Keeping {} mode.",
+                    if self.vim_enabled { "Vim" } else { "Emacs" }
+                );
+                return;
+            }
+        };
+
+        let _ = next_editor.load_history(&self.history_path);
+        self.rl = next_editor;
+        self.vim_enabled = next_vim_enabled;
         if self.vim_enabled {
             self.vim_state = VimState::new();
             eprintln!("Vim mode enabled (rustyline Vi mode)");
@@ -3162,6 +3173,19 @@ fn openai_activity_type(tool_call: &tools::ToolCall) -> &'static str {
     }
 }
 
+/// Build a rustyline editor for the requested edit mode.
+///
+/// Runtime mode switching must use the same fallible construction path as
+/// startup. Terminal/editor initialization can fail in non-interactive
+/// environments, and toggling Vim mode should report that error instead of
+/// panicking mid-session.
+fn new_rustyline_editor(
+    edit_mode: rustyline::EditMode,
+) -> rustyline::Result<rustyline::DefaultEditor> {
+    use rustyline::{Config, Editor};
+    Editor::with_config(Config::builder().edit_mode(edit_mode).build())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3191,5 +3215,16 @@ mod tests {
         assert_eq!(a, b, "provider_path must not leak into the user message");
         assert_ne!(a, c, "different max_turns must yield different messages");
         assert!(c.contains("10"));
+    }
+
+    /// Regression guard for the Vim toggle panic path: editor construction is
+    /// fallible and must be represented as a `Result`, not hidden behind
+    /// `expect()` in production code. The success path is environment-sensitive
+    /// on some CI terminals, so this test only asserts that both modes travel
+    /// through the non-panicking helper.
+    #[test]
+    fn rustyline_editor_mode_construction_is_fallible_not_panicking() {
+        let _ = new_rustyline_editor(rustyline::EditMode::Emacs);
+        let _ = new_rustyline_editor(rustyline::EditMode::Vi);
     }
 }

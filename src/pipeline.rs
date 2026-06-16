@@ -1481,6 +1481,32 @@ fn describe_tool_call(tool_name: &str, arguments: &str) -> String {
     }
 }
 
+/// Return the effective path that the pipeline should pre-check with
+/// guardrails before read/search tool execution.
+///
+/// Write-like tools intentionally return `None` here because their handlers
+/// already call `guardrails::check_file_access` at the mutation boundary.
+fn guardrail_path_for_tool_call(tool_name: &str, arguments: &str) -> Option<String> {
+    let args = serde_json::from_str::<Value>(arguments).ok()?;
+    let args = args.as_object()?;
+
+    match tool_name {
+        "read_file" => args.get("path").and_then(Value::as_str).map(str::to_string),
+        "list_files" | "glob" | "grep" => Some(
+            args.get("path")
+                .and_then(Value::as_str)
+                .unwrap_or(".")
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
+fn guardrail_block_for_tool_call(tool_name: &str, arguments: &str) -> Option<String> {
+    let path = guardrail_path_for_tool_call(tool_name, arguments)?;
+    crate::guardrails::check_file_access(&path).err()
+}
+
 /// Checks permissions for write/destructive tools via a channel-based
 /// handshake: sends `PermissionRequest` to the TUI and blocks until
 /// the user responds with y/n/a/d.
@@ -1508,8 +1534,9 @@ async fn execute_tool_calls_for_tui(
     for tool_call in tool_calls {
         let tool_name = &tool_call.function.name;
 
-        // Check blast radius guardrails
-        if let Err(msg) = crate::guardrails::check_file_access(&tool_call.function.arguments) {
+        // Check read/search blast radius guardrails against the effective
+        // filesystem path, not the raw JSON argument envelope.
+        if let Some(msg) = guardrail_block_for_tool_call(tool_name, &tool_call.function.arguments) {
             send_event_or_break!(
                 tx,
                 AppEvent::ToolDone {
@@ -1686,6 +1713,57 @@ pub fn build_assistant_message_with_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guardrail_path_for_tool_call_uses_actual_read_path() {
+        assert_eq!(
+            guardrail_path_for_tool_call("read_file", r#"{"path":"src/main.rs"}"#),
+            Some("src/main.rs".to_string())
+        );
+    }
+
+    #[test]
+    fn guardrail_path_for_tool_call_defaults_read_search_paths() {
+        for tool_name in ["list_files", "glob", "grep"] {
+            assert_eq!(
+                guardrail_path_for_tool_call(tool_name, "{}"),
+                Some(".".to_string()),
+                "{tool_name} should precheck its executor's default path"
+            );
+        }
+    }
+
+    #[test]
+    fn guardrail_path_for_tool_call_matches_optional_path_type_semantics() {
+        assert_eq!(
+            guardrail_path_for_tool_call("list_files", r#"{"path":42}"#),
+            Some(".".to_string())
+        );
+        assert_eq!(
+            guardrail_path_for_tool_call("read_file", r#"{"path":42}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn guardrail_path_for_tool_call_skips_unparseable_and_non_object_arguments() {
+        assert_eq!(guardrail_path_for_tool_call("read_file", "{not json"), None);
+        assert_eq!(guardrail_path_for_tool_call("list_files", "[]"), None);
+    }
+
+    #[test]
+    fn guardrail_path_for_tool_call_skips_write_tools_checked_by_handlers() {
+        let write_args = r#"{"path":"src/main.rs","content":"new"}"#;
+        assert_eq!(guardrail_path_for_tool_call("write_file", write_args), None);
+        assert_eq!(
+            guardrail_path_for_tool_call("edit_file", r#"{"path":"src/main.rs"}"#),
+            None
+        );
+        assert_eq!(
+            guardrail_path_for_tool_call("notebook_edit", r#"{"notebook_path":"nb.ipynb"}"#),
+            None
+        );
+    }
 
     #[test]
     fn test_build_openai_request() {

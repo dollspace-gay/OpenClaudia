@@ -213,6 +213,54 @@ fn warn_missing_permission_manager_once(entry_point: &'static str) {
     }
 }
 
+fn invalid_tool_arguments_result(
+    tool_call: &ToolCall,
+    detail: impl std::fmt::Display,
+) -> ToolResult {
+    ToolResult {
+        tool_call_id: tool_call.id.clone(),
+        content: format!(
+            "Invalid tool arguments JSON for '{}': {detail}",
+            tool_call.function.name
+        ),
+        is_error: true,
+    }
+}
+
+fn parse_tool_arguments_value(tool_call: &ToolCall) -> Result<Value, ToolResult> {
+    let value = serde_json::from_str::<Value>(&tool_call.function.arguments)
+        .map_err(|err| invalid_tool_arguments_result(tool_call, err))?;
+    if !value.is_object() {
+        return Err(invalid_tool_arguments_result(
+            tool_call,
+            format_args!("expected a JSON object, got {}", value_type_name(&value)),
+        ));
+    }
+    Ok(value)
+}
+
+fn parse_tool_arguments_map(tool_call: &ToolCall) -> Result<HashMap<String, Value>, ToolResult> {
+    let value = parse_tool_arguments_value(tool_call)?;
+    let Value::Object(map) = value else {
+        return Err(invalid_tool_arguments_result(
+            tool_call,
+            format_args!("expected a JSON object, got {}", value_type_name(&value)),
+        ));
+    };
+    Ok(map.into_iter().collect())
+}
+
+const fn value_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
 /// Gate a tool call through the permission system and return either a
 /// ready-to-return [`ToolResult`] (for Denied / `NeedsPrompt` in legacy
 /// string form) or `None` to signal "continue with normal dispatch".
@@ -258,8 +306,10 @@ pub fn execute_tool_with_memory(
         return gated;
     }
 
-    let args: HashMap<String, Value> =
-        serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+    let args = match parse_tool_arguments_map(tool_call) {
+        Ok(args) => args,
+        Err(result) => return result,
+    };
 
     // Subagent tools require full config context; surface a clear error here
     // so callers know to use execute_tool_full() instead.
@@ -309,8 +359,10 @@ pub fn execute_tool_full(
         return gated;
     }
 
-    let args: HashMap<String, Value> =
-        serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+    let args = match parse_tool_arguments_map(tool_call) {
+        Ok(args) => args,
+        Err(result) => return result,
+    };
 
     // Check for subagent tools first (they need config). Each match arm
     // produces the inner `(content, is_error)` pair; the `ToolResult`
@@ -497,6 +549,11 @@ pub fn check_tool_permission_outcome(
     permission_mgr: Option<&PermissionManager>,
 ) -> PermissionOutcome {
     let tool_name = tool_call.function.name.as_str();
+    let args = match parse_tool_arguments_value(tool_call) {
+        Ok(args) => args,
+        Err(result) => return PermissionOutcome::Denied(result),
+    };
+
     let Some(mgr) = permission_mgr else {
         tracing::debug!(
             tool = %tool_name,
@@ -511,8 +568,6 @@ pub fn check_tool_permission_outcome(
         );
         return PermissionOutcome::Allowed;
     }
-
-    let args: Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
 
     match mgr.check(tool_name, &args) {
         CheckResult::Allowed => {
@@ -633,8 +688,10 @@ pub fn execute_tool_with_tasks(
         return gated;
     }
 
-    let args: HashMap<String, Value> =
-        serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+    let args = match parse_tool_arguments_map(tool_call) {
+        Ok(args) => args,
+        Err(result) => return result,
+    };
 
     // Subagent tools (task / agent_output) need app_config and are handled
     // inside execute_tool_full before the registry is consulted.

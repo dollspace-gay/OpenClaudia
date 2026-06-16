@@ -78,7 +78,7 @@ impl AnthropicAdapter {
     /// previous `filter_map(.ok())` would silently drop a message on
     /// a serialization bug, masking it; we now log + drop with full
     /// context so the failure is at least diagnosable.
-    fn convert_messages(messages: &[ChatMessage]) -> Vec<Value> {
+    fn convert_messages(messages: &[ChatMessage]) -> Result<Vec<Value>, ProviderError> {
         let mut as_values: Vec<Value> = Vec::with_capacity(messages.len());
         for (idx, m) in messages.iter().enumerate() {
             match serde_json::to_value(m) {
@@ -95,7 +95,7 @@ impl AnthropicAdapter {
                 }
             }
         }
-        convert_messages_to_anthropic(&as_values)
+        convert_messages_to_anthropic_checked(&as_values)
     }
 
     /// Convert `OpenAI` tools to Anthropic format with optional prompt caching.
@@ -213,9 +213,10 @@ impl ProviderAdapter for AnthropicAdapter {
     }
 
     fn transform_request(&self, request: &ChatCompletionRequest) -> Result<Value, ProviderError> {
+        let messages = Self::convert_messages(&request.messages)?;
         let mut body = json!({
             "model": &request.model,
-            "messages": Self::convert_messages(&request.messages),
+            "messages": messages,
             "max_tokens": request.max_tokens.unwrap_or(crate::DEFAULT_MAX_TOKENS)
         });
 
@@ -636,9 +637,39 @@ pub fn convert_tools_to_anthropic(tools: &[Value]) -> Vec<Value> {
 /// - System messages are filtered out (handled separately at top level)
 #[must_use]
 pub fn convert_messages_to_anthropic(messages: &[Value]) -> Vec<Value> {
+    convert_messages_to_anthropic_impl(messages, false).unwrap_or_else(|e| {
+        warn!(
+            error = %e,
+            "convert_messages_to_anthropic encountered malformed trusted message history; \
+             returning an empty Anthropic message list"
+        );
+        Vec::new()
+    })
+}
+
+/// Checked variant of [`convert_messages_to_anthropic`].
+///
+/// This is used by [`AnthropicAdapter::transform_request`], where malformed
+/// assistant tool-call arguments must surface as a provider request error
+/// instead of being silently replaced with `{}`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError::RequestFailed`] when an assistant tool call has a
+/// missing/non-string `function.arguments`, invalid JSON, or non-object JSON.
+pub fn convert_messages_to_anthropic_checked(
+    messages: &[Value],
+) -> Result<Vec<Value>, ProviderError> {
+    convert_messages_to_anthropic_impl(messages, true)
+}
+
+fn convert_messages_to_anthropic_impl(
+    messages: &[Value],
+    strict_tool_arguments: bool,
+) -> Result<Vec<Value>, ProviderError> {
     let mut result = Vec::new();
 
-    for msg in messages {
+    for (msg_index, msg) in messages.iter().enumerate() {
         let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
 
         // Skip system messages (handled separately)
@@ -648,100 +679,181 @@ pub fn convert_messages_to_anthropic(messages: &[Value]) -> Vec<Value> {
 
         // Handle tool result messages (OpenAI format: role="tool")
         if role == "tool" {
-            let tool_use_id = msg
-                .get("tool_call_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            let is_error = msg
-                .get("is_error")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false);
-
-            let mut tool_result = json!({
-                "type": "tool_result",
-                "tool_use_id": tool_use_id,
-                "content": content
-            });
-            // Anthropic API supports is_error on tool_result blocks
-            if is_error {
-                tool_result["is_error"] = json!(true);
-            }
-
-            result.push(json!({
-                "role": "user",
-                "content": [tool_result]
-            }));
+            result.push(convert_tool_result_message(msg));
             continue;
         }
 
         // Handle assistant messages with tool_calls
         if role == "assistant" {
-            if let Some(tool_calls) = msg.get("tool_calls").and_then(|v| v.as_array()) {
-                let mut content_blocks: Vec<Value> = Vec::new();
-
-                // Add text content if present
-                if let Some(text) = msg.get("content").and_then(|v| v.as_str()) {
-                    if !text.is_empty() {
-                        content_blocks.push(json!({"type": "text", "text": text}));
-                    }
-                }
-
-                // Convert tool_calls to tool_use blocks
-                let empty_obj = json!({});
-                for tc in tool_calls {
-                    let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                    let func = tc.get("function").unwrap_or(&empty_obj);
-                    let name = func.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                    let args_str = func
-                        .get("arguments")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("{}");
-
-                    // Parse arguments string to JSON object
-                    let input: Value = serde_json::from_str(args_str).unwrap_or_else(|_| json!({}));
-
-                    content_blocks.push(json!({
-                        "type": "tool_use",
-                        "id": id,
-                        "name": name,
-                        "input": input
-                    }));
-                }
-
-                // Anthropic requires non-empty content array
-                if content_blocks.is_empty() {
-                    content_blocks.push(json!({"type": "text", "text": ""}));
-                }
-                result.push(json!({
-                    "role": "assistant",
-                    "content": content_blocks
-                }));
+            if let Some(converted) =
+                convert_assistant_tool_call_message(msg_index, msg, strict_tool_arguments)?
+            {
+                result.push(converted);
                 continue;
             }
         }
 
         // Regular user or assistant message - convert content to array format
-        let content = msg.get("content").map_or_else(
-            || json!([{"type": "text", "text": ""}]),
-            |c| {
-                if c.is_string() {
-                    json!([{"type": "text", "text": c.as_str().unwrap_or("")}])
-                } else if c.is_array() {
-                    c.clone()
-                } else {
-                    json!([{"type": "text", "text": ""}])
-                }
-            },
-        );
+        result.push(convert_regular_message(role, msg));
+    }
 
-        result.push(json!({
-            "role": role,
-            "content": content
+    Ok(result)
+}
+
+fn convert_tool_result_message(msg: &Value) -> Value {
+    let tool_use_id = msg
+        .get("tool_call_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    let is_error = msg
+        .get("is_error")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+
+    let mut tool_result = json!({
+        "type": "tool_result",
+        "tool_use_id": tool_use_id,
+        "content": content
+    });
+    if is_error {
+        tool_result["is_error"] = json!(true);
+    }
+
+    json!({
+        "role": "user",
+        "content": [tool_result]
+    })
+}
+
+fn convert_assistant_tool_call_message(
+    msg_index: usize,
+    msg: &Value,
+    strict_tool_arguments: bool,
+) -> Result<Option<Value>, ProviderError> {
+    let Some(tool_calls) = msg.get("tool_calls").and_then(|v| v.as_array()) else {
+        return Ok(None);
+    };
+
+    let mut content_blocks: Vec<Value> = Vec::new();
+    if let Some(text) = msg.get("content").and_then(|v| v.as_str()) {
+        if !text.is_empty() {
+            content_blocks.push(json!({"type": "text", "text": text}));
+        }
+    }
+
+    let empty_obj = json!({});
+    for (tool_call_index, tc) in tool_calls.iter().enumerate() {
+        let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let func = tc.get("function").unwrap_or(&empty_obj);
+        let name = func.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let input =
+            convert_tool_call_input(msg_index, tool_call_index, tc, func, strict_tool_arguments)?;
+
+        content_blocks.push(json!({
+            "type": "tool_use",
+            "id": id,
+            "name": name,
+            "input": input
         }));
     }
 
-    result
+    if content_blocks.is_empty() {
+        content_blocks.push(json!({"type": "text", "text": ""}));
+    }
+    Ok(Some(json!({
+        "role": "assistant",
+        "content": content_blocks
+    })))
+}
+
+fn convert_tool_call_input(
+    msg_index: usize,
+    tool_call_index: usize,
+    tool_call: &Value,
+    func: &Value,
+    strict_tool_arguments: bool,
+) -> Result<Value, ProviderError> {
+    let Some(args_str) = func.get("arguments").and_then(|v| v.as_str()) else {
+        return if strict_tool_arguments {
+            Err(ProviderError::RequestFailed(format!(
+                "Assistant tool_call at message index {msg_index}, tool_call index \
+                 {tool_call_index} missing string 'function.arguments': {tool_call}"
+            )))
+        } else {
+            Ok(json!({}))
+        };
+    };
+
+    match parse_tool_call_input_for_anthropic(msg_index, tool_call_index, tool_call, args_str) {
+        Ok(input) => Ok(input),
+        Err(e) if strict_tool_arguments => Err(e),
+        Err(e) => {
+            warn!(
+                error = %e,
+                message_index = msg_index,
+                tool_call_index,
+                "assistant tool_call has invalid arguments; substituting empty \
+                 Anthropic tool_use.input in compatibility converter"
+            );
+            Ok(json!({}))
+        }
+    }
+}
+
+fn convert_regular_message(role: &str, msg: &Value) -> Value {
+    let content = msg.get("content").map_or_else(
+        || json!([{"type": "text", "text": ""}]),
+        |c| {
+            if c.is_string() {
+                json!([{"type": "text", "text": c.as_str().unwrap_or("")}])
+            } else if c.is_array() {
+                c.clone()
+            } else {
+                json!([{"type": "text", "text": ""}])
+            }
+        },
+    );
+
+    json!({
+        "role": role,
+        "content": content
+    })
+}
+
+fn parse_tool_call_input_for_anthropic(
+    msg_index: usize,
+    tool_call_index: usize,
+    tool_call: &Value,
+    args_str: &str,
+) -> Result<Value, ProviderError> {
+    let input: Value = serde_json::from_str(args_str).map_err(|e| {
+        ProviderError::RequestFailed(format!(
+            "Assistant tool_call at message index {msg_index}, tool_call index \
+             {tool_call_index} has invalid JSON in 'function.arguments': {e}; \
+             tool_call: {tool_call}"
+        ))
+    })?;
+    if !input.is_object() {
+        return Err(ProviderError::RequestFailed(format!(
+            "Assistant tool_call at message index {msg_index}, tool_call index \
+             {tool_call_index} has non-object 'function.arguments': expected JSON \
+             object, got {}; tool_call: {tool_call}",
+            json_value_type_name(&input),
+        )));
+    }
+    Ok(input)
+}
+
+const fn json_value_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
 }
 
 #[cfg(test)]
@@ -832,6 +944,64 @@ mod tests {
             .expect("tool result block missing — #475 regression");
         assert_eq!(tool_result["tool_use_id"], "toolu_abc");
         assert_eq!(tool_result["content"], "4");
+    }
+
+    fn request_with_assistant_tool_arguments(arguments: &str) -> ChatCompletionRequest {
+        ChatCompletionRequest {
+            model: "claude-opus-4-6".to_string(),
+            messages: vec![
+                text_msg("user", "run a tool"),
+                ChatMessage {
+                    role: "assistant".to_string(),
+                    content: MessageContent::Text(String::new()),
+                    name: None,
+                    tool_calls: Some(vec![json!({
+                        "id": "toolu_bad",
+                        "type": "function",
+                        "function": {"name": "bash", "arguments": arguments}
+                    })]),
+                    tool_call_id: None,
+                },
+            ],
+            max_tokens: Some(64),
+            temperature: None,
+            tools: None,
+            stream: None,
+            tool_choice: None,
+            extra: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn transform_request_errors_on_malformed_assistant_tool_call_arguments() {
+        let request = request_with_assistant_tool_arguments("{not json");
+        let err = AnthropicAdapter::new()
+            .transform_request(&request)
+            .expect_err("malformed assistant tool_call arguments must fail request conversion");
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("function.arguments"), "{msg}");
+                assert!(msg.contains("invalid JSON"), "{msg}");
+                assert!(msg.contains("message index 1"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_request_errors_on_non_object_assistant_tool_call_arguments() {
+        let request = request_with_assistant_tool_arguments("[]");
+        let err = AnthropicAdapter::new()
+            .transform_request(&request)
+            .expect_err("non-object assistant tool_call arguments must fail request conversion");
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("function.arguments"), "{msg}");
+                assert!(msg.contains("expected JSON object"), "{msg}");
+                assert!(msg.contains("array"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
     }
 
     #[test]

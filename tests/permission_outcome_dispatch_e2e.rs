@@ -123,9 +123,10 @@ fn outcome_preserves_tool_call_id_into_denied_result() {
 }
 
 #[test]
-fn outcome_with_malformed_arguments_json_defaults_to_empty_args() {
-    // The function uses unwrap_or_default() on the JSON parse,
-    // so malformed args don't error — they become Value::Null.
+fn outcome_with_malformed_arguments_json_returns_denied_error() {
+    // Malformed arguments are a tool-call protocol error. They must not pass
+    // through the permission gate as empty args, because that can hide the
+    // actual target from permission rules.
     let call = ToolCall {
         id: "c1".to_string(),
         call_type: "function".to_string(),
@@ -135,8 +136,16 @@ fn outcome_with_malformed_arguments_json_defaults_to_empty_args() {
         },
     };
     let outcome = check_tool_permission_outcome(&call, None);
-    // No manager → still bypassed.
-    assert!(matches!(outcome, PermissionOutcome::Allowed));
+    let PermissionOutcome::Denied(result) = outcome else {
+        panic!("malformed arguments MUST deny with a tool error; got {outcome:?}");
+    };
+    assert_eq!(result.tool_call_id, "c1");
+    assert!(result.is_error);
+    assert!(
+        result.content.contains("Invalid tool arguments JSON"),
+        "diagnostic must name malformed arguments; got {:?}",
+        result.content
+    );
 }
 
 // ───────────────────────────────────────────────────────────────────────────
