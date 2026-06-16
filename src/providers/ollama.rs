@@ -50,6 +50,62 @@ impl Default for OllamaAdapter {
     }
 }
 
+fn convert_tools_checked(tools: &[Value]) -> Result<Vec<Value>, ProviderError> {
+    let mut out = Vec::with_capacity(tools.len());
+
+    for (index, tool) in tools.iter().enumerate() {
+        let func = tool
+            .get("function")
+            .filter(|value| value.is_object())
+            .ok_or_else(|| {
+                ProviderError::RequestFailed(format!(
+                    "Tool at index {index} missing required 'function' object: {tool}"
+                ))
+            })?;
+
+        let name = func
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| {
+                ProviderError::RequestFailed(format!(
+                    "Tool at index {index} missing non-empty string 'function.name': {tool}"
+                ))
+            })?;
+
+        let description = match func.get("description") {
+            None => json!(""),
+            Some(value @ Value::String(_)) => value.clone(),
+            Some(_) => {
+                return Err(ProviderError::RequestFailed(format!(
+                    "Tool at index {index} has non-string 'function.description': {tool}"
+                )));
+            }
+        };
+
+        let parameters = match func.get("parameters") {
+            None => json!({}),
+            Some(value @ Value::Object(_)) => value.clone(),
+            Some(_) => {
+                return Err(ProviderError::RequestFailed(format!(
+                    "Tool at index {index} has non-object 'function.parameters': {tool}"
+                )));
+            }
+        };
+
+        out.push(json!({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": parameters
+            }
+        }));
+    }
+
+    Ok(out)
+}
+
 #[async_trait]
 impl ProviderAdapter for OllamaAdapter {
     fn name(&self) -> &'static str {
@@ -77,22 +133,7 @@ impl ProviderAdapter for OllamaAdapter {
 
         // Convert tools to Ollama format if present
         if let Some(tools) = &request.tools {
-            let ollama_tools: Vec<Value> = tools
-                .iter()
-                .filter_map(|tool| {
-                    let func = tool.get("function")?;
-                    let default_desc = json!("");
-                    let default_params = json!({});
-                    Some(json!({
-                        "type": "function",
-                        "function": {
-                            "name": func.get("name")?,
-                            "description": func.get("description").unwrap_or(&default_desc),
-                            "parameters": func.get("parameters").unwrap_or(&default_params)
-                        }
-                    }))
-                })
-                .collect();
+            let ollama_tools = convert_tools_checked(tools)?;
             if !ollama_tools.is_empty() {
                 body["tools"] = json!(ollama_tools);
             }
@@ -313,6 +354,26 @@ const fn json_value_type_name(value: &Value) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    fn request_with_tools(tools: Vec<Value>) -> ChatCompletionRequest {
+        ChatCompletionRequest {
+            model: "llama3".to_string(),
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: MessageContent::Text("hello".to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            temperature: None,
+            max_tokens: None,
+            stream: None,
+            tools: Some(tools),
+            tool_choice: None,
+            extra: HashMap::new(),
+        }
+    }
 
     fn base_tool_response(arguments: Value) -> Value {
         json!({
@@ -329,6 +390,135 @@ mod tests {
             },
             "done": true
         })
+    }
+
+    #[test]
+    fn transform_request_converts_valid_tools() {
+        let request = request_with_tools(vec![json!({
+            "type": "function",
+            "function": {
+                "name": "bash",
+                "description": "Run a shell command",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string"}
+                    }
+                }
+            }
+        })]);
+
+        let body = OllamaAdapter::new()
+            .transform_request(&request)
+            .expect("valid tool should convert");
+
+        let tool = &body["tools"][0];
+        assert_eq!(tool["type"], "function");
+        assert_eq!(tool["function"]["name"], "bash");
+        assert_eq!(tool["function"]["description"], "Run a shell command");
+        assert_eq!(tool["function"]["parameters"]["type"], "object");
+    }
+
+    #[test]
+    fn transform_request_defaults_optional_tool_fields() {
+        let request = request_with_tools(vec![json!({
+            "type": "function",
+            "function": {"name": "bash"}
+        })]);
+
+        let body = OllamaAdapter::new()
+            .transform_request(&request)
+            .expect("tool without optional fields should convert");
+
+        let function = &body["tools"][0]["function"];
+        assert_eq!(function["name"], "bash");
+        assert_eq!(function["description"], "");
+        assert_eq!(function["parameters"], json!({}));
+    }
+
+    #[test]
+    fn transform_request_errors_on_tool_missing_function_object() {
+        let request = request_with_tools(vec![json!({"type": "function"})]);
+
+        let err = OllamaAdapter::new()
+            .transform_request(&request)
+            .expect_err("missing function object must fail");
+
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("function"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_request_errors_on_tool_missing_function_name() {
+        let request = request_with_tools(vec![json!({
+            "type": "function",
+            "function": {"description": "no name"}
+        })]);
+
+        let err = OllamaAdapter::new()
+            .transform_request(&request)
+            .expect_err("missing function.name must fail");
+
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("function.name"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_request_errors_on_tool_with_empty_function_name() {
+        let request = request_with_tools(vec![json!({
+            "type": "function",
+            "function": {"name": ""}
+        })]);
+
+        let err = OllamaAdapter::new()
+            .transform_request(&request)
+            .expect_err("empty function.name must fail");
+
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("function.name"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_request_errors_on_malformed_optional_tool_fields() {
+        let bad_description = request_with_tools(vec![json!({
+            "type": "function",
+            "function": {"name": "bash", "description": {"not": "a string"}}
+        })]);
+        let err = OllamaAdapter::new()
+            .transform_request(&bad_description)
+            .expect_err("non-string description must fail");
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("function.description"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+
+        let bad_parameters = request_with_tools(vec![json!({
+            "type": "function",
+            "function": {"name": "bash", "parameters": []}
+        })]);
+        let err = OllamaAdapter::new()
+            .transform_request(&bad_parameters)
+            .expect_err("non-object parameters must fail");
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("function.parameters"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
     }
 
     #[test]
