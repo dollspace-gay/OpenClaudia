@@ -1085,28 +1085,12 @@ fn build_chat_body_anthropic(
 }
 
 /// Translate `OpenAI`-format tool definitions into Gemini function declarations.
-fn build_gemini_functions() -> Vec<serde_json::Value> {
+fn build_gemini_functions() -> Result<Vec<serde_json::Value>, String> {
     let openai_tools = tools::get_all_tool_definitions(true);
-    let tools_vec = openai_tools.as_array().cloned().unwrap_or_default();
-    tools_vec
-        .iter()
-        .filter_map(|tool| {
-            let func = tool.get("function")?;
-            let description = func
-                .get("description")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!(""));
-            let parameters = func
-                .get("parameters")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({}));
-            Some(serde_json::json!({
-                "name": func.get("name")?,
-                "description": description,
-                "parameters": parameters
-            }))
-        })
-        .collect()
+    let tools_vec = openai_tools
+        .as_array()
+        .ok_or_else(|| "built-in tool definitions must be a JSON array".to_string())?;
+    openclaudia::providers::convert_tools_to_gemini_functions(tools_vec).map_err(|e| e.to_string())
 }
 
 /// Split messages into (`gemini_contents`, `system_text`) for Gemini's
@@ -1133,8 +1117,8 @@ fn split_messages_for_gemini(
 }
 
 /// Build the Gemini request body.
-fn build_chat_body_google(messages: &[serde_json::Value]) -> serde_json::Value {
-    let functions = build_gemini_functions();
+fn build_chat_body_google(messages: &[serde_json::Value]) -> Result<serde_json::Value, String> {
+    let functions = build_gemini_functions()?;
     let (contents, system_text) = split_messages_for_gemini(messages);
     let mut req = serde_json::json!({
         "contents": contents,
@@ -1144,7 +1128,7 @@ fn build_chat_body_google(messages: &[serde_json::Value]) -> serde_json::Value {
     if let Some(sys) = system_text {
         req["systemInstruction"] = serde_json::json!({"parts": [{"text": sys}]});
     }
-    req
+    Ok(req)
 }
 
 /// Build the generic OpenAI-compatible request body.
@@ -1192,7 +1176,7 @@ fn build_chat_request_body(
 ) -> Result<serde_json::Value, String> {
     let mut request_body = match target {
         "anthropic" => build_chat_body_anthropic(messages, model, prompt_blocks)?,
-        "google" => build_chat_body_google(messages),
+        "google" => build_chat_body_google(messages)?,
         _ => build_chat_body_openai_like(messages, model),
     };
 

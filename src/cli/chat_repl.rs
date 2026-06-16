@@ -45,7 +45,10 @@ use crate::{
     ToolPermissionResult,
 };
 
-use openclaudia::providers::{convert_messages_to_anthropic_checked, convert_tools_to_anthropic};
+use openclaudia::providers::{
+    convert_messages_to_anthropic_checked, convert_tools_to_anthropic,
+    convert_tools_to_gemini_functions,
+};
 use openclaudia::tools::safe_truncate;
 use openclaudia::{
     config, guardrails, memory, permissions::PermissionManager, plugins, prompt, proxy, session,
@@ -1524,26 +1527,21 @@ impl ChatRepl {
         transport: TurnTransport<'_>,
     ) -> Option<(String, Vec<tools::ToolCall>)> {
         let openai_tools = tools::get_all_tool_definitions(true);
-        let tools_vec = openai_tools.as_array().cloned().unwrap_or_default();
-        let functions: Vec<serde_json::Value> = tools_vec
-            .iter()
-            .filter_map(|tool| {
-                let func = tool.get("function")?;
-                let description = func
-                    .get("description")
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!(""));
-                let parameters = func
-                    .get("parameters")
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!({}));
-                Some(serde_json::json!({
-                    "name": func.get("name")?,
-                    "description": description,
-                    "parameters": parameters
-                }))
-            })
-            .collect();
+        let functions = match openai_tools
+            .as_array()
+            .ok_or_else(|| "built-in tool definitions must be a JSON array".to_string())
+            .and_then(|tools_vec| {
+                convert_tools_to_gemini_functions(tools_vec).map_err(|e| e.to_string())
+            }) {
+            Ok(functions) => functions,
+            Err(error) => {
+                tracing::error!(
+                    error = %error,
+                    "failed to convert built-in tools to Gemini function declarations"
+                );
+                return None;
+            }
+        };
 
         let mut followup_req = serde_json::json!({
             "contents": gemini_contents,

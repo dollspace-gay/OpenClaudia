@@ -6,7 +6,8 @@
 use crate::memory::MemoryDb;
 use crate::permissions::PermissionManager;
 use crate::providers::{
-    convert_messages_to_anthropic_checked, convert_tools_to_anthropic, get_adapter,
+    convert_messages_to_anthropic_checked, convert_tools_to_anthropic,
+    convert_tools_to_gemini_functions, get_adapter,
 };
 use crate::proxy::{self, normalize_base_url};
 use crate::session::TokenUsage;
@@ -166,25 +167,17 @@ pub fn build_openai_request(model: &str, messages: &[Value], effort_level: &str)
 }
 
 /// Build a Google Gemini-format request body.
-#[must_use]
-pub fn build_google_request(messages: &[Value], effort_level: &str) -> Value {
-    static EMPTY_STR: std::sync::LazyLock<Value> =
-        std::sync::LazyLock::new(|| serde_json::json!(""));
-    static EMPTY_OBJ: std::sync::LazyLock<Value> =
-        std::sync::LazyLock::new(|| serde_json::json!({}));
+///
+/// # Errors
+///
+/// Returns an error if the built-in tool definitions cannot be represented as
+/// Gemini function declarations.
+pub fn build_google_request(messages: &[Value], effort_level: &str) -> Result<Value, String> {
     let openai_tools = tools::get_all_tool_definitions(true);
-    let tools_vec = openai_tools.as_array().cloned().unwrap_or_default();
-    let functions: Vec<Value> = tools_vec
-        .iter()
-        .filter_map(|tool| {
-            let func = tool.get("function")?;
-            Some(serde_json::json!({
-                "name": func.get("name")?,
-                "description": func.get("description").unwrap_or_else(|| &*EMPTY_STR),
-                "parameters": func.get("parameters").unwrap_or_else(|| &*EMPTY_OBJ)
-            }))
-        })
-        .collect();
+    let tools_vec = openai_tools
+        .as_array()
+        .ok_or_else(|| "built-in tool definitions must be a JSON array".to_string())?;
+    let functions = convert_tools_to_gemini_functions(tools_vec).map_err(|e| e.to_string())?;
 
     let mut contents = Vec::new();
     let mut system_text: Option<String> = None;
@@ -221,7 +214,7 @@ pub fn build_google_request(messages: &[Value], effort_level: &str) -> Value {
     if let Some(sys) = system_text {
         req["systemInstruction"] = serde_json::json!({"parts": [{"text": sys}]});
     }
-    req
+    Ok(req)
 }
 
 /// Build the appropriate request body for the given provider.
@@ -253,7 +246,7 @@ pub fn build_request(
         "anthropic" => {
             build_anthropic_request(model, messages, effective, claude_code_token, prompt_blocks)
         }
-        "google" => Ok(build_google_request(messages, effective)),
+        "google" => build_google_request(messages, effective),
         _ => Ok(build_openai_request(model, messages, effective)),
     }
 }
@@ -2151,7 +2144,8 @@ mod tests {
             std::env::remove_var("MAX_THINKING_TOKENS");
         }
         let messages = vec![serde_json::json!({"role": "user", "content": "think"})];
-        let req = build_google_request(&messages, "high");
+        let req =
+            build_google_request(&messages, "high").expect("google high-effort request builds");
         let budget = req["generationConfig"]["thinkingConfig"]["thinkingBudget"]
             .as_u64()
             .unwrap_or(0);
@@ -2239,7 +2233,7 @@ mod tests {
         let req = build_anthropic_request("claude-sonnet-4-6", &messages, "medium", None, None)
             .expect("anthropic request should build");
         assert_eq!(req["stream"], true);
-        let req = build_google_request(&messages, "medium");
+        let req = build_google_request(&messages, "medium").expect("google medium request builds");
         // Google request body doesn't include "stream" — it's a separate code path
         // The absence is the contract (Gemini uses non-streaming JSON — gap #602)
         assert!(

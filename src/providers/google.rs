@@ -20,6 +20,77 @@ fn gemini_tool_call_id(ordinal: usize, function_name: &str) -> String {
     format!("call_{ordinal}_{function_name}")
 }
 
+/// Convert `OpenAI` tools to Gemini function declarations.
+///
+/// # Errors
+///
+/// Returns [`ProviderError::RequestFailed`] when a tool definition is missing
+/// a `function` object, a non-empty `function.name`, or contains malformed
+/// optional `function.description` / `function.parameters` fields.
+pub fn convert_tools_to_gemini_functions(tools: &[Value]) -> Result<Vec<Value>, ProviderError> {
+    let mut functions = Vec::with_capacity(tools.len());
+
+    for (index, tool) in tools.iter().enumerate() {
+        let func = tool
+            .get("function")
+            .filter(|value| value.is_object())
+            .ok_or_else(|| {
+                ProviderError::RequestFailed(format!(
+                    "Tool at index {index} missing required 'function' object: {tool}"
+                ))
+            })?;
+
+        let name = func
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| {
+                ProviderError::RequestFailed(format!(
+                    "Tool at index {index} missing non-empty string 'function.name': {tool}"
+                ))
+            })?;
+
+        let description = match func.get("description") {
+            None => json!(""),
+            Some(value @ Value::String(_)) => value.clone(),
+            Some(_) => {
+                return Err(ProviderError::RequestFailed(format!(
+                    "Tool at index {index} has non-string 'function.description': {tool}"
+                )));
+            }
+        };
+
+        let parameters = match func.get("parameters") {
+            None => json!({}),
+            Some(value @ Value::Object(_)) => value.clone(),
+            Some(_) => {
+                return Err(ProviderError::RequestFailed(format!(
+                    "Tool at index {index} has non-object 'function.parameters': {tool}"
+                )));
+            }
+        };
+
+        functions.push(json!({
+            "name": name,
+            "description": description,
+            "parameters": parameters
+        }));
+    }
+
+    Ok(functions)
+}
+
+/// Convert `OpenAI` tools to Gemini's top-level `tools` array.
+///
+/// # Errors
+///
+/// Returns [`ProviderError::RequestFailed`] when any tool definition is
+/// malformed.
+pub fn convert_tools_to_gemini(tools: &[Value]) -> Result<Value, ProviderError> {
+    let functions = convert_tools_to_gemini_functions(tools)?;
+    Ok(json!([{"functionDeclarations": functions}]))
+}
+
 /// Google Gemini API adapter
 pub struct GoogleAdapter;
 
@@ -79,23 +150,6 @@ impl GoogleAdapter {
                 })
             })
             .collect()
-    }
-
-    /// Convert `OpenAI` tools to Gemini function declarations
-    fn convert_tools(tools: &[Value]) -> Value {
-        let functions: Vec<Value> = tools
-            .iter()
-            .filter_map(|tool| {
-                let func = tool.get("function")?;
-                Some(json!({
-                    "name": func.get("name")?,
-                    "description": func.get("description").cloned().unwrap_or_else(|| json!("")),
-                    "parameters": func.get("parameters").cloned().unwrap_or_else(|| json!({}))
-                }))
-            })
-            .collect();
-
-        json!([{"functionDeclarations": functions}])
     }
 
     /// Extract system instruction.
@@ -176,7 +230,7 @@ impl ProviderAdapter for GoogleAdapter {
 
         // Convert tools
         if let Some(tools) = &request.tools {
-            body["tools"] = Self::convert_tools(tools);
+            body["tools"] = convert_tools_to_gemini(tools)?;
         }
 
         debug!(body = %body, "Transformed request for Google");
@@ -443,7 +497,108 @@ const fn args_type_name(value: &Value) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proxy::ContentPart;
+    use crate::proxy::{ChatCompletionRequest, ChatMessage, ContentPart, MessageContent};
+
+    fn google_request_with_tools(tools: Vec<Value>) -> ChatCompletionRequest {
+        ChatCompletionRequest {
+            model: "gemini-2.5-pro".to_string(),
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: MessageContent::Text("run a tool".to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            max_tokens: Some(64),
+            temperature: None,
+            tools: Some(tools),
+            stream: None,
+            tool_choice: None,
+            extra: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn convert_tools_to_gemini_functions_accepts_valid_tool() {
+        let tools = vec![json!({
+            "type": "function",
+            "function": {
+                "name": "bash",
+                "description": "run shell",
+                "parameters": {"type": "object"}
+            }
+        })];
+
+        let functions =
+            convert_tools_to_gemini_functions(&tools).expect("valid tool should convert");
+
+        assert_eq!(functions.len(), 1);
+        assert_eq!(functions[0]["name"], "bash");
+        assert_eq!(functions[0]["description"], "run shell");
+        assert_eq!(functions[0]["parameters"]["type"], "object");
+    }
+
+    #[test]
+    fn transform_request_errors_on_tool_missing_function_object() {
+        let request = google_request_with_tools(vec![json!({"type": "function"})]);
+        let err = GoogleAdapter::new()
+            .transform_request(&request)
+            .expect_err("missing function object must fail");
+
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("'function' object"), "{msg}");
+                assert!(msg.contains("index 0"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_request_errors_on_tool_missing_function_name() {
+        let request = google_request_with_tools(vec![json!({
+            "type": "function",
+            "function": {"parameters": {}}
+        })]);
+        let err = GoogleAdapter::new()
+            .transform_request(&request)
+            .expect_err("missing function.name must fail");
+
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("function.name"), "{msg}");
+                assert!(msg.contains("index 0"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_request_errors_on_tool_with_malformed_optional_fields() {
+        let request = google_request_with_tools(vec![json!({
+            "type": "function",
+            "function": {"name": "bad", "description": 123}
+        })]);
+        let err = GoogleAdapter::new()
+            .transform_request(&request)
+            .expect_err("non-string function.description must fail");
+        match err {
+            ProviderError::RequestFailed(msg) => assert!(msg.contains("description"), "{msg}"),
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+
+        let request = google_request_with_tools(vec![json!({
+            "type": "function",
+            "function": {"name": "bad", "parameters": []}
+        })]);
+        let err = GoogleAdapter::new()
+            .transform_request(&request)
+            .expect_err("non-object function.parameters must fail");
+        match err {
+            ProviderError::RequestFailed(msg) => assert!(msg.contains("parameters"), "{msg}"),
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
 
     /// #785: parsing the same Gemini response twice must yield identical
     /// `tool_calls[*].id` so callers can correlate / cache / diff across

@@ -1008,11 +1008,11 @@ mod tests {
 
     #[test]
     fn test_list_files() {
-        let args = HashMap::new();
+        let mut args = HashMap::new();
+        args.insert("path".to_string(), json!(env!("CARGO_MANIFEST_DIR")));
         let (output, is_error) = file::execute_list_files(&args);
-        assert!(!is_error, "list_files should succeed for cwd");
-        assert!(!output.is_empty(), "cwd should contain files");
-        // Running in the project root, Cargo.toml must be present
+        assert!(!is_error, "list_files should succeed for project root");
+        assert!(!output.is_empty(), "project root should contain files");
         assert!(
             output.contains("Cargo.toml"),
             "Project root should contain Cargo.toml, got: {output}"

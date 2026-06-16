@@ -288,7 +288,7 @@ fn build_openai_request_medium_does_not_emit_reasoning_effort() {
 #[test]
 fn build_google_request_returns_well_formed_json() {
     let msgs = vec![json!({"role": "user", "content": "hi"})];
-    let req = build_google_request(&msgs, "medium");
+    let req = build_google_request(&msgs, "medium").expect("google request should build");
     // Gemini API expects contents (not messages); the
     // function transforms the OpenAI-shape input into
     // Gemini's contents-shape output.

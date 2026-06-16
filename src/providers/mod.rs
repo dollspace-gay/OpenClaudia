@@ -37,7 +37,7 @@ pub use anthropic::{
 };
 pub use api_key::{ApiKey, ApiKeyError, MAX_API_KEY_LEN, REDACTED_PLACEHOLDER};
 pub use deepseek::DeepSeekAdapter;
-pub use google::GoogleAdapter;
+pub use google::{convert_tools_to_gemini, convert_tools_to_gemini_functions, GoogleAdapter};
 pub use ollama::OllamaAdapter;
 pub use openai::OpenAIAdapter;
 pub use qwen::QwenAdapter;
