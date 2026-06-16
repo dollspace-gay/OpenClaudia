@@ -1045,10 +1045,44 @@ mod tests {
             }]
         }));
 
+        assert!(
+            acc.has_tool_calls(),
+            "id + function name should be treated as a finalizable tool call"
+        );
         let calls = acc.finalize();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].function.name, "bash");
         assert_eq!(calls[0].function.arguments, "{\"command\": \"ls\"}");
+    }
+
+    #[test]
+    fn tool_call_accumulator_incomplete_slots_are_not_pending_work() {
+        let mut id_only = ToolCallAccumulator::new();
+        id_only.process_delta(&json!({
+            "tool_calls": [{
+                "index": 0,
+                "id": "call_missing_name",
+                "type": "function"
+            }]
+        }));
+        assert!(
+            !id_only.has_tool_calls(),
+            "id-only partials cannot finalize into executable tool calls"
+        );
+        assert!(id_only.finalize().is_empty());
+
+        let mut name_only = ToolCallAccumulator::new();
+        name_only.process_delta(&json!({
+            "tool_calls": [{
+                "index": 0,
+                "function": {"name": "bash", "arguments": "{\"command\":\"ls\"}"}
+            }]
+        }));
+        assert!(
+            !name_only.has_tool_calls(),
+            "name-only partials cannot finalize without a tool_call id"
+        );
+        assert!(name_only.finalize().is_empty());
     }
 
     #[test]

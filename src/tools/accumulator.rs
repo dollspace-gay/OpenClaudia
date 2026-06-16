@@ -115,10 +115,17 @@ impl ToolCallAccumulator {
             .collect()
     }
 
-    /// Check if we have any tool calls
+    /// Check if we have any complete tool calls.
+    ///
+    /// The accumulator may contain partial slots with only an id or only a
+    /// function fragment. Those cannot be finalized into executable
+    /// [`ToolCall`]s, so callers that use this as a loop condition must not
+    /// treat them as pending work.
     #[must_use]
     pub fn has_tool_calls(&self) -> bool {
-        self.tool_calls.iter().any(|tc| !tc.id.is_empty())
+        self.tool_calls
+            .iter()
+            .any(|tc| !tc.id.is_empty() && !tc.function_name.is_empty())
     }
 
     /// Clear the accumulator
