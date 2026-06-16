@@ -1084,51 +1084,9 @@ fn build_chat_body_anthropic(
     Ok(req)
 }
 
-/// Translate `OpenAI`-format tool definitions into Gemini function declarations.
-fn build_gemini_functions() -> Result<Vec<serde_json::Value>, String> {
-    let openai_tools = tools::get_all_tool_definitions(true);
-    let tools_vec = openai_tools
-        .as_array()
-        .ok_or_else(|| "built-in tool definitions must be a JSON array".to_string())?;
-    openclaudia::providers::convert_tools_to_gemini_functions(tools_vec).map_err(|e| e.to_string())
-}
-
-/// Split messages into (`gemini_contents`, `system_text`) for Gemini's
-/// distinct `contents` / `systemInstruction` shape.
-fn split_messages_for_gemini(
-    messages: &[serde_json::Value],
-) -> (Vec<serde_json::Value>, Option<String>) {
-    let mut contents = Vec::new();
-    let mut system_text: Option<String> = None;
-    for msg in messages {
-        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
-        let text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
-        if role == "system" {
-            system_text = Some(text.to_string());
-            continue;
-        }
-        let gemini_role = if role == "assistant" { "model" } else { "user" };
-        contents.push(serde_json::json!({
-            "role": gemini_role,
-            "parts": [{"text": text}]
-        }));
-    }
-    (contents, system_text)
-}
-
 /// Build the Gemini request body.
 fn build_chat_body_google(messages: &[serde_json::Value]) -> Result<serde_json::Value, String> {
-    let functions = build_gemini_functions()?;
-    let (contents, system_text) = split_messages_for_gemini(messages);
-    let mut req = serde_json::json!({
-        "contents": contents,
-        "generationConfig": {"maxOutputTokens": 4096},
-        "tools": [{"functionDeclarations": functions}]
-    });
-    if let Some(sys) = system_text {
-        req["systemInstruction"] = serde_json::json!({"parts": [{"text": sys}]});
-    }
-    Ok(req)
+    openclaudia::pipeline::build_google_request(messages, "medium")
 }
 
 /// Build the generic OpenAI-compatible request body.

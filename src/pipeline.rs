@@ -180,15 +180,29 @@ pub fn build_google_request(messages: &[Value], effort_level: &str) -> Result<Va
     let functions = convert_tools_to_gemini_functions(tools_vec).map_err(|e| e.to_string())?;
 
     let mut contents = Vec::new();
-    let mut system_text: Option<String> = None;
-    for msg in messages {
-        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
-        let text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
+    let mut system_parts: Vec<String> = Vec::new();
+    for (msg_index, msg) in messages.iter().enumerate() {
+        let role = msg.get("role").and_then(Value::as_str).ok_or_else(|| {
+            format!("Google message at index {msg_index} missing string 'role': {msg}")
+        })?;
+        let text = msg.get("content").and_then(Value::as_str).ok_or_else(|| {
+            format!("Google message at index {msg_index} missing string 'content': {msg}")
+        })?;
         if role == "system" {
-            system_text = Some(text.to_string());
+            if !text.is_empty() {
+                system_parts.push(text.to_string());
+            }
             continue;
         }
-        let gemini_role = if role == "assistant" { "model" } else { "user" };
+        let gemini_role = match role {
+            "assistant" => "model",
+            "user" | "tool" => "user",
+            _ => {
+                return Err(format!(
+                    "Google message at index {msg_index} has unsupported role '{role}': {msg}"
+                ));
+            }
+        };
         contents.push(serde_json::json!({
             "role": gemini_role,
             "parts": [{"text": text}]
@@ -211,6 +225,7 @@ pub fn build_google_request(messages: &[Value], effort_level: &str) -> Result<Va
         "generationConfig": generation_config,
         "tools": [{"functionDeclarations": functions}]
     });
+    let system_text = (!system_parts.is_empty()).then(|| system_parts.join("\n\n"));
     if let Some(sys) = system_text {
         req["systemInstruction"] = serde_json::json!({"parts": [{"text": sys}]});
     }
@@ -2159,6 +2174,46 @@ mod tests {
                 std::env::set_var("MAX_THINKING_TOKENS", v);
             }
         }
+    }
+
+    #[test]
+    fn google_request_rejects_malformed_message_history() {
+        let missing_role = vec![serde_json::json!({"content": "hi"})];
+        let err = build_google_request(&missing_role, "medium")
+            .expect_err("missing message role must fail");
+        assert!(err.contains("'role'"), "{err}");
+        assert!(err.contains("index 0"), "{err}");
+
+        let missing_content = vec![serde_json::json!({"role": "user"})];
+        let err = build_google_request(&missing_content, "medium")
+            .expect_err("missing message content must fail");
+        assert!(err.contains("'content'"), "{err}");
+        assert!(err.contains("index 0"), "{err}");
+
+        let unsupported_role = vec![serde_json::json!({"role": "developer", "content": "hi"})];
+        let err = build_google_request(&unsupported_role, "medium")
+            .expect_err("unsupported role must fail");
+        assert!(err.contains("unsupported role"), "{err}");
+        assert!(err.contains("developer"), "{err}");
+    }
+
+    #[test]
+    fn google_request_concatenates_all_system_messages() {
+        let messages = vec![
+            serde_json::json!({"role": "system", "content": "first"}),
+            serde_json::json!({"role": "user", "content": "hi"}),
+            serde_json::json!({"role": "system", "content": "second"}),
+        ];
+
+        let req = build_google_request(&messages, "medium").expect("google request should build");
+
+        assert_eq!(
+            req["systemInstruction"]["parts"][0]["text"],
+            "first\n\nsecond"
+        );
+        let contents = req["contents"].as_array().expect("contents array");
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["role"], "user");
     }
 
     /// B5 — `TurnResult.needs_followup` is `true` iff tool calls were accumulated.
