@@ -47,6 +47,14 @@ pub enum AuditError {
         source: std::io::Error,
     },
 
+    /// The caller supplied a session id that cannot safely be used as a
+    /// single audit-log filename component.
+    #[error("invalid audit session id {session_id:?}: {reason}")]
+    InvalidSessionId {
+        session_id: String,
+        reason: &'static str,
+    },
+
     /// Failed to write/flush an audit entry. This is the variant that
     /// supersedes the previous silent `.ok()` swallow, so its name preserves
     /// the `Failed` suffix mandated by the issue brief (crosslink #377).
@@ -97,6 +105,12 @@ impl AuditLogger {
     ///
     /// Same as [`Self::new`].
     pub fn new_in(dir: &Path, session_id: &str) -> Result<Self, AuditError> {
+        super::validate_session_file_id(session_id).map_err(|reason| {
+            AuditError::InvalidSessionId {
+                session_id: session_id.to_string(),
+                reason,
+            }
+        })?;
         std::fs::create_dir_all(dir).map_err(|source| AuditError::Mkdir {
             path: dir.to_path_buf(),
             source,
@@ -227,6 +241,35 @@ mod tests {
         let content = std::fs::read_to_string(dir.path().join("happy-session.jsonl")).unwrap();
         assert!(content.contains("test_event"));
         assert!(content.contains("\"key\":\"value\""));
+    }
+
+    #[test]
+    fn new_rejects_path_traversal_session_id_without_creating_outside_log() {
+        let dir = TempDir::new().unwrap();
+        let escape_name = format!("audit-escape-{}", uuid::Uuid::new_v4().simple());
+        let hostile_id = format!("../{escape_name}");
+        let outside_path = dir
+            .path()
+            .parent()
+            .expect("tempdir must have parent")
+            .join(format!("{escape_name}.jsonl"));
+        assert!(
+            !outside_path.exists(),
+            "unique outside fixture path should not pre-exist"
+        );
+
+        let Err(err) = AuditLogger::new_in(dir.path(), &hostile_id) else {
+            panic!("path traversal session id must be rejected");
+        };
+
+        assert!(
+            matches!(err, AuditError::InvalidSessionId { .. }),
+            "expected InvalidSessionId, got {err:?}"
+        );
+        assert!(
+            !outside_path.exists(),
+            "invalid session id must not create a log outside the target directory"
+        );
     }
 
     /// Mkdir failure surfaces a typed error — formerly this was an

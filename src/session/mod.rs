@@ -71,6 +71,22 @@ pub enum EndSessionError {
 /// serialised session JSON under ~500 KB for the default [`TurnMetrics`] size.
 pub const MAX_TURN_METRICS: usize = 1_000;
 
+fn validate_session_file_id(id: &str) -> Result<(), &'static str> {
+    if id.is_empty() {
+        return Err("session id must not be empty");
+    }
+
+    if id.len() > 128 {
+        return Err("session id must be 128 bytes or fewer");
+    }
+
+    if id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        Ok(())
+    } else {
+        Err("session id must contain only ASCII letters, numbers, or '-'")
+    }
+}
+
 /// Write data to a file atomically: write to a uniquely-named temp file
 /// in the same directory, then rename.
 ///
@@ -782,6 +798,8 @@ impl SessionManager {
     /// Each file is written to a `.tmp` file first, then atomically renamed.
     /// If the process crashes mid-write, the original file remains intact.
     fn persist_session(&self, session: &Session) -> anyhow::Result<()> {
+        validate_session_file_id(&session.id)
+            .map_err(|reason| anyhow::anyhow!("invalid session id {:?}: {reason}", session.id))?;
         let filename = format!("{}.json", session.id);
         let path = self.persist_dir.join(&filename);
 
@@ -807,6 +825,10 @@ impl SessionManager {
     /// Load a session by ID
     #[must_use]
     pub fn load_session(&self, session_id: &str) -> Option<Session> {
+        if let Err(reason) = validate_session_file_id(session_id) {
+            warn!(session_id = %session_id, reason, "Rejected invalid session id");
+            return None;
+        }
         let path = self.persist_dir.join(format!("{session_id}.json"));
         self.load_session_from_path(&path)
     }
@@ -826,8 +848,20 @@ impl SessionManager {
         }
 
         match fs::read_to_string(path) {
-            Ok(json) => match serde_json::from_str(&json) {
-                Ok(session) => Some(session),
+            Ok(json) => match serde_json::from_str::<Session>(&json) {
+                Ok(session) => {
+                    if let Err(reason) = validate_session_file_id(&session.id) {
+                        warn!(
+                            session_id = %session.id,
+                            reason,
+                            path = ?path,
+                            "Rejected session file with invalid embedded id"
+                        );
+                        None
+                    } else {
+                        Some(session)
+                    }
+                }
                 Err(e) => {
                     warn!(error = %e, path = ?path, "Failed to parse session file");
                     None
@@ -881,6 +915,14 @@ impl SessionManager {
         }
 
         for session in sessions.iter().skip(keep_count) {
+            if let Err(reason) = validate_session_file_id(&session.id) {
+                warn!(
+                    session_id = %session.id,
+                    reason,
+                    "Skipping cleanup of session with invalid id"
+                );
+                continue;
+            }
             let path = self.persist_dir.join(format!("{}.json", session.id));
             if let Err(e) = fs::remove_file(&path) {
                 warn!(error = %e, path = ?path, "Failed to remove old session");
@@ -1058,6 +1100,72 @@ mod tests {
         let loaded = manager.load_session(&session.id);
         assert!(loaded.is_some());
         assert_eq!(loaded.unwrap().id, session.id);
+    }
+
+    #[test]
+    fn load_session_rejects_path_traversal_id() {
+        let dir = TempDir::new().unwrap();
+        let persist_dir = dir.path().join("sessions");
+        fs::create_dir_all(&persist_dir).unwrap();
+        let outside_path = dir.path().join("outside.json");
+        fs::write(
+            &outside_path,
+            serde_json::to_string(&Session::new_initializer()).unwrap(),
+        )
+        .unwrap();
+        let manager = SessionManager::new(&persist_dir);
+
+        let loaded = manager.load_session("../outside");
+
+        assert!(loaded.is_none(), "path traversal id must be rejected");
+    }
+
+    #[test]
+    fn persist_session_rejects_invalid_embedded_id_without_writing_outside_dir() {
+        let dir = TempDir::new().unwrap();
+        let persist_dir = dir.path().join("sessions");
+        let mut manager = SessionManager::new(&persist_dir);
+        manager.get_or_create_session();
+        manager.get_session_mut().unwrap().id = "../outside".to_string();
+
+        let err = manager
+            .end_session(None)
+            .expect_err("invalid in-memory id must fail persistence");
+
+        assert!(
+            matches!(err, EndSessionError::PersistFailed { .. }),
+            "expected persist failure, got {err:?}"
+        );
+        assert!(
+            !dir.path().join("outside.json").exists(),
+            "invalid session id must not write outside the persist dir"
+        );
+    }
+
+    #[test]
+    fn cleanup_old_sessions_ignores_malicious_embedded_id() {
+        let dir = TempDir::new().unwrap();
+        let persist_dir = dir.path().join("sessions");
+        fs::create_dir_all(&persist_dir).unwrap();
+        let outside_path = dir.path().join("outside.json");
+        fs::write(&outside_path, b"sentinel").unwrap();
+
+        let mut malicious = Session::new_initializer();
+        malicious.id = "../outside".to_string();
+        fs::write(
+            persist_dir.join("malicious.json"),
+            serde_json::to_string(&malicious).unwrap(),
+        )
+        .unwrap();
+        let manager = SessionManager::new(&persist_dir);
+
+        manager.cleanup_old_sessions(0);
+
+        assert_eq!(
+            fs::read(&outside_path).unwrap(),
+            b"sentinel",
+            "cleanup must not remove paths derived from an embedded hostile id"
+        );
     }
 
     #[test]
