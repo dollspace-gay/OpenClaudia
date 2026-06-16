@@ -758,7 +758,15 @@ fn convert_tool_result_message(
         }
         None => "",
     };
-    let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    let content = match msg.get("content").and_then(|v| v.as_str()) {
+        Some(content) => content,
+        None if strict_tool_arguments => {
+            return Err(ProviderError::RequestFailed(format!(
+                "Tool result message at index {msg_index} missing string 'content': {msg}"
+            )));
+        }
+        None => "",
+    };
     let is_error = msg
         .get("is_error")
         .and_then(serde_json::Value::as_bool)
@@ -901,6 +909,11 @@ fn convert_regular_message(
         Some(Value::String(text)) => json!([{"type": "text", "text": text}]),
         Some(Value::Array(parts)) => {
             json!(convert_regular_content_parts(msg_index, parts, strict)?)
+        }
+        None if strict => {
+            return Err(ProviderError::RequestFailed(format!(
+                "Message at index {msg_index} missing 'content': {msg}"
+            )));
         }
         Some(other) if strict => {
             return Err(ProviderError::RequestFailed(format!(
@@ -1229,6 +1242,47 @@ mod tests {
 
         assert_eq!(converted.len(), 1);
         assert_eq!(converted[0]["role"], "user");
+    }
+
+    #[test]
+    fn convert_messages_checked_errors_on_missing_regular_content() {
+        let err = convert_messages_to_anthropic_checked(&[json!({"role": "user"})])
+            .expect_err("missing regular message content must fail checked conversion");
+
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("'content'"), "{msg}");
+                assert!(msg.contains("index 0"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_messages_checked_errors_on_tool_result_missing_content() {
+        let err = convert_messages_to_anthropic_checked(&[json!({
+            "role": "tool",
+            "tool_call_id": "toolu_123"
+        })])
+        .expect_err("tool result without content must fail checked conversion");
+
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("'content'"), "{msg}");
+                assert!(msg.contains("Tool result message"), "{msg}");
+                assert!(msg.contains("index 0"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_messages_compat_missing_content_still_defaults_to_empty_text() {
+        let converted = convert_messages_to_anthropic(&[json!({"role": "user"})]);
+
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0]["role"], "user");
+        assert_eq!(converted[0]["content"][0]["text"], "");
     }
 
     #[test]
