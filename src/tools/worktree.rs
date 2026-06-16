@@ -34,10 +34,26 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 /// Maximum time to wait for a git command (seconds).
 const GIT_TIMEOUT_SECS: u64 = 30;
+
+/// Absolute, PATH-independent location of the `git` binary for worktree ops.
+///
+/// The model-facing worktree tool executes branch validation, worktree add,
+/// status, merge, and removal commands. Resolve `git` once and then use the
+/// absolute path for every subprocess so a later PATH mutation cannot redirect
+/// those calls to an attacker-controlled executable.
+static GIT_BIN: LazyLock<Result<PathBuf, String>> =
+    LazyLock::new(|| which::which("git").map_err(|e| format!("git binary not found on PATH: {e}")));
+
+fn git_bin() -> Result<&'static Path, String> {
+    match &*GIT_BIN {
+        Ok(path) => Ok(path.as_path()),
+        Err(msg) => Err(msg.clone()),
+    }
+}
 
 /// Process-wide set of worktree paths currently held by the agent harness.
 ///
@@ -213,7 +229,7 @@ fn validate_branch_name(name: &str) -> Result<(), String> {
     // empty path segments, etc.) to git itself. We pin the cwd to the system
     // temp dir so this check never depends on being inside a git repo.
     let tmp = std::env::temp_dir();
-    let output = Command::new("git")
+    let output = Command::new(git_bin()?)
         .args(["check-ref-format", "--branch", name])
         .current_dir(&tmp)
         .stdout(std::process::Stdio::piped())
@@ -248,13 +264,14 @@ fn validate_branch_name(name: &str) -> Result<(), String> {
 /// then sustained 100 ms) lives in that helper; the crosslink #956 latency
 /// fix is preserved unchanged.
 fn git_in(cwd: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    let git = git_bin()?;
     // Crosslink #836: route through the shared [`run_with_timeout`]
     // helper so git, pdftotext, and any future tool subprocess share
     // one timeout/backoff implementation. The git-specific timeout
     // and argv-tail formatting are kept here so the caller-visible
     // error string is unchanged.
     crate::tools::command::run_with_timeout(
-        "git",
+        git,
         args,
         Some(cwd),
         std::time::Duration::from_secs(GIT_TIMEOUT_SECS),
@@ -1448,6 +1465,37 @@ mod tests {
                 !code.contains("set_current_dir("),
                 "crosslink #345: production code in src/tools/worktree.rs must \
                  not call set_current_dir (process-wide global mutation); \
+                 line {n}: {raw_line}",
+                n = idx + 1,
+            );
+        }
+    }
+
+    #[test]
+    fn production_git_invocations_use_resolved_binary_path() {
+        let git = git_bin().expect("worktree tests require git on PATH");
+        assert!(
+            git.is_absolute(),
+            "git_bin must resolve git to an absolute path, got {}",
+            git.display()
+        );
+
+        let src = include_str!("worktree.rs");
+        let cfg_test = src
+            .find("#[cfg(test)]")
+            .expect("test module marker must be present");
+        let production = &src[..cfg_test];
+
+        for (idx, raw_line) in production.lines().enumerate() {
+            let code = raw_line.split("//").next().unwrap_or("");
+            assert!(
+                !code.contains("Command::new(\"git\")"),
+                "production worktree code must not invoke bare git; line {n}: {raw_line}",
+                n = idx + 1,
+            );
+            assert!(
+                !code.contains("run_with_timeout(\"git\""),
+                "production worktree code must not pass bare git to run_with_timeout; \
                  line {n}: {raw_line}",
                 n = idx + 1,
             );

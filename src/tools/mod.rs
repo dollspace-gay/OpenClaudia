@@ -1008,6 +1008,7 @@ mod tests {
 
     #[test]
     fn test_list_files() {
+        let _cwd_lock = testutil::process_cwd_lock();
         let mut args = HashMap::new();
         args.insert("path".to_string(), json!(env!("CARGO_MANIFEST_DIR")));
         let (output, is_error) = file::execute_list_files(&args);
