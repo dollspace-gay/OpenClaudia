@@ -979,11 +979,18 @@ impl AcpServer {
                     tool_calls: None,
                     tool_call_id: None,
                 }];
-            all_messages.extend(
-                self.messages
-                    .iter()
-                    .filter_map(|m| serde_json::from_value(m.clone()).ok()),
-            );
+            let decoded_messages = match decode_acp_messages(&self.messages) {
+                Ok(messages) => messages,
+                Err(e) => {
+                    self.send_session_update(
+                        acp_session_id,
+                        "agent_message_chunk",
+                        &json!({"type": "text", "text": format!("Invalid ACP message history: {e}")}),
+                    );
+                    return "error".to_string();
+                }
+            };
+            all_messages.extend(decoded_messages);
 
             // Build a ChatCompletionRequest for the adapter
             let chat_request = crate::proxy::ChatCompletionRequest {
@@ -2159,6 +2166,18 @@ fn finish_acp_stream(content: String, tool_calls: Vec<AccumulatedToolCall>) -> S
     }
 }
 
+fn decode_acp_messages(messages: &[Value]) -> Result<Vec<crate::proxy::ChatMessage>, String> {
+    messages
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, message)| {
+            serde_json::from_value(message)
+                .map_err(|err| format!("message at index {index} is invalid: {err}"))
+        })
+        .collect()
+}
+
 /// Result of executing a tool via ACP.
 #[derive(Debug)]
 struct AcpToolResult {
@@ -2631,6 +2650,39 @@ mod search_security_tests {
 // the regression is impossible without removing the hook engine wiring from
 // `execute_tool_via_acp`.
 // ============================================================================
+
+#[cfg(test)]
+mod message_history_tests {
+    use super::decode_acp_messages;
+    use serde_json::json;
+
+    #[test]
+    fn decode_acp_messages_accepts_valid_history() {
+        let messages = vec![
+            json!({"role": "user", "content": "hello"}),
+            json!({"role": "assistant", "content": "hi"}),
+        ];
+
+        let decoded = decode_acp_messages(&messages).expect("valid ACP history must decode");
+
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].role, "user");
+        assert_eq!(decoded[1].role, "assistant");
+    }
+
+    #[test]
+    fn decode_acp_messages_rejects_malformed_history() {
+        let messages = vec![
+            json!({"role": "user", "content": "hello"}),
+            json!({"role": "assistant"}),
+        ];
+
+        let err = decode_acp_messages(&messages).expect_err("missing content must fail");
+
+        assert!(err.contains("index 1"), "{err}");
+        assert!(err.contains("content"), "{err}");
+    }
+}
 
 #[cfg(test)]
 mod stream_tool_call_tests {
