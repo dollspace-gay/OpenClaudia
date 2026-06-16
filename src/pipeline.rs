@@ -726,35 +726,72 @@ pub fn classify_google_finish_reason(
 }
 
 /// Extract structured tool calls from a Gemini non-streaming response.
-fn extract_google_tool_calls(gemini_json: &Value) -> Vec<ToolCall> {
-    gemini_json
+fn extract_google_tool_calls(gemini_json: &Value) -> Result<Vec<ToolCall>, String> {
+    let Some(parts) = gemini_json
         .get("candidates")
         .and_then(|c| c.get(0))
         .and_then(|c| c.get("content"))
         .and_then(|c| c.get("parts"))
         .and_then(|p| p.as_array())
-        .map(|parts| {
-            parts
-                .iter()
-                .filter_map(|p| {
-                    let fc = p.get("functionCall")?;
-                    let name = fc.get("name")?.as_str()?.to_string();
-                    let args = fc.get("args").map_or_else(
-                        || "{}".to_string(),
-                        |a| serde_json::to_string(a).unwrap_or_default(),
-                    );
-                    Some(ToolCall {
-                        id: format!("call_{}", uuid::Uuid::new_v4()),
-                        call_type: "function".to_string(),
-                        function: tools::FunctionCall {
-                            name,
-                            arguments: args,
-                        },
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    else {
+        return Ok(Vec::new());
+    };
+
+    let mut calls = Vec::new();
+
+    for part in parts {
+        let Some(fc) = part.get("functionCall") else {
+            continue;
+        };
+
+        if !fc.is_object() {
+            return Err(format!("Gemini functionCall must be an object: {fc}"));
+        }
+
+        let name = fc
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| format!("Gemini functionCall missing non-empty string 'name': {fc}"))?
+            .to_string();
+
+        let args = fc
+            .get("args")
+            .ok_or_else(|| format!("Gemini functionCall missing object 'args': {fc}"))?;
+
+        if !args.is_object() {
+            return Err(format!(
+                "Gemini functionCall has non-object 'args': expected JSON object, got {}",
+                google_args_type_name(args)
+            ));
+        }
+
+        let args = serde_json::to_string(args).map_err(|e| {
+            format!("Gemini functionCall has unserializable 'args': {e}; functionCall: {fc}")
+        })?;
+
+        calls.push(ToolCall {
+            id: format!("call_{}", uuid::Uuid::new_v4()),
+            call_type: "function".to_string(),
+            function: tools::FunctionCall {
+                name,
+                arguments: args,
+            },
+        });
+    }
+
+    Ok(calls)
+}
+
+const fn google_args_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
 }
 
 /// Extract `(prompt_tokens, candidates_tokens)` from a Gemini response.
@@ -826,7 +863,7 @@ async fn handle_google_response(
         send_event!(tx, AppEvent::StreamText(text.clone()));
     }
 
-    let tool_calls = extract_google_tool_calls(&gemini_json);
+    let tool_calls = extract_google_tool_calls(&gemini_json)?;
     let (input_tokens, output_tokens) = extract_google_usage(&gemini_json);
 
     // Execute tool calls if any
@@ -1774,6 +1811,81 @@ mod tests {
             guardrail_path_for_tool_call("notebook_edit", r#"{"notebook_path":"nb.ipynb"}"#),
             None
         );
+    }
+
+    #[test]
+    fn extract_google_tool_calls_accepts_valid_function_call() {
+        let body = serde_json::json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"text": "using a tool"},
+                        {"functionCall": {"name": "bash", "args": {"command": "pwd"}}}
+                    ]
+                }
+            }]
+        });
+
+        let calls = extract_google_tool_calls(&body).expect("valid Gemini tool call should parse");
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "bash");
+        assert_eq!(calls[0].function.arguments, r#"{"command":"pwd"}"#);
+    }
+
+    #[test]
+    fn extract_google_tool_calls_rejects_missing_name() {
+        let body = serde_json::json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"functionCall": {"args": {"command": "pwd"}}}
+                    ]
+                }
+            }]
+        });
+
+        let err = extract_google_tool_calls(&body).expect_err("missing Gemini tool name must fail");
+
+        assert!(err.contains("functionCall"), "{err}");
+        assert!(err.contains("name"), "{err}");
+    }
+
+    #[test]
+    fn extract_google_tool_calls_rejects_missing_args() {
+        let body = serde_json::json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"functionCall": {"name": "bash"}}
+                    ]
+                }
+            }]
+        });
+
+        let err = extract_google_tool_calls(&body).expect_err("missing Gemini tool args must fail");
+
+        assert!(err.contains("functionCall"), "{err}");
+        assert!(err.contains("args"), "{err}");
+    }
+
+    #[test]
+    fn extract_google_tool_calls_rejects_non_object_args() {
+        let body = serde_json::json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"functionCall": {"name": "bash", "args": []}}
+                    ]
+                }
+            }]
+        });
+
+        let err =
+            extract_google_tool_calls(&body).expect_err("non-object Gemini tool args must fail");
+
+        assert!(err.contains("args"), "{err}");
+        assert!(err.contains("object"), "{err}");
     }
 
     #[test]

@@ -1110,7 +1110,16 @@ impl ChatRepl {
             return;
         };
 
-        let (full_content, tool_calls) = Self::emit_gemini_initial_text_and_calls(&gemini_json);
+        let (full_content, tool_calls) =
+            match Self::emit_gemini_initial_text_and_calls(&gemini_json) {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    eprintln!("\nInvalid Gemini tool call response: {e}");
+                    let _ = save_chat_session(&self.chat_session);
+                    self.chat_session.messages.pop();
+                    return;
+                }
+            };
         let (input_tokens, output_tokens) = gemini_extract_usage_tokens(&gemini_json);
 
         if let Err(e) = self.audit_logger.log(
@@ -1164,17 +1173,17 @@ impl ChatRepl {
     /// `(full_content, tool_calls)` pair for the tool loop.
     fn emit_gemini_initial_text_and_calls(
         gemini_json: &serde_json::Value,
-    ) -> (String, Vec<tools::ToolCall>) {
+    ) -> Result<(String, Vec<tools::ToolCall>), String> {
         use std::io::Write;
         let mut full_content = String::new();
         let text = gemini_extract_text(gemini_json);
+        let tool_calls = gemini_extract_tool_calls(gemini_json)?;
         if !text.is_empty() {
             print!("{text}");
             std::io::stdout().flush().ok();
             full_content.push_str(&text);
         }
-        let tool_calls = gemini_extract_tool_calls(gemini_json);
-        (full_content, tool_calls)
+        Ok((full_content, tool_calls))
     }
 
     /// Drive the Gemini agentic tool loop until no tool calls remain or
@@ -1557,7 +1566,13 @@ impl ChatRepl {
                     return None;
                 };
                 let text = gemini_extract_text(&resp_json);
-                let calls = gemini_extract_tool_calls(&resp_json);
+                let calls = match gemini_extract_tool_calls(&resp_json) {
+                    Ok(calls) => calls,
+                    Err(e) => {
+                        eprintln!("\nInvalid Gemini follow-up tool call response: {e}");
+                        return None;
+                    }
+                };
                 Some((text, calls))
             }
             Ok(resp) => {
@@ -3142,34 +3157,72 @@ fn gemini_extract_text(json: &serde_json::Value) -> String {
         .unwrap_or_default()
 }
 
-fn gemini_extract_tool_calls(json: &serde_json::Value) -> Vec<tools::ToolCall> {
-    json.get("candidates")
+fn gemini_extract_tool_calls(json: &serde_json::Value) -> Result<Vec<tools::ToolCall>, String> {
+    let Some(parts) = json
+        .get("candidates")
         .and_then(|c| c.get(0))
         .and_then(|c| c.get("content"))
         .and_then(|c| c.get("parts"))
         .and_then(|p| p.as_array())
-        .map(|parts| {
-            parts
-                .iter()
-                .filter_map(|p| {
-                    let fc = p.get("functionCall")?;
-                    let name = fc.get("name")?.as_str()?.to_string();
-                    let args = fc.get("args").map_or_else(
-                        || "{}".to_string(),
-                        |a| serde_json::to_string(a).unwrap_or_default(),
-                    );
-                    Some(tools::ToolCall {
-                        id: format!("call_{}", uuid::Uuid::new_v4()),
-                        call_type: "function".to_string(),
-                        function: tools::FunctionCall {
-                            name,
-                            arguments: args,
-                        },
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    else {
+        return Ok(Vec::new());
+    };
+
+    let mut calls = Vec::new();
+
+    for part in parts {
+        let Some(fc) = part.get("functionCall") else {
+            continue;
+        };
+
+        if !fc.is_object() {
+            return Err(format!("Gemini functionCall must be an object: {fc}"));
+        }
+
+        let name = fc
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| format!("Gemini functionCall missing non-empty string 'name': {fc}"))?
+            .to_string();
+
+        let args = fc
+            .get("args")
+            .ok_or_else(|| format!("Gemini functionCall missing object 'args': {fc}"))?;
+
+        if !args.is_object() {
+            return Err(format!(
+                "Gemini functionCall has non-object 'args': expected JSON object, got {}",
+                gemini_args_type_name(args)
+            ));
+        }
+
+        let args = serde_json::to_string(args).map_err(|e| {
+            format!("Gemini functionCall has unserializable 'args': {e}; functionCall: {fc}")
+        })?;
+
+        calls.push(tools::ToolCall {
+            id: format!("call_{}", uuid::Uuid::new_v4()),
+            call_type: "function".to_string(),
+            function: tools::FunctionCall {
+                name,
+                arguments: args,
+            },
+        });
+    }
+
+    Ok(calls)
+}
+
+const fn gemini_args_type_name(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
 }
 
 /// Pull `(promptTokenCount, candidatesTokenCount)` out of a Gemini
@@ -3317,6 +3370,80 @@ mod tests {
 
         assert_eq!(response["functionResponse"]["name"], "read_file");
         assert_eq!(response["functionResponse"]["response"]["error"], "denied");
+    }
+
+    #[test]
+    fn gemini_extract_tool_calls_accepts_valid_function_call() {
+        let body = serde_json::json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"text": "using a tool"},
+                        {"functionCall": {"name": "bash", "args": {"command": "pwd"}}}
+                    ]
+                }
+            }]
+        });
+
+        let calls = gemini_extract_tool_calls(&body).expect("valid Gemini call should parse");
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "bash");
+        assert_eq!(calls[0].function.arguments, r#"{"command":"pwd"}"#);
+    }
+
+    #[test]
+    fn gemini_extract_tool_calls_rejects_missing_name() {
+        let body = serde_json::json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"functionCall": {"args": {"command": "pwd"}}}
+                    ]
+                }
+            }]
+        });
+
+        let err = gemini_extract_tool_calls(&body).expect_err("missing Gemini name must fail");
+
+        assert!(err.contains("functionCall"), "{err}");
+        assert!(err.contains("name"), "{err}");
+    }
+
+    #[test]
+    fn gemini_extract_tool_calls_rejects_missing_args() {
+        let body = serde_json::json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"functionCall": {"name": "bash"}}
+                    ]
+                }
+            }]
+        });
+
+        let err = gemini_extract_tool_calls(&body).expect_err("missing Gemini args must fail");
+
+        assert!(err.contains("functionCall"), "{err}");
+        assert!(err.contains("args"), "{err}");
+    }
+
+    #[test]
+    fn gemini_extract_tool_calls_rejects_non_object_args() {
+        let body = serde_json::json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"functionCall": {"name": "bash", "args": []}}
+                    ]
+                }
+            }]
+        });
+
+        let err = gemini_extract_tool_calls(&body).expect_err("non-object Gemini args must fail");
+
+        assert!(err.contains("args"), "{err}");
+        assert!(err.contains("object"), "{err}");
     }
 
     /// #601 — `emit_max_turns_event` returns the canonical
