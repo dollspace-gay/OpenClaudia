@@ -16,7 +16,8 @@
 //! optional `acp:` block of `.openclaudia/config.yaml` plus a single
 //! env-var override — same configurability surface, no schema break.
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+use std::path::Path;
 
 /// Default iteration ceiling for the ACP prompt → tool-call → re-prompt
 /// loop. Matches the previous hard-coded value so existing deployments
@@ -32,12 +33,26 @@ const fn default_max_iterations() -> u32 {
     DEFAULT_MAX_ITERATIONS
 }
 
+fn deserialize_positive_max_iterations<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u32::deserialize(deserializer)?;
+    if value == 0 {
+        return Err(serde::de::Error::custom(
+            "max_iterations must be at least 1",
+        ));
+    }
+    Ok(value)
+}
+
 /// ACP server configuration.
 ///
 /// All fields default to the values previously hard-coded in
 /// [`crate::acp::AcpServer::run_prompt_loop`] so omitting the section
 /// from `config.yaml` reproduces today's behaviour exactly.
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct AcpConfig {
     /// Maximum number of provider request iterations within a single
     /// ACP prompt. Each tool call consumes one iteration; the loop
@@ -45,7 +60,10 @@ pub struct AcpConfig {
     /// calls. The cap exists as a safety belt against runaway loops —
     /// a model that never decides to stop. Configurable so operators
     /// running long-horizon agents can raise it without forking.
-    #[serde(default = "default_max_iterations")]
+    #[serde(
+        default = "default_max_iterations",
+        deserialize_with = "deserialize_positive_max_iterations"
+    )]
     pub max_iterations: u32,
 }
 
@@ -60,36 +78,91 @@ impl Default for AcpConfig {
 impl AcpConfig {
     /// Resolve the runtime [`AcpConfig`] from (in order of precedence):
     ///
-    /// 1. The [`MAX_ITERATIONS_ENV_VAR`] env var, if set to a parseable `u32`.
+    /// 1. The [`MAX_ITERATIONS_ENV_VAR`] env var, if set to a parseable,
+    ///    non-zero `u32`.
     /// 2. The `acp:` block of `.openclaudia/config.yaml`, if present.
     /// 3. [`AcpConfig::default`].
     ///
-    /// Errors from individual sources are silently downgraded to the
-    /// next source — this lookup is on the per-prompt hot path and must
-    /// not panic when the operator's config is malformed. The caller
-    /// receives a usable cap in every case.
-    #[must_use]
-    pub fn load() -> Self {
-        let mut cfg = Self::load_from_yaml().unwrap_or_default();
-        if let Ok(raw) = std::env::var(MAX_ITERATIONS_ENV_VAR) {
-            if let Ok(parsed) = raw.trim().parse::<u32>() {
-                if parsed > 0 {
-                    cfg.max_iterations = parsed;
-                }
+    /// # Errors
+    ///
+    /// Returns an error when the YAML file is present but malformed, the
+    /// `acp:` block has the wrong shape, `max_iterations` is zero, or the env
+    /// var override is present but invalid. Missing files and absent `acp:`
+    /// blocks still resolve to defaults.
+    pub fn load() -> Result<Self, String> {
+        let cfg = Self::load_from_yaml_path(Path::new(".openclaudia/config.yaml"))?;
+        match std::env::var(MAX_ITERATIONS_ENV_VAR) {
+            Ok(raw) => Self::apply_env_override(cfg, &raw),
+            Err(std::env::VarError::NotPresent) => Ok(cfg),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                Err(format!("{MAX_ITERATIONS_ENV_VAR} must be valid UTF-8"))
             }
         }
-        cfg
     }
 
     /// Read the `acp:` block out of `.openclaudia/config.yaml` if the
-    /// file exists. Returns `None` when the file is missing, unreadable,
-    /// or carries no `acp:` block — the caller falls back to defaults.
-    fn load_from_yaml() -> Option<Self> {
-        let path = std::path::PathBuf::from(".openclaudia/config.yaml");
-        let raw = std::fs::read_to_string(&path).ok()?;
-        let root: serde_yaml::Value = serde_yaml::from_str(&raw).ok()?;
-        let acp = root.get("acp")?;
-        serde_yaml::from_value(acp.clone()).ok()
+    /// file exists. Missing files or absent `acp:` blocks resolve to defaults.
+    fn load_from_yaml_path(path: &Path) -> Result<Self, String> {
+        let raw = match std::fs::read_to_string(path) {
+            Ok(raw) => raw,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
+        };
+        Self::load_from_yaml_str(&raw)
+    }
+
+    fn load_from_yaml_str(raw: &str) -> Result<Self, String> {
+        let root: serde_yaml::Value =
+            serde_yaml::from_str(raw).map_err(|e| format!("invalid YAML: {e}"))?;
+        if root.is_null() {
+            return Ok(Self::default());
+        }
+        if !root.is_mapping() {
+            return Err(format!(
+                "expected config root to be a mapping, got {}",
+                yaml_value_type_name(&root)
+            ));
+        }
+        let Some(acp) = root.get("acp") else {
+            return Ok(Self::default());
+        };
+        let cfg: Self = serde_yaml::from_value(acp.clone())
+            .map_err(|e| format!("invalid acp config block: {e}"))?;
+        cfg.validate()
+    }
+
+    fn apply_env_override(mut cfg: Self, raw: &str) -> Result<Self, String> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Ok(cfg);
+        }
+        let parsed = trimmed.parse::<u32>().map_err(|e| {
+            format!("{MAX_ITERATIONS_ENV_VAR} must be a positive integer, got {trimmed:?}: {e}")
+        })?;
+        if parsed == 0 {
+            return Err(format!("{MAX_ITERATIONS_ENV_VAR} must be at least 1"));
+        }
+        cfg.max_iterations = parsed;
+        Ok(cfg)
+    }
+
+    fn validate(self) -> Result<Self, String> {
+        if self.max_iterations == 0 {
+            return Err("acp.max_iterations must be at least 1".to_string());
+        }
+        Ok(self)
+    }
+}
+
+const fn yaml_value_type_name(value: &serde_yaml::Value) -> &'static str {
+    match value {
+        serde_yaml::Value::Null => "null",
+        serde_yaml::Value::Bool(_) => "boolean",
+        serde_yaml::Value::Number(_) => "number",
+        serde_yaml::Value::String(_) => "string",
+        serde_yaml::Value::Sequence(_) => "sequence",
+        serde_yaml::Value::Mapping(_) => "mapping",
+        serde_yaml::Value::Tagged(_) => "tagged",
     }
 }
 
@@ -116,6 +189,97 @@ mod tests {
         let yaml = "max_iterations: 200\n";
         let cfg: AcpConfig = serde_yaml::from_str(yaml).expect("valid yaml");
         assert_eq!(cfg.max_iterations, 200);
+    }
+
+    #[test]
+    fn deserialisation_rejects_zero_max_iterations() {
+        let err = serde_yaml::from_str::<AcpConfig>("max_iterations: 0\n")
+            .expect_err("zero cap must be invalid");
+
+        assert!(err.to_string().contains("at least 1"), "{err}");
+    }
+
+    #[test]
+    fn load_from_yaml_str_defaults_when_acp_block_absent() {
+        let cfg = AcpConfig::load_from_yaml_str("proxy:\n  target: anthropic\n")
+            .expect("missing acp block should use defaults");
+
+        assert_eq!(cfg, AcpConfig::default());
+    }
+
+    #[test]
+    fn load_from_yaml_str_reads_acp_block() {
+        let cfg = AcpConfig::load_from_yaml_str("acp:\n  max_iterations: 123\n")
+            .expect("valid acp block should load");
+
+        assert_eq!(cfg.max_iterations, 123);
+    }
+
+    #[test]
+    fn load_from_yaml_str_rejects_malformed_yaml() {
+        let err = AcpConfig::load_from_yaml_str("acp: [").expect_err("bad YAML must fail");
+
+        assert!(err.contains("invalid YAML"), "{err}");
+    }
+
+    #[test]
+    fn load_from_yaml_str_rejects_non_mapping_root() {
+        let err =
+            AcpConfig::load_from_yaml_str("- acp").expect_err("non-mapping config root must fail");
+
+        assert!(err.contains("mapping"), "{err}");
+        assert!(err.contains("sequence"), "{err}");
+    }
+
+    #[test]
+    fn load_from_yaml_str_rejects_unknown_acp_field() {
+        let err = AcpConfig::load_from_yaml_str("acp:\n  max_iteration: 10\n")
+            .expect_err("typoed acp field must fail");
+
+        assert!(err.contains("invalid acp config block"), "{err}");
+        assert!(err.contains("max_iteration"), "{err}");
+    }
+
+    #[test]
+    fn load_from_yaml_str_rejects_zero_acp_iterations() {
+        let err = AcpConfig::load_from_yaml_str("acp:\n  max_iterations: 0\n")
+            .expect_err("zero acp cap must fail");
+
+        assert!(err.contains("at least 1"), "{err}");
+    }
+
+    #[test]
+    fn env_override_wins_when_positive_integer() {
+        let cfg = AcpConfig::apply_env_override(AcpConfig { max_iterations: 10 }, "200")
+            .expect("valid env override should apply");
+
+        assert_eq!(cfg.max_iterations, 200);
+    }
+
+    #[test]
+    fn env_override_rejects_invalid_value() {
+        let err = AcpConfig::apply_env_override(AcpConfig::default(), "many")
+            .expect_err("invalid env override must fail");
+
+        assert!(err.contains(MAX_ITERATIONS_ENV_VAR), "{err}");
+        assert!(err.contains("positive integer"), "{err}");
+    }
+
+    #[test]
+    fn env_override_rejects_zero() {
+        let err = AcpConfig::apply_env_override(AcpConfig::default(), "0")
+            .expect_err("zero env override must fail");
+
+        assert!(err.contains(MAX_ITERATIONS_ENV_VAR), "{err}");
+        assert!(err.contains("at least 1"), "{err}");
+    }
+
+    #[test]
+    fn env_override_empty_string_is_ignored() {
+        let cfg = AcpConfig::apply_env_override(AcpConfig { max_iterations: 25 }, "   ")
+            .expect("empty env override should be ignored");
+
+        assert_eq!(cfg.max_iterations, 25);
     }
 
     #[test]

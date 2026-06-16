@@ -932,7 +932,17 @@ impl AcpServer {
         // agents no longer need to recompile — set it via the
         // `acp.max_iterations` YAML key or the
         // `OPENCLAUDIA_ACP_MAX_ITERATIONS` env var.
-        let max_iterations = crate::config::AcpConfig::load().max_iterations;
+        let max_iterations = match crate::config::AcpConfig::load() {
+            Ok(cfg) => cfg.max_iterations,
+            Err(e) => {
+                self.send_session_update(
+                    acp_session_id,
+                    "agent_message_chunk",
+                    &json!({"type": "text", "text": format!("Invalid ACP configuration: {e}")}),
+                );
+                return "error".to_string();
+            }
+        };
 
         for iteration in 0..max_iterations {
             if self.cancel_flag.load(Ordering::SeqCst) {
