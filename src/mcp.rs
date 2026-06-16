@@ -918,11 +918,35 @@ impl McpServer {
 
         // Parse server info and capabilities
         if let Some(info) = result.get("serverInfo") {
-            self.info = serde_json::from_value(info.clone()).ok();
+            if !info.is_object() {
+                return Err(McpError::Protocol(format!(
+                    "MCP server '{}' initialize response has non-object serverInfo: {info}",
+                    self.name
+                )));
+            }
+            self.info = Some(serde_json::from_value(info.clone()).map_err(|e| {
+                McpError::Protocol(format!(
+                    "MCP server '{}' initialize response has invalid serverInfo: {e}; \
+                     serverInfo: {info}",
+                    self.name
+                ))
+            })?);
         }
 
         if let Some(caps) = result.get("capabilities") {
-            self.capabilities = serde_json::from_value(caps.clone()).unwrap_or_default();
+            if !caps.is_object() {
+                return Err(McpError::Protocol(format!(
+                    "MCP server '{}' initialize response has non-object capabilities: {caps}",
+                    self.name
+                )));
+            }
+            self.capabilities = serde_json::from_value(caps.clone()).map_err(|e| {
+                McpError::Protocol(format!(
+                    "MCP server '{}' initialize response has invalid capabilities: {e}; \
+                     capabilities: {caps}",
+                    self.name
+                ))
+            })?;
         }
 
         // Send initialized notification
@@ -2433,6 +2457,52 @@ mod tests {
 
         assert_eq!(server.name(), "ok");
         assert!(server.tools().is_empty());
+    }
+
+    #[tokio::test]
+    async fn initialize_errors_on_malformed_server_info() {
+        let transport = FakeTransport::new(vec![json!({
+            "serverInfo": {"version": "1"},
+            "capabilities": {}
+        })]);
+
+        match McpServer::new_with_config(
+            "badinfo",
+            Box::new(transport),
+            McpServerConfig::new().with_initialize_timeout_secs(5),
+        )
+        .await
+        {
+            Err(McpError::Protocol(msg)) => {
+                assert!(msg.contains("serverInfo"), "{msg}");
+                assert!(msg.contains("badinfo"), "{msg}");
+            }
+            Err(other) => panic!("expected Protocol, got {other:?}"),
+            Ok(_) => panic!("malformed serverInfo must fail MCP initialize"),
+        }
+    }
+
+    #[tokio::test]
+    async fn initialize_errors_on_malformed_capabilities() {
+        let transport = FakeTransport::new(vec![json!({
+            "serverInfo": {"name": "badcaps", "version": "1"},
+            "capabilities": []
+        })]);
+
+        match McpServer::new_with_config(
+            "badcaps",
+            Box::new(transport),
+            McpServerConfig::new().with_initialize_timeout_secs(5),
+        )
+        .await
+        {
+            Err(McpError::Protocol(msg)) => {
+                assert!(msg.contains("capabilities"), "{msg}");
+                assert!(msg.contains("badcaps"), "{msg}");
+            }
+            Err(other) => panic!("expected Protocol, got {other:?}"),
+            Ok(_) => panic!("malformed capabilities must fail MCP initialize"),
+        }
     }
 
     /// Fix #628: the timeout duration is configurable via
