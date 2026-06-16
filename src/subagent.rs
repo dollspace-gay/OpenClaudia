@@ -1201,43 +1201,39 @@ pub async fn run_subagent(
         messages.push(assistant_message.clone());
 
         // Execute tool calls and add results
-        let empty_obj = json!({});
-        for tool_call in &tool_calls {
-            let tool_id = tool_call
-                .get("id")
-                .and_then(|id| id.as_str())
-                .unwrap_or("unknown");
-            let function = tool_call.get("function").unwrap_or(&empty_obj);
-            let name = function
-                .get("name")
-                .and_then(|n| n.as_str())
-                .unwrap_or("unknown");
-            let arguments = function
-                .get("arguments")
-                .and_then(|a| a.as_str())
-                .unwrap_or("{}");
+        for (tool_call_index, tool_call) in tool_calls.iter().enumerate() {
+            let tc = match parse_subagent_tool_call(tool_call, tool_call_index) {
+                Ok(tc) => tc,
+                Err(err) => {
+                    messages.push(json!({
+                        "role": "tool",
+                        "tool_call_id": subagent_tool_call_id_for_error(
+                            tool_call,
+                            tool_call_index
+                        ),
+                        "content": format!("Error: {err}")
+                    }));
+                    continue;
+                }
+            };
 
             // Check if tool is allowed
-            if !allowed_tools.contains(&name) {
+            if !allowed_tools.contains(&tc.function.name.as_str()) {
+                let tool_id = tc.id.clone();
+                let tool_name = tc.function.name.clone();
                 messages.push(json!({
                     "role": "tool",
                     "tool_call_id": tool_id,
-                    "content": format!("Error: Tool '{name}' is not available to this agent type")
+                    "content": format!(
+                        "Error: Tool '{}' is not available to this agent type",
+                        tool_name
+                    )
                 }));
                 continue;
             }
 
             // Execute the tool with the library-layer permission gate
             // engaged (crosslink #505).
-            let tc = ToolCall {
-                id: tool_id.to_string(),
-                call_type: "function".to_string(),
-                function: crate::tools::FunctionCall {
-                    name: name.to_string(),
-                    arguments: arguments.to_string(),
-                },
-            };
-
             // Bind the subagent's id as the session key so its task
             // list lives in its own bucket. Claude Code uses the
             // `agentId ?? sessionId` fallback; here agent_id is always
@@ -1247,7 +1243,7 @@ pub async fn run_subagent(
 
             messages.push(json!({
                 "role": "tool",
-                "tool_call_id": tool_id,
+                "tool_call_id": tc.id,
                 "content": result.content
             }));
         }
@@ -1455,6 +1451,56 @@ fn parse_response(response: &Value) -> Result<Value, String> {
     }
 
     Err("Could not parse response".to_string())
+}
+
+fn subagent_tool_call_id_for_error(tool_call: &Value, index: usize) -> String {
+    tool_call
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map_or_else(|| format!("invalid_tool_call_{index}"), str::to_string)
+}
+
+fn parse_subagent_tool_call(tool_call: &Value, index: usize) -> Result<ToolCall, String> {
+    let id = tool_call
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| format!("tool_call[{index}] missing non-empty string 'id'"))?;
+    let function = tool_call
+        .get("function")
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("tool_call[{index}] missing object 'function'"))?;
+    let name = function
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| format!("tool_call[{index}] missing non-empty string 'function.name'"))?;
+    let arguments = function
+        .get("arguments")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("tool_call[{index}] missing string 'function.arguments'"))?;
+    let parsed_arguments = serde_json::from_str::<Value>(arguments)
+        .map_err(|e| format!("tool_call[{index}] has invalid JSON in 'function.arguments': {e}"))?;
+    if !parsed_arguments.is_object() {
+        return Err(format!(
+            "tool_call[{index}] has non-object 'function.arguments': expected JSON object"
+        ));
+    }
+
+    Ok(ToolCall {
+        id: id.to_string(),
+        call_type: tool_call
+            .get("type")
+            .and_then(Value::as_str)
+            .filter(|call_type| !call_type.is_empty())
+            .unwrap_or("function")
+            .to_string(),
+        function: crate::tools::FunctionCall {
+            name: name.to_string(),
+            arguments: arguments.to_string(),
+        },
+    })
 }
 
 // === Tool Execution ===
@@ -1814,6 +1860,68 @@ mod tests {
                 .unwrap()
                 .as_str(),
             Some("agent_output")
+        );
+    }
+
+    #[test]
+    fn parse_subagent_tool_call_accepts_valid_openai_shape() {
+        let call = json!({
+            "id": "call_1",
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "arguments": "{\"path\":\"src/main.rs\"}"
+            }
+        });
+
+        let parsed = parse_subagent_tool_call(&call, 0).expect("valid tool call should parse");
+
+        assert_eq!(parsed.id, "call_1");
+        assert_eq!(parsed.call_type, "function");
+        assert_eq!(parsed.function.name, "read_file");
+        assert_eq!(parsed.function.arguments, "{\"path\":\"src/main.rs\"}");
+    }
+
+    #[test]
+    fn parse_subagent_tool_call_rejects_malformed_arguments() {
+        let missing = json!({
+            "id": "call_missing",
+            "function": {"name": "read_file"}
+        });
+        let err = parse_subagent_tool_call(&missing, 0)
+            .expect_err("missing arguments must not become {}");
+        assert!(err.contains("function.arguments"), "{err}");
+
+        let invalid_json = json!({
+            "id": "call_bad_json",
+            "function": {"name": "read_file", "arguments": "{not json"}
+        });
+        let err = parse_subagent_tool_call(&invalid_json, 1)
+            .expect_err("invalid JSON must not become {}");
+        assert!(err.contains("invalid JSON"), "{err}");
+
+        let non_object = json!({
+            "id": "call_array",
+            "function": {"name": "read_file", "arguments": "[]"}
+        });
+        let err = parse_subagent_tool_call(&non_object, 2)
+            .expect_err("non-object arguments must not execute");
+        assert!(err.contains("non-object"), "{err}");
+    }
+
+    #[test]
+    fn subagent_tool_call_error_id_falls_back_to_stable_synthetic_id() {
+        assert_eq!(
+            subagent_tool_call_id_for_error(&json!({"id": "call_1"}), 7),
+            "call_1"
+        );
+        assert_eq!(
+            subagent_tool_call_id_for_error(&json!({"id": ""}), 7),
+            "invalid_tool_call_7"
+        );
+        assert_eq!(
+            subagent_tool_call_id_for_error(&json!({}), 7),
+            "invalid_tool_call_7"
         );
     }
 
