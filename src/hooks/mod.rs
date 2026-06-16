@@ -1928,9 +1928,12 @@ mod tests {
     // Crosslink #778 — fire_post_tool surfaces hook errors via tracing::error!
     // ========================================================================
 
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, LazyLock, Mutex};
     use tracing::subscriber;
     use tracing_subscriber::fmt::MakeWriter;
+
+    static TRACE_CAPTURE_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+        LazyLock::new(|| tokio::sync::Mutex::new(()));
 
     /// Shared buffer that satisfies `MakeWriter` so tests can capture the
     /// `tracing` output emitted by the hook engine.
@@ -1998,6 +2001,7 @@ mod tests {
     /// security gate.
     #[tokio::test]
     async fn pre_tool_use_with_malformed_matcher_fails_closed_and_blocks() {
+        let _trace_guard = TRACE_CAPTURE_LOCK.lock().await;
         let entry = HookEntry {
             // `(unclosed` is not a valid regex → validate_and_match returns Err
             matcher: Some("(unclosed".to_string()),
@@ -2022,6 +2026,7 @@ mod tests {
     /// an unrelated tool.
     #[tokio::test]
     async fn post_tool_use_with_malformed_matcher_fails_open_and_skips() {
+        let _trace_guard = TRACE_CAPTURE_LOCK.lock().await;
         let entry = HookEntry {
             matcher: Some("(unclosed".to_string()),
             hooks: vec![Hook::Prompt {
@@ -2050,6 +2055,7 @@ mod tests {
     /// deny matchers.
     #[tokio::test]
     async fn pre_tool_use_matcher_failure_emits_warn_with_fail_closed_field() {
+        let _trace_guard = TRACE_CAPTURE_LOCK.lock().await;
         let captured = CapturedWriter::default();
         let subscriber = tracing_subscriber::fmt()
             .with_writer(captured.clone())
@@ -2091,6 +2097,7 @@ mod tests {
     /// two paths in their log pipelines.
     #[tokio::test]
     async fn post_tool_use_matcher_failure_emits_warn_with_fail_closed_false() {
+        let _trace_guard = TRACE_CAPTURE_LOCK.lock().await;
         let captured = CapturedWriter::default();
         let subscriber = tracing_subscriber::fmt()
             .with_writer(captured.clone())
@@ -2130,6 +2137,7 @@ mod tests {
     async fn fire_post_tool_surfaces_hook_errors_via_tracing_error() {
         use std::collections::HashSet;
 
+        let _trace_guard = TRACE_CAPTURE_LOCK.lock().await;
         let captured = CapturedWriter::default();
         let subscriber = tracing_subscriber::fmt()
             .with_writer(captured.clone())
@@ -2204,6 +2212,7 @@ mod tests {
     /// Confirms the error-surfacing is gated on `result.errors`, not always-on.
     #[tokio::test]
     async fn fire_post_tool_silent_when_hooks_succeed() {
+        let _trace_guard = TRACE_CAPTURE_LOCK.lock().await;
         let captured = CapturedWriter::default();
         let subscriber = tracing_subscriber::fmt()
             .with_writer(captured.clone())
