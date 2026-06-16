@@ -275,24 +275,47 @@ async fn auth_device_start(
     })))
 }
 
+fn required_non_empty_payload_string<'a>(
+    payload: &'a Value,
+    field: &str,
+) -> Result<&'a str, ProxyError> {
+    payload
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| ProxyError::InvalidBody(format!("Missing non-empty string field '{field}'")))
+}
+
+fn extract_device_submit_fields(payload: &Value) -> Result<(String, String), ProxyError> {
+    let raw_code = required_non_empty_payload_string(payload, "code")?;
+    let (code, parsed_state) = crate::oauth::parse_auth_code(raw_code);
+    if code.trim().is_empty() {
+        return Err(ProxyError::InvalidBody(
+            "Missing non-empty string field 'code'".to_string(),
+        ));
+    }
+
+    let oauth_state = match parsed_state {
+        Some(state) if !state.trim().is_empty() => state,
+        Some(_) => {
+            return Err(ProxyError::InvalidBody(
+                "Missing non-empty string field 'state'".to_string(),
+            ));
+        }
+        None => required_non_empty_payload_string(payload, "state")?.to_string(),
+    };
+
+    Ok((code, oauth_state))
+}
+
 /// Submit authorization code from device flow
 async fn auth_device_submit(
     State(state): State<ProxyState>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, ProxyError> {
-    use crate::oauth::{parse_auth_code, OAuthClient, OAuthSession};
+    use crate::oauth::{OAuthClient, OAuthSession};
 
-    let mut code = payload["code"].as_str().unwrap_or("").to_string();
-    let mut oauth_state = payload["state"].as_str().unwrap_or("").to_string();
-
-    // Handle combined code#state format
-    if code.contains('#') {
-        let (parsed_code, parsed_state) = parse_auth_code(&code);
-        code = parsed_code;
-        if let Some(s) = parsed_state {
-            oauth_state = s;
-        }
-    }
+    let (code, oauth_state) = extract_device_submit_fields(&payload)?;
 
     // Get PKCE challenge
     let pkce = state
@@ -2058,6 +2081,83 @@ mod tests {
             "providers": {}
         }))
         .expect("minimal_config must deserialise")
+    }
+
+    #[test]
+    fn extract_device_submit_fields_accepts_separate_code_and_state() {
+        let payload = serde_json::json!({
+            "code": "auth_code_123",
+            "state": "state_abc"
+        });
+
+        let (code, state) =
+            extract_device_submit_fields(&payload).expect("valid payload should parse");
+
+        assert_eq!(code, "auth_code_123");
+        assert_eq!(state, "state_abc");
+    }
+
+    #[test]
+    fn extract_device_submit_fields_accepts_combined_code_and_state() {
+        let payload = serde_json::json!({
+            "code": "auth_code_123#state_abc"
+        });
+
+        let (code, state) =
+            extract_device_submit_fields(&payload).expect("combined payload should parse");
+
+        assert_eq!(code, "auth_code_123");
+        assert_eq!(state, "state_abc");
+    }
+
+    #[test]
+    fn extract_device_submit_fields_prefers_combined_state_over_payload_state() {
+        let payload = serde_json::json!({
+            "code": "auth_code_123#state_from_code",
+            "state": "state_from_payload"
+        });
+
+        let (code, state) =
+            extract_device_submit_fields(&payload).expect("combined payload should parse");
+
+        assert_eq!(code, "auth_code_123");
+        assert_eq!(state, "state_from_code");
+    }
+
+    #[test]
+    fn extract_device_submit_fields_rejects_missing_or_malformed_code() {
+        for payload in [
+            serde_json::json!({ "state": "state_abc" }),
+            serde_json::json!({ "code": "", "state": "state_abc" }),
+            serde_json::json!({ "code": "   ", "state": "state_abc" }),
+            serde_json::json!({ "code": 123, "state": "state_abc" }),
+            serde_json::json!({ "code": "#state_abc" }),
+        ] {
+            let err = extract_device_submit_fields(&payload)
+                .expect_err("missing or malformed code must fail");
+            match err {
+                ProxyError::InvalidBody(msg) => assert!(msg.contains("'code'"), "{msg}"),
+                other => panic!("expected InvalidBody, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn extract_device_submit_fields_rejects_missing_or_malformed_state() {
+        for payload in [
+            serde_json::json!({ "code": "auth_code_123" }),
+            serde_json::json!({ "code": "auth_code_123", "state": "" }),
+            serde_json::json!({ "code": "auth_code_123", "state": "   " }),
+            serde_json::json!({ "code": "auth_code_123", "state": 123 }),
+            serde_json::json!({ "code": "auth_code_123#" }),
+        ] {
+            let err = extract_device_submit_fields(&payload)
+                .expect_err("missing or malformed state must fail");
+            match err {
+                ProxyError::InvalidBody(msg) => assert!(msg.contains("'state'"), "{msg}"),
+                other => panic!("expected InvalidBody, got {other:?}"),
+            }
+        }
     }
 
     // ── Phase 2 spec-pinning tests (#552 / spec #537 B-proxy) ────────────────
