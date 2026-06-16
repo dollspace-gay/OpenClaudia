@@ -1040,11 +1040,6 @@ pub fn slash_add_dir(args: &str) -> SlashCommandResult {
 /// `.openclaudia/branches/<name>.json`.  `name` defaults to a timestamp
 /// with a UUID suffix when not supplied.  Returns `BranchSession(name)`.
 pub fn slash_branch(args: &str, messages: &[serde_json::Value]) -> SlashCommandResult {
-    let branches_dir = std::path::PathBuf::from(".openclaudia/branches");
-    if let Err(e) = fs::create_dir_all(&branches_dir) {
-        println!("\nError: could not create branches directory: {e}\n");
-        return SlashCommandResult::Handled;
-    }
     let name: String = {
         let raw = args.trim();
         if raw.is_empty() {
@@ -1055,6 +1050,17 @@ pub fn slash_branch(args: &str, messages: &[serde_json::Value]) -> SlashCommandR
             raw.to_string()
         }
     };
+
+    if let Err(reason) = validate_branch_snapshot_name(&name) {
+        println!("\nError: invalid branch name '{name}': {reason}\n");
+        return SlashCommandResult::Handled;
+    }
+
+    let branches_dir = std::path::PathBuf::from(".openclaudia/branches");
+    if let Err(e) = fs::create_dir_all(&branches_dir) {
+        println!("\nError: could not create branches directory: {e}\n");
+        return SlashCommandResult::Handled;
+    }
     let branch_path = branches_dir.join(format!("{name}.json"));
     if branch_path.exists() {
         println!("\nError: branch '{name}' already exists. Choose a different name.\n");
@@ -1068,7 +1074,10 @@ pub fn slash_branch(args: &str, messages: &[serde_json::Value]) -> SlashCommandR
     match serde_json::to_string_pretty(&snapshot) {
         Ok(json) => match fs::write(&branch_path, json.as_bytes()) {
             Ok(()) => {
-                println!("\nBranched session as {name}; use /resume {name} to restore\n");
+                println!(
+                    "\nBranched session as {name}; snapshot saved to {}\n",
+                    branch_path.display()
+                );
                 SlashCommandResult::BranchSession(name)
             }
             Err(e) => {
@@ -1080,6 +1089,25 @@ pub fn slash_branch(args: &str, messages: &[serde_json::Value]) -> SlashCommandR
             println!("\nError: could not serialise session: {e}\n");
             SlashCommandResult::Handled
         }
+    }
+}
+
+fn validate_branch_snapshot_name(name: &str) -> Result<(), &'static str> {
+    if name.is_empty() {
+        return Err("name must not be empty");
+    }
+
+    if name.len() > 128 {
+        return Err("name must be 128 bytes or fewer");
+    }
+
+    if name
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        Ok(())
+    } else {
+        Err("use only ASCII letters, numbers, '-' or '_'")
     }
 }
 
@@ -2733,6 +2761,37 @@ mod tests {
         );
         let branch_path = std::path::PathBuf::from(format!(".openclaudia/branches/{name}.json"));
         let _ = std::fs::remove_file(&branch_path);
+    }
+
+    #[test]
+    fn branch_rejects_path_traversal_name_without_writing_outside_branches() {
+        let escape_name = format!("branch-escape-{}", uuid::Uuid::new_v4().simple());
+        let input = format!("/branch ../{escape_name}");
+
+        let result = handle_slash_command(&input, &mut ctx(), "anthropic", "claude-sonnet");
+
+        assert!(
+            matches!(result, Some(SlashCommandResult::Handled)),
+            "path-like branch names must be rejected"
+        );
+        let escaped_path = std::path::PathBuf::from(format!(".openclaudia/{escape_name}.json"));
+        assert!(
+            !escaped_path.exists(),
+            "invalid branch name must not write outside .openclaudia/branches"
+        );
+    }
+
+    #[test]
+    fn branch_rejects_names_with_shell_or_path_punctuation() {
+        for bad in ["bad/name", "bad\\name", "bad name", "bad$name", ".hidden"] {
+            let input = format!("/branch {bad}");
+            let result = handle_slash_command(&input, &mut ctx(), "anthropic", "claude-sonnet");
+
+            assert!(
+                matches!(result, Some(SlashCommandResult::Handled)),
+                "branch name {bad:?} must be rejected"
+            );
+        }
     }
 
     // ── §12 /btw (#179) ───────────────────────────────────────────────
