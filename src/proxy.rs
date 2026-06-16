@@ -1105,16 +1105,24 @@ async fn proxy_chat_completions(
     )
     .await?;
 
-    // Post-response: extract usage from non-streaming responses and convert
+    // Post-response: non-streaming chat completions must be normalized back
+    // into OpenAI shape after the provider-native request/response roundtrip.
     let max_bytes = state.config.proxy.max_response_bytes;
-    if token_tracking_enabled && !is_stream {
-        let (response_value, usage) = convert_response_with_usage(raw_response, max_bytes).await?;
-        if let Some(usage) = usage {
-            record_actual_usage_for_session(&state, usage).await;
-        }
-        apply_vdd_review(response_value, &state, &request, &provider_name, &api_key).await
-    } else {
+    if is_stream {
         convert_response(raw_response, max_bytes).await
+    } else {
+        let (response_value, usage) =
+            convert_response_with_usage(raw_response, max_bytes, &provider_name).await?;
+        if let Some(usage) = usage {
+            if token_tracking_enabled {
+                record_actual_usage_for_session(&state, usage).await;
+            }
+        }
+        if token_tracking_enabled {
+            apply_vdd_review(response_value, &state, &request, &provider_name, &api_key).await
+        } else {
+            Ok(response_value)
+        }
     }
 }
 
@@ -1547,7 +1555,8 @@ async fn read_body_capped(
     Ok(buf)
 }
 
-/// Convert reqwest response to axum response, also extracting token usage if present.
+/// Convert a non-streaming chat-completion response to `OpenAI` shape, also
+/// extracting token usage if present.
 ///
 /// `max_bytes` caps the body read; callers pass
 /// `state.config.proxy.max_response_bytes` (default 50 MiB). A response body
@@ -1555,6 +1564,7 @@ async fn read_body_capped(
 async fn convert_response_with_usage(
     response: reqwest::Response,
     max_bytes: usize,
+    provider_name: &str,
 ) -> Result<(Response, Option<TokenUsage>), ProxyError> {
     let status = StatusCode::from_u16(response.status().as_u16())
         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
@@ -1562,7 +1572,10 @@ async fn convert_response_with_usage(
     let mut builder = Response::builder().status(status);
 
     for (key, value) in response.headers() {
-        if key != header::TRANSFER_ENCODING && key != header::CONTENT_LENGTH {
+        if key != header::TRANSFER_ENCODING
+            && key != header::CONTENT_LENGTH
+            && (key != header::CONTENT_TYPE || !status.is_success())
+        {
             if let Ok(v) = HeaderValue::from_bytes(value.as_bytes()) {
                 builder = builder.header(key.as_str(), v);
             }
@@ -1572,13 +1585,33 @@ async fn convert_response_with_usage(
     // Bounded read: prevents memory-DoS from a hostile or buggy upstream.
     let body = read_body_capped(response, max_bytes).await?;
 
-    // Try to extract usage from the response body
-    let usage = serde_json::from_slice::<Value>(&body)
-        .ok()
-        .map(|json| extract_usage_from_response(&json))
-        .filter(|u| u.total() > 0);
+    if !status.is_success() {
+        let response = builder
+            .body(Body::from(body))
+            .map_err(|e| ProxyError::InvalidBody(format!("Failed to build response body: {e}")))?;
+        return Ok((response, None));
+    }
+
+    let raw_json = serde_json::from_slice::<Value>(&body).map_err(|e| {
+        ProxyError::InvalidBody(format!("Failed to parse provider response JSON: {e}"))
+    })?;
+    let adapter = get_adapter(provider_name).map_err(|e| ProxyError::InvalidBody(e.to_string()))?;
+    let raw_usage = adapter.extract_token_usage(&raw_json);
+    let transformed_json = adapter
+        .transform_response(raw_json, false)
+        .map_err(|e| ProxyError::InvalidBody(format!("Provider response transform failed: {e}")))?;
+
+    let usage = raw_usage.or_else(|| {
+        let usage = extract_usage_from_response(&transformed_json);
+        (usage.total() > 0).then_some(usage)
+    });
+
+    let body = serde_json::to_vec(&transformed_json).map_err(|e| {
+        ProxyError::InvalidBody(format!("Failed to serialize transformed response: {e}"))
+    })?;
 
     let response = builder
+        .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(body))
         .map_err(|e| ProxyError::InvalidBody(format!("Failed to build response body: {e}")))?;
     Ok((response, usage))
@@ -2081,6 +2114,106 @@ mod tests {
             "providers": {}
         }))
         .expect("minimal_config must deserialise")
+    }
+
+    async fn upstream_response(
+        status: StatusCode,
+        content_type: &str,
+        body: String,
+    ) -> reqwest::Response {
+        use tokio::io::AsyncWriteExt as _;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local_addr");
+        let content_type = content_type.to_string();
+
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let reason = status.canonical_reason().unwrap_or("OK");
+                let header = format!(
+                    "HTTP/1.1 {} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n\r\n",
+                    status.as_u16(),
+                    body.len()
+                );
+                let _ = stream.write_all(header.as_bytes()).await;
+                let _ = stream.write_all(body.as_bytes()).await;
+            }
+        });
+
+        reqwest::get(format!("http://{addr}")).await.expect("GET")
+    }
+
+    async fn response_json(response: Response) -> Value {
+        let body = response.into_body();
+        let bytes = axum::body::to_bytes(body, usize::MAX)
+            .await
+            .expect("read response body");
+        serde_json::from_slice(&bytes).expect("response body must be JSON")
+    }
+
+    #[tokio::test]
+    async fn convert_response_with_usage_transforms_anthropic_chat_completion() {
+        let raw = serde_json::json!({
+            "id": "msg_123",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-opus-4-6",
+            "stop_reason": "end_turn",
+            "content": [
+                {"type": "text", "text": "hello from claude"}
+            ],
+            "usage": {
+                "input_tokens": 12,
+                "output_tokens": 5,
+                "cache_read_input_tokens": 3,
+                "cache_creation_input_tokens": 2
+            }
+        });
+        let upstream = upstream_response(StatusCode::OK, "application/json", raw.to_string()).await;
+
+        let (response, usage) = convert_response_with_usage(upstream, 1024 * 1024, "anthropic")
+            .await
+            .expect("valid Anthropic response should transform");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let usage = usage.expect("raw Anthropic usage should be preserved");
+        assert_eq!(usage.input_tokens, 12);
+        assert_eq!(usage.output_tokens, 5);
+        assert_eq!(usage.cache_read_tokens, 3);
+        assert_eq!(usage.cache_write_tokens, 2);
+
+        let body = response_json(response).await;
+        assert_eq!(body["object"], "chat.completion");
+        assert_eq!(
+            body["choices"][0]["message"]["content"],
+            "hello from claude"
+        );
+        assert_eq!(body["usage"]["prompt_tokens"], 12);
+        assert_eq!(body["usage"]["completion_tokens"], 5);
+    }
+
+    #[tokio::test]
+    async fn convert_response_with_usage_rejects_malformed_openai_response() {
+        let upstream = upstream_response(
+            StatusCode::OK,
+            "application/json",
+            serde_json::json!({"id": "bad", "choices": []}).to_string(),
+        )
+        .await;
+
+        let err = convert_response_with_usage(upstream, 1024 * 1024, "openai")
+            .await
+            .expect_err("empty choices must fail at provider boundary");
+
+        match err {
+            ProxyError::InvalidBody(msg) => {
+                assert!(msg.contains("Provider response transform failed"), "{msg}");
+                assert!(msg.contains("empty 'choices' array"), "{msg}");
+            }
+            other => panic!("expected InvalidBody, got {other:?}"),
+        }
     }
 
     #[test]
