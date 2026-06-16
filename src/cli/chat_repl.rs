@@ -493,12 +493,20 @@ impl ChatRepl {
                 SlashOutcome::Continue
             }
             SlashCommandResult::LoadSession(sid) => {
-                if let Some(loaded) = load_chat_session(&sid) {
-                    self.chat_session = loaded;
-                    println!(
-                        "Loaded {} messages from previous session.\n",
-                        self.chat_session.messages.len()
-                    );
+                match load_chat_session(&sid) {
+                    Ok(Some(loaded)) => {
+                        self.chat_session = loaded;
+                        println!(
+                            "Loaded {} messages from previous session.\n",
+                            self.chat_session.messages.len()
+                        );
+                    }
+                    Ok(None) => {
+                        eprintln!("Session {sid} was not found.");
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to load session {sid}: {e}");
+                    }
                 }
                 SlashOutcome::Continue
             }

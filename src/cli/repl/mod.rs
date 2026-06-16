@@ -9,9 +9,10 @@ pub mod session_io;
 pub mod slash;
 pub mod vim;
 
+use anyhow::{bail, Context};
 use openclaudia::tools::safe_truncate;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Get the data directory for `OpenClaudia`
 pub fn get_data_dir() -> PathBuf {
@@ -233,44 +234,207 @@ impl ChatSession {
 
 /// Save a chat session to disk
 pub fn save_chat_session(session: &ChatSession) -> anyhow::Result<()> {
-    let dir = get_sessions_dir();
-    fs::create_dir_all(&dir)?;
-
-    let path = dir.join(format!("{}.json", session.id));
+    let path = chat_session_path(&session.id)?;
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
     let json = serde_json::to_string_pretty(session)?;
     fs::write(path, json)?;
     Ok(())
 }
 
-/// Load a chat session by ID
-pub fn load_chat_session(id: &str) -> Option<ChatSession> {
-    let path = get_sessions_dir().join(format!("{id}.json"));
-    if path.exists() {
-        let json = fs::read_to_string(&path).ok()?;
-        serde_json::from_str(&json).ok()
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatSessionLoadIssue {
+    pub path: PathBuf,
+    pub message: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChatSessionList {
+    pub sessions: Vec<ChatSession>,
+    pub issues: Vec<ChatSessionLoadIssue>,
+}
+
+fn validate_chat_session_id(id: &str) -> anyhow::Result<()> {
+    if id.is_empty() {
+        bail!("chat session id must not be empty");
+    }
+
+    if id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        Ok(())
     } else {
-        None
+        bail!("chat session id contains invalid characters: {id:?}");
     }
 }
 
-/// List all chat sessions, sorted by most recent
-pub fn list_chat_sessions() -> Vec<ChatSession> {
-    let dir = get_sessions_dir();
-    let mut sessions = Vec::new();
+fn chat_session_path(id: &str) -> anyhow::Result<PathBuf> {
+    validate_chat_session_id(id)?;
+    Ok(get_sessions_dir().join(format!("{id}.json")))
+}
 
-    if let Ok(entries) = fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|e| e == "json") {
-                if let Ok(json) = fs::read_to_string(&path) {
-                    if let Ok(session) = serde_json::from_str::<ChatSession>(&json) {
-                        sessions.push(session);
-                    }
-                }
+fn read_chat_session_file(path: &Path) -> anyhow::Result<ChatSession> {
+    let json = fs::read_to_string(path)
+        .with_context(|| format!("failed to read chat session {}", path.display()))?;
+    serde_json::from_str(&json)
+        .with_context(|| format!("failed to parse chat session {}", path.display()))
+}
+
+/// Load a chat session by ID
+pub fn load_chat_session(id: &str) -> anyhow::Result<Option<ChatSession>> {
+    let path = chat_session_path(id)?;
+    let json = match fs::read_to_string(&path) {
+        Ok(json) => json,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(e)
+                .with_context(|| format!("failed to read chat session {}", path.display()));
+        }
+    };
+
+    serde_json::from_str(&json)
+        .map(Some)
+        .with_context(|| format!("failed to parse chat session {}", path.display()))
+}
+
+fn list_chat_sessions_in_dir(dir: &Path) -> ChatSessionList {
+    let mut sessions = Vec::new();
+    let mut issues = Vec::new();
+
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return ChatSessionList { sessions, issues };
+        }
+        Err(e) => {
+            issues.push(ChatSessionLoadIssue {
+                path: dir.to_path_buf(),
+                message: format!("failed to read chat sessions directory: {e}"),
+            });
+            return ChatSessionList { sessions, issues };
+        }
+    };
+
+    for entry_result in entries {
+        let entry = match entry_result {
+            Ok(entry) => entry,
+            Err(e) => {
+                issues.push(ChatSessionLoadIssue {
+                    path: dir.to_path_buf(),
+                    message: format!("failed to read chat session directory entry: {e}"),
+                });
+                continue;
             }
+        };
+
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "json") {
+            continue;
+        }
+
+        match read_chat_session_file(&path) {
+            Ok(session) => sessions.push(session),
+            Err(e) => issues.push(ChatSessionLoadIssue {
+                path,
+                message: e.to_string(),
+            }),
         }
     }
 
     sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
-    sessions
+    ChatSessionList { sessions, issues }
+}
+
+/// List all chat sessions with any files skipped due to IO or parse errors.
+pub fn list_chat_sessions_with_issues() -> ChatSessionList {
+    list_chat_sessions_in_dir(&get_sessions_dir())
+}
+
+/// List all chat sessions, sorted by most recent
+pub fn list_chat_sessions() -> Vec<ChatSession> {
+    let listed = list_chat_sessions_with_issues();
+    for issue in &listed.issues {
+        tracing::warn!(
+            path = %issue.path.display(),
+            error = %issue.message,
+            "Skipped unreadable chat session"
+        );
+        eprintln!(
+            "Warning: skipped saved session {}: {}",
+            issue.path.display(),
+            issue.message
+        );
+    }
+
+    listed.sessions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_session() -> ChatSession {
+        ChatSession::new(
+            "test-model",
+            "anthropic",
+            openclaudia::modes::BehaviorMode::default(),
+        )
+    }
+
+    #[test]
+    fn load_chat_session_rejects_path_segments() {
+        let err = load_chat_session("../outside").expect_err("path traversal must be rejected");
+        assert!(
+            err.to_string().contains("invalid characters"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn save_chat_session_rejects_path_segments() {
+        let mut session = test_session();
+        session.id = "../outside".to_string();
+
+        let err = save_chat_session(&session).expect_err("path traversal must be rejected");
+
+        assert!(
+            err.to_string().contains("invalid characters"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn read_chat_session_file_reports_malformed_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("bad.json");
+        fs::write(&path, "{not-json").unwrap();
+
+        let err = read_chat_session_file(&path).expect_err("malformed JSON must be an error");
+
+        assert!(
+            err.to_string().contains("failed to parse chat session"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn list_chat_sessions_reports_corrupt_files_without_hiding_valid_sessions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let valid_path = tmp.path().join("valid.json");
+        let corrupt_path = tmp.path().join("corrupt.json");
+        fs::write(&valid_path, serde_json::to_string(&test_session()).unwrap()).unwrap();
+        fs::write(&corrupt_path, "{not-json").unwrap();
+
+        let listed = list_chat_sessions_in_dir(tmp.path());
+
+        assert_eq!(listed.sessions.len(), 1);
+        assert_eq!(listed.issues.len(), 1);
+        assert_eq!(listed.issues[0].path, corrupt_path);
+        assert!(
+            listed.issues[0]
+                .message
+                .contains("failed to parse chat session"),
+            "unexpected issue: {:?}",
+            listed.issues[0]
+        );
+    }
 }
