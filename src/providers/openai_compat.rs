@@ -193,10 +193,13 @@ impl ProviderAdapter for OpenAiCompatibleAdapter {
         Ok(body)
     }
 
-    fn transform_response(&self, response: Value, _stream: bool) -> Result<Value, ProviderError> {
+    fn transform_response(&self, response: Value, stream: bool) -> Result<Value, ProviderError> {
         // All OpenAI-compatible providers return responses already in
         // OpenAI shape. `reasoning_content` (when present) is carried
         // through verbatim for DeepSeek/Qwen/Z.AI thinking output.
+        if !stream {
+            validate_openai_chat_response(self.name, &response)?;
+        }
         Ok(response)
     }
 
@@ -217,6 +220,74 @@ impl ProviderAdapter for OpenAiCompatibleAdapter {
     fn supports_model_listing(&self) -> bool {
         self.supports_models
     }
+}
+
+fn validate_openai_chat_response(provider: &str, response: &Value) -> Result<(), ProviderError> {
+    let choices = response
+        .get("choices")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            ProviderError::InvalidResponse(format!(
+                "{provider} response missing required 'choices' array: {response}"
+            ))
+        })?;
+
+    if choices.is_empty() {
+        return Err(ProviderError::InvalidResponse(format!(
+            "{provider} response contains empty 'choices' array: {response}"
+        )));
+    }
+
+    for (choice_index, choice) in choices.iter().enumerate() {
+        if !choice.is_object() {
+            return Err(ProviderError::InvalidResponse(format!(
+                "{provider} response choices[{choice_index}] must be an object: {choice}"
+            )));
+        }
+
+        let message = choice
+            .get("message")
+            .filter(|message| message.is_object())
+            .ok_or_else(|| {
+                ProviderError::InvalidResponse(format!(
+                    "{provider} response choices[{choice_index}] missing object 'message': {choice}"
+                ))
+            })?;
+
+        if let Some(role) = message.get("role") {
+            if !role.is_string() {
+                return Err(ProviderError::InvalidResponse(format!(
+                    "{provider} response choices[{choice_index}].message.role must be a string: {message}"
+                )));
+            }
+        }
+
+        if let Some(content) = message.get("content") {
+            if !content.is_string() && !content.is_null() {
+                return Err(ProviderError::InvalidResponse(format!(
+                    "{provider} response choices[{choice_index}].message.content must be a string or null: {message}"
+                )));
+            }
+        }
+
+        if let Some(tool_calls) = message.get("tool_calls") {
+            if !tool_calls.is_array() {
+                return Err(ProviderError::InvalidResponse(format!(
+                    "{provider} response choices[{choice_index}].message.tool_calls must be an array: {message}"
+                )));
+            }
+        }
+
+        if let Some(finish_reason) = choice.get("finish_reason") {
+            if !finish_reason.is_string() && !finish_reason.is_null() {
+                return Err(ProviderError::InvalidResponse(format!(
+                    "{provider} response choices[{choice_index}].finish_reason must be a string or null: {choice}"
+                )));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -384,5 +455,154 @@ mod tests {
         );
         assert_eq!(a.chat_endpoint("glm-4"), "/chat/completions");
         assert!(!a.supports_model_listing());
+    }
+
+    #[test]
+    fn transform_response_accepts_valid_openai_text_response() {
+        let a = OpenAiCompatibleAdapter::new(
+            "openai",
+            "/v1/chat/completions",
+            ThinkingInjector::OpenAiReasoningEffort,
+            true,
+        );
+        let response = json!({
+            "id": "chatcmpl-123",
+            "choices": [{
+                "message": {"role": "assistant", "content": "hello"},
+                "finish_reason": "stop"
+            }]
+        });
+
+        assert_eq!(
+            a.transform_response(response.clone(), false).unwrap(),
+            response
+        );
+    }
+
+    #[test]
+    fn transform_response_accepts_valid_tool_call_response() {
+        let a = OpenAiCompatibleAdapter::new(
+            "deepseek",
+            "/v1/chat/completions",
+            ThinkingInjector::DeepSeekEnableThinking,
+            false,
+        );
+        let response = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "bash", "arguments": "{\"command\":\"pwd\"}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        assert_eq!(
+            a.transform_response(response.clone(), false).unwrap(),
+            response
+        );
+    }
+
+    #[test]
+    fn transform_response_rejects_missing_choices_array() {
+        let a = OpenAiCompatibleAdapter::new(
+            "openai",
+            "/v1/chat/completions",
+            ThinkingInjector::OpenAiReasoningEffort,
+            true,
+        );
+
+        let err = a
+            .transform_response(json!({"id": "bad"}), false)
+            .expect_err("missing choices must be invalid");
+
+        match err {
+            ProviderError::InvalidResponse(msg) => {
+                assert!(msg.contains("'choices' array"), "{msg}");
+                assert!(msg.contains("openai"), "{msg}");
+            }
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_response_rejects_empty_choices_array() {
+        let a = OpenAiCompatibleAdapter::new(
+            "qwen",
+            "/v1/chat/completions",
+            ThinkingInjector::QwenEnableThinking,
+            false,
+        );
+
+        let err = a
+            .transform_response(json!({"choices": []}), false)
+            .expect_err("empty choices must be invalid");
+
+        match err {
+            ProviderError::InvalidResponse(msg) => assert!(msg.contains("empty"), "{msg}"),
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_response_rejects_choice_missing_message() {
+        let a = OpenAiCompatibleAdapter::new(
+            "zai",
+            "/chat/completions",
+            ThinkingInjector::GlmThinking,
+            false,
+        );
+
+        let err = a
+            .transform_response(json!({"choices": [{"finish_reason": "stop"}]}), false)
+            .expect_err("choice without message must be invalid");
+
+        match err {
+            ProviderError::InvalidResponse(msg) => {
+                assert!(msg.contains("choices[0]"), "{msg}");
+                assert!(msg.contains("'message'"), "{msg}");
+            }
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_response_rejects_non_string_content() {
+        let a = OpenAiCompatibleAdapter::new(
+            "openai",
+            "/v1/chat/completions",
+            ThinkingInjector::OpenAiReasoningEffort,
+            true,
+        );
+
+        let err = a
+            .transform_response(
+                json!({"choices": [{"message": {"role": "assistant", "content": ["bad"]}}]}),
+                false,
+            )
+            .expect_err("array content must be invalid");
+
+        match err {
+            ProviderError::InvalidResponse(msg) => assert!(msg.contains("content"), "{msg}"),
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_response_keeps_stream_chunks_passthrough() {
+        let a = OpenAiCompatibleAdapter::new(
+            "openai",
+            "/v1/chat/completions",
+            ThinkingInjector::OpenAiReasoningEffort,
+            true,
+        );
+        let chunk = json!({"choices": [{"delta": {"content": "he"}}]});
+
+        assert_eq!(a.transform_response(chunk.clone(), true).unwrap(), chunk);
     }
 }
