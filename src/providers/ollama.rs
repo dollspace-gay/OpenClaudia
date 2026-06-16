@@ -200,6 +200,22 @@ impl ProviderAdapter for OllamaAdapter {
                 ))
             })?;
 
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .filter(|role| !role.is_empty())
+            .ok_or_else(|| {
+                ProviderError::InvalidResponse(format!(
+                    "Ollama response message missing non-empty string 'role': {message}"
+                ))
+            })?;
+        if role != "assistant" {
+            return Err(ProviderError::InvalidResponse(format!(
+                "Ollama response message has unsupported role '{role}', expected 'assistant': \
+                 {message}"
+            )));
+        }
+
         let content = message
             .get("content")
             .and_then(Value::as_str)
@@ -719,6 +735,54 @@ mod tests {
 
         match err {
             ProviderError::InvalidResponse(msg) => assert!(msg.contains("'message'"), "{msg}"),
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_response_errors_on_missing_or_malformed_role() {
+        for message in [
+            json!({"content": "hello"}),
+            json!({"role": "", "content": "hello"}),
+            json!({"role": 7, "content": "hello"}),
+        ] {
+            let response = json!({
+                "model": "llama3",
+                "message": message,
+                "done": true
+            });
+
+            let err = OllamaAdapter::new()
+                .transform_response(response, false)
+                .expect_err("missing or malformed role must fail");
+
+            match err {
+                ProviderError::InvalidResponse(msg) => assert!(msg.contains("'role'"), "{msg}"),
+                other => panic!("expected InvalidResponse, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn transform_response_errors_on_unsupported_role() {
+        let response = json!({
+            "model": "llama3",
+            "message": {
+                "role": "user",
+                "content": "hello"
+            },
+            "done": true
+        });
+
+        let err = OllamaAdapter::new()
+            .transform_response(response, false)
+            .expect_err("unsupported response role must fail");
+
+        match err {
+            ProviderError::InvalidResponse(msg) => {
+                assert!(msg.contains("unsupported role"), "{msg}");
+                assert!(msg.contains("assistant"), "{msg}");
+            }
             other => panic!("expected InvalidResponse, got {other:?}"),
         }
     }
