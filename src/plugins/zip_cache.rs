@@ -149,7 +149,8 @@ impl ZipCache {
     /// # Errors
     ///
     /// Returns [`ZipCacheError::IntegrityMismatch`] when
-    /// `entry.sha256` disagrees with the computed hash of `bytes`, and
+    /// `entry.sha256` disagrees with the computed hash of `bytes`,
+    /// [`ZipCacheError::Index`] when the existing index is corrupt, and
     /// [`ZipCacheError::Io`] for any filesystem error.
     pub fn put(&self, entry: CacheEntry, bytes: &[u8]) -> Result<(), ZipCacheError> {
         let actual = sha256_hex(bytes);
@@ -159,9 +160,9 @@ impl ZipCache {
                 actual,
             });
         }
+        let mut idx = self.read_index()?;
         std::fs::create_dir_all(&self.root)?;
         std::fs::write(self.archive_path(&entry.sha256), bytes)?;
-        let mut idx = self.read_index().unwrap_or_default();
         idx.insert(entry.sha256.clone(), entry);
         self.write_index(&idx)?;
         Ok(())
@@ -303,6 +304,29 @@ mod tests {
         cache.write_index(&idx).unwrap();
         let read = cache.read_index().unwrap();
         assert_eq!(read.get(&e.sha256), Some(&e));
+    }
+
+    #[test]
+    fn put_rejects_corrupt_index_without_overwriting_it() {
+        let (_tmp, cache) = fresh();
+        std::fs::create_dir_all(&cache.root).unwrap();
+        std::fs::write(cache.index_path(), "{not json").unwrap();
+
+        let bytes = b"fresh archive bytes";
+        let sha = sha256_hex(bytes);
+        let err = cache
+            .put(entry(&sha), bytes)
+            .expect_err("corrupt index must fail closed");
+
+        assert!(matches!(err, ZipCacheError::Index(_)));
+        assert_eq!(
+            std::fs::read_to_string(cache.index_path()).unwrap(),
+            "{not json"
+        );
+        assert!(
+            !cache.archive_path(&sha).exists(),
+            "put must not leave an unindexed archive after index corruption"
+        );
     }
 
     #[test]
