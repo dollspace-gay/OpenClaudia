@@ -700,7 +700,12 @@ fn convert_messages_to_anthropic_impl(
         }
 
         // Regular user or assistant message - convert content to array format
-        result.push(convert_regular_message(role, msg));
+        result.push(convert_regular_message(
+            msg_index,
+            role,
+            msg,
+            strict_tool_arguments,
+        )?);
     }
 
     Ok(result)
@@ -858,23 +863,114 @@ fn convert_tool_call_input(
     }
 }
 
-fn convert_regular_message(role: &str, msg: &Value) -> Value {
-    let content = msg.get("content").map_or_else(
-        || json!([{"type": "text", "text": ""}]),
-        |c| {
-            if c.is_string() {
-                json!([{"type": "text", "text": c.as_str().unwrap_or("")}])
-            } else if c.is_array() {
-                c.clone()
-            } else {
-                json!([{"type": "text", "text": ""}])
-            }
-        },
-    );
+fn convert_regular_message(
+    msg_index: usize,
+    role: &str,
+    msg: &Value,
+    strict: bool,
+) -> Result<Value, ProviderError> {
+    let content = match msg.get("content") {
+        Some(Value::String(text)) => json!([{"type": "text", "text": text}]),
+        Some(Value::Array(parts)) => {
+            json!(convert_regular_content_parts(msg_index, parts, strict)?)
+        }
+        Some(other) if strict => {
+            return Err(ProviderError::RequestFailed(format!(
+                "Message at index {msg_index} has unsupported 'content' type {}: {msg}",
+                json_value_type_name(other)
+            )));
+        }
+        Some(_) | None => json!([{"type": "text", "text": ""}]),
+    };
 
-    json!({
+    Ok(json!({
         "role": role,
         "content": content
+    }))
+}
+
+fn convert_regular_content_parts(
+    msg_index: usize,
+    parts: &[Value],
+    strict: bool,
+) -> Result<Vec<Value>, ProviderError> {
+    let mut out = Vec::with_capacity(parts.len());
+
+    for (part_index, part) in parts.iter().enumerate() {
+        match part.get("type").and_then(Value::as_str) {
+            Some("text") => match part.get("text").and_then(Value::as_str) {
+                Some(text) => out.push(json!({"type": "text", "text": text})),
+                None if strict => {
+                    return Err(ProviderError::RequestFailed(format!(
+                        "Text content part at message index {msg_index}, part index {part_index} \
+                         missing string 'text': {part}"
+                    )));
+                }
+                None => out.push(json!({"type": "text", "text": ""})),
+            },
+            Some("image" | "image_url") => {
+                let source = anthropic_image_source_from_part(part).ok_or_else(|| {
+                    ProviderError::RequestFailed(format!(
+                        "Image content part at message index {msg_index}, part index {part_index} \
+                         missing Anthropic image source: {part}"
+                    ))
+                })?;
+                out.push(json!({"type": "image", "source": source}));
+            }
+            Some(other) => {
+                if strict {
+                    return Err(ProviderError::RequestFailed(format!(
+                        "Unsupported content part type '{other}' at message index {msg_index}, \
+                         part index {part_index}: {part}"
+                    )));
+                }
+                warn!(
+                    message_index = msg_index,
+                    part_index,
+                    part = %part,
+                    "dropping unsupported content part in compatibility Anthropic converter"
+                );
+            }
+            None => {
+                if !strict {
+                    warn!(
+                        message_index = msg_index,
+                        part_index,
+                        part = %part,
+                        "dropping content part missing type in compatibility Anthropic converter"
+                    );
+                    continue;
+                }
+                return Err(ProviderError::RequestFailed(format!(
+                    "Content part at message index {msg_index}, part index {part_index} missing \
+                     string 'type': {part}"
+                )));
+            }
+        }
+    }
+
+    if out.is_empty() {
+        out.push(json!({"type": "text", "text": ""}));
+    }
+
+    Ok(out)
+}
+
+fn anthropic_image_source_from_part(part: &Value) -> Option<Value> {
+    if let Some(source) = part.get("source").filter(|source| source.is_object()) {
+        return Some(source.clone());
+    }
+
+    let image_url = part.get("image_url")?;
+    if image_url.get("type").is_some() {
+        return Some(image_url.clone());
+    }
+
+    image_url.get("url").and_then(Value::as_str).map(|url| {
+        json!({
+            "type": "url",
+            "url": url
+        })
     })
 }
 
@@ -1214,7 +1310,82 @@ mod tests {
         let messages = body["messages"].as_array().expect("messages array");
         assert_eq!(messages.len(), 1);
         let content = messages[0]["content"].as_array().expect("content is array");
-        assert!(content.len() >= 2, "multimodal parts lost: {content:?}");
+        assert_eq!(content.len(), 2, "multimodal parts lost: {content:?}");
+        assert_eq!(content[0], json!({"type": "text", "text": "describe this"}));
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["source"]["type"], "base64");
+        assert_eq!(content[1]["source"]["media_type"], "image/png");
+        assert!(content[1].get("image_url").is_none());
+    }
+
+    #[test]
+    fn transform_request_errors_on_text_content_part_missing_text() {
+        let msg = ChatMessage {
+            role: "user".to_string(),
+            content: MessageContent::Parts(vec![ContentPart {
+                content_type: "text".to_string(),
+                text: None,
+                image_url: None,
+            }]),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        let request = ChatCompletionRequest {
+            model: "claude-opus-4-6".to_string(),
+            messages: vec![msg],
+            max_tokens: Some(64),
+            temperature: None,
+            tools: None,
+            stream: None,
+            tool_choice: None,
+            extra: std::collections::HashMap::new(),
+        };
+
+        let err = AnthropicAdapter::new()
+            .transform_request(&request)
+            .expect_err("missing text part content must fail");
+
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("missing string 'text'"), "{msg}")
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_request_errors_on_unknown_content_part_type() {
+        let msg = ChatMessage {
+            role: "user".to_string(),
+            content: MessageContent::Parts(vec![ContentPart {
+                content_type: "input_audio".to_string(),
+                text: None,
+                image_url: None,
+            }]),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        let request = ChatCompletionRequest {
+            model: "claude-opus-4-6".to_string(),
+            messages: vec![msg],
+            max_tokens: Some(64),
+            temperature: None,
+            tools: None,
+            stream: None,
+            tool_choice: None,
+            extra: std::collections::HashMap::new(),
+        };
+
+        let err = AnthropicAdapter::new()
+            .transform_request(&request)
+            .expect_err("unknown content part must fail");
+
+        match err {
+            ProviderError::RequestFailed(msg) => assert!(msg.contains("input_audio"), "{msg}"),
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
     }
 
     // --- Regression tests for crosslink #338 ---
