@@ -22,6 +22,9 @@ use openclaudia::{
 };
 
 use clap::{builder::PossibleValuesParser, Parser, Subcommand};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::LazyLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 // Re-import the extracted helpers still used by main.rs after the
@@ -32,6 +35,21 @@ use cli::repl::session_io::{
     compact_chat_session, estimate_session_tokens, save_session_to_short_term_memory,
 };
 use cli::repl::{get_history_path, list_chat_sessions, ChatSession};
+
+/// Absolute, PATH-independent location of `git` for startup repository probes.
+static GIT_BIN: LazyLock<Result<PathBuf, String>> =
+    LazyLock::new(|| which::which("git").map_err(|e| format!("git binary not found on PATH: {e}")));
+
+fn git_bin() -> Result<&'static Path, String> {
+    match &*GIT_BIN {
+        Ok(path) => Ok(path.as_path()),
+        Err(msg) => Err(msg.clone()),
+    }
+}
+
+fn git_command() -> Result<Command, String> {
+    Ok(Command::new(git_bin()?))
+}
 
 #[derive(Parser)]
 #[command(name = "openclaudia")]
@@ -827,10 +845,11 @@ fn init_rustyline_with_history() -> anyhow::Result<(rustyline::DefaultEditor, st
 /// directory. Extracted from `cmd_chat` per crosslink #262
 /// (god-function decomposition).
 fn chdir_to_git_root() {
-    let Ok(output) = std::process::Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-    else {
+    let Ok(output) = git_command().and_then(|mut cmd| {
+        cmd.args(["rev-parse", "--show-toplevel"])
+            .output()
+            .map_err(|e| e.to_string())
+    }) else {
         return;
     };
     if !output.status.success() {
@@ -1226,6 +1245,32 @@ async fn cmd_chat(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_git_probe_uses_resolved_binary_path() {
+        let git = git_bin().expect("main tests require git on PATH");
+        assert!(
+            git.is_absolute(),
+            "git_bin must resolve git to an absolute path, got {}",
+            git.display()
+        );
+
+        let src = include_str!("main.rs");
+        let cfg_test = src
+            .find("#[cfg(test)]")
+            .expect("test module marker must be present");
+        let production = &src[..cfg_test];
+
+        for (idx, raw_line) in production.lines().enumerate() {
+            let code = raw_line.split("//").next().unwrap_or("");
+            assert!(
+                !code.contains("Command::new(\"git\")")
+                    && !code.contains("std::process::Command::new(\"git\")"),
+                "production main code must not invoke bare git; line {n}: {raw_line}",
+                n = idx + 1,
+            );
+        }
+    }
 
     #[test]
     fn resolve_model_prefers_explicit_override() {
