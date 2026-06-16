@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 
 /// Review uncommitted git changes or compare against a branch
 pub fn review_git_changes(args: &str) {
@@ -180,28 +181,107 @@ pub fn configure_provider_api_key() {
 
     let config_path = config_dir.join("config.yaml");
 
-    let mut config_content = if config_path.exists() {
-        fs::read_to_string(&config_path).unwrap_or_default()
-    } else {
-        String::new()
-    };
+    match upsert_provider_api_key_config(&config_path, provider_id, provider_name, api_key) {
+        Ok(ProviderConfigUpdate::AlreadyConfigured) => {
+            println!("\nProvider already configured in config file.");
+            println!("Edit {} to update.\n", config_path.display());
+        }
+        Ok(ProviderConfigUpdate::Saved) => {
+            println!("\nSaved API key to: {}", config_path.display());
+            println!("Restart the chat to use the new configuration.\n");
+        }
+        Err(e) => eprintln!("\n{e}\n"),
+    }
+}
 
-    let provider_section =
-        format!("\n# {provider_name} configuration\n{provider_id}_api_key: \"{api_key}\"\n");
+#[derive(Debug, PartialEq, Eq)]
+enum ProviderConfigUpdate {
+    AlreadyConfigured,
+    Saved,
+}
+
+fn upsert_provider_api_key_config(
+    config_path: &Path,
+    provider_id: &str,
+    provider_name: &str,
+    api_key: &str,
+) -> Result<ProviderConfigUpdate, String> {
+    let mut config_content = match fs::read_to_string(config_path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            return Err(format!(
+                "Failed to read existing config {}: {e}",
+                config_path.display()
+            ));
+        }
+    };
 
     let key_pattern = format!("{provider_id}_api_key:");
     if config_content.contains(&key_pattern) {
-        println!("\nProvider already configured in config file.");
-        println!("Edit {} to update.\n", config_path.display());
-    } else {
-        config_content.push_str(&provider_section);
+        return Ok(ProviderConfigUpdate::AlreadyConfigured);
+    }
 
-        match fs::write(&config_path, &config_content) {
-            Ok(()) => {
-                println!("\nSaved API key to: {}", config_path.display());
-                println!("Restart the chat to use the new configuration.\n");
-            }
-            Err(e) => eprintln!("\nFailed to save config: {e}\n"),
-        }
+    let quoted_api_key = serde_json::to_string(api_key).map_err(|e| {
+        format!(
+            "Failed to encode API key for config {}: {e}",
+            config_path.display()
+        )
+    })?;
+    let provider_section =
+        format!("\n# {provider_name} configuration\n{provider_id}_api_key: {quoted_api_key}\n");
+    config_content.push_str(&provider_section);
+
+    fs::write(config_path, config_content)
+        .map_err(|e| format!("Failed to save config {}: {e}", config_path.display()))?;
+
+    Ok(ProviderConfigUpdate::Saved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_yaml::Value as YamlValue;
+
+    #[test]
+    fn upsert_provider_api_key_config_rejects_unreadable_utf8_without_overwrite() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.yaml");
+        fs::write(&config_path, [0xff, 0xfe, 0xfd]).unwrap();
+
+        let err = upsert_provider_api_key_config(&config_path, "openai", "OpenAI", "sk-new-key")
+            .expect_err("invalid UTF-8 config must not be treated as empty");
+
+        assert!(err.contains("Failed to read existing config"), "{err}");
+        assert_eq!(fs::read(&config_path).unwrap(), vec![0xff, 0xfe, 0xfd]);
+    }
+
+    #[test]
+    fn upsert_provider_api_key_config_writes_escaped_yaml_scalar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.yaml");
+        let api_key = "sk-quote\"and\\slash";
+
+        let update = upsert_provider_api_key_config(&config_path, "openai", "OpenAI", api_key)
+            .expect("new config should be written");
+
+        assert_eq!(update, ProviderConfigUpdate::Saved);
+        let config = fs::read_to_string(&config_path).unwrap();
+        let parsed: YamlValue = serde_yaml::from_str(&config).unwrap();
+        assert_eq!(parsed["openai_api_key"].as_str(), Some(api_key));
+    }
+
+    #[test]
+    fn upsert_provider_api_key_config_preserves_existing_provider_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.yaml");
+        let original = "openai_api_key: \"sk-existing\"\n";
+        fs::write(&config_path, original).unwrap();
+
+        let update = upsert_provider_api_key_config(&config_path, "openai", "OpenAI", "sk-new")
+            .expect("existing readable config should load");
+
+        assert_eq!(update, ProviderConfigUpdate::AlreadyConfigured);
+        assert_eq!(fs::read_to_string(&config_path).unwrap(), original);
     }
 }
