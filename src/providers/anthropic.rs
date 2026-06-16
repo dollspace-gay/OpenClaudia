@@ -655,8 +655,10 @@ pub fn convert_messages_to_anthropic(messages: &[Value]) -> Vec<Value> {
 ///
 /// # Errors
 ///
-/// Returns [`ProviderError::RequestFailed`] when an assistant tool call has a
-/// missing/non-string `function.arguments`, invalid JSON, or non-object JSON.
+/// Returns [`ProviderError::RequestFailed`] when an assistant tool call has
+/// missing linkage fields (`id`, `function.name`, `function.arguments`), invalid
+/// JSON arguments, non-object JSON arguments, or when a tool result is missing
+/// its `tool_call_id`.
 pub fn convert_messages_to_anthropic_checked(
     messages: &[Value],
 ) -> Result<Vec<Value>, ProviderError> {
@@ -679,7 +681,11 @@ fn convert_messages_to_anthropic_impl(
 
         // Handle tool result messages (OpenAI format: role="tool")
         if role == "tool" {
-            result.push(convert_tool_result_message(msg));
+            result.push(convert_tool_result_message(
+                msg_index,
+                msg,
+                strict_tool_arguments,
+            )?);
             continue;
         }
 
@@ -700,11 +706,25 @@ fn convert_messages_to_anthropic_impl(
     Ok(result)
 }
 
-fn convert_tool_result_message(msg: &Value) -> Value {
-    let tool_use_id = msg
+fn convert_tool_result_message(
+    msg_index: usize,
+    msg: &Value,
+    strict_tool_arguments: bool,
+) -> Result<Value, ProviderError> {
+    let tool_use_id = match msg
         .get("tool_call_id")
         .and_then(|v| v.as_str())
-        .unwrap_or("");
+        .filter(|id| !id.is_empty())
+    {
+        Some(id) => id,
+        None if strict_tool_arguments => {
+            return Err(ProviderError::RequestFailed(format!(
+                "Tool result message at index {msg_index} missing non-empty string \
+                 'tool_call_id': {msg}"
+            )));
+        }
+        None => "",
+    };
     let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
     let is_error = msg
         .get("is_error")
@@ -720,10 +740,10 @@ fn convert_tool_result_message(msg: &Value) -> Value {
         tool_result["is_error"] = json!(true);
     }
 
-    json!({
+    Ok(json!({
         "role": "user",
         "content": [tool_result]
-    })
+    }))
 }
 
 fn convert_assistant_tool_call_message(
@@ -744,9 +764,46 @@ fn convert_assistant_tool_call_message(
 
     let empty_obj = json!({});
     for (tool_call_index, tc) in tool_calls.iter().enumerate() {
-        let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        let func = tc.get("function").unwrap_or(&empty_obj);
-        let name = func.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let id = match tc
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|id| !id.is_empty())
+        {
+            Some(id) => id,
+            None if strict_tool_arguments => {
+                return Err(ProviderError::RequestFailed(format!(
+                    "Assistant tool_call at message index {msg_index}, tool_call index \
+                     {tool_call_index} missing non-empty string 'id': {tc}"
+                )));
+            }
+            None => "",
+        };
+
+        let func = match tc.get("function").filter(|v| v.is_object()) {
+            Some(func) => func,
+            None if strict_tool_arguments => {
+                return Err(ProviderError::RequestFailed(format!(
+                    "Assistant tool_call at message index {msg_index}, tool_call index \
+                     {tool_call_index} missing required 'function' object: {tc}"
+                )));
+            }
+            None => &empty_obj,
+        };
+
+        let name = match func
+            .get("name")
+            .and_then(|v| v.as_str())
+            .filter(|name| !name.is_empty())
+        {
+            Some(name) => name,
+            None if strict_tool_arguments => {
+                return Err(ProviderError::RequestFailed(format!(
+                    "Assistant tool_call at message index {msg_index}, tool_call index \
+                     {tool_call_index} missing non-empty string 'function.name': {tc}"
+                )));
+            }
+            None => "",
+        };
         let input =
             convert_tool_call_input(msg_index, tool_call_index, tc, func, strict_tool_arguments)?;
 
@@ -946,7 +1003,7 @@ mod tests {
         assert_eq!(tool_result["content"], "4");
     }
 
-    fn request_with_assistant_tool_arguments(arguments: &str) -> ChatCompletionRequest {
+    fn request_with_assistant_tool_call(tool_call: Value) -> ChatCompletionRequest {
         ChatCompletionRequest {
             model: "claude-opus-4-6".to_string(),
             messages: vec![
@@ -955,11 +1012,7 @@ mod tests {
                     role: "assistant".to_string(),
                     content: MessageContent::Text(String::new()),
                     name: None,
-                    tool_calls: Some(vec![json!({
-                        "id": "toolu_bad",
-                        "type": "function",
-                        "function": {"name": "bash", "arguments": arguments}
-                    })]),
+                    tool_calls: Some(vec![tool_call]),
                     tool_call_id: None,
                 },
             ],
@@ -970,6 +1023,14 @@ mod tests {
             tool_choice: None,
             extra: std::collections::HashMap::new(),
         }
+    }
+
+    fn request_with_assistant_tool_arguments(arguments: &str) -> ChatCompletionRequest {
+        request_with_assistant_tool_call(json!({
+            "id": "toolu_bad",
+            "type": "function",
+            "function": {"name": "bash", "arguments": arguments}
+        }))
     }
 
     #[test]
@@ -999,6 +1060,94 @@ mod tests {
                 assert!(msg.contains("function.arguments"), "{msg}");
                 assert!(msg.contains("expected JSON object"), "{msg}");
                 assert!(msg.contains("array"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_request_errors_on_missing_assistant_tool_call_id() {
+        let request = request_with_assistant_tool_call(json!({
+            "type": "function",
+            "function": {"name": "bash", "arguments": "{}"}
+        }));
+        let err = AnthropicAdapter::new()
+            .transform_request(&request)
+            .expect_err("missing assistant tool_call id must fail request conversion");
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("'id'"), "{msg}");
+                assert!(msg.contains("message index 1"), "{msg}");
+                assert!(msg.contains("tool_call index 0"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_request_errors_on_missing_assistant_tool_call_function_object() {
+        let request = request_with_assistant_tool_call(json!({
+            "id": "toolu_bad",
+            "type": "function"
+        }));
+        let err = AnthropicAdapter::new()
+            .transform_request(&request)
+            .expect_err("missing assistant tool_call function object must fail request conversion");
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("'function' object"), "{msg}");
+                assert!(msg.contains("message index 1"), "{msg}");
+                assert!(msg.contains("tool_call index 0"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_request_errors_on_missing_assistant_tool_call_name() {
+        let request = request_with_assistant_tool_call(json!({
+            "id": "toolu_bad",
+            "type": "function",
+            "function": {"arguments": "{}"}
+        }));
+        let err = AnthropicAdapter::new()
+            .transform_request(&request)
+            .expect_err("missing assistant tool_call function.name must fail request conversion");
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("function.name"), "{msg}");
+                assert!(msg.contains("message index 1"), "{msg}");
+                assert!(msg.contains("tool_call index 0"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_request_errors_on_tool_result_missing_tool_call_id() {
+        let request = ChatCompletionRequest {
+            model: "claude-opus-4-6".to_string(),
+            messages: vec![ChatMessage {
+                role: "tool".to_string(),
+                content: MessageContent::Text("4".to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            max_tokens: Some(64),
+            temperature: None,
+            tools: None,
+            stream: None,
+            tool_choice: None,
+            extra: std::collections::HashMap::new(),
+        };
+        let err = AnthropicAdapter::new()
+            .transform_request(&request)
+            .expect_err("tool result without tool_call_id must fail request conversion");
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("tool_call_id"), "{msg}");
+                assert!(msg.contains("index 0"), "{msg}");
             }
             other => panic!("expected RequestFailed, got {other:?}"),
         }
