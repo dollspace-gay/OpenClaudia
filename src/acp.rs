@@ -940,7 +940,19 @@ impl AcpServer {
             }
 
             // Build the request
-            let tools = crate::tools::get_tool_definitions();
+            let tools =
+                match acp_tool_definitions_for_chat_request(crate::tools::get_tool_definitions()) {
+                    Ok(tools) => tools,
+                    Err(e) => {
+                        let text = format!("Internal ACP tool registry error: {e}");
+                        self.send_session_update(
+                            acp_session_id,
+                            "agent_message_chunk",
+                            &json!({"type": "text", "text": text}),
+                        );
+                        return "error".to_string();
+                    }
+                };
             // Crosslink #694: inject `.openclaudia/rules` content into the
             // system prompt so the ACP path receives the same rules
             // context the proxy path injects via `ContextInjector`. The
@@ -999,7 +1011,7 @@ impl AcpServer {
                 temperature: None,
                 max_tokens: None,
                 stream: Some(true),
-                tools: Some(serde_json::from_value(tools.clone()).unwrap_or_default()),
+                tools: Some(tools),
                 tool_choice: None,
                 extra: std::collections::HashMap::new(),
             };
@@ -2178,6 +2190,53 @@ fn decode_acp_messages(messages: &[Value]) -> Result<Vec<crate::proxy::ChatMessa
         .collect()
 }
 
+fn acp_tool_definitions_for_chat_request(definitions: Value) -> Result<Vec<Value>, String> {
+    let Value::Array(tools) = definitions else {
+        return Err(format!(
+            "expected tool registry to return an array, got {}",
+            value_type_name(&definitions)
+        ));
+    };
+
+    for (index, tool) in tools.iter().enumerate() {
+        let Some(tool_type) = tool.get("type").and_then(Value::as_str) else {
+            return Err(format!(
+                "tool definition at index {index} missing string 'type'"
+            ));
+        };
+        if tool_type != "function" {
+            return Err(format!(
+                "tool definition at index {index} has unsupported type '{tool_type}'"
+            ));
+        }
+        let function = tool
+            .get("function")
+            .ok_or_else(|| format!("tool definition at index {index} missing 'function' object"))?;
+        if !function.is_object() {
+            return Err(format!(
+                "tool definition at index {index} has non-object 'function'"
+            ));
+        }
+        let name = function
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| {
+                format!("tool definition at index {index} missing non-empty string 'function.name'")
+            })?;
+        if function
+            .get("parameters")
+            .is_some_and(|params| !params.is_object())
+        {
+            return Err(format!(
+                "tool definition '{name}' at index {index} has non-object 'function.parameters'"
+            ));
+        }
+    }
+
+    Ok(tools)
+}
+
 /// Result of executing a tool via ACP.
 #[derive(Debug)]
 struct AcpToolResult {
@@ -2681,6 +2740,52 @@ mod message_history_tests {
 
         assert!(err.contains("index 1"), "{err}");
         assert!(err.contains("content"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod tool_definition_tests {
+    use super::acp_tool_definitions_for_chat_request;
+    use serde_json::json;
+
+    #[test]
+    fn acp_tool_definitions_accept_registry_shape() {
+        let tools = acp_tool_definitions_for_chat_request(crate::tools::get_tool_definitions())
+            .expect("built-in tool registry must be valid for ACP chat requests");
+
+        assert!(!tools.is_empty(), "ACP must advertise built-in tools");
+        assert!(tools.iter().all(|tool| tool["type"] == "function"));
+    }
+
+    #[test]
+    fn acp_tool_definitions_reject_non_array_registry_shape() {
+        let err = acp_tool_definitions_for_chat_request(json!({"tools": []}))
+            .expect_err("non-array registry shape must fail");
+
+        assert!(err.contains("array"), "{err}");
+        assert!(err.contains("object"), "{err}");
+    }
+
+    #[test]
+    fn acp_tool_definitions_reject_malformed_tool_entry() {
+        let err = acp_tool_definitions_for_chat_request(json!([
+            {"type": "function", "function": {"parameters": {}}}
+        ]))
+        .expect_err("tool without function.name must fail");
+
+        assert!(err.contains("function.name"), "{err}");
+        assert!(err.contains("index 0"), "{err}");
+    }
+
+    #[test]
+    fn acp_tool_definitions_reject_non_object_parameters() {
+        let err = acp_tool_definitions_for_chat_request(json!([
+            {"type": "function", "function": {"name": "bad", "parameters": []}}
+        ]))
+        .expect_err("tool with non-object parameters must fail");
+
+        assert!(err.contains("bad"), "{err}");
+        assert!(err.contains("parameters"), "{err}");
     }
 }
 
