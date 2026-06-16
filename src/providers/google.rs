@@ -273,8 +273,13 @@ impl ProviderAdapter for GoogleAdapter {
         if let Some(error) = response.get("error") {
             let message = error
                 .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("Unknown error");
+                .and_then(Value::as_str)
+                .filter(|message| !message.is_empty())
+                .ok_or_else(|| {
+                    ProviderError::InvalidResponse(format!(
+                        "Gemini API error missing non-empty string 'message': {error}"
+                    ))
+                })?;
             let code = error
                 .get("code")
                 .and_then(serde_json::Value::as_u64)
@@ -292,34 +297,18 @@ impl ProviderAdapter for GoogleAdapter {
                 ProviderError::InvalidResponse("No candidates in response".to_string())
             })?;
 
-        let content = candidate
+        let parts = candidate
             .get("content")
             .and_then(|c| c.get("parts"))
-            .and_then(|p| p.as_array())
-            .map(|parts| {
-                parts
-                    .iter()
-                    .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
-                    .collect::<Vec<_>>()
-                    .join("")
-            })
-            .unwrap_or_default();
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                ProviderError::InvalidResponse(format!(
+                    "Gemini candidate missing content.parts array: {candidate}"
+                ))
+            })?;
+        let content = extract_gemini_text_content(parts)?;
 
-        // Extract function calls.
-        //
-        // Crosslink #785: tool-call ids are derived deterministically from
-        // `(ordinal, function_name)` so re-parsing the same upstream payload
-        // produces identical ids — restores parse idempotency that the prior
-        // `Uuid::new_v4()` formulation broke. The ordinal disambiguates
-        // multiple calls to the same function in one turn (e.g. two `bash`
-        // calls in a row do NOT collide on id `call_0_bash` / `call_1_bash`).
-        let tool_calls: Option<Vec<Value>> = candidate
-            .get("content")
-            .and_then(|c| c.get("parts"))
-            .and_then(|p| p.as_array())
-            .map(|parts| extract_gemini_tool_calls(parts.as_slice()))
-            .transpose()?
-            .flatten();
+        let tool_calls = extract_gemini_tool_calls(parts)?;
 
         let mut message = json!({
             "role": "assistant",
@@ -494,6 +483,33 @@ const fn args_type_name(value: &Value) -> &'static str {
     }
 }
 
+fn extract_gemini_text_content(parts: &[Value]) -> Result<String, ProviderError> {
+    let mut content = String::new();
+
+    for (index, part) in parts.iter().enumerate() {
+        if let Some(text_value) = part.get("text") {
+            let text = text_value.as_str().ok_or_else(|| {
+                ProviderError::InvalidResponse(format!(
+                    "Gemini content part at index {index} has non-string 'text': {part}"
+                ))
+            })?;
+            content.push_str(text);
+            continue;
+        }
+
+        if part.get("functionCall").is_some() {
+            continue;
+        }
+
+        return Err(ProviderError::InvalidResponse(format!(
+            "Gemini content part at index {index} has no supported text or functionCall field: \
+             {part}"
+        )));
+    }
+
+    Ok(content)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -597,6 +613,97 @@ mod tests {
         match err {
             ProviderError::RequestFailed(msg) => assert!(msg.contains("parameters"), "{msg}"),
             other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_response_concatenates_text_parts_and_keeps_tool_calls() {
+        let body = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"text": "hello "},
+                        {"functionCall": {"name": "bash", "args": {"command": "pwd"}}},
+                        {"text": "world"}
+                    ]
+                },
+                "finishReason": "STOP"
+            }]
+        });
+
+        let parsed = GoogleAdapter::new()
+            .transform_response(body, false)
+            .expect("valid mixed response should parse");
+
+        assert_eq!(parsed["choices"][0]["message"]["content"], "hello world");
+        let calls = parsed["choices"][0]["message"]["tool_calls"]
+            .as_array()
+            .expect("tool calls should be preserved");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["function"]["name"], "bash");
+    }
+
+    #[test]
+    fn transform_response_errors_on_missing_content_parts() {
+        let body = json!({
+            "candidates": [{
+                "content": {}
+            }]
+        });
+
+        let err = GoogleAdapter::new()
+            .transform_response(body, false)
+            .expect_err("missing content.parts must fail");
+
+        match err {
+            ProviderError::InvalidResponse(msg) => assert!(msg.contains("content.parts"), "{msg}"),
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_response_errors_on_non_string_text_part() {
+        let body = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"text": 123}
+                    ]
+                }
+            }]
+        });
+
+        let err = GoogleAdapter::new()
+            .transform_response(body, false)
+            .expect_err("non-string text part must fail");
+
+        match err {
+            ProviderError::InvalidResponse(msg) => assert!(msg.contains("'text'"), "{msg}"),
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_response_errors_on_unsupported_part_shape() {
+        let body = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"inlineData": {"mimeType": "image/png", "data": "..."}}
+                    ]
+                }
+            }]
+        });
+
+        let err = GoogleAdapter::new()
+            .transform_response(body, false)
+            .expect_err("unsupported response part must fail");
+
+        match err {
+            ProviderError::InvalidResponse(msg) => {
+                assert!(msg.contains("supported text or functionCall"), "{msg}");
+            }
+            other => panic!("expected InvalidResponse, got {other:?}"),
         }
     }
 
