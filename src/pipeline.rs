@@ -6,7 +6,7 @@
 use crate::memory::MemoryDb;
 use crate::permissions::PermissionManager;
 use crate::providers::{
-    convert_messages_to_anthropic_checked, convert_tools_to_anthropic,
+    convert_messages_to_anthropic_checked, convert_tool_definitions_to_anthropic_checked,
     convert_tools_to_gemini_functions, extract_gemini_text_content, get_adapter,
 };
 use crate::proxy::{self, normalize_base_url};
@@ -90,7 +90,8 @@ pub fn build_anthropic_request(
     let anthropic_messages =
         convert_messages_to_anthropic_checked(messages).map_err(|e| e.to_string())?;
     let openai_tools = tools::get_all_tool_definitions(true);
-    let anthropic_tools = convert_tools_to_anthropic(openai_tools.as_array().unwrap_or(&vec![]));
+    let anthropic_tools =
+        convert_tool_definitions_to_anthropic_checked(&openai_tools).map_err(|e| e.to_string())?;
 
     let mut req = serde_json::json!({
         "model": model,

@@ -33,7 +33,8 @@ use crate::session::TokenUsage;
 // Re-export all adapter types and public functions
 pub use anthropic::{
     build_system_blocks, build_system_blocks_from_string, convert_messages_to_anthropic,
-    convert_messages_to_anthropic_checked, convert_tools_to_anthropic, AnthropicAdapter,
+    convert_messages_to_anthropic_checked, convert_tool_definitions_to_anthropic_checked,
+    convert_tools_to_anthropic, convert_tools_to_anthropic_checked, AnthropicAdapter,
 };
 pub use api_key::{ApiKey, ApiKeyError, MAX_API_KEY_LEN, REDACTED_PLACEHOLDER};
 pub use deepseek::DeepSeekAdapter;

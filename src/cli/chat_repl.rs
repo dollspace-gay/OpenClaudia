@@ -46,7 +46,7 @@ use crate::{
 };
 
 use openclaudia::providers::{
-    convert_messages_to_anthropic_checked, convert_tools_to_anthropic,
+    convert_messages_to_anthropic_checked, convert_tool_definitions_to_anthropic_checked,
     convert_tools_to_gemini_functions, extract_gemini_text_content,
 };
 use openclaudia::tools::safe_truncate;
@@ -2219,8 +2219,8 @@ impl ChatRepl {
         let anthropic_messages = convert_messages_to_anthropic_checked(&self.chat_session.messages)
             .map_err(|e| e.to_string())?;
         let openai_tools = tools::get_all_tool_definitions(true);
-        let anthropic_tools =
-            convert_tools_to_anthropic(openai_tools.as_array().unwrap_or(&vec![]));
+        let anthropic_tools = convert_tool_definitions_to_anthropic_checked(&openai_tools)
+            .map_err(|e| e.to_string())?;
 
         let mut followup_req = serde_json::json!({
             "model": self.model,
@@ -2754,8 +2754,8 @@ impl ChatRepl {
                 convert_messages_to_anthropic_checked(&self.chat_session.messages)
                     .map_err(|e| e.to_string())?;
             let openai_tools = tools::get_all_tool_definitions(true);
-            let anthropic_tools =
-                convert_tools_to_anthropic(openai_tools.as_array().unwrap_or(&vec![]));
+            let anthropic_tools = convert_tool_definitions_to_anthropic_checked(&openai_tools)
+                .map_err(|e| e.to_string())?;
             let mut req = serde_json::json!({
                 "model": self.model,
                 "messages": anthropic_messages,

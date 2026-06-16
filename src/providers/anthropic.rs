@@ -629,6 +629,38 @@ pub fn convert_tools_to_anthropic(tools: &[Value]) -> Vec<Value> {
     AnthropicAdapter::convert_tools(tools, true)
 }
 
+/// Checked variant of [`convert_tools_to_anthropic`].
+///
+/// # Errors
+///
+/// Returns [`ProviderError::RequestFailed`] if any tool is missing the
+/// `function` object or `function.name` is missing/non-string/empty.
+pub fn convert_tools_to_anthropic_checked(tools: &[Value]) -> Result<Vec<Value>, ProviderError> {
+    AnthropicAdapter::convert_tools_checked(tools, true)
+}
+
+/// Convert a JSON value expected to contain an `OpenAI` tools array to
+/// Anthropic tool definitions.
+///
+/// This is intended for call sites that receive tool definitions as a generic
+/// [`Value`] from the built-in registry and should fail closed if that registry
+/// ever stops returning an array.
+///
+/// # Errors
+///
+/// Returns [`ProviderError::RequestFailed`] if the top-level value is not an
+/// array or if any contained tool is malformed.
+pub fn convert_tool_definitions_to_anthropic_checked(
+    tools: &Value,
+) -> Result<Vec<Value>, ProviderError> {
+    let tool_array = tools.as_array().ok_or_else(|| {
+        ProviderError::RequestFailed(format!(
+            "Anthropic tool definitions must be a JSON array: {tools}"
+        ))
+    })?;
+    convert_tools_to_anthropic_checked(tool_array)
+}
+
 /// Convert messages from `OpenAI` format to Anthropic format
 ///
 /// Handles the critical differences:
@@ -1767,8 +1799,37 @@ mod tests {
     #[test]
     fn convert_tools_checked_errors_on_malformed_input() {
         let tools = vec![json!({"type": "function", "function": {}})];
-        let err = AnthropicAdapter::convert_tools_checked(&tools, true)
+        let err = convert_tools_to_anthropic_checked(&tools)
             .expect_err("missing function.name must surface (#413)");
         assert!(matches!(err, ProviderError::RequestFailed(_)));
+    }
+
+    #[test]
+    fn convert_tool_definitions_checked_errors_on_non_array() {
+        let err = convert_tool_definitions_to_anthropic_checked(&json!({"not": "tools"}))
+            .expect_err("non-array tool registry must fail closed");
+
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("JSON array"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_tool_definitions_checked_errors_on_malformed_entry() {
+        let err = convert_tool_definitions_to_anthropic_checked(&json!([
+            {"type": "function", "function": {}}
+        ]))
+        .expect_err("malformed tool registry entry must fail closed");
+
+        match err {
+            ProviderError::RequestFailed(msg) => {
+                assert!(msg.contains("function.name"), "{msg}");
+                assert!(msg.contains("index 0"), "{msg}");
+            }
+            other => panic!("expected RequestFailed, got {other:?}"),
+        }
     }
 }
