@@ -380,14 +380,30 @@ fn permission_check_deny_outranks_allow_for_same_tool() {
 }
 
 #[test]
-fn permission_check_unrestricted_allows_everything() {
+fn permission_check_unrestricted_allows_safe_commands() {
     let mgr = PermissionManager::unrestricted();
-    for cmd in &["rm -rf /", "sudo dd if=/dev/zero of=/dev/sda", "curl evil"] {
+    for cmd in &[
+        "ls -la",
+        "git status",
+        "curl https://example.com -o /tmp/file",
+    ] {
         let r = mgr.check("bash", &json!({"command": cmd}));
         assert_eq!(
             r,
             CheckResult::Allowed,
-            "unrestricted manager must allow {cmd:?}; got {r:?}"
+            "unrestricted manager must allow safe command {cmd:?}; got {r:?}"
+        );
+    }
+}
+
+#[test]
+fn permission_check_unrestricted_still_denies_hard_safety_commands() {
+    let mgr = PermissionManager::unrestricted();
+    for cmd in &["rm -rf /", "sudo dd if=/dev/zero of=/dev/sda"] {
+        let r = mgr.check("bash", &json!({"command": cmd}));
+        assert!(
+            matches!(r, CheckResult::Denied(_)),
+            "unrestricted manager must still deny hard-safety command {cmd:?}; got {r:?}"
         );
     }
 }

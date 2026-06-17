@@ -99,6 +99,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - TUI: every turn now dual-writes — the existing JSON snapshot at `~/.local/share/openclaudia/chat_sessions/<uuid>.json` stays for backward compat, and new entries also append to the JSONL transcript via `App::persist_transcript_tail`. Watermark tracking skips re-appending on resume
 
 ### Fixed
+- permissions: `PermissionManager::unrestricted()` now skips prompts/rules without bypassing hard safety checks for denylisted Bash commands, `dangerously_disable_sandbox` tool args, `.git` writes, or `.claude/settings.json`.
 - tui/messages: thinking deltas now render as a collapsed `∴ Thinking… (Xs)` indicator (live) replaced by `∴ Thought for X.Xs` once regular text streams in, matching Claude Code. Raw reasoning tokens are hidden (accumulated in `MessageList::thinking_buffer` for session persistence) rather than inlined into the assistant message
 - deps: bumped rustls-webpki 0.103.10 → 0.103.12 (GHSA-965h-392x-2mh5, GHSA on wildcard name constraints), rand 0.9.2 → 0.9.4 and rand 0.10.0 → 0.10.1 (GHSA on `rand::rng()` unsoundness). Closes 6 open dependabot alerts in both Cargo.lock and fuzz/Cargo.lock
 - anthropic default model changed from `claude-sonnet-4-6` to `claude-opus-4-6` in cmd_tui, cmd_chat `resolve_model_name`, and cmd_acp

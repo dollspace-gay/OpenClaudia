@@ -375,6 +375,11 @@ pub struct PermissionManager {
     tui_always_denied: Mutex<HashSet<String>>,
 }
 
+struct HardSafetyDenial {
+    reason: String,
+    target: String,
+}
+
 impl PermissionManager {
     /// Create a new `PermissionManager`, loading persisted rules from disk.
     pub fn new(
@@ -405,7 +410,11 @@ impl PermissionManager {
         }
     }
 
-    /// Build an explicitly unrestricted manager that allows every tool call.
+    /// Build an explicitly unrestricted manager that skips prompts and rules.
+    ///
+    /// Hard safety checks still apply: catastrophic bash commands,
+    /// prompt-injected sandbox escalation, and writes to protected control
+    /// files are denied before the `enabled=false` shortcut fires.
     ///
     /// This is the migration target for call sites that previously passed
     /// `None` through `Option<&PermissionManager>`: the new strict dispatch
@@ -436,6 +445,11 @@ impl PermissionManager {
     ///
     /// Returns `Allowed`, `Denied`, or `NeedsPrompt`.
     pub fn check(&self, tool_name: &str, tool_args: &serde_json::Value) -> CheckResult {
+        if let Some(denial) = Self::hard_safety_denial(tool_name, tool_args) {
+            Self::log_permission_decision("denied", "hard_safety", tool_name, &denial.target, "");
+            return CheckResult::Denied(denial.reason);
+        }
+
         if !self.enabled {
             return CheckResult::Allowed;
         }
@@ -458,36 +472,6 @@ impl PermissionManager {
                 return CheckResult::Allowed;
             }
         };
-
-        // SECURITY (crosslink #795): a model that injects
-        // `dangerously_disable_sandbox: true` into Bash tool args is
-        // making an active escalation attempt. The previous code
-        // logged a warn and fell through to normal rule processing —
-        // which is fine for the surface defence (the flag is never
-        // honoured), but it misses the audit signal that the model
-        // tried at all. Emit a structured error event and DENY the
-        // call outright so the attempted escalation is recorded as a
-        // bounded refusal rather than a silent ignore.
-        if canonical_tool == "Bash" {
-            if let Some(disable) = tool_args.get("dangerously_disable_sandbox") {
-                if disable.as_bool().unwrap_or(false) {
-                    tracing::error!(
-                        target: "openclaudia::permissions",
-                        event = "sandbox_escalation_attempt",
-                        tool = %canonical_tool,
-                        target_arg = %target,
-                        "model attempted dangerously_disable_sandbox=true in tool \
-                         args — REJECTED. The flag is only honoured from user-level \
-                         configuration; this invocation is denied (crosslink #795)."
-                    );
-                    return CheckResult::Denied(
-                        "dangerously_disable_sandbox cannot be set from tool \
-                         arguments — only from user-level configuration"
-                            .to_string(),
-                    );
-                }
-            }
-        }
 
         // Permission-decision audit logging (crosslink #870) — see
         // `log_permission_decision` for the structured event shape.
@@ -732,6 +716,104 @@ impl PermissionManager {
             // either didn't supply it or supplied a non-string value.
             _ => Some(Err(canonical)),
         }
+    }
+
+    /// Non-negotiable safety checks that survive explicit permission bypasses.
+    ///
+    /// This sits before the `enabled=false` shortcut used by
+    /// [`Self::unrestricted`], matching Claude Code's bypass mode: operators
+    /// can skip prompts, but prompt-injected sandbox escalation, hard-denylisted
+    /// shell payloads, and writes to protected control files still fail closed.
+    fn hard_safety_denial(
+        tool_name: &str,
+        tool_args: &serde_json::Value,
+    ) -> Option<HardSafetyDenial> {
+        match tool_name.to_ascii_lowercase().as_str() {
+            "bash" => Self::bash_hard_safety_denial(tool_args),
+            "edit" | "edit_file" | "write" | "write_file" => {
+                Self::write_target_hard_safety_denial(tool_args, "path")
+            }
+            "notebook_edit" => Self::write_target_hard_safety_denial(tool_args, "notebook_path"),
+            _ => None,
+        }
+    }
+
+    fn bash_hard_safety_denial(tool_args: &serde_json::Value) -> Option<HardSafetyDenial> {
+        if tool_args
+            .get("dangerously_disable_sandbox")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            let target = tool_args
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            tracing::error!(
+                target: "openclaudia::permissions",
+                event = "sandbox_escalation_attempt",
+                tool = "Bash",
+                target_arg = %target,
+                "model attempted dangerously_disable_sandbox=true in tool \
+                 args — REJECTED. The flag is only honoured from user-level \
+                 configuration; this invocation is denied (crosslink #795)."
+            );
+            return Some(HardSafetyDenial {
+                reason: "dangerously_disable_sandbox cannot be set from tool \
+                         arguments — only from user-level configuration"
+                    .to_string(),
+                target: target.to_string(),
+            });
+        }
+
+        let command = tool_args.get("command")?.as_str()?;
+        crate::tools::validate_command(command)
+            .err()
+            .map(|reason| HardSafetyDenial {
+                reason: format!("Denied by bash hard safety check: {reason}"),
+                target: command.to_string(),
+            })
+    }
+
+    fn write_target_hard_safety_denial(
+        tool_args: &serde_json::Value,
+        path_key: &str,
+    ) -> Option<HardSafetyDenial> {
+        let path = tool_args.get(path_key)?.as_str()?;
+        Self::protected_write_target_reason(path).map(|reason| HardSafetyDenial {
+            reason: reason.to_string(),
+            target: path.to_string(),
+        })
+    }
+
+    fn protected_write_target_reason(path: &str) -> Option<&'static str> {
+        let components = Self::normalised_path_components(path);
+
+        if components.iter().any(|component| component == ".git") {
+            return Some("Denied by hard safety check: writes inside .git are protected");
+        }
+
+        components.windows(2).find_map(|window| {
+            if window[0] == ".claude" && window[1] == "settings.json" {
+                Some("Denied by hard safety check: .claude/settings.json is protected")
+            } else {
+                None
+            }
+        })
+    }
+
+    fn normalised_path_components(path: &str) -> Vec<String> {
+        let slash_path = path.replace('\\', "/");
+        let mut components = Vec::new();
+        for raw in slash_path.split('/') {
+            match raw {
+                "" | "." => {}
+                ".." => {
+                    components.pop();
+                }
+                component => components.push(component.to_ascii_lowercase()),
+            }
+        }
+        components
     }
 
     /// Emit a structured permission-decision audit event (crosslink #870).
@@ -1063,19 +1145,32 @@ mod tests {
         (mgr, dir)
     }
 
-    /// Fix #282: a manager built with `enabled = false` still auto-allows, but that is no
-    /// longer the default posture. The default (`PermissionsConfig::default()`) now produces
-    /// `enabled = true`, so a fresh install is deny-by-default.
+    /// Fix #282/#586: a manager built with `enabled = false` still auto-allows
+    /// ordinary calls, but hard safety checks remain non-negotiable. The default
+    /// (`PermissionsConfig::default()`) now produces `enabled = true`, so a fresh
+    /// install is deny-by-default.
     #[test]
     fn test_disabled_always_allows() {
-        // `enabled = false` is an explicit opt-out — still short-circuits to Allowed.
+        // `enabled = false` is an explicit opt-out from prompts/rules —
+        // safe calls still short-circuit to Allowed.
         let (mgr, _dir) = make_manager(false, vec![]);
-        let result = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        let result = mgr.check("bash", &json!({"command": "ls -la"}));
         assert_eq!(result, CheckResult::Allowed);
     }
 
+    #[test]
+    fn test_disabled_still_denies_hard_safety_bash() {
+        let (mgr, _dir) = make_manager(false, vec![]);
+        let result = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        assert!(
+            matches!(result, CheckResult::Denied(_)),
+            "#586: enabled=false must not bypass bash hard safety, got: {result:?}"
+        );
+    }
+
     /// Fix #282: the DEFAULT `PermissionsConfig` now has `enabled = true` (deny-by-default).
-    /// A manager built from `PermissionsConfig::default()` must prompt for destructive calls.
+    /// A manager built from `PermissionsConfig::default()` must prompt for ordinary
+    /// unmatched calls.
     #[test]
     fn test_default_config_is_deny_by_default() {
         use crate::config::PermissionsConfig;
@@ -1088,11 +1183,11 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let persist_path = dir.path().join("permissions.json");
         let mgr = PermissionManager::new(persist_path, cfg.enabled, cfg.default_allow);
-        // A fresh default config must NOT auto-allow rm -rf /
-        let result = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        // A fresh default config must NOT auto-allow a normal bash command.
+        let result = mgr.check("bash", &json!({"command": "git status"}));
         assert!(
             matches!(result, CheckResult::NeedsPrompt { .. }),
-            "#282: default config must produce NeedsPrompt for destructive bash, got: {result:?}"
+            "#282: default config must produce NeedsPrompt for ordinary bash, got: {result:?}"
         );
     }
 
@@ -1117,15 +1212,16 @@ mod tests {
             !cfg.enabled,
             "#282: explicit enabled=false in YAML must be respected"
         );
-        // An explicitly-disabled manager must short-circuit to Allowed
+        // An explicitly-disabled manager must short-circuit to Allowed for
+        // ordinary calls.
         let dir = tempfile::TempDir::new().unwrap();
         let persist_path = dir.path().join("permissions.json");
         let mgr = PermissionManager::new(persist_path, cfg.enabled, cfg.default_allow);
-        let result = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        let result = mgr.check("bash", &json!({"command": "ls -la"}));
         assert_eq!(
             result,
             CheckResult::Allowed,
-            "#282: explicit enabled=false must still short-circuit to Allowed"
+            "#282: explicit enabled=false must still short-circuit safe calls to Allowed"
         );
     }
 
@@ -1170,7 +1266,7 @@ mod tests {
 
         // Non-matching command still needs prompt
         let result2 = mgr.check("bash", &json!({"command": "rm -rf /"}));
-        assert!(matches!(result2, CheckResult::NeedsPrompt { .. }));
+        assert!(matches!(result2, CheckResult::Denied(_)));
     }
 
     #[test]
@@ -1489,8 +1585,8 @@ mod tests {
 /// These tests pin the CURRENT behaviour of `PermissionManager` against
 /// the Phase 1 spec extracted in crosslink #531. They do **not** fix
 /// bugs — they document divergences from CC so that regressions are
-/// caught and so that each gap issue (#570, #572, #576, #581, #586)
-/// has an explicit, labelled test.
+/// caught and so that each gap issue (#570, #572, #576, #581) plus the
+/// #586 hard-safety regression has an explicit, labelled test.
 ///
 /// Security-critical divergences are marked `// SECURITY: #<issue>`.
 /// Denial paths are the dominant test style, matching the permission
@@ -1564,24 +1660,18 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B1-deny-2: OC has NO pre-allow deny tier (gap vs CC alwaysDenyRules).
-    /// A pattern that would be a CC alwaysDenyRule can only be expressed in OC
-    /// as a session Deny. Without that session rule, `default_allow` wins.
-    /// Documents the gap from spec §B1 "Security divergence".
+    /// B1-deny-2: hard safety fires before `default_allow`.
+    /// A permissive default rule must not approve commands that the Bash
+    /// hard denylist refuses.
     #[test]
-    fn b1_gap_no_pre_allow_deny_tier_default_allow_wins() {
+    fn b1_hard_safety_beats_default_allow() {
         // Allow all bash commands via default_allow — no session deny rule.
         let (mgr, _dir) = enabled(vec!["**"]);
 
-        // CC could have alwaysDenyRules that fire before step 2a allow lookup.
-        // OC cannot replicate that without a session Deny rule.
-        // Current OC behaviour: Allowed (default_allow step 3 fires).
-        // A future pre-allow deny tier (parity with CC) would return Denied here.
         let r = mgr.check("bash", &json!({"command": "rm -rf /"}));
-        assert_eq!(
-            r,
-            CheckResult::Allowed,
-            "B1 gap doc: without a session Deny, OC cannot short-circuit before allow lookup"
+        assert!(
+            matches!(r, CheckResult::Denied(_)),
+            "#586: hard safety must beat permissive default_allow; got {r:?}"
         );
     }
 
@@ -1647,9 +1737,9 @@ mod phase2_spec_pins {
     fn b2_single_star_does_not_match_slash() {
         let (mgr, _dir) = enabled(vec!["*"]);
 
-        // "rm -rf /" contains a `/` — OC `*` → `[^/]*` which stops at `/`.
+        // "cat /tmp/file" contains a `/` — OC `*` → `[^/]*` which stops at `/`.
         // SECURITY: #576 — CC `*` → `.*` which WOULD match this. OC is safer here.
-        let r = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        let r = mgr.check("bash", &json!({"command": "cat /tmp/file"}));
         assert!(
             matches!(r, CheckResult::NeedsPrompt { .. }),
             "B2/B6 #576: single-star must not allow commands containing '/'; got {r:?}"
@@ -1664,66 +1754,55 @@ mod phase2_spec_pins {
         );
     }
 
-    // ── B3 · unrestricted() bypasses ALL checks ────────────────────────────
+    // ── B3 · unrestricted() bypasses prompts/rules, not hard safety ───────
 
-    /// B3-deny-1 (SECURITY: #586): `unrestricted()` allows destructive bash commands.
-    /// CC bypassPermissions still enforces step 1g safetyCheck; OC does not.
+    /// B3-deny-1 (SECURITY: #586): `unrestricted()` still denies destructive bash.
+    /// CC bypassPermissions still enforces step 1g safetyCheck; OC now does too.
     #[test]
-    fn b3_unrestricted_allows_destructive_bash() {
+    fn b3_unrestricted_denies_destructive_bash() {
         let mgr = PermissionManager::unrestricted();
-        // SECURITY: #586 — CC would still run safetyCheck (step 1g) here.
-        // OC short-circuits at enabled=false before any check.
         let r = mgr.check("bash", &json!({"command": "rm -rf /"}));
-        assert_eq!(
-            r,
-            CheckResult::Allowed,
-            "B3 SECURITY #586: unrestricted() currently allows rm -rf / (CC would deny via safetyCheck)"
+        assert!(
+            matches!(r, CheckResult::Denied(_)),
+            "B3 SECURITY #586: unrestricted() must deny rm -rf / via hard safety; got {r:?}"
         );
     }
 
-    /// B3-deny-2 (SECURITY: #586): `unrestricted()` allows writes to `.git/config`.
+    /// B3-deny-2 (SECURITY: #586): `unrestricted()` still blocks `.git/config`.
     /// CC's bypassPermissions mode still blocks .git/ writes via step 1g.
     #[test]
-    fn b3_unrestricted_allows_git_config_write() {
+    fn b3_unrestricted_denies_git_config_write() {
         let mgr = PermissionManager::unrestricted();
-        // SECURITY: #586 — CC bypassPermissions denies .git/config edits via safetyCheck.
-        // OC unrestricted() is a superset bypass; no safety-path check exists.
         let r = mgr.check("edit_file", &json!({"path": ".git/config"}));
-        assert_eq!(
-            r,
-            CheckResult::Allowed,
-            "B3 SECURITY #586: unrestricted() must currently return Allowed for .git/config (documents gap)"
+        assert!(
+            matches!(r, CheckResult::Denied(_)),
+            "B3 SECURITY #586: unrestricted() must deny .git/config edits; got {r:?}"
         );
     }
 
-    /// B3-deny-3 (SECURITY: #586): `unrestricted()` allows writes to `.claude/settings.json`.
+    /// B3-deny-3 (SECURITY: #586): `unrestricted()` blocks `.claude/settings.json`.
     #[test]
-    fn b3_unrestricted_allows_claude_settings_write() {
+    fn b3_unrestricted_denies_claude_settings_write() {
         let mgr = PermissionManager::unrestricted();
-        // SECURITY: #586
         let r = mgr.check("write_file", &json!({"path": ".claude/settings.json"}));
-        assert_eq!(
-            r,
-            CheckResult::Allowed,
-            "B3 SECURITY #586: unrestricted() must currently return Allowed for .claude/settings.json"
+        assert!(
+            matches!(r, CheckResult::Denied(_)),
+            "B3 SECURITY #586: unrestricted() must deny .claude/settings.json writes; got {r:?}"
         );
     }
 
     /// B3-deny-4 (SECURITY: #586): `dangerously_disable_sandbox` check in enabled mode
-    /// is unreachable via `unrestricted()` — the short-circuit fires first.
+    /// also applies via `unrestricted()`.
     #[test]
-    fn b3_unrestricted_bypasses_sandbox_flag_check() {
+    fn b3_unrestricted_denies_sandbox_flag_check() {
         let mgr = PermissionManager::unrestricted();
-        // The sandbox-flag check (lines 155-169) is inside enabled=true branch.
-        // SECURITY: #586 — unrestricted() skips it entirely.
         let r = mgr.check(
             "bash",
             &json!({"command": "id", "dangerously_disable_sandbox": true}),
         );
-        assert_eq!(
-            r,
-            CheckResult::Allowed,
-            "B3 SECURITY #586: unrestricted bypasses sandbox-flag check"
+        assert!(
+            matches!(r, CheckResult::Denied(_)),
+            "B3 SECURITY #586: unrestricted must deny sandbox flag escalation; got {r:?}"
         );
     }
 
@@ -1792,7 +1871,7 @@ mod phase2_spec_pins {
         );
     }
 
-    /// B6-deny-3 (SECURITY: #576): `"rm *"` does NOT match `"rm -rf /"` in OC.
+    /// B6-deny-3 (SECURITY: #576): `"rm *"` does NOT match `"rm /tmp/file"` in OC.
     /// CC `"rm *"` → `^rm .*$` which WOULD match (`.` matches `/`).
     /// OC `"rm *"` → `^rm [^/]*$` which does NOT match (stops at `/`).
     /// OC is MORE restrictive here; documents the portability break.
@@ -1800,10 +1879,10 @@ mod phase2_spec_pins {
     fn b6_rm_star_does_not_match_path_with_slash() {
         let (mgr, _dir) = enabled(vec!["rm *"]);
         // SECURITY: #576 — OC is safer than CC for this pattern.
-        let r = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        let r = mgr.check("bash", &json!({"command": "rm /tmp/file"}));
         assert!(
             matches!(r, CheckResult::NeedsPrompt { .. }),
-            "B6 #576: 'rm *' must not match 'rm -rf /' in OC (slash blocked by [^/]*)"
+            "B6 #576: 'rm *' must not match 'rm /tmp/file' in OC (slash blocked by [^/]*)"
         );
     }
 
@@ -1823,14 +1902,15 @@ mod phase2_spec_pins {
 
     // ── B7 · Default config is deny-by-default (Fix #282 + #581) ───────────
     //
-    // Pre-fix: PermissionsConfig::default() had enabled=false → allow-all.
+    // Pre-fix: PermissionsConfig::default() had enabled=false → prompt/rule bypass.
     // Post-fix (#282): default is enabled=true → deny-by-default (CC parity).
     // The `disabled()` helper still constructs an explicit enabled=false manager
     // for tests that need to verify that path still short-circuits.
 
     /// B7-deny-1 (FIX #282 / SECURITY: #581): `PermissionsConfig::default()` now has
     /// `enabled=true`, so a fresh install is deny-by-default, matching CC.
-    /// The old allow-all posture required explicitly constructing with `enabled=false`.
+    /// The old prompt/rule bypass posture required explicitly constructing
+    /// with `enabled=false`; hard safety still applies.
     #[test]
     fn b7_default_config_is_deny_by_default_not_allow_all() {
         use crate::config::PermissionsConfig;
@@ -1844,16 +1924,16 @@ mod phase2_spec_pins {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("perms.json");
         let mgr = PermissionManager::new(path, cfg.enabled, cfg.default_allow);
-        let r = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        let r = mgr.check("bash", &json!({"command": "git status"}));
         assert!(
             matches!(r, CheckResult::NeedsPrompt { .. }),
-            "FIX #282/#581: default config must deny (NeedsPrompt) rm -rf /, got {r:?}"
+            "FIX #282/#581: default config must deny (NeedsPrompt) ordinary bash, got {r:?}"
         );
     }
 
-    /// B7-deny-2 (FIX #282): default config denies writes to safety-sensitive paths.
+    /// B7-deny-2 (FIX #282/#586): default config blocks safety-sensitive paths.
     #[test]
-    fn b7_default_config_denies_git_config_edit() {
+    fn b7_default_config_blocks_git_config_edit() {
         use crate::config::PermissionsConfig;
         let cfg = PermissionsConfig::default();
         let dir = TempDir::new().unwrap();
@@ -1861,21 +1941,22 @@ mod phase2_spec_pins {
         let mgr = PermissionManager::new(path, cfg.enabled, cfg.default_allow);
         let r = mgr.check("edit_file", &json!({"path": ".git/config"}));
         assert!(
-            matches!(r, CheckResult::NeedsPrompt { .. }),
-            "FIX #282: default config must deny (NeedsPrompt) .git/config edits, got {r:?}"
+            matches!(r, CheckResult::Denied(_)),
+            "FIX #282/#586: default config must hard-deny .git/config edits, got {r:?}"
         );
     }
 
-    /// B7-explicit-disabled: explicit `enabled=false` still short-circuits to Allowed
-    /// (the old default behaviour, now only reachable by opting out explicitly).
+    /// B7-explicit-disabled: explicit `enabled=false` still short-circuits
+    /// ordinary calls to Allowed (the old default behaviour, now only reachable
+    /// by opting out explicitly).
     #[test]
-    fn b7_explicit_disabled_allows_all() {
+    fn b7_explicit_disabled_allows_safe_calls() {
         let mgr = disabled();
-        let r = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        let r = mgr.check("bash", &json!({"command": "ls -la"}));
         assert_eq!(
             r,
             CheckResult::Allowed,
-            "B7: explicit enabled=false must still short-circuit to Allowed"
+            "B7: explicit enabled=false must still short-circuit safe calls to Allowed"
         );
     }
 
@@ -1884,7 +1965,7 @@ mod phase2_spec_pins {
     #[test]
     fn b7_enabled_empty_default_allow_is_deny_by_default() {
         let (mgr, _dir) = enabled(vec![]);
-        for cmd in ["rm -rf /", "ls", "cargo build", "cat /etc/passwd"] {
+        for cmd in ["ls", "cargo build", "cat /etc/passwd"] {
             let r = mgr.check("bash", &json!({"command": cmd}));
             assert!(
                 matches!(r, CheckResult::NeedsPrompt { .. }),
@@ -1899,7 +1980,7 @@ mod phase2_spec_pins {
     fn b7_catchall_star_does_not_allow_slash_commands() {
         let (mgr, _dir) = enabled(vec!["*"]);
         // SECURITY: #576 — OC is MORE restrictive than CC for catchall `*`.
-        let r = mgr.check("bash", &json!({"command": "rm -rf /"}));
+        let r = mgr.check("bash", &json!({"command": "cat /tmp/file"}));
         assert!(
             matches!(r, CheckResult::NeedsPrompt { .. }),
             "B7 #576: OC '*' catchall must not allow commands containing '/' (diverges from CC '.*')"

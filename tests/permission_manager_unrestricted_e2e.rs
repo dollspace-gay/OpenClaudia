@@ -1,6 +1,6 @@
 //! End-to-end tests for `permissions::PermissionManager::unrestricted`
 //! plus `is_enabled` predicate. Pins the `unrestricted()`
-//! constructor's enabled=false short-circuit and the
+//! constructor's enabled=false prompt/rule short-circuit and the
 //! empty-state contract.
 //!
 //! Sprint 211 of the verification effort. Sprint 210 covered TUI
@@ -42,12 +42,12 @@ fn unrestricted_manager_has_no_session_rules() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section B — unrestricted check() short-circuits to Allowed
+// Section B — unrestricted check() short-circuits safe calls to Allowed
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn unrestricted_allows_every_tool_invocation() {
-    // PINS DOC: enabled=false → check() returns Allowed.
+fn unrestricted_allows_safe_tool_invocation() {
+    // PINS DOC: enabled=false → safe calls return Allowed.
     let mgr = PermissionManager::unrestricted();
     let outcome = mgr.check("Bash", &json!({"command": "ls"}));
     assert_eq!(outcome, CheckResult::Allowed);
@@ -61,12 +61,33 @@ fn unrestricted_allows_edit_tool() {
 }
 
 #[test]
-fn unrestricted_allows_destructive_command_without_rules() {
+fn unrestricted_denies_destructive_command_without_rules() {
     let mgr = PermissionManager::unrestricted();
     let outcome = mgr.check("Bash", &json!({"command": "rm -rf /"}));
-    // unrestricted means even "rm -rf /" passes the gate
-    // (it's still blocked by validate_command's denylist later).
-    assert_eq!(outcome, CheckResult::Allowed);
+    assert!(
+        matches!(outcome, CheckResult::Denied(_)),
+        "unrestricted must not bypass hard safety for rm -rf /; got {outcome:?}"
+    );
+}
+
+#[test]
+fn unrestricted_denies_protected_git_paths() {
+    let mgr = PermissionManager::unrestricted();
+    let outcome = mgr.check("Edit", &json!({"path": ".git/config"}));
+    assert!(
+        matches!(outcome, CheckResult::Denied(_)),
+        "unrestricted must not bypass hard safety for .git paths; got {outcome:?}"
+    );
+}
+
+#[test]
+fn unrestricted_denies_claude_settings_path() {
+    let mgr = PermissionManager::unrestricted();
+    let outcome = mgr.check("Write", &json!({"path": ".claude/settings.json"}));
+    assert!(
+        matches!(outcome, CheckResult::Denied(_)),
+        "unrestricted must not bypass hard safety for .claude/settings.json; got {outcome:?}"
+    );
 }
 
 #[test]
@@ -94,14 +115,15 @@ fn unrestricted_allows_session_rule_mutations() {
 
 #[test]
 fn unrestricted_check_ignores_session_rules_due_to_enabled_false() {
-    // PINS: even a Deny rule doesn't take effect when enabled=false.
+    // PINS: even a Deny rule doesn't take effect when enabled=false, provided
+    // the call itself does not trip hard safety.
     let mut mgr = PermissionManager::unrestricted();
     mgr.add_session_rule(PermissionRule {
         tool: "Bash".to_string(),
         pattern: "*".to_string(),
         decision: PermissionDecision::Deny,
     });
-    let outcome = mgr.check("Bash", &json!({"command": "anything"}));
+    let outcome = mgr.check("Bash", &json!({"command": "echo anything"}));
     assert_eq!(
         outcome,
         CheckResult::Allowed,
@@ -179,7 +201,7 @@ fn check_under_unrestricted_is_deterministic() {
 }
 
 #[test]
-fn check_under_unrestricted_with_different_tools_yields_allowed() {
+fn check_under_unrestricted_with_safe_or_malformed_targets_yields_allowed() {
     let mgr = PermissionManager::unrestricted();
     for tool in ["Bash", "Edit", "Write", "Read", "Glob", "Grep"] {
         let outcome = mgr.check(tool, &json!({}));
