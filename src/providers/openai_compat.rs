@@ -52,12 +52,11 @@ pub(super) enum ThinkingInjector {
     /// (e.g. `gpt-4`) get no change — matching prior `OpenAIAdapter`
     /// behaviour.
     OpenAiReasoningEffort,
-    /// `DeepSeek` R1 / reasoner.
+    /// `DeepSeek` V4 thinking controls.
     ///
-    /// Sets `enable_thinking: true` if and only if `thinking.enabled`.
-    /// When disabled, no field is added — matching prior
-    /// `DeepSeekAdapter` behaviour (silent no-op).
-    DeepSeekEnableThinking,
+    /// Sets `thinking: {type:"enabled"|"disabled"}`. When enabled, also
+    /// sets `reasoning_effort` to `high` or `max`.
+    DeepSeekThinking,
     /// Qwen `QwQ` / Alibaba.
     ///
     /// Always sets `enable_thinking` to the value of `thinking.enabled`
@@ -85,7 +84,7 @@ impl ThinkingInjector {
             Self::None => {}
             Self::OpenAiReasoningEffort => {
                 if thinking.enabled {
-                    let effort = thinking.reasoning_effort.as_deref().unwrap_or("medium");
+                    let effort = openai_reasoning_effort(thinking.reasoning_effort.as_deref());
                     if is_openai_reasoning_model(model) {
                         body["reasoning_effort"] = json!(effort);
                         debug!("Added OpenAI reasoning params: effort={}", effort);
@@ -106,10 +105,14 @@ impl ThinkingInjector {
                     }
                 }
             }
-            Self::DeepSeekEnableThinking => {
+            Self::DeepSeekThinking => {
                 if thinking.enabled {
-                    body["enable_thinking"] = json!(true);
-                    debug!("Added DeepSeek thinking params: enable_thinking=true");
+                    let effort = deepseek_reasoning_effort(thinking.reasoning_effort.as_deref());
+                    body["thinking"] = json!({ "type": "enabled" });
+                    body["reasoning_effort"] = json!(effort);
+                    debug!("Added DeepSeek thinking params: enabled=true, effort={effort}");
+                } else {
+                    body["thinking"] = json!({ "type": "disabled" });
                 }
             }
             Self::QwenEnableThinking => {
@@ -143,6 +146,21 @@ fn is_openai_reasoning_model(model: &str) -> bool {
     ["o1", "o3", "o4", "gpt-5"]
         .iter()
         .any(|family| is_model_family(&model, family))
+}
+
+fn openai_reasoning_effort(effort: Option<&str>) -> &'static str {
+    match effort {
+        Some("low") => "low",
+        Some("high" | "max" | "xhigh") => "high",
+        _ => "medium",
+    }
+}
+
+fn deepseek_reasoning_effort(effort: Option<&str>) -> &'static str {
+    match effort {
+        Some("max" | "xhigh") => "max",
+        _ => "high",
+    }
 }
 
 fn is_model_family(model: &str, family: &str) -> bool {
@@ -393,6 +411,15 @@ mod tests {
     }
 
     #[test]
+    fn openai_reasoning_effort_clamps_max_to_high() {
+        let mut t = thinking_on();
+        t.reasoning_effort = Some("max".to_string());
+        let mut body = serde_json::to_value(req("gpt-5.5")).unwrap();
+        ThinkingInjector::OpenAiReasoningEffort.inject(&mut body, &t, "gpt-5.5");
+        assert_eq!(body["reasoning_effort"], "high");
+    }
+
+    #[test]
     fn openai_reasoning_effort_set_for_gpt5_model_family() {
         for model in ["gpt-5", "gpt-5.5", "gpt-5.3-codex", "gpt-5.1-codex-max"] {
             let mut body = serde_json::to_value(req(model)).unwrap();
@@ -426,23 +453,23 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_thinking_enabled_only_writes_when_on() {
-        let mut on = serde_json::to_value(req("deepseek-reasoner")).unwrap();
-        ThinkingInjector::DeepSeekEnableThinking.inject(
-            &mut on,
-            &thinking_on(),
-            "deepseek-reasoner",
-        );
-        assert_eq!(on["enable_thinking"], true);
+    fn deepseek_thinking_writes_current_thinking_shape() {
+        let mut on = serde_json::to_value(req("deepseek-v4-pro")).unwrap();
+        ThinkingInjector::DeepSeekThinking.inject(&mut on, &thinking_on(), "deepseek-v4-pro");
+        assert_eq!(on["thinking"]["type"], "enabled");
+        assert_eq!(on["reasoning_effort"], "high");
+        assert!(on.get("enable_thinking").is_none());
 
-        let mut off = serde_json::to_value(req("deepseek-reasoner")).unwrap();
-        ThinkingInjector::DeepSeekEnableThinking.inject(
-            &mut off,
-            &thinking_off(),
-            "deepseek-reasoner",
-        );
-        // DeepSeek prior behaviour: no field at all when disabled.
-        assert!(off.get("enable_thinking").is_none());
+        let mut max = thinking_on();
+        max.reasoning_effort = Some("max".to_string());
+        let mut max_body = serde_json::to_value(req("deepseek-v4-pro")).unwrap();
+        ThinkingInjector::DeepSeekThinking.inject(&mut max_body, &max, "deepseek-v4-pro");
+        assert_eq!(max_body["reasoning_effort"], "max");
+
+        let mut off = serde_json::to_value(req("deepseek-v4-pro")).unwrap();
+        ThinkingInjector::DeepSeekThinking.inject(&mut off, &thinking_off(), "deepseek-v4-pro");
+        assert_eq!(off["thinking"]["type"], "disabled");
+        assert!(off.get("reasoning_effort").is_none());
     }
 
     #[test]
@@ -540,7 +567,7 @@ mod tests {
         let a = OpenAiCompatibleAdapter::new(
             "deepseek",
             "/v1/chat/completions",
-            ThinkingInjector::DeepSeekEnableThinking,
+            ThinkingInjector::DeepSeekThinking,
             false,
         );
         let response = json!({
@@ -679,7 +706,7 @@ mod tests {
         let a = OpenAiCompatibleAdapter::new(
             "deepseek",
             "/v1/chat/completions",
-            ThinkingInjector::DeepSeekEnableThinking,
+            ThinkingInjector::DeepSeekThinking,
             false,
         );
 

@@ -203,7 +203,7 @@ fn thinking_config_for_pipeline_effort(effort_level: &str) -> Option<ThinkingCon
         enabled: true,
         budget_tokens: None,
         preserve_across_turns: false,
-        reasoning_effort: Some("high".to_string()),
+        reasoning_effort: Some(if effort_level == "max" { "max" } else { "high" }.to_string()),
         adaptive: true,
     })
 }
@@ -2261,11 +2261,17 @@ mod tests {
 
         let deepseek = build_request("deepseek", "deepseek-v4-pro", &messages, "high", None, None)
             .expect("deepseek request should build");
-        assert_eq!(deepseek["enable_thinking"], true);
+        assert_eq!(deepseek["thinking"]["type"], "enabled");
+        assert_eq!(deepseek["reasoning_effort"], "high");
         assert!(
-            deepseek.get("reasoning_effort").is_none(),
-            "DeepSeek must not receive OpenAI reasoning_effort: {deepseek}"
+            deepseek.get("enable_thinking").is_none(),
+            "DeepSeek must not receive legacy enable_thinking: {deepseek}"
         );
+
+        let deepseek_max =
+            build_request("deepseek", "deepseek-v4-pro", &messages, "max", None, None)
+                .expect("deepseek max request should build");
+        assert_eq!(deepseek_max["reasoning_effort"], "max");
 
         let qwen = build_request("qwen", "qwen3.7-plus", &messages, "high", None, None)
             .expect("qwen request should build");

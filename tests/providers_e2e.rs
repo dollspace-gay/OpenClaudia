@@ -664,17 +664,14 @@ fn anthropic_thinking_budget_lands_in_request() {
 }
 
 #[test]
-fn deepseek_thinking_config_injects_enable_thinking_field() {
-    // DeepSeek's documented contract: when ThinkingConfig.enabled = true,
-    // inject `enable_thinking: true` into the request body. The upstream
-    // API ignores the field on non-reasoner models — so the adapter
-    // doesn't need to check the model name itself. We pin the
-    // forward-everything behaviour so a future refactor that "optimises"
-    // by gating on model name has to explicitly own the regression.
-    let req = minimal_request("test-model");
+fn deepseek_thinking_config_injects_current_thinking_shape() {
+    // DeepSeek's current documented contract uses `thinking` plus
+    // `reasoning_effort`; the legacy `enable_thinking` field must not leak.
+    let req = minimal_request("deepseek-v4-pro");
     let thinking_on = ThinkingConfig {
         enabled: true,
         budget_tokens: Some(5000),
+        reasoning_effort: Some("max".to_string()),
         ..Default::default()
     };
     let thinking_off = ThinkingConfig {
@@ -690,17 +687,24 @@ fn deepseek_thinking_config_injects_enable_thinking_field() {
         .expect("with-off");
     let without = adapter.transform_request(&req).expect("without");
     assert_eq!(
-        with_on.get("enable_thinking").and_then(Value::as_bool),
-        Some(true),
-        "DeepSeek must inject enable_thinking=true when thinking is enabled: {with_on}"
+        with_on["thinking"]["type"], "enabled",
+        "DeepSeek must inject thinking.type=enabled when thinking is enabled: {with_on}"
+    );
+    assert_eq!(
+        with_on["reasoning_effort"], "max",
+        "DeepSeek must forward supported max reasoning effort: {with_on}"
     );
     assert!(
-        with_off.get("enable_thinking").is_none(),
-        "DeepSeek must NOT inject enable_thinking when thinking disabled: {with_off}"
+        with_on.get("enable_thinking").is_none(),
+        "DeepSeek must not inject legacy enable_thinking: {with_on}"
+    );
+    assert_eq!(
+        with_off["thinking"]["type"], "disabled",
+        "DeepSeek must inject thinking.type=disabled when thinking disabled: {with_off}"
     );
     assert!(
-        without.get("enable_thinking").is_none(),
-        "transform_request (no thinking) must not inject the field: {without}"
+        without.get("thinking").is_none(),
+        "transform_request (no thinking) must not inject the thinking field: {without}"
     );
 }
 

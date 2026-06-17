@@ -1,8 +1,7 @@
 //! Qwen/Alibaba API adapter (OpenAI-compatible with `enable_thinking` toggle).
 //!
 //! Thin newtype around [`OpenAiCompatibleAdapter`]. Qwen always writes an
-//! explicit `enable_thinking: true|false` (unlike `DeepSeek`, which omits
-//! the field when disabled).
+//! explicit `enable_thinking: true|false`.
 //!
 //! See crosslink #281.
 

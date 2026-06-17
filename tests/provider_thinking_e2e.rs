@@ -8,8 +8,8 @@
 //!
 //!   - **`OpenAI`**: `reasoning_effort: "low|medium|high"`,
 //!     only for OpenAI reasoning-family models.
-//!   - **`DeepSeek`**: `enable_thinking: true` when enabled;
-//!     ABSENT when disabled (silent no-op).
+//!   - **`DeepSeek`**: `thinking: {type: "enabled"|"disabled"}`,
+//!     plus `reasoning_effort: "high"|"max"` when enabled.
 //!   - **`Qwen`**: `enable_thinking` ALWAYS written (true OR false).
 //!   - **`Z.AI`/GLM**: `thinking: {type: "enabled"|"disabled"}`,
 //!     plus `clear_thinking: false` when
@@ -155,34 +155,55 @@ fn openai_thinking_disabled_writes_no_reasoning_field() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section B — DeepSeek: enable_thinking present-or-absent
+// Section B - DeepSeek: thinking object plus high/max effort
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn deepseek_thinking_enabled_sets_enable_thinking_true() {
+fn deepseek_thinking_enabled_sets_thinking_and_default_high_effort() {
     let adapter = get_adapter("deepseek").expect("deepseek adapter");
-    let req = minimal_request("deepseek-reasoner");
+    let req = minimal_request("deepseek-v4-pro");
     let body = adapter
         .transform_request_with_thinking(&req, &enabled_thinking(None))
         .expect("transform");
     assert_eq!(
-        body["enable_thinking"], true,
-        "DeepSeek with thinking enabled MUST set enable_thinking=true; got {body}"
+        body["thinking"]["type"], "enabled",
+        "DeepSeek with thinking enabled MUST set thinking.type=enabled; got {body}"
+    );
+    assert_eq!(
+        body["reasoning_effort"], "high",
+        "DeepSeek with no explicit effort MUST default reasoning_effort to high; got {body}"
+    );
+    assert!(
+        body.get("enable_thinking").is_none(),
+        "DeepSeek MUST NOT receive legacy enable_thinking; got {body}"
     );
 }
 
 #[test]
-fn deepseek_thinking_disabled_omits_enable_thinking() {
+fn deepseek_thinking_enabled_maps_max_effort() {
     let adapter = get_adapter("deepseek").expect("deepseek adapter");
-    let req = minimal_request("deepseek-reasoner");
+    let req = minimal_request("deepseek-v4-pro");
+    let body = adapter
+        .transform_request_with_thinking(&req, &enabled_thinking(Some("max")))
+        .expect("transform");
+    assert_eq!(
+        body["reasoning_effort"], "max",
+        "DeepSeek max effort MUST map to reasoning_effort=max; got {body}"
+    );
+}
+
+#[test]
+fn deepseek_thinking_disabled_writes_disabled_thinking_object() {
+    let adapter = get_adapter("deepseek").expect("deepseek adapter");
+    let req = minimal_request("deepseek-v4-pro");
     let body = adapter
         .transform_request_with_thinking(&req, &disabled_thinking())
         .expect("transform");
-    // DeepSeek convention: silent no-op when disabled.
-    assert!(
-        body.get("enable_thinking").is_none(),
-        "DeepSeek disabled MUST omit enable_thinking; got {body}"
+    assert_eq!(
+        body["thinking"]["type"], "disabled",
+        "DeepSeek disabled MUST set thinking.type=disabled; got {body}"
     );
+    assert!(body.get("reasoning_effort").is_none());
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -329,7 +350,8 @@ fn each_provider_uses_a_distinct_thinking_field() {
         .unwrap()
         .transform_request_with_thinking(&req, &thinking)
         .unwrap();
-    assert_eq!(deepseek["enable_thinking"], true);
+    assert_eq!(deepseek["thinking"]["type"], "enabled");
+    assert_eq!(deepseek["reasoning_effort"], "high");
 
     let qwen = get_adapter("qwen")
         .unwrap()
@@ -343,11 +365,8 @@ fn each_provider_uses_a_distinct_thinking_field() {
         .unwrap();
     assert_eq!(zai["thinking"]["type"], "enabled");
 
-    // The deepseek + qwen bodies happen to look the same shape
-    // for THIS config (both emit `enable_thinking: true`), but
-    // the disabled variant separates them — Section B/C pin that.
-    // No cross-provider equality assertion here because it would
-    // be tautological for the enabled case.
+    // No cross-provider equality assertion here: DeepSeek and Z.AI both
+    // use a `thinking` object, but DeepSeek also emits `reasoning_effort`.
 }
 
 // ───────────────────────────────────────────────────────────────────────────

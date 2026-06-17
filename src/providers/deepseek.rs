@@ -1,9 +1,8 @@
-//! `DeepSeek` API adapter (OpenAI-compatible with `enable_thinking` toggle).
+//! `DeepSeek` API adapter (OpenAI-compatible with `DeepSeek` thinking controls).
 //!
 //! Thin newtype around [`OpenAiCompatibleAdapter`]. The only
-//! `DeepSeek`-specific behaviour is injecting `enable_thinking: true` when
-//! thinking mode is enabled; when disabled, no field is written (matching
-//! the prior bespoke adapter).
+//! `DeepSeek`-specific behaviour is injecting `thinking:
+//! {type:"enabled"|"disabled"}` and `reasoning_effort: "high"|"max"`.
 //!
 //! See crosslink #281.
 
@@ -25,7 +24,7 @@ impl DeepSeekAdapter {
         Self(OpenAiCompatibleAdapter::new(
             "deepseek",
             "/v1/chat/completions",
-            ThinkingInjector::DeepSeekEnableThinking,
+            ThinkingInjector::DeepSeekThinking,
             false,
         ))
     }
