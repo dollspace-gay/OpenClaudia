@@ -1202,12 +1202,19 @@ pub fn slash_sessions() -> SlashCommandResult {
         if sessions.len() > 10 {
             println!("  ... and {} more", sessions.len() - 10);
         }
-        println!("\nUse /continue <n> to resume a session.\n");
+        println!("\nUse /continue <n|session-id> to resume a session.\n");
     }
     SlashCommandResult::Handled
 }
 
+fn parse_session_uuid_arg(args: &str) -> Option<String> {
+    uuid::Uuid::parse_str(args.trim())
+        .ok()
+        .map(|id| id.to_string())
+}
+
 pub fn slash_continue(args: &str) -> SlashCommandResult {
+    let args = args.trim();
     if args.is_empty() {
         let sessions = list_chat_sessions();
         if let Some(session) = sessions.first() {
@@ -1215,6 +1222,9 @@ pub fn slash_continue(args: &str) -> SlashCommandResult {
             return SlashCommandResult::LoadSession(session.id.clone());
         }
         println!("\nNo sessions to continue.\n");
+    } else if let Some(session_id) = parse_session_uuid_arg(args) {
+        println!("\nContinuing session: {}\n", safe_truncate(&session_id, 8));
+        return SlashCommandResult::LoadSession(session_id);
     } else if let Ok(num) = args.parse::<usize>() {
         let sessions = list_chat_sessions();
         if num > 0 && num <= sessions.len() {
@@ -1224,7 +1234,7 @@ pub fn slash_continue(args: &str) -> SlashCommandResult {
         }
         println!("\nInvalid session number. Use /sessions to see available sessions.\n");
     } else {
-        println!("\nUsage: /continue <number>\n");
+        println!("\nUsage: /continue <number|session-id>\n");
     }
     SlashCommandResult::Handled
 }
@@ -2552,10 +2562,10 @@ fn parse_axis_overrides(parts: &[&str]) -> SlashCommandResult {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 //
 // These tests pin the *current* OC contracts against the Phase 1 spec (#539).
-// They document divergences from CC reference behavior (filed as gap issues
-// #653, #657, #659, #662, #663, #666).  Do NOT fix the divergences here —
-// fixing is Phase 3+ work.  If a test starts failing, the production behavior
-// changed and the pin should be updated consciously.
+// Some cases document divergences from CC reference behavior (filed as gap
+// issues #653, #657, #659, #662, #663, #666); others pin gaps that have since
+// been closed. If a test starts failing, the production behavior changed and
+// the pin should be updated consciously.
 //
 // Test layout:
 //   - spec_compact_*      — §1 /compact
@@ -2660,10 +2670,11 @@ mod tests {
         );
     }
 
-    /// OC: `/resume <UUID>` is rejected (UUID is non-numeric).
-    /// CC: would load the session by UUID.  Pinned divergence.
+    /// `/resume <UUID>` loads the session by ID. The actual disk read happens
+    /// in the REPL dispatcher so this parser can return `LoadSession` without
+    /// requiring the file to exist in unit tests.
     #[test]
-    fn spec_resume_uuid_arg_rejected() {
+    fn spec_resume_uuid_arg_returns_load_session() {
         let result = handle_slash_command(
             "/resume 550e8400-e29b-41d4-a716-446655440000",
             &mut ctx(),
@@ -2671,9 +2682,31 @@ mod tests {
             "claude-sonnet",
         );
         assert!(
-            matches!(result, Some(SlashCommandResult::Handled)),
-            "/resume <UUID> must return Handled — OC rejects non-numeric args (gap)"
+            matches!(
+                result,
+                Some(SlashCommandResult::LoadSession(ref s))
+                    if s == "550e8400-e29b-41d4-a716-446655440000"
+            ),
+            "/resume <UUID> must return LoadSession"
         );
+    }
+
+    #[test]
+    fn spec_resume_uuid_aliases_return_load_session() {
+        for input in [
+            "/continue 550E8400-E29B-41D4-A716-446655440000",
+            "/load 550e8400e29b41d4a716446655440000",
+        ] {
+            let result = handle_slash_command(input, &mut ctx(), "anthropic", "claude-sonnet");
+            assert!(
+                matches!(
+                    result,
+                    Some(SlashCommandResult::LoadSession(ref s))
+                        if s == "550e8400-e29b-41d4-a716-446655440000"
+                ),
+                "{input} must canonicalize and return LoadSession"
+            );
+        }
     }
 
     /// `/continue` is an alias for `/resume` — same behavior.
