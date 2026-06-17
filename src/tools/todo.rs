@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 /// Hard cap on a single todo's `content` field, in *bytes* (matches the
 /// Claude Code parity limit).
@@ -116,8 +116,17 @@ pub(super) fn current_session_key() -> String {
 /// [`DEFAULT_SESSION_KEY`] when no guard is active). Claude Code uses
 /// the same model — see TodoWriteTool.ts where `todoKey = context.agentId
 /// ?? getSessionId()` buckets each agent/session separately.
-static TODO_LISTS: std::sync::LazyLock<Mutex<HashMap<String, Vec<TodoItem>>>> =
+type TodoLists = HashMap<String, Vec<TodoItem>>;
+
+static TODO_LISTS: std::sync::LazyLock<Mutex<TodoLists>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn todo_lists_guard(operation: &'static str) -> Result<MutexGuard<'static, TodoLists>, String> {
+    TODO_LISTS.lock().map_err(|err| {
+        tracing::error!(operation, error = %err, "Todo list lock poisoned");
+        err.to_string()
+    })
+}
 
 /// Write/update the todo list
 /// Parse and validate a single `todos[i]` JSON object into a [`TodoItem`].
@@ -215,7 +224,7 @@ pub fn execute_todo_write(args: &HashMap<String, Value>) -> (String, bool) {
     // map lock so two concurrent todo_write calls cannot race the bucket
     // (crosslink #972).
     let session_key = current_session_key();
-    match TODO_LISTS.lock() {
+    match todo_lists_guard("execute_todo_write") {
         Ok(mut map) => {
             if all_done {
                 map.remove(&session_key);
@@ -273,7 +282,7 @@ pub fn execute_todo_write(args: &HashMap<String, Value>) -> (String, bool) {
 /// Read the current todo list for the active session bucket.
 pub fn execute_todo_read() -> (String, bool) {
     let session_key = current_session_key();
-    let todos = match TODO_LISTS.lock() {
+    let todos = match todo_lists_guard("execute_todo_read") {
         Ok(map) => map.get(&session_key).cloned().unwrap_or_default(),
         Err(e) => return (format!("Failed to read todo list: {e}"), true),
     };
@@ -310,10 +319,10 @@ pub fn execute_todo_read() -> (String, bool) {
 }
 
 /// Get the todo list for the active session bucket (for external use).
+#[must_use]
 pub fn get_todo_list() -> Vec<TodoItem> {
     let session_key = current_session_key();
-    TODO_LISTS
-        .lock()
+    todo_lists_guard("get_todo_list")
         .map(|m| m.get(&session_key).cloned().unwrap_or_default())
         .unwrap_or_default()
 }
@@ -321,7 +330,7 @@ pub fn get_todo_list() -> Vec<TodoItem> {
 /// Clear the todo list for the active session bucket.
 pub fn clear_todo_list() {
     let session_key = current_session_key();
-    if let Ok(mut map) = TODO_LISTS.lock() {
+    if let Ok(mut map) = todo_lists_guard("clear_todo_list") {
         map.remove(&session_key);
     }
 }
@@ -330,7 +339,7 @@ pub fn clear_todo_list() {
 /// all state" code paths — the single-session `clear_todo_list` only
 /// removes the current bucket.
 pub fn clear_all_todo_lists() {
-    if let Ok(mut map) = TODO_LISTS.lock() {
+    if let Ok(mut map) = todo_lists_guard("clear_all_todo_lists") {
         map.clear();
     }
 }
