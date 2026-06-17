@@ -40,7 +40,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, RwLock};
+use std::sync::{LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::SystemTime;
 use thiserror::Error;
 
@@ -213,6 +213,30 @@ struct SkillsCache {
 }
 
 static SKILLS_CACHE: LazyLock<RwLock<Option<SkillsCache>>> = LazyLock::new(|| RwLock::new(None));
+
+fn skills_cache_read_guard(
+    operation: &'static str,
+) -> RwLockReadGuard<'static, Option<SkillsCache>> {
+    match SKILLS_CACHE.read() {
+        Ok(guard) => guard,
+        Err(err) => {
+            tracing::error!(operation, error = %err, "Skills cache read lock poisoned");
+            err.into_inner()
+        }
+    }
+}
+
+fn skills_cache_write_guard(
+    operation: &'static str,
+) -> RwLockWriteGuard<'static, Option<SkillsCache>> {
+    match SKILLS_CACHE.write() {
+        Ok(guard) => guard,
+        Err(err) => {
+            tracing::error!(operation, error = %err, "Skills cache write lock poisoned");
+            err.into_inner()
+        }
+    }
+}
 
 /// Walk upward from `start` looking for the project root — the nearest
 /// ancestor that contains `.openclaudia/config.yaml`. Returns `None` when no
@@ -549,7 +573,8 @@ pub fn load_skills() -> Vec<SkillDefinition> {
     let mtimes_now = current_mtimes(&dirs);
 
     // Fast path: read lock, cache hit.
-    if let Ok(guard) = SKILLS_CACHE.read() {
+    {
+        let guard = skills_cache_read_guard("load_skills.read");
         if let Some(cache) = guard.as_ref() {
             if cache.mtimes == mtimes_now {
                 return cache.skills.clone();
@@ -559,10 +584,7 @@ pub fn load_skills() -> Vec<SkillDefinition> {
 
     // Slow path: rescan under the write lock. Re-check inside the write
     // lock to avoid a thundering-herd of refreshes if many callers raced.
-    let mut guard = match SKILLS_CACHE.write() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let mut guard = skills_cache_write_guard("load_skills.write");
     if let Some(cache) = guard.as_ref() {
         if cache.mtimes == mtimes_now {
             return cache.skills.clone();
@@ -581,9 +603,8 @@ pub fn load_skills() -> Vec<SkillDefinition> {
 /// Useful for tests and for editor watchers that detect in-place edits to
 /// a `SKILL.md` without changing the parent directory's mtime.
 pub fn invalidate_cache() {
-    if let Ok(mut guard) = SKILLS_CACHE.write() {
-        *guard = None;
-    }
+    let mut guard = skills_cache_write_guard("invalidate_cache");
+    *guard = None;
 }
 
 /// Get a skill by name
