@@ -102,17 +102,31 @@ pub fn execute_shell_command_with_permission(
     execute_shell_command_internal(cmd);
 }
 
+fn resolved_process_command(binary: &str) -> Result<std::process::Command, String> {
+    which::which(binary)
+        .map(std::process::Command::new)
+        .map_err(|e| format!("{binary} binary not found on PATH: {e}"))
+}
+
 /// Execute a shell command and print output
 pub fn execute_shell_command_internal(cmd: &str) {
-    use std::process::Command;
-
     println!();
 
     #[cfg(windows)]
-    let output = Command::new("cmd").args(["/C", cmd]).output();
+    let output = resolved_process_command("cmd").and_then(|mut command| {
+        command
+            .args(["/C", cmd])
+            .output()
+            .map_err(|e| e.to_string())
+    });
 
     #[cfg(not(windows))]
-    let output = Command::new("sh").args(["-c", cmd]).output();
+    let output = resolved_process_command("sh").and_then(|mut command| {
+        command
+            .args(["-c", cmd])
+            .output()
+            .map_err(|e| e.to_string())
+    });
 
     match output {
         Ok(output) => {
@@ -133,4 +147,31 @@ pub fn execute_shell_command_internal(cmd: &str) {
         }
     }
     println!();
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn repl_permission_shells_use_resolved_binaries() {
+        let source = include_str!("permissions.rs");
+        let cfg_test = source
+            .find("#[cfg(test)]")
+            .expect("test marker must be present");
+        let production = &source[..cfg_test];
+
+        assert!(
+            !production.contains("Command::new(\"cmd\")")
+                && !production.contains("std::process::Command::new(\"cmd\")"),
+            "permission shell runner must not invoke bare cmd"
+        );
+        assert!(
+            !production.contains("Command::new(\"sh\")")
+                && !production.contains("std::process::Command::new(\"sh\")"),
+            "permission shell runner must not invoke bare sh"
+        );
+        assert!(
+            production.contains("which::which(binary)"),
+            "permission shell runner must resolve shell binaries through the Rust resolver"
+        );
+    }
 }
