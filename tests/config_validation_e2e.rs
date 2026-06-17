@@ -27,10 +27,87 @@
 #![allow(clippy::unwrap_used)]
 
 use openclaudia::config::{
-    validate_base_url, validate_provider_base_url, AppConfig, PermissionsConfig,
+    load_config, validate_base_url, validate_provider_base_url, AppConfig, PermissionsConfig,
 };
 use openclaudia::providers::api_key::{ApiKey, ApiKeyError};
 use serde_yaml::Value as YamlValue;
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+    sync::{Mutex, MutexGuard, OnceLock},
+};
+
+const CONFIG_ENV_VARS: &[&str] = &[
+    "OPENCLAUDIA_PROXY_TARGET",
+    "OPENCLAUDIA_PROVIDERS_OLLAMA_BASE_URL",
+    "OPENCLAUDIA_PROVIDERS_LOCAL_BASE_URL",
+    "OPENCLAUDIA_PROVIDERS_LMSTUDIO_BASE_URL",
+    "OPENCLAUDIA_PROVIDERS_LOCALAI_BASE_URL",
+    "OPENCLAUDIA_PROVIDERS_TEXT-GENERATION-WEBUI_BASE_URL",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "GOOGLE_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "QWEN_API_KEY",
+    "ZAI_API_KEY",
+    "KIMI_API_KEY",
+    "MOONSHOT_API_KEY",
+    "MINIMAX_API_KEY",
+];
+
+fn process_env_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+struct CwdGuard {
+    previous: PathBuf,
+}
+
+impl CwdGuard {
+    fn set_to(path: &Path) -> Self {
+        let previous = std::env::current_dir().expect("current dir");
+        std::env::set_current_dir(path).expect("set temp cwd");
+        Self { previous }
+    }
+}
+
+impl Drop for CwdGuard {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.previous);
+    }
+}
+
+struct EnvGuard {
+    key: &'static str,
+    previous: Option<OsString>,
+}
+
+impl EnvGuard {
+    fn set_path(key: &'static str, value: &Path) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::remove_var(key);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        if let Some(value) = &self.previous {
+            std::env::set_var(self.key, value);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Section A — validate_base_url adversarial inputs
@@ -420,5 +497,36 @@ fn readme_config_file_example_uses_real_schema_and_valid_provider_urls() {
     for (name, provider) in &cfg.providers {
         validate_provider_base_url(name, &provider.base_url)
             .unwrap_or_else(|err| panic!("README provider {name:?} base_url must validate: {err}"));
+    }
+}
+
+#[test]
+fn load_config_seeds_advertised_local_provider_defaults() {
+    let _lock = process_env_lock();
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _cwd_guard = CwdGuard::set_to(cwd.path());
+    let _home_guard = EnvGuard::set_path("HOME", home.path());
+    let _env_guards: Vec<EnvGuard> = CONFIG_ENV_VARS
+        .iter()
+        .copied()
+        .map(EnvGuard::remove)
+        .collect();
+
+    let cfg = load_config().expect("default config must load in isolated cwd");
+    for (name, expected_url) in [
+        ("ollama", "http://localhost:11434"),
+        ("local", "http://localhost:1234/v1"),
+        ("lmstudio", "http://localhost:1234/v1"),
+        ("localai", "http://localhost:8080/v1"),
+        ("text-generation-webui", "http://localhost:5000/v1"),
+    ] {
+        let provider = cfg
+            .providers
+            .get(name)
+            .unwrap_or_else(|| panic!("default config must include local provider {name}"));
+        assert_eq!(provider.base_url, expected_url);
+        validate_provider_base_url(name, &provider.base_url)
+            .unwrap_or_else(|err| panic!("default {name} base_url must validate: {err}"));
     }
 }

@@ -1033,7 +1033,7 @@ impl ToolHandler for CronCreateHandler {
             "type": "function",
             "function": {
                 "name": "cron_create",
-                "description": "Create a recurring scheduled task with a cron expression. Schedules are stored in .openclaudia/schedules.json and executed by loop mode or an external scheduler.",
+                "description": "Create recurring schedule metadata with a cron expression. Schedules are stored in .openclaudia/schedules.json for external schedulers; OpenClaudia does not run them automatically.",
                 "parameters": {
                     "type": "object",
                     "properties": {

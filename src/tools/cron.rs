@@ -1,8 +1,9 @@
 //! Cron scheduling tools for recurring task execution.
 //!
 //! Manages cron-like schedules stored in a JSON file at
-//! `.openclaudia/schedules.json`. Actual execution is handled
-//! by the loop mode or an external scheduler.
+//! `.openclaudia/schedules.json`. OpenClaudia currently stores and
+//! exposes schedule metadata; actual recurring execution is the
+//! responsibility of an external scheduler.
 //!
 //! ## Concurrency model (crosslink #403)
 //!

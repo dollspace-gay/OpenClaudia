@@ -397,6 +397,37 @@ fn init_template_marks_keybindings_as_legacy_repl_specific() {
     let config = fs::read_to_string(cwd.path().join(".openclaudia/config.yaml"))
         .expect("init should write config.yaml");
     assert!(
+        config.contains("https://github.com/dollspace-gay/OpenClaudia"),
+        "init template must point at the real upstream repository"
+    );
+    assert!(
+        !config.contains("github.com/yourusername/openclaudia"),
+        "init template must not contain placeholder repository URLs"
+    );
+    for model in [
+        "claude-opus-4-7",
+        "gpt-5.5",
+        "gemini-3.5-flash",
+        "MiniMax-M3",
+    ] {
+        assert!(
+            config.contains(model),
+            "init template should advertise representative current model {model}"
+        );
+    }
+    for provider in [
+        "ollama:",
+        "local:",
+        "lmstudio:",
+        "localai:",
+        "text-generation-webui:",
+    ] {
+        assert!(
+            config.contains(provider),
+            "init template must include advertised local provider {provider}"
+        );
+    }
+    assert!(
         config.contains("Legacy line REPL keybindings (`openclaudia --tui-mode`)"),
         "init template must label keybindings as legacy REPL-specific"
     );

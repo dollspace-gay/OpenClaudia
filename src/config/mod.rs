@@ -188,7 +188,16 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
         // Kimi/Moonshot (OpenAI-compatible)
         .set_default("providers.kimi.base_url", "https://api.moonshot.ai/v1")?
         // MiniMax (OpenAI-compatible)
-        .set_default("providers.minimax.base_url", "https://api.minimax.io/v1")?;
+        .set_default("providers.minimax.base_url", "https://api.minimax.io/v1")?
+        // Local OpenAI-compatible providers.
+        .set_default("providers.ollama.base_url", "http://localhost:11434")?
+        .set_default("providers.local.base_url", "http://localhost:1234/v1")?
+        .set_default("providers.lmstudio.base_url", "http://localhost:1234/v1")?
+        .set_default("providers.localai.base_url", "http://localhost:8080/v1")?
+        .set_default(
+            "providers.text-generation-webui.base_url",
+            "http://localhost:5000/v1",
+        )?;
 
     // Load from project config file
     let project_config = PathBuf::from(".openclaudia/config.yaml");

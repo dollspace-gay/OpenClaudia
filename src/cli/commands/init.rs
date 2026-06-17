@@ -27,20 +27,25 @@ pub fn cmd_init(force: bool) -> anyhow::Result<()> {
 
     // Write default config
     let default_config = r#"# OpenClaudia Configuration
-# https://github.com/yourusername/openclaudia
+# https://github.com/dollspace-gay/OpenClaudia
 
 proxy:
   port: 8080
   host: "127.0.0.1"
-  target: anthropic  # Default provider: anthropic, openai, google, zai, deepseek, qwen, kimi, minimax
+  # Provider: anthropic, openai, google, deepseek, qwen, zai, kimi, minimax,
+  # ollama, local, lmstudio, localai, text-generation-webui
+  target: anthropic
 
 providers:
+  # Anthropic - Models: claude-opus-4-8, claude-opus-4-7, claude-sonnet-4-6
   anthropic:
     base_url: https://api.anthropic.com
     # api_key: ${ANTHROPIC_API_KEY}  # Set via environment variable
+  # OpenAI - Models: gpt-5.5, gpt-5.5-pro, gpt-5.4-mini
   openai:
     base_url: https://api.openai.com
     # api_key: ${OPENAI_API_KEY}
+  # Google Gemini - Models: gemini-3.5-flash, gemini-3.1-pro-preview
   google:
     base_url: https://generativelanguage.googleapis.com
     # api_key: ${GOOGLE_API_KEY}
@@ -64,9 +69,21 @@ providers:
   minimax:
     base_url: https://api.minimax.io/v1
     # api_key: ${MINIMAX_API_KEY}
+  # Ollama for local LLM inference
+  ollama:
+    base_url: http://localhost:11434
+  # Any OpenAI-compatible local server (LM Studio, LocalAI, text-generation-webui)
+  local:
+    base_url: http://localhost:1234/v1
+  lmstudio:
+    base_url: http://localhost:1234/v1
+  localai:
+    base_url: http://localhost:8080/v1
+  text-generation-webui:
+    base_url: http://localhost:5000/v1
 
 # Hooks run at key moments in the agent lifecycle
-# See: https://github.com/yourusername/openclaudia/docs/hooks.md
+# See the hooks configuration examples below.
 # hooks:
 #   session_start:
 #     - hooks:

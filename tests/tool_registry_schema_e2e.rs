@@ -343,3 +343,27 @@ fn every_tool_description_is_non_trivial() {
         thin.join("\n  ")
     );
 }
+
+#[test]
+fn cron_create_description_does_not_claim_openclaudia_runs_schedules() {
+    let def = registry()
+        .get("cron_create")
+        .expect("cron_create registered")
+        .definition();
+    let desc = def
+        .pointer("/function/description")
+        .and_then(Value::as_str)
+        .expect("cron_create description");
+    assert!(
+        desc.contains("external schedulers"),
+        "cron_create must describe the actual execution boundary; got {desc:?}"
+    );
+    assert!(
+        !desc.contains("executed by loop mode"),
+        "cron_create must not advertise automatic loop-mode execution; got {desc:?}"
+    );
+    assert!(
+        !desc.contains("OpenClaudia runs"),
+        "cron_create must not imply OpenClaudia executes schedules automatically; got {desc:?}"
+    );
+}
