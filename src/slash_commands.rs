@@ -143,7 +143,7 @@ const SKILLS: &[SlashCommand] = &[
 ];
 
 /// Time-travel and session-shape commands (crosslink #653, #657, #659,
-/// #662). `/rewind`/`/checkpoint` are implemented in the legacy REPL;
+/// #662). `/rewind`/`/checkpoint` and `/fast` are implemented in the legacy REPL;
 /// the remaining entries may begin as surface-only "tracked but not
 /// implemented" responses while their storage/overlay support lands.
 const TIME_TRAVEL: &[SlashCommand] = &[
@@ -159,7 +159,7 @@ const TIME_TRAVEL: &[SlashCommand] = &[
     ),
     cmd(
         "/fast",
-        "Toggle fast mode (auto-switches model + remembers preference)",
+        "Set low effort and switch to a known fast model when available",
     ),
 ];
 

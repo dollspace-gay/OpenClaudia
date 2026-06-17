@@ -652,6 +652,13 @@ impl ChatRepl {
             SlashCommandResult::ToggleVim => self.toggle_vim(),
             SlashCommandResult::SetEffort(level) => self.effort_level = level,
             SlashCommandResult::CycleEffort => self.cycle_effort(),
+            SlashCommandResult::FastMode { effort, model } => apply_fast_mode_result(
+                &mut self.model,
+                &mut self.chat_session,
+                &mut self.effort_level,
+                effort,
+                model,
+            ),
             SlashCommandResult::SetBehaviorMode(new_mode) => {
                 self.chat_session.behavior_mode = new_mode;
             }
@@ -3150,6 +3157,20 @@ fn rewind_chat_session(session: &mut ChatSession, turns: usize) -> usize {
     rewound
 }
 
+fn apply_fast_mode_result(
+    model: &mut String,
+    session: &mut ChatSession,
+    effort_level: &mut String,
+    effort: String,
+    fast_model: Option<String>,
+) {
+    *effort_level = effort;
+    if let Some(fast_model) = fast_model {
+        *model = fast_model;
+        session.model.clone_from(model);
+    }
+}
+
 const fn json_value_type_name(value: &serde_json::Value) -> &'static str {
     match value {
         serde_json::Value::Null => "null",
@@ -3508,6 +3529,45 @@ providers: {}
         assert_eq!(rewound, 1);
         assert!(session.messages.is_empty());
         assert_eq!(session.undo_stack.len(), 1);
+    }
+
+    #[test]
+    fn apply_fast_mode_result_sets_effort_and_model() {
+        let mut session = chat_session_with_turns(0);
+        let mut model = "claude-opus-4-6".to_string();
+        let mut effort = "medium".to_string();
+
+        apply_fast_mode_result(
+            &mut model,
+            &mut session,
+            &mut effort,
+            "low".to_string(),
+            Some("claude-haiku-4-5-20251001".to_string()),
+        );
+
+        assert_eq!(effort, "low");
+        assert_eq!(model, "claude-haiku-4-5-20251001");
+        assert_eq!(session.model, "claude-haiku-4-5-20251001");
+    }
+
+    #[test]
+    fn apply_fast_mode_result_without_model_only_sets_effort() {
+        let mut session = chat_session_with_turns(0);
+        let mut model = "custom-local".to_string();
+        session.model.clone_from(&model);
+        let mut effort = "high".to_string();
+
+        apply_fast_mode_result(
+            &mut model,
+            &mut session,
+            &mut effort,
+            "low".to_string(),
+            None,
+        );
+
+        assert_eq!(effort, "low");
+        assert_eq!(model, "custom-local");
+        assert_eq!(session.model, "custom-local");
     }
 
     #[test]

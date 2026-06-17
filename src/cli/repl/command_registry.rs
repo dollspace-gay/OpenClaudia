@@ -89,8 +89,8 @@ use super::review::{configure_provider_api_key, review_git_changes};
 use super::slash::{
     handle_mode_command, slash_add_dir, slash_agents, slash_branch, slash_btw, slash_commit,
     slash_commit_push_pr, slash_config, slash_context, slash_continue, slash_copy, slash_cost,
-    slash_debug, slash_doctor, slash_effort, slash_find, slash_help, slash_history, slash_init,
-    slash_login, slash_model, slash_plugin, slash_rewind, slash_sessions, slash_skill,
+    slash_debug, slash_doctor, slash_effort, slash_fast, slash_find, slash_help, slash_history,
+    slash_init, slash_login, slash_model, slash_plugin, slash_rewind, slash_sessions, slash_skill,
     slash_version,
 };
 use crate::cli::display::theme::handle_theme_command;
@@ -532,6 +532,18 @@ impl CommandHandler for EffortCommand {
     }
 }
 
+// ── /fast ────────────────────────────────────────────────────────────────────
+
+struct FastCommand;
+impl CommandHandler for FastCommand {
+    fn name(&self) -> &'static str {
+        "fast"
+    }
+    fn handle(&self, ctx: &mut SlashCtx<'_>, _args: &str) -> SlashCommandResult {
+        slash_fast(ctx.provider, ctx.current_model)
+    }
+}
+
 // ── /find, /f ────────────────────────────────────────────────────────────────
 
 struct FindCommand;
@@ -758,6 +770,7 @@ static HANDLERS: &[&dyn CommandHandler] = &[
     &ConfigCommand,
     &DebugCommand,
     &EffortCommand,
+    &FastCommand,
     &FindCommand,
     &MemoryCommand,
     &ActivityCommand,

@@ -94,6 +94,11 @@ pub enum SlashCommandResult {
     SetEffort(String),
     /// Cycle effort level: low → medium → high → low
     CycleEffort,
+    /// Set fast profile for the session: low effort plus optional fast model.
+    FastMode {
+        effort: String,
+        model: Option<String>,
+    },
     /// Show help message (already printed)
     Handled,
     /// Add a working directory to the session scope (#176)
@@ -1042,6 +1047,47 @@ pub fn slash_effort(args: &str) -> SlashCommandResult {
             println!("  (no argument cycles through levels)\n");
             SlashCommandResult::Handled
         }
+    }
+}
+
+fn fast_model_for_provider(provider: &str) -> Option<&'static str> {
+    let static_provider = match provider {
+        "gemini" => "google",
+        "glm" | "zhipu" => "zai",
+        "alibaba" => "qwen",
+        other => other,
+    };
+    let preferred: &[&str] = match static_provider {
+        "anthropic" => &["claude-haiku-4-5-20251001"],
+        "openai" => &["gpt-5-mini", "gpt-5-nano", "gpt-4.1-mini", "gpt-4o-mini"],
+        "google" => &["gemini-2.5-flash-lite", "gemini-3-flash-preview"],
+        "zai" => &["glm-4.7-flash", "glm-4.5-flash"],
+        "qwen" => &["qwen-turbo"],
+        "deepseek" => &["deepseek-chat"],
+        _ => return None,
+    };
+    let available = get_available_models(static_provider);
+    preferred
+        .iter()
+        .copied()
+        .find(|candidate| available.contains(candidate))
+}
+
+pub fn slash_fast(provider: &str, current_model: &str) -> SlashCommandResult {
+    let target_model = fast_model_for_provider(provider)
+        .filter(|model| *model != current_model)
+        .map(str::to_string);
+
+    match target_model.as_deref() {
+        Some(model) => println!(
+            "\n\u{2713} Fast mode enabled: effort \x1b[33mlow\x1b[0m, model \x1b[36m{model}\x1b[0m\n"
+        ),
+        None => println!("\n\u{2713} Fast mode enabled: effort \x1b[33mlow\x1b[0m\n"),
+    }
+
+    SlashCommandResult::FastMode {
+        effort: "low".to_string(),
+        model: target_model,
     }
 }
 
@@ -2389,6 +2435,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn spec_fast_anthropic_switches_to_haiku_and_low_effort() {
+        let result = handle_slash_command("/fast", &mut ctx(), "anthropic", "claude-opus-4-6");
+        assert!(
+            matches!(
+                result,
+                Some(SlashCommandResult::FastMode { ref effort, ref model })
+                    if effort == "low"
+                        && model.as_deref() == Some("claude-haiku-4-5-20251001")
+            ),
+            "/fast must set low effort and switch Anthropic sessions to Haiku"
+        );
+    }
+
+    #[test]
+    fn spec_fast_keeps_model_when_already_fast() {
+        let result = handle_slash_command(
+            "/fast",
+            &mut ctx(),
+            "anthropic",
+            "claude-haiku-4-5-20251001",
+        );
+        assert!(
+            matches!(
+                result,
+                Some(SlashCommandResult::FastMode { ref effort, ref model })
+                    if effort == "low" && model.is_none()
+            ),
+            "/fast must avoid a no-op model switch when already on the fast model"
+        );
+    }
+
+    #[test]
+    fn spec_fast_unknown_provider_sets_low_effort_without_model_switch() {
+        let result = handle_slash_command("/fast", &mut ctx(), "local", "custom-fast");
+        assert!(
+            matches!(
+                result,
+                Some(SlashCommandResult::FastMode { ref effort, ref model })
+                    if effort == "low" && model.is_none()
+            ),
+            "/fast must still lower effort for providers without a static fast model"
+        );
+    }
+
     // ── §4 /plan ─────────────────────────────────────────────────────────────
 
     /// OC: `/plan` returns `ToggleMode` (unconditionally toggles Build↔Plan).
@@ -2737,10 +2828,10 @@ mod tests {
         );
     }
 
-    // ── Gap B–F: Commands absent from OC (pin unknown-command path) ──────────
+    // ── Remaining gap commands absent from OC (pin unknown-command path) ─────
     //
     // These tests document that the commands from CC gap issues #657,
-    // #659, #662, #663, #666 currently fall through to the unknown-command arm
+    // #659, #663, #666 currently fall through to the unknown-command arm
     // and return Handled.  If any of these start returning something else, a
     // Phase 3 implementation landed and this pin must be updated.
 
@@ -2761,16 +2852,6 @@ mod tests {
         assert!(
             matches!(result, Some(SlashCommandResult::Handled)),
             "/thinkback must return Handled — command not yet implemented (gap #659)"
-        );
-    }
-
-    /// Gap D (#662): `/fast` does not exist in OC → unknown-command path.
-    #[test]
-    fn gap_missing_fast_returns_handled() {
-        let result = handle_slash_command("/fast", &mut ctx(), "anthropic", "claude-sonnet");
-        assert!(
-            matches!(result, Some(SlashCommandResult::Handled)),
-            "/fast must return Handled — command not yet implemented (gap #662)"
         );
     }
 
