@@ -1,6 +1,7 @@
 use std::{
     fs,
     io::Write,
+    net::TcpListener,
     process::{Command, Output, Stdio},
 };
 
@@ -133,6 +134,100 @@ providers:
     assert!(
         stdout.contains("Target: local"),
         "config output should show active local target; got {stdout:?}"
+    );
+}
+
+fn write_local_provider_config(cwd: &tempfile::TempDir) {
+    let config_dir = cwd.path().join(".openclaudia");
+    fs::create_dir_all(&config_dir).expect("config dir");
+    fs::write(
+        config_dir.join("config.yaml"),
+        r#"
+proxy:
+  port: 8080
+  host: "127.0.0.1"
+  target: local
+providers:
+  local:
+    base_url: http://localhost:1234/v1
+"#,
+    )
+    .expect("config file");
+}
+
+fn held_loopback_port() -> (TcpListener, u16) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind held port");
+    let port = listener.local_addr().expect("local addr").port();
+    (listener, port)
+}
+
+#[test]
+fn start_allows_keyless_local_provider_until_bind_failure() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    write_local_provider_config(&cwd);
+    let (_listener, port) = held_loopback_port();
+    let port = port.to_string();
+
+    let output = isolated_command(&cwd, &home)
+        .args(["start", "--port", &port])
+        .output()
+        .expect("openclaudia start must run");
+
+    assert!(
+        !output.status.success(),
+        "held port should make start fail after local auth preflight; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !combined.contains("No API key configured for provider")
+            && !combined.contains("Set API_KEY"),
+        "local provider must not be rejected for missing API key; got {combined:?}"
+    );
+    assert!(
+        combined.to_lowercase().contains("address already in use"),
+        "start should reach bind and report the held port; got {combined:?}"
+    );
+}
+
+#[test]
+fn loop_allows_keyless_local_provider_and_reports_bind_failure() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    write_local_provider_config(&cwd);
+    let (_listener, port) = held_loopback_port();
+    let port = port.to_string();
+
+    let output = isolated_command(&cwd, &home)
+        .args(["loop", "--max-iterations", "1", "--port", &port])
+        .output()
+        .expect("openclaudia loop must run");
+
+    assert!(
+        !output.status.success(),
+        "loop must return non-zero when its proxy server cannot bind; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !combined.contains("No API key configured for provider")
+            && !combined.contains("Set API_KEY"),
+        "local provider loop mode must not require an API key; got {combined:?}"
+    );
+    assert!(
+        combined.to_lowercase().contains("address already in use"),
+        "loop should surface the bind failure; got {combined:?}"
     );
 }
 

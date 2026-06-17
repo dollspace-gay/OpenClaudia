@@ -45,17 +45,6 @@ pub async fn cmd_start(
     };
 
     if provider.api_key.is_none() {
-        let env_var = match config.proxy.target.as_str() {
-            "anthropic" => "ANTHROPIC_API_KEY",
-            "openai" => "OPENAI_API_KEY",
-            "google" | "gemini" => "GOOGLE_API_KEY",
-            "zai" | "glm" | "zhipu" => "ZAI_API_KEY",
-            "deepseek" => "DEEPSEEK_API_KEY",
-            "qwen" | "alibaba" => "QWEN_API_KEY",
-            "kimi" | "moonshot" => "KIMI_API_KEY or MOONSHOT_API_KEY",
-            "minimax" => "MINIMAX_API_KEY",
-            _ => "API_KEY",
-        };
         if config.proxy.target == "anthropic" {
             tracing::warn!(
                 "No API key configured for '{}'. OAuth authentication is available.",
@@ -65,7 +54,13 @@ pub async fn cmd_start(
                 "Visit http://localhost:{}/auth/device to authenticate with Claude Max",
                 config.proxy.port
             );
+        } else if config::is_local_provider_name(&config.proxy.target) {
+            info!(
+                "No API key configured for local provider '{}'; continuing without auth headers.",
+                config.proxy.target
+            );
         } else {
+            let env_var = super::provider_api_key_env_var(&config.proxy.target);
             error!(
                 "No API key configured for provider '{}'. Set {} environment variable.",
                 config.proxy.target, env_var

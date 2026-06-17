@@ -356,10 +356,11 @@ pub fn resolve_endpoint(
 
 /// Build the headers needed for the API request.
 ///
-/// `api_key` is `Option<&ApiKey>`: `None` is valid only when
-/// `claude_code_token` is `Some(_)` (OAuth path doesn't need an API key).
-/// If both are `None` the function returns an empty auth set — the caller
-/// is expected to have validated the combination. See crosslink #256.
+/// `api_key` is `Option<&ApiKey>`. If both `api_key` and
+/// `claude_code_token` are `None`, the function returns an empty auth set.
+/// Callers validate whether that is acceptable for the selected provider
+/// (for example, Anthropic OAuth bootstrap and local providers can proceed
+/// without static API keys). See crosslink #256.
 ///
 /// # Errors
 ///
