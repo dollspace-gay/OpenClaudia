@@ -422,21 +422,14 @@ pub(crate) fn find_git_bash() -> Option<std::path::PathBuf> {
         }
     }
 
-    // Try to find via 'where git' and derive bash path
-    if let Ok(output) = Command::new("where").arg("git").output() {
-        if output.status.success() {
-            let git_path = String::from_utf8_lossy(&output.stdout);
-            if let Some(first_line) = git_path.lines().next() {
-                // git.exe is usually in cmd/ or bin/, bash is in bin/
-                let git_dir = std::path::Path::new(first_line.trim())
-                    .parent()
-                    .and_then(|p| p.parent());
-                if let Some(git_root) = git_dir {
-                    let bash = git_root.join("bin").join("bash.exe");
-                    if bash.exists() {
-                        return Some(bash);
-                    }
-                }
+    // Try to find git on PATH and derive the sibling Git Bash path.
+    if let Ok(git_path) = which::which("git") {
+        // git.exe is usually in cmd/ or bin/, bash is in bin/.
+        let git_dir = git_path.parent().and_then(|p| p.parent());
+        if let Some(git_root) = git_dir {
+            let bash = git_root.join("bin").join("bash.exe");
+            if bash.exists() {
+                return Some(bash);
             }
         }
     }
@@ -659,6 +652,24 @@ mod tests {
         let mut args = bash_args(cmd);
         args.insert("run_in_background".to_string(), Value::Bool(true));
         args
+    }
+
+    #[test]
+    fn windows_git_bash_lookup_uses_rust_resolver() {
+        let source = include_str!("mod.rs");
+        let cfg_test = source
+            .find("#[cfg(test)]")
+            .expect("test marker must be present");
+        let production = &source[..cfg_test];
+
+        assert!(
+            !production.contains("Command::new(\"where\")"),
+            "find_git_bash must not shell out to the Windows where command"
+        );
+        assert!(
+            production.contains("which::which(\"git\")"),
+            "find_git_bash must locate git through the Rust resolver"
+        );
     }
 
     // B1 — background spawn: shell_id format and manager state
