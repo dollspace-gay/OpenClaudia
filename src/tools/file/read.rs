@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::io::Read as _;
-use std::path::Path;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 /// Hard cap on file size accepted by all read functions.  Prevents OOM via
 /// `/dev/zero` and similar unbounded sources.  10 MiB is generous for any
@@ -16,6 +16,29 @@ const MAX_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024;
 /// Maximum chars retained in [`read_text_file`] output before truncation
 /// at the next line boundary kicks in. crosslink #939.
 const READ_TEXT_BUDGET: usize = 100_000;
+
+static PDFTOTEXT_BIN: LazyLock<Result<PathBuf, String>> = LazyLock::new(|| {
+    which::which("pdftotext").map_err(|_| {
+        "pdftotext is not installed. Install it with:\n  \
+         Ubuntu/Debian: sudo apt install poppler-utils\n  \
+         macOS: brew install poppler\n  \
+         Fedora: sudo dnf install poppler-utils"
+            .to_string()
+    })
+});
+
+static PDFINFO_BIN: LazyLock<Option<PathBuf>> = LazyLock::new(|| which::which("pdfinfo").ok());
+
+fn pdftotext_bin() -> Result<&'static Path, String> {
+    match &*PDFTOTEXT_BIN {
+        Ok(path) => Ok(path.as_path()),
+        Err(msg) => Err(msg.clone()),
+    }
+}
+
+fn pdfinfo_bin() -> Option<&'static Path> {
+    (*PDFINFO_BIN).as_deref()
+}
 
 /// Return `(error_message, is_error=true)` if `path` is too large or is a
 /// special device file that bypasses the size check (e.g., `/dev/zero`
@@ -267,27 +290,10 @@ pub fn read_pdf_file(path: &str, pages: Option<&str>) -> (String, bool) {
         return (err, true);
     }
 
-    // Check if pdftotext is available
-    let check = Command::new("which").arg("pdftotext").output();
-    match check {
-        Ok(output) if !output.status.success() => {
-            return (
-                "pdftotext is not installed. Install it with:\n  \
-                 Ubuntu/Debian: sudo apt install poppler-utils\n  \
-                 macOS: brew install poppler\n  \
-                 Fedora: sudo dnf install poppler-utils"
-                    .to_string(),
-                true,
-            );
-        }
-        Err(_) => {
-            return (
-                "Could not check for pdftotext. Ensure poppler-utils is installed.".to_string(),
-                true,
-            );
-        }
-        _ => {}
-    }
+    let pdftotext = match pdftotext_bin() {
+        Ok(path) => path,
+        Err(msg) => return (msg, true),
+    };
 
     let timeout = std::time::Duration::from_secs(PDF_TIMEOUT_SECS);
 
@@ -296,24 +302,26 @@ pub fn read_pdf_file(path: &str, pages: Option<&str>) -> (String, bool) {
         // `--` terminates options so a hostile filename cannot be parsed as a flag
         // (defence-in-depth alongside reject_flag_prefix above).
         let info_args = ["--", path];
-        if let Ok(info) =
-            crate::tools::command::run_with_timeout("pdfinfo", &info_args, None, timeout)
-        {
-            if info.status.success() {
-                let info_text = String::from_utf8_lossy(&info.stdout);
-                for line in info_text.lines() {
-                    if line.starts_with("Pages:") {
-                        if let Some(count_str) = line.split(':').nth(1) {
-                            if let Ok(count) = count_str.trim().parse::<u32>() {
-                                const MAX_PDF_PAGES_WITHOUT_RANGE: u32 = 10;
-                                if count > MAX_PDF_PAGES_WITHOUT_RANGE {
-                                    return (
-                                        format!(
-                                            "PDF has {count} pages. For large PDFs (>{MAX_PDF_PAGES_WITHOUT_RANGE} pages), you must specify \
-                                             a page range using the 'pages' parameter (e.g., '1-5', '3', '10-20')."
-                                        ),
-                                        true,
-                                    );
+        if let Some(pdfinfo) = pdfinfo_bin() {
+            if let Ok(info) =
+                crate::tools::command::run_with_timeout(pdfinfo, &info_args, None, timeout)
+            {
+                if info.status.success() {
+                    let info_text = String::from_utf8_lossy(&info.stdout);
+                    for line in info_text.lines() {
+                        if line.starts_with("Pages:") {
+                            if let Some(count_str) = line.split(':').nth(1) {
+                                if let Ok(count) = count_str.trim().parse::<u32>() {
+                                    const MAX_PDF_PAGES_WITHOUT_RANGE: u32 = 10;
+                                    if count > MAX_PDF_PAGES_WITHOUT_RANGE {
+                                        return (
+                                            format!(
+                                                "PDF has {count} pages. For large PDFs (>{MAX_PDF_PAGES_WITHOUT_RANGE} pages), you must specify \
+                                                 a page range using the 'pages' parameter (e.g., '1-5', '3', '10-20')."
+                                            ),
+                                            true,
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -344,7 +352,7 @@ pub fn read_pdf_file(path: &str, pages: Option<&str>) -> (String, bool) {
     argv.push("-".to_string()); // stdout sentinel
     let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
 
-    match crate::tools::command::run_with_timeout("pdftotext", &argv_refs, None, timeout) {
+    match crate::tools::command::run_with_timeout(pdftotext, &argv_refs, None, timeout) {
         Ok(output) => {
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -635,6 +643,30 @@ mod tests {
         f.write_all(content.as_bytes()).expect("write");
         let path = f.path().to_string_lossy().to_string();
         (f, path)
+    }
+
+    #[test]
+    fn read_pdf_uses_resolved_poppler_binaries() {
+        let source = include_str!("read.rs");
+        let cfg_test = source
+            .find("#[cfg(test)]")
+            .expect("test module marker must be present");
+        let production = &source[..cfg_test];
+
+        assert!(
+            !production.contains("Command::new(\"which\")")
+                && !production.contains("std::process::Command::new(\"which\")"),
+            "production PDF reader must not shell out to which"
+        );
+        assert!(
+            !production.contains("run_with_timeout(\"pdftotext\"")
+                && !production.contains("run_with_timeout(\"pdfinfo\""),
+            "production PDF reader must pass resolved Poppler binary paths to run_with_timeout"
+        );
+        assert!(
+            production.contains("which::which(\"pdftotext\")"),
+            "pdftotext availability must use the Rust resolver"
+        );
     }
 
     #[test]
