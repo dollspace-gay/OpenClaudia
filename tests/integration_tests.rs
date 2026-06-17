@@ -2235,6 +2235,13 @@ mod subagent_tools {
         assert!(!explore_tools.contains(&"write_file"));
         assert!(!explore_tools.contains(&"edit_file"));
 
+        // Plan should be read-only and must not be able to shell out.
+        let plan_tools = AgentType::Plan.allowed_tools();
+        assert!(plan_tools.contains(&"read_file"));
+        assert!(!plan_tools.contains(&"write_file"));
+        assert!(!plan_tools.contains(&"edit_file"));
+        assert!(!plan_tools.contains(&"bash"));
+
         // Guide should be most restricted
         let guide_tools = AgentType::Guide.allowed_tools();
         assert!(guide_tools.contains(&"read_file"));

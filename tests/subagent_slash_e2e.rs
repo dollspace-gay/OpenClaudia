@@ -166,6 +166,10 @@ fn plan_agent_does_not_have_write_or_edit_tools() {
     let tools = AgentType::Plan.allowed_tools();
     assert!(!tools.contains(&"write_file"));
     assert!(!tools.contains(&"edit_file"));
+    assert!(
+        !tools.contains(&"bash"),
+        "Plan is read-only and MUST NOT have bash; got {tools:?}"
+    );
 }
 
 #[test]

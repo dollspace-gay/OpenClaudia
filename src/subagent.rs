@@ -160,8 +160,9 @@ impl AgentType {
             Self::Explore => {
                 vec!["bash", "read_file", "list_files", "web_fetch", "web_search"]
             }
-            Self::Plan => vec!["bash", "read_file", "list_files", "web_fetch", "web_search"],
-            Self::Guide => vec!["read_file", "list_files", "web_fetch", "web_search"],
+            Self::Plan | Self::Guide => {
+                vec!["read_file", "list_files", "web_fetch", "web_search"]
+            }
             Self::Coordinator => vec![
                 "task",
                 "agent_output",
