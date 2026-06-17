@@ -10,11 +10,41 @@
 use regex::Regex;
 use std::process::Command;
 use std::sync::LazyLock;
+use tracing::error;
 
 /// Cap on the command string supplied to `bash -c`.
 /// Beyond this length a prompt is likely an obfuscated payload or a
 /// pathological generation; legitimate commands are well under 4 KiB.
 pub const MAX_COMMAND_LEN: usize = 4096;
+
+const POLICY_REGEX_UNAVAILABLE_REASON: &str = "internal bash policy regex unavailable";
+
+fn compile_policy_regex(name: &'static str, pattern: &str) -> Option<Regex> {
+    match Regex::new(pattern) {
+        Ok(regex) => Some(regex),
+        Err(error) => {
+            error!(
+                name,
+                pattern,
+                error = %error,
+                "Invalid built-in bash policy regex; failing closed",
+            );
+            None
+        }
+    }
+}
+
+fn compiled_policy_regex(regex: Option<&Regex>) -> Result<&Regex, &'static str> {
+    regex.ok_or(POLICY_REGEX_UNAVAILABLE_REASON)
+}
+
+/// Structural pattern for `curl <url> | bash`, `wget <url> | sh`, etc.
+static PIPE_TO_SHELL: LazyLock<Option<Regex>> = LazyLock::new(|| {
+    compile_policy_regex(
+        "PIPE_TO_SHELL",
+        r"\b(curl|wget|fetch)\b[^\n|]*\|\s*(sudo\s+)?(ba)?sh\b",
+    )
+});
 
 /// True if the env-var name is a credential or other sensitive secret
 /// that must never flow into an untrusted child process.
@@ -115,11 +145,6 @@ pub fn denied_reason(command: &str) -> Option<&'static str> {
         ("nc -e /bin/", "netcat reverse shell (-e exec)"),
         ("ncat -e /bin/", "ncat reverse shell (-e exec)"),
     ];
-    // Structural patterns — `curl <url> | bash`, `wget <url> | sh`, etc.
-    static PIPE_TO_SHELL: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"\b(curl|wget|fetch)\b[^\n|]*\|\s*(sudo\s+)?(ba)?sh\b")
-            .expect("PIPE_TO_SHELL regex is a compile-time constant")
-    });
     let lower = command.to_ascii_lowercase();
 
     for (pat, reason) in SUBSTRINGS {
@@ -128,7 +153,10 @@ pub fn denied_reason(command: &str) -> Option<&'static str> {
         }
     }
 
-    if PIPE_TO_SHELL.is_match(&lower) {
+    let Ok(pipe_to_shell) = compiled_policy_regex((*PIPE_TO_SHELL).as_ref()) else {
+        return Some(POLICY_REGEX_UNAVAILABLE_REASON);
+    };
+    if pipe_to_shell.is_match(&lower) {
         return Some("pipe download-to-shell (curl/wget | sh)");
     }
 
@@ -369,8 +397,9 @@ const SAFE_READ_ONLY_COMMANDS: &[&str] = &[
 /// process (`| sh`, `| bash`, `| python3`, `| node`, optionally prefixed
 /// with `sudo `). Kept at module scope so it compiles once and avoids the
 /// `items_after_statements` clippy lint when used inside a function.
-static PIPE_TO_INTERPRETER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
+static PIPE_TO_INTERPRETER: LazyLock<Option<Regex>> = LazyLock::new(|| {
+    compile_policy_regex(
+        "PIPE_TO_INTERPRETER",
         r"(?ix)
         \|                              # pipe
         \s*                             # optional whitespace
@@ -383,28 +412,28 @@ static PIPE_TO_INTERPRETER: LazyLock<Regex> = LazyLock::new(|| {
         \b
         ",
     )
-    .expect("PIPE_TO_INTERPRETER regex is a compile-time constant")
 });
 
 /// Regex that matches `eval`, `exec`, or `source` appearing as a shell
 /// token (i.e. with shell-meaningful boundaries on both sides). Kept at
 /// module scope per the above.
-static INTERPRETER_KEYWORD: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
+static INTERPRETER_KEYWORD: LazyLock<Option<Regex>> = LazyLock::new(|| {
+    compile_policy_regex(
+        "INTERPRETER_KEYWORD",
         r"(?x)
         (?: \A | [\s;|&(] )             # shell-meaningful boundary before
         (?: eval | exec | source )      # keyword (no `.` here — handled separately)
         (?: \z | [\s;|&)] )             # shell-meaningful boundary after
         ",
     )
-    .expect("INTERPRETER_KEYWORD regex is a compile-time constant")
 });
 
 /// Regex that matches `find` invoked with `-exec`, `-execdir`, `-ok`,
 /// `-okdir`, or `-delete` — flags that turn `find` from a read-only
 /// search into an arbitrary-command launcher.
-static FIND_EXEC: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
+static FIND_EXEC: LazyLock<Option<Regex>> = LazyLock::new(|| {
+    compile_policy_regex(
+        "FIND_EXEC",
         r"(?x)
         \b find \b                      # find as a token
         [^\n;|&]*                       # arguments on the same logical command
@@ -412,7 +441,6 @@ static FIND_EXEC: LazyLock<Regex> = LazyLock::new(|| {
         -(?: exec | execdir | ok | okdir | delete ) \b
         ",
     )
-    .expect("FIND_EXEC regex is a compile-time constant")
 });
 
 /// Returns `Some(reason)` when the command contains a shell construct that
@@ -459,14 +487,20 @@ pub fn dangerous_shell_construct(command: &str) -> Option<&'static str> {
     // 3. Pipe / redirect into an interpreter. Match `| sh`, `| bash`,
     //    `| python`, `| node`, etc., optionally prefixed with `sudo `.
     //    We do NOT match `| grep` — those don't take stdin as a script.
-    if PIPE_TO_INTERPRETER.is_match(command) {
+    let Ok(pipe_to_interpreter) = compiled_policy_regex((*PIPE_TO_INTERPRETER).as_ref()) else {
+        return Some(POLICY_REGEX_UNAVAILABLE_REASON);
+    };
+    if pipe_to_interpreter.is_match(command) {
         return Some("pipe to interpreter (| sh | bash | python | node ...)");
     }
 
     // 4. Direct interpreter invocation as a *token* (not a substring of
     //    a longer identifier like `source_file.txt` or `execute_query`,
     //    and not as a flag like `find -exec` which is handled in §5).
-    if INTERPRETER_KEYWORD.is_match(command) {
+    let Ok(interpreter_keyword) = compiled_policy_regex((*INTERPRETER_KEYWORD).as_ref()) else {
+        return Some(POLICY_REGEX_UNAVAILABLE_REASON);
+    };
+    if interpreter_keyword.is_match(command) {
         return Some("interpreter invocation (eval / exec / source)");
     }
     // 4b. POSIX `.` dot-command (`. ./foo.sh` sources a file). Match only
@@ -483,7 +517,10 @@ pub fn dangerous_shell_construct(command: &str) -> Option<&'static str> {
     // 5. `find` with execution / deletion flags. `find` itself is
     //    read-only, but `-exec`, `-execdir`, `-delete`, and `-ok` turn it
     //    into an arbitrary-command launcher.
-    if FIND_EXEC.is_match(command) {
+    let Ok(find_exec) = compiled_policy_regex((*FIND_EXEC).as_ref()) else {
+        return Some(POLICY_REGEX_UNAVAILABLE_REASON);
+    };
+    if find_exec.is_match(command) {
         return Some("find with -exec / -execdir / -ok / -delete");
     }
 
@@ -673,6 +710,20 @@ pub fn validate_command(command: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_policy_regex_is_skipped() {
+        assert!(compile_policy_regex("TEST_REGEX", "[").is_none());
+    }
+
+    #[test]
+    fn unavailable_policy_regex_reports_fail_closed_reason() {
+        let missing = None;
+        assert_eq!(
+            compiled_policy_regex(missing.as_ref()).unwrap_err(),
+            POLICY_REGEX_UNAVAILABLE_REASON
+        );
+    }
 
     #[test]
     fn sensitive_env_matches_known_keys() {
