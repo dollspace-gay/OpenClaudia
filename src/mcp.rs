@@ -7,7 +7,7 @@
 //! Handles tool discovery, schema translation, and request routing.
 
 use async_trait::async_trait;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -722,6 +722,118 @@ impl HttpTransport {
     }
 }
 
+fn response_content_type_is_event_stream(headers: &HeaderMap) -> bool {
+    headers
+        .get_all(CONTENT_TYPE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .any(content_type_value_is_event_stream)
+}
+
+fn content_type_value_is_event_stream(value: &str) -> bool {
+    value.split(',').any(|part| {
+        part.split(';')
+            .next()
+            .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("text/event-stream"))
+    })
+}
+
+async fn parse_http_json_rpc_response(
+    response: reqwest::Response,
+) -> Result<JsonRpcResponse, McpError> {
+    let is_event_stream = response_content_type_is_event_stream(response.headers());
+    let body = response.text().await.map_err(|err| {
+        if is_event_stream {
+            McpError::Protocol(format!("Failed to read SSE response: {err}"))
+        } else {
+            McpError::Protocol(format!("Failed to read response: {err}"))
+        }
+    })?;
+
+    if is_event_stream || body_looks_like_sse(&body) {
+        parse_sse_json_rpc_response(&body)
+    } else {
+        serde_json::from_str(&body)
+            .map_err(|err| McpError::Protocol(format!("Failed to parse response: {err}")))
+    }
+}
+
+fn body_looks_like_sse(body: &str) -> bool {
+    body.lines()
+        .map(str::trim_start)
+        .find(|line| !line.is_empty())
+        .is_some_and(|line| {
+            line.starts_with(':')
+                || line.starts_with("event:")
+                || line.starts_with("data:")
+                || line.starts_with("id:")
+                || line.starts_with("retry:")
+        })
+}
+
+fn parse_sse_json_rpc_response(body: &str) -> Result<JsonRpcResponse, McpError> {
+    let mut event_name: Option<String> = None;
+    let mut data_lines: Vec<String> = Vec::new();
+
+    for line in body.lines() {
+        if line.is_empty() {
+            if let Some(response) = parse_sse_json_rpc_event(event_name.as_deref(), &data_lines)? {
+                return Ok(response);
+            }
+            event_name = None;
+            data_lines.clear();
+            continue;
+        }
+
+        if line.starts_with(':') {
+            continue;
+        }
+
+        let (field, value) = match line.split_once(':') {
+            Some((field, value)) => (field, value.strip_prefix(' ').unwrap_or(value)),
+            None => (line, ""),
+        };
+
+        match field {
+            "event" => event_name = Some(value.to_string()),
+            "data" => data_lines.push(value.to_string()),
+            _ => {}
+        }
+    }
+
+    if let Some(response) = parse_sse_json_rpc_event(event_name.as_deref(), &data_lines)? {
+        return Ok(response);
+    }
+
+    Err(McpError::Protocol(
+        "SSE response did not contain a JSON-RPC response message".to_string(),
+    ))
+}
+
+fn parse_sse_json_rpc_event(
+    event_name: Option<&str>,
+    data_lines: &[String],
+) -> Result<Option<JsonRpcResponse>, McpError> {
+    if data_lines.is_empty() || event_name.is_some_and(|name| name != "message") {
+        return Ok(None);
+    }
+
+    let data = data_lines.join("\n");
+    let value: Value = serde_json::from_str(&data)
+        .map_err(|err| McpError::Protocol(format!("Failed to parse SSE event JSON: {err}")))?;
+
+    if !value
+        .get("id")
+        .is_some_and(|_| value.get("result").is_some() || value.get("error").is_some())
+    {
+        return Ok(None);
+    }
+
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(|err| McpError::Protocol(format!("Failed to parse SSE JSON-RPC response: {err}")))
+}
+
 #[async_trait]
 impl McpTransport for HttpTransport {
     async fn request(&self, method: &str, params: Option<Value>) -> Result<Value, McpError> {
@@ -744,8 +856,7 @@ impl McpTransport for HttpTransport {
         //
         // Crosslink #631 — MCP Streamable HTTP compliance:
         // * `Accept: application/json, text/event-stream` per spec §6.5
-        //   (servers MAY respond with either; we must announce we accept
-        //   both even though we currently parse only the JSON branch).
+        //   (servers MAY respond with either; both branches are parsed below).
         // * Echo any captured `Mcp-Session-Id` so the server can route
         //   subsequent requests to the same logical session.
         let mut builder = Self::client()?
@@ -794,10 +905,7 @@ impl McpTransport for HttpTransport {
             }
         }
 
-        let response: JsonRpcResponse = response
-            .json()
-            .await
-            .map_err(|e| McpError::Protocol(format!("Failed to parse response: {e}")))?;
+        let response = parse_http_json_rpc_response(response).await?;
 
         // Fix #701 — JSON-RPC §5 requires response.id == request.id.
         // The pre-fix HTTP transport parsed `id` into the struct and
@@ -1361,34 +1469,30 @@ fn parse_mcp_resources_list_response(
         .collect()
 }
 
-/// Stub kinds for not-yet-implemented MCP transports (crosslink #630).
+/// Named MCP transports that do not have standalone builders here.
 ///
-/// The MCP spec defines several streaming transports that OC does not yet
-/// implement end-to-end:
+/// The MCP spec defines several streaming transports:
 ///
 /// * **`Sse`** — Server-Sent Events (`text/event-stream`) one-way push from
 ///   the server, paired with a separate HTTP POST for the client→server
 ///   direction.
 /// * **`WebSocket`** — full-duplex `ws://` / `wss://` channel.
 /// * **`StreamableHttp`** — the current MCP-canonical HTTP transport with
-///   bidirectional streaming over a single endpoint (spec §6.5). The
-///   underlying request path is now compliant ([`HttpTransport`] gained
-///   `Accept`-header and `Mcp-Session-Id` support in crosslink #631), but
-///   the server-push branch (`text/event-stream` responses) is still
-///   parsed as JSON only — when the server elects to stream, we land in
-///   the `not yet implemented` arm here.
+///   bidirectional streaming over a single endpoint (spec §6.5).
 ///
-/// This enum exists so callers can name the transport choice today and the
-/// `build_stub_transport` constructor returns a structured error per
-/// variant. When a transport ships, the matching arm flips from
-/// `Err(McpError::NotImplemented)` to `Ok(Box<dyn McpTransport>)`.
+/// Runtime plugin config normalizes `streamable-http` to `http`, so the
+/// regular [`HttpTransport`] handles JSON responses, `text/event-stream`
+/// response bodies, `Accept`, and `Mcp-Session-Id`. This enum remains for
+/// callers that need a typed diagnostic for deprecated standalone SSE or
+/// future WebSocket support rather than silently treating those names as
+/// typos.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpTransportKind {
     /// `text/event-stream` server-push branch — landing under #630-SSE.
     Sse,
     /// Full-duplex WebSocket transport — landing under #630-WS.
     WebSocket,
-    /// MCP Streamable HTTP server-push branch — landing under #630-SH.
+    /// Streamable HTTP is implemented by [`HttpTransport`] in runtime config.
     StreamableHttp,
 }
 
@@ -1407,16 +1511,22 @@ impl McpTransportKind {
     ///
     /// # Errors
     ///
-    /// Returns [`McpError::Transport`] with a `"not yet implemented"` body
-    /// for every variant — the unifying boundary that lets callers wire
-    /// configuration today and detect at runtime that the chosen transport
-    /// is on the roadmap rather than misspelled.
+    /// Returns [`McpError::Transport`] with guidance for transports that
+    /// should be routed through existing config (`streamable-http`) or that
+    /// remain on the roadmap (`sse`, `websocket`).
     pub fn build_stub_transport(&self, _url: &str) -> Result<Box<dyn McpTransport>, McpError> {
-        Err(McpError::Transport(format!(
-            "{} MCP transport is not yet implemented (crosslink #630); \
-             use `stdio` or `http` for now",
-            self.label()
-        )))
+        match self {
+            Self::StreamableHttp => Err(McpError::Transport(
+                "Streamable HTTP MCP transport is implemented by the `http` transport; \
+                 use `type: \"http\"` or `type: \"streamable-http\"` in config"
+                    .to_string(),
+            )),
+            Self::Sse | Self::WebSocket => Err(McpError::Transport(format!(
+                "{} MCP transport is not yet implemented (crosslink #630); \
+                 use `stdio` or `http` for now",
+                self.label()
+            ))),
+        }
     }
 }
 

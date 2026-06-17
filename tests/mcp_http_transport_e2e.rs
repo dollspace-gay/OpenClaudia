@@ -40,6 +40,10 @@ struct EchoIdResponder {
     error_body: Option<Value>,
 }
 
+struct SseEchoIdResponder {
+    result_body: Value,
+}
+
 impl Respond for EchoIdResponder {
     fn respond(&self, request: &Request) -> ResponseTemplate {
         // Parse the request body as JSON to extract the id.
@@ -57,6 +61,37 @@ impl Respond for EchoIdResponder {
             envelope.insert("error".to_string(), error.clone());
         }
         ResponseTemplate::new(200).set_body_json(Value::Object(envelope))
+    }
+}
+
+impl Respond for SseEchoIdResponder {
+    fn respond(&self, request: &Request) -> ResponseTemplate {
+        let body_json: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
+        let id = body_json.get("id").cloned().unwrap_or(Value::Null);
+
+        let progress = json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/progress",
+            "params": {
+                "progressToken": "tool-call",
+                "progress": 0.5
+            }
+        });
+
+        let mut envelope = serde_json::Map::new();
+        envelope.insert("jsonrpc".to_string(), Value::String("2.0".to_string()));
+        envelope.insert("id".to_string(), id);
+        envelope.insert("result".to_string(), self.result_body.clone());
+
+        let body = format!(
+            "event: message\ndata: {}\n\nevent: message\ndata: {}\n\n",
+            serde_json::to_string(&progress).expect("progress JSON"),
+            serde_json::to_string(&Value::Object(envelope)).expect("response JSON")
+        );
+
+        ResponseTemplate::new(200)
+            .set_body_string(body)
+            .insert_header("content-type", "text/event-stream; charset=utf-8")
     }
 }
 
@@ -128,6 +163,12 @@ const fn echo_error(error: Value) -> EchoIdResponder {
     EchoIdResponder {
         result_body: None,
         error_body: Some(error),
+    }
+}
+
+const fn sse_echo_result(result: Value) -> SseEchoIdResponder {
+    SseEchoIdResponder {
+        result_body: result,
     }
 }
 
@@ -250,6 +291,32 @@ async fn call_tool_returns_server_result_through_transport() {
         .expect("content array");
     assert_eq!(content.len(), 1);
     assert_eq!(content[0]["text"], "HELLO");
+}
+
+#[tokio::test]
+async fn call_tool_accepts_streamable_http_sse_response_body() {
+    let mock = MockServer::start().await;
+    mount_handshake(&mock).await;
+    Mock::given(method("POST"))
+        .and(body_string_contains("\"method\":\"tools/call\""))
+        .respond_with(sse_echo_result(call_tool_success_result("STREAMED")))
+        .mount(&mock)
+        .await;
+
+    let mgr = McpManager::new();
+    mgr.__test_connect_http_unchecked("srv", &mock.uri())
+        .await
+        .expect("connect");
+
+    let result = mgr
+        .call_tool("mcp__srv__echo", json!({"text": "hi"}))
+        .await
+        .expect("SSE JSON-RPC response must parse");
+    let content = result
+        .get("content")
+        .and_then(Value::as_array)
+        .expect("content array");
+    assert_eq!(content[0]["text"], "STREAMED");
 }
 
 // ───────────────────────────────────────────────────────────────────────────
