@@ -7,6 +7,7 @@
 //! Handles tool discovery, schema translation, and request routing.
 
 use async_trait::async_trait;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -552,6 +553,7 @@ impl McpTransport for StdioTransport {
 /// MCP servers builds the connection pool once, not N times.
 pub struct HttpTransport {
     base_url: String,
+    headers: HeaderMap,
     request_id: AtomicU64,
     /// MCP Streamable HTTP session id (crosslink #631).
     ///
@@ -561,6 +563,20 @@ pub struct HttpTransport {
     /// id through every request. `RwLock` because the value is read on
     /// every request but written at most once.
     session_id: std::sync::RwLock<Option<String>>,
+}
+
+fn parse_static_headers(headers: &HashMap<String, String>) -> Result<HeaderMap, McpError> {
+    let mut parsed = HeaderMap::new();
+    for (name, value) in headers {
+        let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|err| {
+            McpError::Transport(format!("Invalid MCP HTTP header name {name:?}: {err}"))
+        })?;
+        let header_value = HeaderValue::from_str(value).map_err(|err| {
+            McpError::Transport(format!("Invalid MCP HTTP header value for {name:?}: {err}"))
+        })?;
+        parsed.insert(header_name, header_value);
+    }
+    Ok(parsed)
 }
 
 impl HttpTransport {
@@ -593,11 +609,25 @@ impl HttpTransport {
     /// so call sites and tests can distinguish a validation failure
     /// from a runtime transport error.
     pub fn new(base_url: &str) -> Result<Self, McpError> {
+        Self::new_with_headers(base_url, &HashMap::new())
+    }
+
+    /// Create a new HTTP transport with static request headers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::Transport`] if the URL fails validation or any
+    /// configured header name/value is invalid.
+    pub fn new_with_headers(
+        base_url: &str,
+        headers: &HashMap<String, String>,
+    ) -> Result<Self, McpError> {
         // SSRF guard. Mirrors `web::fetch_url`'s entry check (#368) and
         // satisfies the perimeter contract spelled out in #677.
         crate::web::validate_url(base_url).map_err(|reason| {
             McpError::Transport(format!("SSRF guard rejected MCP base URL: {reason}"))
         })?;
+        let headers = parse_static_headers(headers)?;
 
         // Touch the static so the client is eagerly built on first
         // construction. Cheap, idempotent, and surfaces a build error
@@ -605,6 +635,7 @@ impl HttpTransport {
         Self::client()?;
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
+            headers,
             request_id: AtomicU64::new(1),
             session_id: std::sync::RwLock::new(None),
         })
@@ -624,8 +655,19 @@ impl HttpTransport {
     #[doc(hidden)]
     #[must_use]
     pub fn __test_new_unchecked(base_url: &str) -> Self {
+        Self::__test_new_unchecked_with_headers(base_url, &HashMap::new())
+    }
+
+    /// Test-only constructor with static headers and no SSRF guard.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn __test_new_unchecked_with_headers(
+        base_url: &str,
+        headers: &HashMap<String, String>,
+    ) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
+            headers: parse_static_headers(headers).unwrap_or_default(),
             request_id: AtomicU64::new(1),
             session_id: std::sync::RwLock::new(None),
         }
@@ -707,6 +749,7 @@ impl McpTransport for HttpTransport {
         //   subsequent requests to the same logical session.
         let mut builder = Self::client()?
             .post(&self.base_url)
+            .headers(self.headers.clone())
             .timeout(HTTP_REQUEST_TIMEOUT)
             .header("Accept", "application/json, text/event-stream")
             .header("Content-Type", "application/json")
@@ -1387,6 +1430,7 @@ enum ConnectionSpec {
     },
     Http {
         url: String,
+        headers: HashMap<String, String>,
     },
 }
 
@@ -1399,7 +1443,9 @@ impl ConnectionSpec {
                     command, &argv, env,
                 )?))
             }
-            Self::Http { url } => Ok(Box::new(HttpTransport::new(url)?)),
+            Self::Http { url, headers } => {
+                Ok(Box::new(HttpTransport::new_with_headers(url, headers)?))
+            }
         }
     }
 }
@@ -1550,8 +1596,25 @@ impl McpManager {
     ///
     /// Returns an `McpError` if URL validation, connection, or initialization fails.
     pub async fn connect_http(&self, name: &str, url: &str) -> Result<(), McpError> {
+        self.connect_http_with_headers(name, url, &HashMap::new())
+            .await
+    }
+
+    /// Connect to an MCP server via HTTP with static headers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `McpError` if URL/header validation, connection, or
+    /// initialization fails.
+    pub async fn connect_http_with_headers(
+        &self,
+        name: &str,
+        url: &str,
+        headers: &HashMap<String, String>,
+    ) -> Result<(), McpError> {
         let spec = ConnectionSpec::Http {
             url: url.to_string(),
+            headers: headers.clone(),
         };
         let transport = spec.build_transport()?;
         let server = McpServer::new(name, transport).await?;
@@ -1574,10 +1637,25 @@ impl McpManager {
         name: &str,
         url: &str,
     ) -> Result<(), McpError> {
+        self.__test_connect_http_unchecked_with_headers(name, url, &HashMap::new())
+            .await
+    }
+
+    /// Test-only HTTP connector with static headers and no SSRF guard.
+    #[doc(hidden)]
+    pub async fn __test_connect_http_unchecked_with_headers(
+        &self,
+        name: &str,
+        url: &str,
+        headers: &HashMap<String, String>,
+    ) -> Result<(), McpError> {
         let spec = ConnectionSpec::Http {
             url: url.to_string(),
+            headers: headers.clone(),
         };
-        let transport: Box<dyn McpTransport> = Box::new(HttpTransport::__test_new_unchecked(url));
+        let transport: Box<dyn McpTransport> = Box::new(
+            HttpTransport::__test_new_unchecked_with_headers(url, headers),
+        );
         let server = McpServer::new(name, transport).await?;
         let entry = ServerEntry::new(spec, server);
         self.servers.lock().await.insert(name.to_string(), entry);

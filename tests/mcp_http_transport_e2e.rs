@@ -19,7 +19,8 @@
 
 use openclaudia::mcp::McpManager;
 use serde_json::{json, Value};
-use wiremock::matchers::{body_string_contains, method};
+use std::collections::HashMap;
+use wiremock::matchers::{body_string_contains, header, method};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -180,6 +181,41 @@ async fn handshake_and_tools_list_round_trip_against_wiremock() {
     // get_server_info returns the NAME we registered the server
     // under (not the remote serverInfo.name). Pin that contract.
     assert_eq!(registered_name, "test-server");
+}
+
+#[tokio::test]
+async fn http_connect_sends_static_headers_on_handshake_requests() {
+    let mock = MockServer::start().await;
+
+    for method_name in ["initialize", "notifications/initialized", "tools/list"] {
+        let responder = if method_name == "tools/list" {
+            echo_result(tools_list_result_body())
+        } else if method_name == "initialize" {
+            echo_result(init_result_body())
+        } else {
+            echo_result(json!({}))
+        };
+        Mock::given(method("POST"))
+            .and(header("Authorization", "Bearer test-token"))
+            .and(header("X-Mcp-Team", "openclaudia"))
+            .and(body_string_contains(format!(
+                "\"method\":\"{method_name}\""
+            )))
+            .respond_with(responder)
+            .mount(&mock)
+            .await;
+    }
+
+    let headers = HashMap::from([
+        ("Authorization".to_string(), "Bearer test-token".to_string()),
+        ("X-Mcp-Team".to_string(), "openclaudia".to_string()),
+    ]);
+    let mgr = McpManager::new();
+    mgr.__test_connect_http_unchecked_with_headers("hdr", &mock.uri(), &headers)
+        .await
+        .expect("connect with headers");
+
+    assert!(mgr.is_live("hdr").await);
 }
 
 // ───────────────────────────────────────────────────────────────────────────

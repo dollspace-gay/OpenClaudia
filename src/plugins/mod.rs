@@ -396,6 +396,14 @@ pub struct PluginMcpServer {
     pub url: Option<String>,
     /// Environment variables
     pub env: HashMap<String, String>,
+    /// Static HTTP headers
+    pub headers: HashMap<String, String>,
+    /// Dynamic header helper command
+    pub headers_helper: Option<String>,
+    /// Per-server tool execution timeout in milliseconds
+    pub timeout: Option<u64>,
+    /// Whether Claude Code should eagerly load this server's tools
+    pub always_load: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -552,6 +560,10 @@ impl Plugin {
                         env: HashMap::new(),
                         transport,
                         url: server["url"].as_str().map(String::from),
+                        headers: HashMap::new(),
+                        headers_helper: None,
+                        timeout: None,
+                        always_load: None,
                     },
                 );
             }
@@ -1223,6 +1235,10 @@ impl Plugin {
                 args: config.args.clone(),
                 url: config.url.clone(),
                 env: config.env.clone(),
+                headers: config.headers.clone(),
+                headers_helper: config.headers_helper.clone(),
+                timeout: config.timeout,
+                always_load: config.always_load,
             })
             .collect()
     }

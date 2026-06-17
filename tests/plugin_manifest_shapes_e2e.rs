@@ -113,6 +113,31 @@ fn mcp_server_config_http_transport_with_url_round_trips() {
 }
 
 #[test]
+fn mcp_server_config_type_alias_http_with_headers_round_trips() {
+    let json = r#"{
+        "type": "http",
+        "url": "https://api.example.com/mcp",
+        "headers": {"Authorization": "Bearer token"}
+    }"#;
+    let config: McpServerConfig = serde_json::from_str(json).expect("de");
+    assert_eq!(config.transport, "http");
+    assert_eq!(
+        config.headers.get("Authorization").map(String::as_str),
+        Some("Bearer token")
+    );
+}
+
+#[test]
+fn mcp_server_config_streamable_http_type_normalizes_to_http() {
+    let json = r#"{
+        "type": "streamable-http",
+        "url": "https://api.example.com/mcp"
+    }"#;
+    let config: McpServerConfig = serde_json::from_str(json).expect("de");
+    assert_eq!(config.transport, "http");
+}
+
+#[test]
 fn mcp_server_config_env_vars_round_trip() {
     let json = r#"{
         "command": "node",
@@ -135,6 +160,10 @@ fn mcp_server_config_omits_empty_args_and_env_on_serialize() {
         env: HashMap::new(),
         transport: "stdio".to_string(),
         url: None,
+        headers: HashMap::new(),
+        headers_helper: None,
+        timeout: None,
+        always_load: None,
     };
     let json = serde_json::to_string(&config).expect("ser");
     assert!(
@@ -337,6 +366,10 @@ fn mcp_server_config_clone_preserves_all_fields() {
         },
         transport: "http".to_string(),
         url: Some("https://x".to_string()),
+        headers: HashMap::from([("Authorization".to_string(), "Bearer token".to_string())]),
+        headers_helper: Some("/bin/headers".to_string()),
+        timeout: Some(5000),
+        always_load: Some(true),
     };
     let cloned = original.clone();
     assert_eq!(cloned.command, original.command);
@@ -344,6 +377,10 @@ fn mcp_server_config_clone_preserves_all_fields() {
     assert_eq!(cloned.env.len(), original.env.len());
     assert_eq!(cloned.transport, original.transport);
     assert_eq!(cloned.url, original.url);
+    assert_eq!(cloned.headers, original.headers);
+    assert_eq!(cloned.headers_helper, original.headers_helper);
+    assert_eq!(cloned.timeout, original.timeout);
+    assert_eq!(cloned.always_load, original.always_load);
 }
 
 #[test]

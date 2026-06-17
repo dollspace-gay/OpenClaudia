@@ -25,6 +25,10 @@ fn make_spec(transport: &str) -> McpServerSpec {
         env: HashMap::new(),
         transport: transport.to_string(),
         url: None,
+        headers: HashMap::new(),
+        headers_helper: None,
+        timeout: None,
+        always_load: None,
     }
 }
 

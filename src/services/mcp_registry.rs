@@ -37,6 +37,14 @@ pub struct McpServerSpec {
     pub transport: String,
     /// Endpoint URL (`http` transport) or absent for `stdio`.
     pub url: Option<String>,
+    /// Static HTTP headers for remote transports.
+    pub headers: HashMap<String, String>,
+    /// Dynamic header helper command.
+    pub headers_helper: Option<String>,
+    /// Per-server tool timeout in milliseconds.
+    pub timeout: Option<u64>,
+    /// Tool-search hint for eager loading.
+    pub always_load: Option<bool>,
 }
 
 impl McpServerSpec {
@@ -51,6 +59,10 @@ impl McpServerSpec {
             env: cfg.env.clone(),
             transport: cfg.transport.clone(),
             url: cfg.url.clone(),
+            headers: cfg.headers.clone(),
+            headers_helper: cfg.headers_helper.clone(),
+            timeout: cfg.timeout,
+            always_load: cfg.always_load,
         }
     }
 }
@@ -131,6 +143,10 @@ mod tests {
                 env: HashMap::new(),
                 transport: "stdio".into(),
                 url: None,
+                headers: HashMap::new(),
+                headers_helper: None,
+                timeout: None,
+                always_load: None,
             },
         }
     }
@@ -180,6 +196,10 @@ mod tests {
             env: HashMap::from([("X".to_string(), "1".to_string())]),
             transport: "stdio".into(),
             url: None,
+            headers: HashMap::new(),
+            headers_helper: None,
+            timeout: None,
+            always_load: None,
         };
         let spec = McpServerSpec::from_plugin_config(&cfg);
         assert_eq!(spec.command.as_deref(), Some("python"));

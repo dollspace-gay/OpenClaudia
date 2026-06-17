@@ -2124,6 +2124,27 @@ pub async fn connect_mcp_servers(
     for (plugin, server) in plugin_manager.all_mcp_servers() {
         match server.transport.as_str() {
             "stdio" => {
+                if server.always_load.is_some() {
+                    warn!(
+                        server = %server.name,
+                        plugin = %plugin.name(),
+                        "MCP alwaysLoad is a tool-search hint; OpenClaudia currently eager-loads MCP tools"
+                    );
+                }
+                if !server.headers.is_empty() || server.headers_helper.is_some() {
+                    warn!(
+                        server = %server.name,
+                        plugin = %plugin.name(),
+                        "MCP stdio server declares HTTP headers; ignoring headers for stdio transport"
+                    );
+                }
+                if server.timeout.is_some() {
+                    warn!(
+                        server = %server.name,
+                        plugin = %plugin.name(),
+                        "MCP per-server timeout is not wired yet; using default transport timeout"
+                    );
+                }
                 if let Some(command) = &server.command {
                     let args: Vec<&str> = server
                         .args
@@ -2145,7 +2166,32 @@ pub async fn connect_mcp_servers(
             }
             "http" => {
                 if let Some(url) = &server.url {
-                    match mcp.connect_http(&server.name, url).await {
+                    if server.always_load.is_some() {
+                        warn!(
+                            server = %server.name,
+                            plugin = %plugin.name(),
+                            "MCP alwaysLoad is a tool-search hint; OpenClaudia currently eager-loads MCP tools"
+                        );
+                    }
+                    if server.headers_helper.is_some() {
+                        warn!(
+                            server = %server.name,
+                            plugin = %plugin.name(),
+                            "MCP headersHelper is not supported yet; skipping server to avoid unauthenticated requests"
+                        );
+                        continue;
+                    }
+                    if server.timeout.is_some() {
+                        warn!(
+                            server = %server.name,
+                            plugin = %plugin.name(),
+                            "MCP per-server timeout is not wired yet; using default transport timeout"
+                        );
+                    }
+                    match mcp
+                        .connect_http_with_headers(&server.name, url, &server.headers)
+                        .await
+                    {
                         Ok(()) => {
                             info!(server = %server.name, plugin = %plugin.name(), "Connected MCP (http)");
                         }

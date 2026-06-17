@@ -303,15 +303,56 @@ pub struct McpServerConfig {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub env: HashMap<String, String>,
     /// Transport type (stdio or http)
-    #[serde(default = "default_transport")]
+    #[serde(
+        default = "default_transport",
+        alias = "type",
+        deserialize_with = "deserialize_transport"
+    )]
     pub transport: String,
     /// URL for HTTP transport
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Static HTTP headers for remote MCP transports.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub headers: HashMap<String, String>,
+    /// Dynamic header helper command. Parsed so the connection layer can
+    /// explicitly reject unsupported dynamic auth instead of silently
+    /// dropping it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "headersHelper"
+    )]
+    pub headers_helper: Option<String>,
+    /// Per-server tool execution timeout in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+    /// Claude Code tool-search hint for eager loading.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "alwaysLoad"
+    )]
+    pub always_load: Option<bool>,
 }
 
 fn default_transport() -> String {
     "stdio".to_string()
+}
+
+fn normalize_transport(transport: &str) -> String {
+    match transport {
+        "streamable-http" => "http".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn deserialize_transport<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    Ok(normalize_transport(&raw))
 }
 
 /// LSP server configuration declared by a plugin manifest (CC parity

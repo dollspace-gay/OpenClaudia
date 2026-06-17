@@ -22,6 +22,10 @@ fn default_cfg() -> McpServerConfig {
         env: HashMap::new(),
         transport: "stdio".to_string(),
         url: None,
+        headers: HashMap::new(),
+        headers_helper: None,
+        timeout: None,
+        always_load: None,
     }
 }
 
@@ -63,6 +67,25 @@ fn from_plugin_config_propagates_env() {
     };
     let spec = McpServerSpec::from_plugin_config(&cfg);
     assert_eq!(spec.env.get("MY_VAR"), Some(&"value".to_string()));
+}
+
+#[test]
+fn from_plugin_config_propagates_headers_and_mcp_metadata() {
+    let cfg = McpServerConfig {
+        headers: HashMap::from([("Authorization".to_string(), "Bearer token".to_string())]),
+        headers_helper: Some("/bin/get-headers".to_string()),
+        timeout: Some(600_000),
+        always_load: Some(true),
+        ..default_cfg()
+    };
+    let spec = McpServerSpec::from_plugin_config(&cfg);
+    assert_eq!(
+        spec.headers.get("Authorization").map(String::as_str),
+        Some("Bearer token")
+    );
+    assert_eq!(spec.headers_helper.as_deref(), Some("/bin/get-headers"));
+    assert_eq!(spec.timeout, Some(600_000));
+    assert_eq!(spec.always_load, Some(true));
 }
 
 #[test]
@@ -140,13 +163,17 @@ fn mcp_server_config_env_defaults_to_empty_map() {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn spec_clone_preserves_all_5_fields() {
+fn spec_clone_preserves_all_fields() {
     let original = McpServerSpec {
         command: Some("npx".to_string()),
         args: vec!["-y".to_string()],
         env: HashMap::from([("K".to_string(), "V".to_string())]),
         transport: "stdio".to_string(),
         url: None,
+        headers: HashMap::new(),
+        headers_helper: None,
+        timeout: None,
+        always_load: None,
     };
     let cloned = original.clone();
     assert_eq!(cloned, original);
@@ -162,6 +189,10 @@ fn spec_partial_eq_distinguishes_different_commands() {
         env: HashMap::new(),
         transport: "stdio".to_string(),
         url: None,
+        headers: HashMap::new(),
+        headers_helper: None,
+        timeout: None,
+        always_load: None,
     };
     let b = McpServerSpec {
         command: Some("python".to_string()),
@@ -178,6 +209,10 @@ fn spec_partial_eq_distinguishes_different_args() {
         env: HashMap::new(),
         transport: "stdio".to_string(),
         url: None,
+        headers: HashMap::new(),
+        headers_helper: None,
+        timeout: None,
+        always_load: None,
     };
     let b = McpServerSpec {
         args: vec!["b".to_string()],
@@ -194,6 +229,10 @@ fn spec_partial_eq_distinguishes_different_transports() {
         env: HashMap::new(),
         transport: "stdio".to_string(),
         url: None,
+        headers: HashMap::new(),
+        headers_helper: None,
+        timeout: None,
+        always_load: None,
     };
     let b = McpServerSpec {
         transport: "http".to_string(),
@@ -210,6 +249,10 @@ fn spec_debug_format_includes_field_names() {
         env: HashMap::new(),
         transport: "stdio".to_string(),
         url: None,
+        headers: HashMap::new(),
+        headers_helper: None,
+        timeout: None,
+        always_load: None,
     };
     let d = format!("{spec:?}");
     assert!(d.contains("command"));
@@ -228,6 +271,10 @@ fn from_plugin_config_called_twice_yields_equal_specs() {
         env: HashMap::from([("X".to_string(), "Y".to_string())]),
         transport: "stdio".to_string(),
         url: None,
+        headers: HashMap::new(),
+        headers_helper: None,
+        timeout: None,
+        always_load: None,
     };
     let s1 = McpServerSpec::from_plugin_config(&cfg);
     let s2 = McpServerSpec::from_plugin_config(&cfg);
@@ -248,6 +295,10 @@ fn from_plugin_config_with_full_config_propagates_every_field() {
         env,
         transport: "stdio".to_string(),
         url: None,
+        headers: HashMap::from([("X-Api-Key".to_string(), "secret".to_string())]),
+        headers_helper: Some("/bin/helper".to_string()),
+        timeout: Some(1234),
+        always_load: Some(false),
     };
     let spec = McpServerSpec::from_plugin_config(&cfg);
     assert_eq!(spec.command.as_deref(), Some("uvx"));
@@ -255,4 +306,11 @@ fn from_plugin_config_with_full_config_propagates_every_field() {
     assert_eq!(spec.env.get("API_KEY"), Some(&"secret".to_string()));
     assert_eq!(spec.transport, "stdio");
     assert!(spec.url.is_none());
+    assert_eq!(
+        spec.headers.get("X-Api-Key").map(String::as_str),
+        Some("secret")
+    );
+    assert_eq!(spec.headers_helper.as_deref(), Some("/bin/helper"));
+    assert_eq!(spec.timeout, Some(1234));
+    assert_eq!(spec.always_load, Some(false));
 }
