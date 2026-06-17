@@ -14,7 +14,10 @@ use axum::{
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU32, Ordering},
+    Arc,
+};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -29,7 +32,7 @@ use crate::hooks::{
 use crate::mcp::McpManager;
 use crate::oauth::OAuthStore;
 use crate::plugins::PluginManager;
-use crate::providers::{self, get_adapter, ApiKey};
+use crate::providers::{self, get_adapter, ApiKey, ProviderAdapter};
 use crate::rules::{extract_extensions_from_tool_input, RulesEngine};
 use crate::session::{get_session_context, SessionManager, TokenUsage};
 use crate::vdd::{VddEngine, VddResult};
@@ -68,6 +71,42 @@ pub struct ProxyState {
     pub oauth_store: Arc<OAuthStore>,
     /// VDD engine for adversarial review (if enabled)
     pub vdd_engine: Option<Arc<tokio::sync::Mutex<VddEngine>>>,
+    /// Optional controller used by `openclaudia loop` to count completed
+    /// proxy turns, fire Stop hooks, and shut the server down at the
+    /// documented iteration limit.
+    pub loop_control: Option<Arc<LoopControl>>,
+}
+
+pub struct LoopControl {
+    max_iterations: u32,
+    completed_iterations: AtomicU32,
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
+}
+
+impl LoopControl {
+    const fn new(max_iterations: u32, shutdown_tx: tokio::sync::watch::Sender<bool>) -> Self {
+        Self {
+            max_iterations,
+            completed_iterations: AtomicU32::new(0),
+            shutdown_tx,
+        }
+    }
+
+    fn completed_iterations(&self) -> u32 {
+        self.completed_iterations.load(Ordering::SeqCst)
+    }
+
+    fn mark_completed_iteration(&self) -> u32 {
+        self.completed_iterations.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    const fn reached_limit(&self, iteration: u32) -> bool {
+        self.max_iterations > 0 && iteration >= self.max_iterations
+    }
+
+    fn request_shutdown(&self) {
+        let _ = self.shutdown_tx.send(true);
+    }
 }
 
 /// Errors that can occur in the proxy
@@ -826,7 +865,7 @@ async fn apply_vdd_review(
     state: &ProxyState,
     request: &ChatCompletionRequest,
     provider_name: &str,
-    api_key: &ApiKey,
+    api_key: Option<&ApiKey>,
 ) -> Result<Response, ProxyError> {
     let Some(vdd_engine) = &state.vdd_engine else {
         return Ok(response_value);
@@ -854,7 +893,7 @@ async fn apply_vdd_review(
 
     let vdd_result = {
         let engine = vdd_engine.lock().await;
-        let builder = crate::vdd::BuilderProvider::new(provider_name, Some(api_key));
+        let builder = crate::vdd::BuilderProvider::new(provider_name, api_key);
         engine
             .process_response(&response_json, request, builder)
             .await
@@ -964,6 +1003,46 @@ async fn compact_request_context(request: &mut ChatCompletionRequest, state: &Pr
     }
 }
 
+async fn complete_loop_iteration(state: &ProxyState) {
+    let Some(control) = state.loop_control.as_ref() else {
+        return;
+    };
+
+    let iteration = control.mark_completed_iteration();
+    let session_id = {
+        let sm = state.session_manager.read().await;
+        sm.get_session().map(|session| session.id.clone())
+    };
+    let mut stop_input =
+        HookInput::new(HookEvent::Stop).with_extra("iteration", serde_json::json!(iteration));
+    if let Some(session_id) = session_id {
+        stop_input = stop_input.with_session_id(session_id);
+    }
+
+    let stop_result = state.hook_engine.run(HookEvent::Stop, &stop_input).await;
+    if !stop_result.allowed {
+        info!(
+            iteration,
+            reason = ?stop_result
+                .outputs
+                .first()
+                .and_then(|output| output.reason.as_deref()),
+            "Loop mode Stop hook requested shutdown"
+        );
+        control.request_shutdown();
+        return;
+    }
+
+    if control.reached_limit(iteration) {
+        info!(
+            iteration,
+            max_iterations = control.max_iterations,
+            "Loop mode reached maximum completed iterations"
+        );
+        control.request_shutdown();
+    }
+}
+
 /// Resolve the target provider, its configuration, and the API key for a
 /// chat-completion request.
 ///
@@ -976,21 +1055,32 @@ async fn compact_request_context(request: &mut ChatCompletionRequest, state: &Pr
 /// - [`ProxyError::ProviderNotConfigured`] if the resolved provider name has
 ///   no entry in `state.config.providers`.
 /// - [`ProxyError::NoApiKey`] if neither the request headers nor the provider
-///   config supply an API key.
+///   config supply an API key for a non-local provider.
 fn resolve_provider<'a>(
     state: &'a ProxyState,
     headers: &HeaderMap,
     model: &str,
-) -> Result<(String, &'a ProviderConfig, ApiKey), ProxyError> {
+) -> Result<(String, &'a ProviderConfig, Option<ApiKey>), ProxyError> {
     let provider_name = determine_provider(model, &state.config);
     let provider = state
         .config
         .get_provider(&provider_name)
         .ok_or_else(|| ProxyError::ProviderNotConfigured(provider_name.clone()))?;
-    let api_key = extract_api_key(headers)?
-        .or_else(|| provider.api_key.clone())
-        .ok_or_else(|| ProxyError::NoApiKey(provider_name.clone()))?;
+    let api_key = extract_api_key(headers)?.or_else(|| provider.api_key.clone());
+    if api_key.is_none() && !crate::config::is_local_provider_name(&provider_name) {
+        return Err(ProxyError::NoApiKey(provider_name));
+    }
     Ok((provider_name, provider, api_key))
+}
+
+fn adapter_headers(
+    adapter: &dyn ProviderAdapter,
+    api_key: Option<&ApiKey>,
+) -> Vec<(String, String)> {
+    api_key.map_or_else(
+        || vec![("content-type".to_string(), "application/json".to_string())],
+        |key| adapter.get_headers(key),
+    )
 }
 
 /// Increment the active session's request counter, if one exists.
@@ -1039,7 +1129,7 @@ async fn transform_and_forward(
     state: &ProxyState,
     provider: &ProviderConfig,
     provider_name: &str,
-    api_key: &ApiKey,
+    api_key: Option<&ApiKey>,
     request: &ChatCompletionRequest,
     is_stream: bool,
 ) -> Result<reqwest::Response, ProxyError> {
@@ -1062,7 +1152,7 @@ async fn transform_and_forward(
         &adapter.chat_endpoint(&request.model),
         &transformed_request,
         is_stream,
-        adapter.get_headers(api_key),
+        adapter_headers(adapter, api_key),
     )
     .await
 }
@@ -1134,7 +1224,7 @@ async fn proxy_chat_completions(
         &state,
         provider,
         &provider_name,
-        &api_key,
+        api_key.as_ref(),
         &request,
         is_stream,
     )
@@ -1144,7 +1234,9 @@ async fn proxy_chat_completions(
     // into OpenAI shape after the provider-native request/response roundtrip.
     let max_bytes = state.config.proxy.max_response_bytes;
     if is_stream {
-        convert_response(raw_response, max_bytes).await
+        let response = convert_response(raw_response, max_bytes).await?;
+        complete_loop_iteration(&state).await;
+        Ok(response)
     } else {
         let (response_value, usage) =
             convert_response_with_usage(raw_response, max_bytes, &provider_name).await?;
@@ -1154,8 +1246,18 @@ async fn proxy_chat_completions(
             }
         }
         if token_tracking_enabled {
-            apply_vdd_review(response_value, &state, &request, &provider_name, &api_key).await
+            let response = apply_vdd_review(
+                response_value,
+                &state,
+                &request,
+                &provider_name,
+                api_key.as_ref(),
+            )
+            .await?;
+            complete_loop_iteration(&state).await;
+            Ok(response)
         } else {
+            complete_loop_iteration(&state).await;
             Ok(response_value)
         }
     }
@@ -1238,9 +1340,10 @@ async fn proxy_completions(
         .get_provider(&provider_name)
         .ok_or_else(|| ProxyError::ProviderNotConfigured(provider_name.clone()))?;
 
-    let api_key = extract_api_key(&headers)?
-        .or_else(|| provider.api_key.clone())
-        .ok_or_else(|| ProxyError::NoApiKey(provider_name.clone()))?;
+    let api_key = extract_api_key(&headers)?.or_else(|| provider.api_key.clone());
+    if api_key.is_none() && !crate::config::is_local_provider_name(&provider_name) {
+        return Err(ProxyError::NoApiKey(provider_name));
+    }
 
     let is_stream = request["stream"].as_bool().unwrap_or(false);
     let max_bytes = state.config.proxy.max_response_bytes;
@@ -1248,14 +1351,16 @@ async fn proxy_completions(
         &state.client,
         provider,
         &provider_name,
-        &api_key,
+        api_key.as_ref(),
         "/v1/completions",
         &request,
         is_stream,
     )
     .await?;
 
-    convert_response(raw, max_bytes).await
+    let response = convert_response(raw, max_bytes).await?;
+    complete_loop_iteration(&state).await;
+    Ok(response)
 }
 
 /// Resolved authentication for a `/v1/messages` request.
@@ -1379,7 +1484,7 @@ async fn send_api_key_anthropic_messages(
         client,
         provider,
         "anthropic",
-        api_key,
+        Some(api_key),
         "/v1/messages",
         request,
         is_stream,
@@ -1410,7 +1515,7 @@ async fn proxy_anthropic_messages(
         .ok_or_else(|| ProxyError::ProviderNotConfigured("anthropic".to_string()))?;
 
     let max_bytes = state.config.proxy.max_response_bytes;
-    match resolve_anthropic_auth(&headers, &state.oauth_store, provider)? {
+    let response = match resolve_anthropic_auth(&headers, &state.oauth_store, provider)? {
         AnthropicAuth::Oauth(session) => {
             send_oauth_anthropic_messages(
                 &state.client,
@@ -1425,7 +1530,9 @@ async fn proxy_anthropic_messages(
             send_api_key_anthropic_messages(&state.client, provider, &api_key, &request, max_bytes)
                 .await
         }
-    }
+    }?;
+    complete_loop_iteration(&state).await;
+    Ok(response)
 }
 
 /// Passthrough for unhandled routes
@@ -1449,9 +1556,10 @@ async fn proxy_passthrough(
         .active_provider()
         .ok_or_else(|| ProxyError::ProviderNotConfigured(state.config.proxy.target.clone()))?;
 
-    let api_key = extract_api_key(&headers)?
-        .or_else(|| provider.api_key.clone())
-        .ok_or_else(|| ProxyError::NoApiKey(state.config.proxy.target.clone()))?;
+    let api_key = extract_api_key(&headers)?.or_else(|| provider.api_key.clone());
+    if api_key.is_none() && !crate::config::is_local_provider_name(&state.config.proxy.target) {
+        return Err(ProxyError::NoApiKey(state.config.proxy.target.clone()));
+    }
 
     let url = format!("{}{}", normalize_base_url(&provider.base_url), path);
     debug!(url = %url, "Passthrough request");
@@ -1478,7 +1586,7 @@ async fn proxy_passthrough(
     // fall back to OpenAIAdapter; the failure was invisible.
     let adapter = crate::providers::get_adapter(&state.config.proxy.target)
         .map_err(|e| ProxyError::InvalidBody(e.to_string()))?;
-    for (k, v) in adapter.get_headers(&api_key) {
+    for (k, v) in adapter_headers(adapter, api_key.as_ref()) {
         req_builder = req_builder.header(k.as_str(), v.as_str());
     }
 
@@ -1803,7 +1911,7 @@ async fn forward_to_provider<T: Serialize + Sync>(
     client: &Client,
     provider: &ProviderConfig,
     provider_name: &str,
-    api_key: &ApiKey,
+    api_key: Option<&ApiKey>,
     path: &str,
     body: &T,
     is_stream: bool,
@@ -1822,7 +1930,7 @@ async fn forward_to_provider<T: Serialize + Sync>(
     // with Bearer auth pointed at the wrong endpoint).
     let adapter = crate::providers::get_adapter(provider_name)
         .map_err(|e| ProxyError::InvalidBody(e.to_string()))?;
-    for (key, value) in adapter.get_headers(api_key) {
+    for (key, value) in adapter_headers(adapter, api_key) {
         req = req.header(key.as_str(), value.as_str());
     }
 
@@ -1914,6 +2022,13 @@ async fn convert_response(
 
 /// Build a `ProxyState` from the given config, initializing all subsystems.
 async fn build_proxy_state(config: AppConfig) -> anyhow::Result<ProxyState> {
+    build_proxy_state_with_loop_control(config, None).await
+}
+
+async fn build_proxy_state_with_loop_control(
+    config: AppConfig,
+    loop_control: Option<Arc<LoopControl>>,
+) -> anyhow::Result<ProxyState> {
     let client = Client::builder()
         .timeout(std::time::Duration::from_mins(5))
         .build()?;
@@ -1991,6 +2106,7 @@ async fn build_proxy_state(config: AppConfig) -> anyhow::Result<ProxyState> {
         mcp_manager,
         oauth_store,
         vdd_engine,
+        loop_control,
     })
 }
 
@@ -2133,6 +2249,75 @@ pub async fn start_server_with_shutdown(
         })
         .await?;
 
+    Ok(())
+}
+
+/// Start the proxy server in loop mode.
+///
+/// A loop iteration is one completed proxied chat/completion response. After
+/// each iteration this fires the `Stop` hook with the iteration number; the
+/// server shuts down when a Stop hook blocks or when `max_iterations` is
+/// reached (`0` means unlimited until Ctrl+C).
+///
+/// # Errors
+///
+/// Returns an error if binding the TCP listener, serving, or VDD
+/// configuration validation fails.
+pub async fn start_loop_server(config: AppConfig, max_iterations: u32) -> anyhow::Result<()> {
+    let addr = format!("{}:{}", config.proxy.host, config.proxy.port);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    let control = Arc::new(LoopControl::new(max_iterations, shutdown_tx.clone()));
+    let state = build_proxy_state_with_loop_control(config, Some(control.clone())).await?;
+    let session_id = fire_session_start(&state).await;
+    let session_manager = Arc::clone(&state.session_manager);
+
+    let app = create_router(state);
+
+    info!(
+        address = %addr,
+        max_iterations = if max_iterations == 0 {
+            "unlimited".to_string()
+        } else {
+            max_iterations.to_string()
+        },
+        "Starting OpenClaudia loop proxy server"
+    );
+
+    let ctrl_c_shutdown = shutdown_tx.clone();
+    tokio::spawn(async move {
+        if matches!(tokio::signal::ctrl_c().await, Ok(())) {
+            info!("Received Ctrl+C, initiating loop shutdown...");
+            let _ = ctrl_c_shutdown.send(true);
+        }
+    });
+
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            loop {
+                if shutdown_rx.changed().await.is_err() || *shutdown_rx.borrow() {
+                    info!("Loop shutdown signal received, stopping server...");
+                    break;
+                }
+            }
+        })
+        .await?;
+
+    let completed = control.completed_iterations();
+    let handoff = format!(
+        "Loop mode completed after {completed} iteration(s).\nSession ended after {completed} iteration(s)."
+    );
+    let mut sm = session_manager.write().await;
+    let active_session_matches = sm
+        .get_session()
+        .is_some_and(|session| session.id == session_id);
+    if active_session_matches {
+        if let Err(e) = sm.end_session(Some(&handoff)) {
+            warn!(error = %e, "Failed to persist session at end of loop mode");
+        }
+    }
+
+    info!(completed, "Loop mode ended");
     Ok(())
 }
 

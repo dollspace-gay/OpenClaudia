@@ -1,7 +1,7 @@
 use std::{
     fs,
     io::{BufRead, BufReader, Read, Write},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     process::{Command, Output, Stdio},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -208,6 +208,11 @@ fn held_loopback_port() -> (TcpListener, u16) {
     (listener, port)
 }
 
+fn unused_loopback_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind free port");
+    listener.local_addr().expect("local addr").port()
+}
+
 fn spawn_local_sse_server_rejecting_auth() -> (JoinHandle<Result<(), String>>, String) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind local sse server");
     listener
@@ -301,6 +306,158 @@ fn spawn_local_sse_server_rejecting_auth() -> (JoinHandle<Result<(), String>>, S
     (handle, base_url)
 }
 
+fn spawn_local_chat_server_rejecting_auth() -> (JoinHandle<Result<(), String>>, String) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind local chat server");
+    listener
+        .set_nonblocking(true)
+        .expect("set local chat listener nonblocking");
+    let addr = listener.local_addr().expect("local chat addr");
+    let base_url = format!("http://{addr}");
+
+    let handle = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (mut stream, _) = loop {
+            match listener.accept() {
+                Ok(accepted) => break accepted,
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Err("local chat server timed out waiting for request".to_string());
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(err) => return Err(format!("local chat accept failed: {err}")),
+            }
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .map_err(|err| format!("set read timeout failed: {err}"))?;
+
+        let mut reader = BufReader::new(
+            stream
+                .try_clone()
+                .map_err(|err| format!("clone stream failed: {err}"))?,
+        );
+        let mut request_head = String::new();
+        loop {
+            let mut line = String::new();
+            let bytes = reader
+                .read_line(&mut line)
+                .map_err(|err| format!("read request header failed: {err}"))?;
+            if bytes == 0 {
+                return Err("client closed before completing request headers".to_string());
+            }
+            if line == "\r\n" {
+                break;
+            }
+            request_head.push_str(&line);
+        }
+
+        if !request_head.starts_with("POST /v1/chat/completions ") {
+            return Err(format!(
+                "unexpected local provider request: {request_head:?}"
+            ));
+        }
+        if request_head
+            .lines()
+            .any(|line| line.to_ascii_lowercase().starts_with("authorization:"))
+        {
+            return Err(format!(
+                "keyless local provider request must not send Authorization header: {request_head:?}"
+            ));
+        }
+
+        let content_length = request_head
+            .lines()
+            .find_map(|line| {
+                line.split_once(':').and_then(|(name, value)| {
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+            })
+            .unwrap_or(0);
+        let mut request_body = vec![0; content_length];
+        reader
+            .read_exact(&mut request_body)
+            .map_err(|err| format!("read request body failed: {err}"))?;
+        if !String::from_utf8_lossy(&request_body).contains("\"stream\":false") {
+            return Err("local proxy request should preserve stream=false".to_string());
+        }
+
+        let body = r#"{"id":"chatcmpl-local","object":"chat.completion","created":0,"model":"local-test-model","choices":[{"index":0,"message":{"role":"assistant","content":"local proxy ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .map_err(|err| format!("write local chat response failed: {err}"))?;
+        Ok(())
+    });
+
+    (handle, base_url)
+}
+
+fn wait_for_loop_proxy(port: u16, child: &mut std::process::Child) -> Result<(), String> {
+    let addr = format!("127.0.0.1:{port}");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if TcpStream::connect(&addr).is_ok() {
+            return Ok(());
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|err| format!("checking child status failed: {err}"))?
+        {
+            return Err(format!("loop proxy exited before listening: {status}"));
+        }
+        if Instant::now() >= deadline {
+            return Err("timed out waiting for loop proxy to listen".to_string());
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn post_chat_completion_to_proxy(port: u16) -> Result<String, String> {
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .map_err(|err| format!("connect to proxy failed: {err}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .map_err(|err| format!("set read timeout failed: {err}"))?;
+    let body = r#"{"model":"local-test-model","messages":[{"role":"user","content":"hello"}],"stream":false}"#;
+    let request = format!(
+        "POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|err| format!("write proxy request failed: {err}"))?;
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|err| format!("read proxy response failed: {err}"))?;
+    Ok(response)
+}
+
+fn wait_for_child_exit(mut child: std::process::Child) -> Output {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().expect("collect child output"),
+            Ok(None) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(25));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                return child
+                    .wait_with_output()
+                    .expect("collect killed child output");
+            }
+            Err(err) => panic!("checking child status failed: {err}"),
+        }
+    }
+}
+
 #[test]
 fn start_allows_keyless_local_provider_until_bind_failure() {
     let cwd = tempfile::tempdir().expect("cwd tempdir");
@@ -368,6 +525,46 @@ fn loop_allows_keyless_local_provider_and_reports_bind_failure() {
     assert!(
         combined.to_lowercase().contains("address already in use"),
         "loop should surface the bind failure; got {combined:?}"
+    );
+}
+
+#[test]
+fn loop_proxy_allows_keyless_local_provider_request_and_stops_after_one_iteration() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    let (server, base_url) = spawn_local_chat_server_rejecting_auth();
+    write_local_provider_config_with_base_url(&cwd, &base_url);
+    let proxy_port = unused_loopback_port();
+    let proxy_port_arg = proxy_port.to_string();
+
+    let mut child = isolated_command(&cwd, &home)
+        .args(["loop", "--max-iterations", "1", "--port", &proxy_port_arg])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("openclaudia loop must spawn");
+
+    wait_for_loop_proxy(proxy_port, &mut child).expect("loop proxy should start");
+    let response =
+        post_chat_completion_to_proxy(proxy_port).expect("proxy request should complete");
+    let output = wait_for_child_exit(child);
+    let server_result = server.join().expect("local chat server thread should join");
+
+    assert!(
+        server_result.is_ok(),
+        "local chat server failed: {:?}",
+        server_result.err()
+    );
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK") && response.contains("local proxy ok"),
+        "loop proxy should forward keyless local request and return upstream body; got {response:?}"
+    );
+    assert!(
+        output.status.success(),
+        "loop --max-iterations 1 should exit cleanly after one completed request; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 

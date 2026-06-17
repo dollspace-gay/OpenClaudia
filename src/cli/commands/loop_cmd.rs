@@ -1,13 +1,6 @@
-use openclaudia::{
-    config, guardrails,
-    hooks::{HookEngine, HookEvent, HookInput},
-    proxy,
-    session::{EndSessionError, SessionManager},
-};
-use tokio::sync::watch;
+use openclaudia::{config, guardrails, proxy};
 use tracing::{error, info};
 
-#[allow(clippy::too_many_lines)]
 /// Run in iteration/loop mode with Stop hooks
 pub async fn cmd_loop(
     max_iterations: u32,
@@ -61,13 +54,6 @@ pub async fn cmd_loop(
         );
     }
 
-    let session_dir = config.session.persist_path.clone();
-    let mut session_manager = SessionManager::new(&session_dir);
-    let session = session_manager.get_or_create_session();
-    let session_id = session.id.clone();
-
-    let hook_engine = HookEngine::new(config.hooks.clone());
-
     info!(
         "OpenClaudia v{} starting in loop mode...",
         env!("CARGO_PKG_VERSION")
@@ -80,105 +66,10 @@ pub async fn cmd_loop(
             max_iterations.to_string()
         }
     );
-    info!("Session ID: {}", session_id);
     info!(
         "Proxy: http://{}:{} -> {}",
         config.proxy.host, config.proxy.port, config.proxy.target
     );
 
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
-    let shutdown_tx_clone = shutdown_tx.clone();
-    tokio::spawn(async move {
-        if matches!(tokio::signal::ctrl_c().await, Ok(())) {
-            info!("Received Ctrl+C, initiating shutdown...");
-            let _ = shutdown_tx_clone.send(true);
-        }
-    });
-
-    let mut iteration: u32 = 0;
-    let mut shutdown_rx_loop = shutdown_rx.clone();
-
-    loop {
-        iteration += 1;
-
-        if max_iterations > 0 && iteration > max_iterations {
-            info!("Reached maximum iterations ({})", max_iterations);
-            break;
-        }
-
-        if *shutdown_rx_loop.borrow() {
-            info!("Shutdown signal received");
-            break;
-        }
-
-        info!("=== Iteration {} ===", iteration);
-
-        if let Some(session) = session_manager.get_session_mut() {
-            session.increment_requests();
-        }
-
-        let config_clone = config.clone();
-        let shutdown_rx_server = shutdown_rx.clone();
-
-        let server_handle = tokio::spawn(async move {
-            proxy::start_server_with_shutdown(config_clone, shutdown_rx_server).await
-        });
-
-        match server_handle.await {
-            Ok(Ok(())) => {
-                info!("Iteration {} completed", iteration);
-            }
-            Ok(Err(e)) => {
-                error!("Server error in iteration {}: {}", iteration, e);
-                return Err(anyhow::anyhow!(
-                    "server error in loop iteration {iteration}: {e}"
-                ));
-            }
-            Err(e) => {
-                error!("Server task error: {}", e);
-                anyhow::bail!("server task error in loop iteration {iteration}: {e}");
-            }
-        }
-
-        let stop_input = HookInput::new(HookEvent::Stop)
-            .with_session_id(&session_id)
-            .with_extra("iteration", serde_json::json!(iteration));
-
-        let stop_result = hook_engine.run(HookEvent::Stop, &stop_input).await;
-
-        if !stop_result.allowed {
-            info!(
-                "Stop hook requested termination: {:?}",
-                stop_result
-                    .outputs
-                    .first()
-                    .and_then(|o| o.reason.as_deref())
-            );
-            break;
-        }
-
-        if shutdown_rx_loop.changed().await.is_err() || *shutdown_rx_loop.borrow() {
-            info!("Shutdown requested between iterations");
-            break;
-        }
-
-        info!("Continuing to next iteration...");
-    }
-
-    let handoff = format!(
-        "Loop mode completed after {iteration} iterations.\nSession ended at iteration {iteration}."
-    );
-    // #356: end_session is now fallible.  Log persist failures here rather
-    // than propagating, since the loop has already done its work — but do
-    // NOT swallow them silently as the old implementation did.
-    match session_manager.end_session(Some(&handoff)) {
-        Ok(_) | Err(EndSessionError::NotFound) => {}
-        Err(e @ EndSessionError::PersistFailed { .. }) => {
-            error!(error = %e, "Failed to persist session at end of loop mode");
-        }
-    }
-
-    info!("Loop mode ended after {} iterations", iteration);
-    Ok(())
+    proxy::start_loop_server(config, max_iterations).await
 }
