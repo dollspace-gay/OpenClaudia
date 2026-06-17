@@ -37,8 +37,8 @@ pub use memory::MemoryConfig;
 pub use path_validation::{validate_persist_path, PathValidationError, ALLOW_OUT_OF_ROOT_ENV};
 pub use permissions::PermissionsConfig;
 pub use provider::{
-    adaptive_budget_for, validate_base_url, validate_provider_base_url, ProviderConfig,
-    ThinkingConfig,
+    adaptive_budget_for, is_local_provider_name, validate_base_url, validate_provider_base_url,
+    ProviderConfig, ThinkingConfig,
 };
 pub use proxy::ProxyConfig;
 pub use session::{SessionConfig, TokenTrackingConfig};

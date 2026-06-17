@@ -48,7 +48,10 @@ pub fn validate_provider_base_url(provider_name: &str, url: &str) -> Result<(), 
     }
 }
 
-fn is_local_provider_name(provider_name: &str) -> bool {
+/// Return true for provider targets that intentionally point at user-owned
+/// local or LAN inference servers and therefore do not require a remote API key.
+#[must_use]
+pub fn is_local_provider_name(provider_name: &str) -> bool {
     matches!(
         provider_name.to_ascii_lowercase().as_str(),
         "ollama" | "local" | "lmstudio" | "localai" | "text-generation-webui"

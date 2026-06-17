@@ -1,5 +1,5 @@
 use openclaudia::{
-    config,
+    claude_credentials, config,
     mcp::McpManager,
     plugins::PluginManager,
     providers::{get_adapter, ProviderAdapter, ProviderError},
@@ -12,10 +12,95 @@ use tracing::info;
 
 const DOCTOR_ADAPTER_PROVIDER: &str = "anthropic";
 
+#[derive(Debug, PartialEq, Eq)]
+enum ActiveProviderAuthRequirement {
+    ConfiguredApiKey,
+    NotRequiredForLocal,
+    AnthropicCanUseClaudeCode,
+    MissingApiKey { env_var: &'static str },
+}
+
 fn lookup_doctor_adapter(
     provider_name: &str,
 ) -> Result<&'static dyn ProviderAdapter, ProviderError> {
     get_adapter(provider_name)
+}
+
+fn provider_api_key_env_var(provider_name: &str) -> &'static str {
+    match provider_name {
+        "anthropic" => "ANTHROPIC_API_KEY",
+        "openai" => "OPENAI_API_KEY",
+        "google" | "gemini" => "GOOGLE_API_KEY",
+        "zai" | "glm" | "zhipu" => "ZAI_API_KEY",
+        "deepseek" => "DEEPSEEK_API_KEY",
+        "qwen" | "alibaba" => "QWEN_API_KEY",
+        _ => "API_KEY",
+    }
+}
+
+fn active_provider_auth_requirement(
+    provider_name: &str,
+    provider: &config::ProviderConfig,
+) -> ActiveProviderAuthRequirement {
+    if provider.api_key.is_some() {
+        return ActiveProviderAuthRequirement::ConfiguredApiKey;
+    }
+
+    if config::is_local_provider_name(provider_name) {
+        return ActiveProviderAuthRequirement::NotRequiredForLocal;
+    }
+
+    if provider_name.eq_ignore_ascii_case("anthropic") {
+        return ActiveProviderAuthRequirement::AnthropicCanUseClaudeCode;
+    }
+
+    ActiveProviderAuthRequirement::MissingApiKey {
+        env_var: provider_api_key_env_var(provider_name),
+    }
+}
+
+async fn check_active_provider_auth(
+    provider_name: &str,
+    provider: &config::ProviderConfig,
+) -> bool {
+    print!("\nActive provider auth... ");
+    match active_provider_auth_requirement(provider_name, provider) {
+        ActiveProviderAuthRequirement::ConfiguredApiKey => {
+            println!("configured");
+            true
+        }
+        ActiveProviderAuthRequirement::NotRequiredForLocal => {
+            println!("not required for local provider");
+            true
+        }
+        ActiveProviderAuthRequirement::AnthropicCanUseClaudeCode => {
+            if !claude_credentials::has_claude_code_credentials() {
+                println!(
+                    "FAILED (no API key or Claude Code credentials; set ANTHROPIC_API_KEY or run `claude`)"
+                );
+                return false;
+            }
+
+            match claude_credentials::load_credentials().await {
+                Ok(creds) => {
+                    println!(
+                        "Claude Code credentials OK ({}, {})",
+                        creds.subscription_type.as_deref().unwrap_or("unknown"),
+                        creds.rate_limit_tier.as_deref().unwrap_or("default")
+                    );
+                    true
+                }
+                Err(err) => {
+                    println!("FAILED (Claude Code credentials unusable: {err})");
+                    false
+                }
+            }
+        }
+        ActiveProviderAuthRequirement::MissingApiKey { env_var } => {
+            println!("FAILED (set {env_var} or configure providers.{provider_name}.api_key)");
+            false
+        }
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -63,8 +148,12 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
     };
 
     if let Some(config) = &loaded_config {
-        print!("\nConnectivity to {}... ", config.proxy.target);
         if let Some(provider) = config.active_provider() {
+            if !check_active_provider_auth(&config.proxy.target, provider).await {
+                has_failures = true;
+            }
+
+            print!("\nConnectivity to {}... ", config.proxy.target);
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .build()?;
@@ -312,6 +401,18 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openclaudia::providers::ApiKey;
+    use std::collections::HashMap;
+
+    fn provider_with_key(api_key: Option<ApiKey>) -> config::ProviderConfig {
+        config::ProviderConfig {
+            api_key,
+            base_url: "https://api.example.com".to_string(),
+            model: None,
+            headers: HashMap::new(),
+            thinking: config::ThinkingConfig::default(),
+        }
+    }
 
     #[test]
     fn lookup_doctor_adapter_resolves_builtin_provider() {
@@ -329,5 +430,49 @@ mod tests {
             }
             Err(err) => panic!("unexpected provider error: {err}"),
         }
+    }
+
+    #[test]
+    fn active_provider_auth_accepts_configured_api_key() {
+        let api_key = ApiKey::try_from_string("sk-test-key".to_string()).expect("valid key");
+        assert_eq!(
+            active_provider_auth_requirement("openai", &provider_with_key(Some(api_key))),
+            ActiveProviderAuthRequirement::ConfiguredApiKey
+        );
+    }
+
+    #[test]
+    fn active_provider_auth_allows_keyless_local_providers() {
+        for provider in [
+            "ollama",
+            "local",
+            "lmstudio",
+            "localai",
+            "text-generation-webui",
+        ] {
+            assert_eq!(
+                active_provider_auth_requirement(provider, &provider_with_key(None)),
+                ActiveProviderAuthRequirement::NotRequiredForLocal,
+                "local provider {provider} must not require a remote API key"
+            );
+        }
+    }
+
+    #[test]
+    fn active_provider_auth_flags_missing_remote_api_key() {
+        assert_eq!(
+            active_provider_auth_requirement("openai", &provider_with_key(None)),
+            ActiveProviderAuthRequirement::MissingApiKey {
+                env_var: "OPENAI_API_KEY"
+            }
+        );
+    }
+
+    #[test]
+    fn active_provider_auth_routes_keyless_anthropic_to_claude_code_check() {
+        assert_eq!(
+            active_provider_auth_requirement("anthropic", &provider_with_key(None)),
+            ActiveProviderAuthRequirement::AnthropicCanUseClaudeCode
+        );
     }
 }
