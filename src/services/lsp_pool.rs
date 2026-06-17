@@ -33,7 +33,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::process::Child;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 /// Opaque handle to a running language-server child process.
@@ -104,6 +104,8 @@ pub struct LspServerManager {
     idle_ttl: Duration,
 }
 
+type PoolEntries = HashMap<String, ChildHandle>;
+
 impl LspServerManager {
     /// Build a manager around `spawner` using [`DEFAULT_IDLE_TTL`].
     #[must_use]
@@ -119,6 +121,16 @@ impl LspServerManager {
             inner: Arc::new(Mutex::new(HashMap::new())),
             spawner,
             idle_ttl: ttl,
+        }
+    }
+
+    fn inner_guard(&self, operation: &'static str) -> Option<MutexGuard<'_, PoolEntries>> {
+        match self.inner.lock() {
+            Ok(guard) => Some(guard),
+            Err(err) => {
+                tracing::error!(operation, error = %err, "LSP server pool lock poisoned");
+                None
+            }
         }
     }
 
@@ -145,23 +157,24 @@ impl LspServerManager {
     /// immediately reclaim it.
     pub fn release(&self, mut handle: ChildHandle) {
         handle.last_used = Instant::now();
-        if let Ok(mut guard) = self.inner.lock() {
-            // If a concurrent `acquire` already spawned a replacement
-            // for this language, drop the older one (the newer is
-            // more likely to be in a clean state).
-            let key = handle.language.clone();
-            if let Some(mut stale) = guard.insert(key, handle) {
-                if let Some(mut child) = stale.child.take() {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+        let Some(mut guard) = self.inner_guard("release") else {
+            return;
+        };
+        // If a concurrent `acquire` already spawned a replacement
+        // for this language, drop the older one (the newer is
+        // more likely to be in a clean state).
+        let key = handle.language.clone();
+        if let Some(mut stale) = guard.insert(key, handle) {
+            if let Some(mut child) = stale.child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
             }
         }
     }
 
     /// Remove and return the entry for `language`, if any.
     fn take(&self, language: &str) -> Option<ChildHandle> {
-        let mut guard = self.inner.lock().ok()?;
+        let mut guard = self.inner_guard("take")?;
         guard.remove(language)
     }
 
@@ -173,7 +186,7 @@ impl LspServerManager {
         let now = Instant::now();
         let mut reaped = 0usize;
         let ttl = self.idle_ttl;
-        let Ok(mut guard) = self.inner.lock() else {
+        let Some(mut guard) = self.inner_guard("reap_idle") else {
             return 0;
         };
         let stale_keys: Vec<String> = guard
@@ -195,12 +208,13 @@ impl LspServerManager {
 
     /// Kill every pooled server. Used at shutdown.
     pub fn kill_all(&self) {
-        if let Ok(mut guard) = self.inner.lock() {
-            for (_, mut handle) in guard.drain() {
-                if let Some(mut child) = handle.child.take() {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+        let Some(mut guard) = self.inner_guard("kill_all") else {
+            return;
+        };
+        for (_, mut handle) in guard.drain() {
+            if let Some(mut child) = handle.child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
             }
         }
     }
@@ -208,7 +222,7 @@ impl LspServerManager {
     /// Number of currently pooled entries. For tests + diagnostics.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.inner.lock().map_or(0, |g| g.len())
+        self.inner_guard("len").map_or(0, |g| g.len())
     }
 
     /// `true` when the pool is empty.
