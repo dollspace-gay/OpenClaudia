@@ -1308,7 +1308,7 @@ async fn cmd_chat(
     // under the clippy::too_many_lines threshold. Behaviour is
     // preserved — see `src/cli/chat_repl.rs` for the loop body, slash
     // dispatcher, and provider-specific response handlers.
-    let Some(repl) = cli::chat_repl::ChatRepl::new(cli::chat_repl::ChatReplArgs {
+    let repl = cli::chat_repl::ChatRepl::new(cli::chat_repl::ChatReplArgs {
         model_override,
         target_override,
         resume,
@@ -1317,11 +1317,7 @@ async fn cmd_chat(
         dangerously_skip_permissions,
         mode_arg,
     })
-    .await?
-    else {
-        // `ChatRepl::new` already printed a user-facing error.
-        return Ok(());
-    };
+    .await?;
     repl.run().await
 }
 

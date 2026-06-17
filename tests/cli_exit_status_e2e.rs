@@ -155,6 +155,11 @@ fn doctor_without_config_exits_nonzero() {
 }
 
 #[test]
+fn legacy_repl_without_config_exits_nonzero() {
+    assert_missing_config_is_failure(&["--tui-mode"]);
+}
+
+#[test]
 fn doctor_does_not_create_session_state() {
     let cwd = tempfile::tempdir().expect("cwd tempdir");
     let home = tempfile::tempdir().expect("home tempdir");

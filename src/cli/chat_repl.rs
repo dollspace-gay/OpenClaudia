@@ -170,15 +170,16 @@ fn load_repl_config(
     model_override: Option<&str>,
     target_override: Option<&str>,
 ) -> Option<config::AppConfig> {
+    if !config::config_file_exists() {
+        eprintln!("No configuration found. Run 'openclaudia init' first.");
+        return None;
+    }
+
     let mut config = match config::load_config() {
         Ok(config) => config,
         Err(err) => {
-            if config::config_file_exists() {
-                eprintln!("Failed to parse configuration: {err}");
-                eprintln!("Check your .openclaudia/config.yaml for syntax errors.");
-            } else {
-                eprintln!("No configuration found. Run 'openclaudia init' first.");
-            }
+            eprintln!("Failed to parse configuration: {err}");
+            eprintln!("Check your .openclaudia/config.yaml for syntax errors.");
             return None;
         }
     };
@@ -205,10 +206,10 @@ fn apply_model_provider_override(config: &mut config::AppConfig, model: &str) {
 
 impl ChatRepl {
     /// Resolve config + auth + provider + session and return a fully
-    /// initialized REPL. `Ok(None)` means setup printed a user-facing
-    /// error and the caller should exit cleanly (matches the original
-    /// `return Ok(())` branches of `cmd_chat`).
-    pub async fn new(args: ChatReplArgs) -> anyhow::Result<Option<Self>> {
+    /// initialized REPL. Setup failures return an error after printing the
+    /// same user-facing diagnostics as the default TUI path, so the process
+    /// exits non-zero instead of making automation believe startup succeeded.
+    pub async fn new(args: ChatReplArgs) -> anyhow::Result<Self> {
         use openclaudia::rules::RulesEngine;
 
         chdir_to_git_root();
@@ -216,7 +217,7 @@ impl ChatRepl {
             Ok(regex) => regex,
             Err(err) => {
                 eprintln!("{err}");
-                return Ok(None);
+                anyhow::bail!(err);
             }
         };
 
@@ -224,14 +225,14 @@ impl ChatRepl {
             args.model_override.as_deref(),
             args.target_override.as_deref(),
         ) else {
-            return Ok(None);
+            anyhow::bail!("legacy REPL setup failed: configuration unavailable");
         };
 
         let initial_behavior_mode = match parse_initial_behavior_mode(args.mode_arg.as_deref()) {
             Ok(m) => m,
             Err(e) => {
                 eprintln!("{e}");
-                return Ok(None);
+                anyhow::bail!(e);
             }
         };
 
@@ -241,7 +242,7 @@ impl ChatRepl {
             Ok(provider) => provider,
             Err(err) => {
                 eprintln!("{err}");
-                return Ok(None);
+                anyhow::bail!(err);
             }
         };
 
@@ -250,7 +251,10 @@ impl ChatRepl {
             claude_code_token,
         }) = resolve_chat_auth(&config.proxy.target, provider).await?
         else {
-            return Ok(None);
+            anyhow::bail!(
+                "could not resolve authentication for target '{}'",
+                config.proxy.target
+            );
         };
 
         let model = resolve_model_name(
@@ -261,7 +265,7 @@ impl ChatRepl {
         // Crosslink #433: typo in `proxy.target` fails fast at REPL setup
         // instead of silently falling back to OpenAIAdapter.
         let Some(adapter) = resolve_repl_adapter(&config.proxy.target) else {
-            return Ok(None);
+            anyhow::bail!("unknown provider target '{}'", config.proxy.target);
         };
         let client = reqwest::Client::new();
         let hook_engine = build_hook_engine(&config);
@@ -281,7 +285,7 @@ impl ChatRepl {
         let permission_mgr = init_permission_manager(&config, args.dangerously_skip_permissions);
         let vdd_engine: Option<vdd::VddEngine> = init_vdd_engine_if_enabled(&config);
 
-        Ok(Some(Self {
+        Ok(Self {
             config,
             coordinator: args.coordinator,
             dangerously_skip_permissions: args.dangerously_skip_permissions,
@@ -307,7 +311,7 @@ impl ChatRepl {
             permissions: std::collections::HashSet::new(),
             always_allowed_tools: std::collections::HashSet::new(),
             plugin_manager,
-        }))
+        })
     }
 
     /// Drive the readline loop until the user exits. `auto_learner`
@@ -3114,10 +3118,9 @@ struct InitialStreamResult {
 
 /// Resolve the REPL's provider adapter from `proxy.target`. Returns
 /// `None` (with an error printed to stderr) when the configured target
-/// is not a registered adapter name — the caller treats `None` as the
-/// "setup printed a message, exit cleanly" signal already used elsewhere
-/// in [`ChatRepl::new`]. Extracted to keep the body of `new` under the
-/// clippy `too_many_lines` ceiling. See crosslink #433.
+/// is not a registered adapter name. The caller turns that into a setup
+/// error so the process exits non-zero. Extracted to keep the body of
+/// `new` under the clippy `too_many_lines` ceiling. See crosslink #433.
 fn resolve_repl_adapter(
     target: &str,
 ) -> Option<&'static dyn openclaudia::providers::ProviderAdapter> {
