@@ -87,9 +87,11 @@ pub fn terminate_process_tree(pid: u32) {
     #[cfg(not(unix))]
     {
         // /T kills the process tree, /F forces termination
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .output();
+        if let Ok(taskkill) = which::which("taskkill") {
+            let _ = Command::new(taskkill)
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .output();
+        }
     }
 }
 
@@ -97,6 +99,24 @@ pub fn terminate_process_tree(pid: u32) {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn windows_taskkill_uses_resolved_binary() {
+        let source = include_str!("kill.rs");
+        let cfg_test = source
+            .find("#[cfg(test)]")
+            .expect("test marker must be present");
+        let production = &source[..cfg_test];
+
+        assert!(
+            !production.contains("Command::new(\"taskkill\")"),
+            "production kill helper must not invoke bare taskkill"
+        );
+        assert!(
+            production.contains("which::which(\"taskkill\")"),
+            "production kill helper must locate taskkill through the Rust resolver"
+        );
+    }
 
     // ── Phase 2 pinning tests (crosslink #541) ────────────────────────────────
     // Pins OC's CURRENT kill_shell contracts per spec crosslink #526 §B2.
