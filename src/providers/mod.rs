@@ -16,6 +16,8 @@ mod anthropic;
 pub mod api_key;
 mod deepseek;
 mod google;
+mod kimi;
+mod minimax;
 mod ollama;
 mod openai;
 mod openai_compat;
@@ -42,6 +44,8 @@ pub use ollama::OllamaAdapter;
 pub use openai::OpenAIAdapter;
 pub use qwen::QwenAdapter;
 pub use zai::ZaiAdapter;
+pub use kimi::KimiAdapter;
+pub use minimax::MiniMaxAdapter;
 
 /// Errors that can occur during provider operations
 #[derive(Error, Debug)]
@@ -253,6 +257,8 @@ pub enum ProviderKind {
     DeepSeek,
     Qwen,
     Zai,
+    Kimi,
+    MiniMax,
     Unknown,
 }
 
@@ -286,6 +292,12 @@ impl ProviderKind {
         if m.starts_with("qwen") || m.starts_with("qwq") || m.starts_with("qvq") {
             return Self::Qwen;
         }
+        if m.starts_with("kimi") {
+            return Self::Kimi;
+        }
+        if m.starts_with("minimax") {
+            return Self::MiniMax;
+        }
         if m.starts_with("glm") {
             return Self::Zai;
         }
@@ -303,6 +315,8 @@ impl ProviderKind {
             Self::DeepSeek => "deepseek",
             Self::Qwen => "qwen",
             Self::Zai => "zai",
+            Self::Kimi => "kimi",
+            Self::MiniMax => "minimax",
             Self::Unknown => "unknown",
         }
     }
@@ -330,6 +344,8 @@ static GOOGLE: GoogleAdapter = GoogleAdapter::new();
 static DEEPSEEK: DeepSeekAdapter = DeepSeekAdapter::new();
 static QWEN: QwenAdapter = QwenAdapter::new();
 static ZAI: ZaiAdapter = ZaiAdapter::new();
+static KIMI: KimiAdapter = KimiAdapter::new();
+static MINIMAX: MiniMaxAdapter = MiniMaxAdapter::new();
 static OLLAMA: OllamaAdapter = OllamaAdapter::new();
 
 /// Canonical names accepted by [`get_adapter`]. Aliases are listed in the
@@ -350,6 +366,8 @@ pub const SUPPORTED_PROVIDERS: &[&str] = &[
     "zai",
     "glm",
     "zhipu",
+    "kimi",
+    "minimax",
     "ollama",
     "local",
     "lmstudio",
@@ -388,6 +406,8 @@ pub fn get_adapter(provider: &str) -> Result<&'static dyn ProviderAdapter, Provi
         "zai" | "glm" | "zhipu" => &ZAI,
         "deepseek" => &DEEPSEEK,
         "qwen" | "alibaba" => &QWEN,
+        "kimi" => &KIMI,
+        "minimax" => &MINIMAX,
         "ollama" => &OLLAMA,
         // OpenAI-compatible providers: explicitly named (no silent fallback
         // for unrecognised names — see the `_ =>` arm below).

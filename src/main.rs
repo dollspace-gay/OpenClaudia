@@ -16,7 +16,8 @@ use openclaudia::{
     config, guardrails, memory,
     permissions::PermissionManager,
     plugins, prompt,
-    proxy::normalize_base_url,
+    proxy::{self, normalize_base_url},
+    providers::get_adapter,
     tools::{self},
     tui, vdd,
 };
@@ -44,6 +45,10 @@ struct Cli {
     /// Model to use for chat
     #[arg(short, long, global = true)]
     model: Option<String>,
+
+    /// Target provider (use default model for that provider)
+    #[arg(short = 't', long, global = true)]
+    target: Option<String>,
 
     /// Resume the most recent chat session
     #[arg(long, alias = "continue")]
@@ -77,6 +82,10 @@ struct Cli {
         value_parser = PossibleValuesParser::new(openclaudia::modes::SUPPORTED_PRESETS),
     )]
     mode: Option<String>,
+
+    /// One-shot print mode: send a single message and print response to stdout
+    #[arg(short = 'p', long, global = true)]
+    print: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -212,11 +221,18 @@ async fn main() -> anyhow::Result<()> {
     let _ =
         openclaudia::migrations::run_all(&openclaudia::migrations::MigrationContext::from_env());
 
+    // One-shot print mode
+    if let Some(prompt) = cli.print {
+        cmd_print(cli.model, cli.target, prompt).await?;
+        return Ok(());
+    }
+
     match cli.command {
         None if cli.tui_mode => {
             // Legacy rustyline REPL (--tui-mode is now the escape hatch name, kept for compat)
             cmd_chat(
                 cli.model,
+                cli.target,
                 cli.resume,
                 cli.session_id,
                 cli.coordinator,
@@ -227,7 +243,7 @@ async fn main() -> anyhow::Result<()> {
         }
         None => {
             // Default: full-screen TUI
-            cmd_tui(cli.model).await
+            cmd_tui(cli.model, cli.target).await
         }
         Some(Commands::Init { force }) => cli::commands::init::cmd_init(force),
         Some(Commands::Auth { status, logout }) => {
@@ -253,11 +269,203 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+/// Extract the incremental assistant text from one streaming SSE `data:`
+/// JSON object, supporting all wire shapes the print path may receive:
+///   * OpenAI-compatible streaming: `choices[0].delta.content`
+///   * Anthropic-native streaming (`/v1/messages`, incl. OAuth):
+///     `{"type":"content_block_delta", "delta":{"text":"..."}}`
+///   * Anthropic-native non-streaming: `content[*].text` (an array of
+///     content blocks — only `type == "text"` blocks carry user-visible
+///     text; `type == "tool_use"` blocks hold tool-call payloads we
+///     don't print here).
+///
+/// Returns `None` for non-text events (role openers, `message_stop`,
+/// thinking deltas, tool-call deltas, and message-level events with
+/// no extractable text) so the caller prints only answer text.
+fn extract_stream_delta(json: &serde_json::Value) -> Option<String> {
+    // OpenAI-compatible streaming delta.
+    if let Some(text) = json["choices"][0]["delta"]["content"].as_str() {
+        return Some(text.to_string());
+    }
+    // Anthropic streaming content_block_delta.
+    if json["type"].as_str() == Some("content_block_delta") {
+        if let Some(text) = json["delta"]["text"].as_str() {
+            return Some(text.to_string());
+        }
+    }
+    // Anthropic non-streaming message — `content` is an array of blocks.
+    // We extract only `type == "text"` blocks and concatenate them; any
+    // tool_use / thinking / image blocks are skipped. If the array is
+    // absent, or contains no text blocks, returns None so the caller's
+    // "no output" behaviour matches the streaming case.
+    if let Some(arr) = json["content"].as_array() {
+        let mut joined = String::new();
+        for block in arr {
+            if block["type"].as_str() == Some("text") {
+                if let Some(text) = block["text"].as_str() {
+                    joined.push_str(text);
+                }
+            }
+        }
+        if !joined.is_empty() {
+            return Some(joined);
+        }
+    }
+    None
+}
+
+/// One-shot print mode: load config, resolve auth, send one message, print response.
+#[allow(clippy::too_many_lines)]
+async fn cmd_print(
+    model_override: Option<String>,
+    target_override: Option<String>,
+    prompt: String,
+) -> anyhow::Result<()> {
+    use futures::StreamExt;
+    use std::io::Write;
+
+    let mut config = config::load_config().map_err(|e| {
+        if config::config_file_exists() {
+            eprintln!("Failed to parse configuration: {e}");
+            anyhow::anyhow!("invalid configuration: {e}")
+        } else {
+            eprintln!("No configuration found. Run 'openclaudia init' first.");
+            anyhow::anyhow!("no configuration found")
+        }
+    })?;
+
+    if let Some(ref target) = target_override {
+        config.proxy.target.clone_from(target);
+    }
+    if let Some(ref model) = model_override {
+        let detected = openclaudia::proxy::determine_provider(model, &config);
+        if detected != config.proxy.target {
+            config.proxy.target = detected;
+        }
+    }
+
+    let Some(provider) = config.active_provider() else {
+        anyhow::bail!("no provider configured for target '{}'", config.proxy.target);
+    };
+
+    let Some(ChatAuth {
+        api_key: key_opt,
+        claude_code_token,
+    }) = resolve_chat_auth(&config.proxy.target, provider).await?
+    else {
+        anyhow::bail!("could not resolve authentication for target '{}'", config.proxy.target);
+    };
+    if key_opt.is_none() && claude_code_token.is_none() {
+        anyhow::bail!(
+            "no API key or Claude Code OAuth credentials for target '{}'",
+            config.proxy.target
+        );
+    }
+
+    let model = resolve_model_name(model_override, provider.model.clone(), &config.proxy.target);
+
+    let request = proxy::ChatCompletionRequest {
+        model: model.clone(),
+        messages: vec![
+            proxy::ChatMessage {
+                role: "user".to_string(),
+                content: proxy::MessageContent::Text(prompt),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ],
+        temperature: None,
+        max_tokens: Some(4096),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        extra: std::collections::HashMap::new(),
+    };
+
+    let adapter = get_adapter(&config.proxy.target)
+        .map_err(|e| anyhow::anyhow!("unknown provider: {e}"))?;
+
+    // One-shot print skips extended thinking: the Anthropic adapter would
+    // set `thinking.budget_tokens` without raising `max_tokens` above it
+    // (a 400 from /v1/messages), and thinking deltas are never printed here.
+    let mut transformed = adapter
+        .transform_request(&request)
+        .map_err(|e| anyhow::anyhow!("request transform error: {e}"))?;
+
+    // Claude Code OAuth requires the exact Claude Code system-prompt prefix
+    // block — the Anthropic OAuth endpoint validates it. Mirrors the TUI /
+    // pipeline path (`build_chat_request_body`).
+    if claude_code_token.is_some() {
+        openclaudia::claude_credentials::inject_system_prompt(&mut transformed);
+    }
+
+    let extra_headers: Vec<(String, String)> = provider
+        .headers
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let url = openclaudia::pipeline::resolve_endpoint(
+        &config.proxy.target,
+        &model,
+        &provider.base_url,
+        claude_code_token.as_deref(),
+    )?;
+    let headers = openclaudia::pipeline::resolve_headers(
+        &config.proxy.target,
+        key_opt.as_ref(),
+        claude_code_token.as_deref(),
+        &extra_headers,
+    )?;
+
+    let client = reqwest::Client::new();
+    let mut req = client.post(&url).json(&transformed);
+    for (key, value) in &headers {
+        req = req.header(key.as_str(), value.as_str());
+    }
+
+    let response = req.send().await?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("API error {}: {body}", status.as_u16());
+    }
+
+    // Stream SSE response
+    let mut stream = response.bytes_stream();
+    let mut buf = String::new();
+
+    while let Some(result) = stream.next().await {
+        let chunk = result?;
+        buf.push_str(&String::from_utf8_lossy(&chunk));
+
+        // Process complete SSE lines
+        while let Some(pos) = buf.find('\n') {
+            let line = buf[..pos].trim().to_string();
+            buf = buf[pos + 1..].to_string();
+
+            if line.is_empty() || line == "data: [DONE]" {
+                continue;
+            }
+            if let Some(data) = line.strip_prefix("data: ") {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(delta) = extract_stream_delta(&json) {
+                        print!("{delta}");
+                        let _ = std::io::stdout().flush();
+                    }
+                }
+            }
+        }
+    }
+    println!();
+    Ok(())
+}
+
 /// Full-screen TUI mode (default when no subcommand).
 ///
 /// Loads config, resolves the provider/model/API key, builds the system prompt,
 /// then launches the ratatui interactive TUI with the API pipeline wired up.
-async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
+async fn cmd_tui(model_override: Option<String>, target_override: Option<String>) -> anyhow::Result<()> {
     // Crosslink #797: every configuration-load / provider-resolve /
     // auth-resolve failure path used to print to stderr and return
     // `Ok(())`, giving exit code 0 even on a broken setup. `set -e`
@@ -276,6 +484,11 @@ async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
         }
     })?;
 
+    // Auto-detect provider from model name
+    // Override target if --target/-t is provided
+    if let Some(ref target) = target_override {
+        config.proxy.target.clone_from(target);
+    }
     // Auto-detect provider from model name
     if let Some(ref model) = model_override {
         let detected = openclaudia::proxy::determine_provider(model, &config);
@@ -852,16 +1065,18 @@ fn chdir_to_git_root() {
 /// against the matching adapter, giving us a compile-/test-time guard
 /// against silent drift (`claude-opus-4-6` → `4-7` → `4-8` …).
 const DEFAULT_MODELS_BY_TARGET: &[(&str, &str)] = &[
-    ("anthropic", "claude-opus-4-6"),
-    ("google", "gemini-2.5-flash"),
-    ("zai", "glm-5"),
-    ("deepseek", "deepseek-chat"),
-    ("qwen", "qwen3.5-plus"),
+    ("anthropic", "claude-opus-4-8"),
+    ("google", "gemini-3.1-pro-preview"),
+    ("zai", "glm-5.2"),
+    ("deepseek", "deepseek-v4-pro"),
+    ("qwen", "qwen-3.7-plus"),
+    ("kimi", "kimi-k2.7-code"),
+    ("minimax", "minimax-m3"),
 ];
 
 /// Fallback model for targets not listed in [`DEFAULT_MODELS_BY_TARGET`].
 /// Currently every non-table target is treated as OpenAI-compatible.
-const DEFAULT_MODEL_FALLBACK: &str = "gpt-5.2";
+const DEFAULT_MODEL_FALLBACK: &str = "gpt-5.5";
 
 /// Look up the canonical default model for a target, or [`DEFAULT_MODEL_FALLBACK`].
 fn default_model_for_target(target: &str) -> &'static str {
@@ -978,6 +1193,8 @@ async fn resolve_chat_auth(
         "zai" => "ZAI_API_KEY",
         "deepseek" => "DEEPSEEK_API_KEY",
         "qwen" => "QWEN_API_KEY",
+        "kimi" => "KIMI_API_KEY",
+        "minimax" => "MINIMAX_API_KEY",
         _ => "API_KEY",
     };
     eprintln!("No API key configured for '{target}'. Set {env_var} or add to config.");
@@ -1242,6 +1459,7 @@ fn build_chat_endpoint_and_headers(
 
 async fn cmd_chat(
     model_override: Option<String>,
+    target_override: Option<String>,
     resume: bool,
     session_id: Option<String>,
     coordinator: bool,
@@ -1255,6 +1473,7 @@ async fn cmd_chat(
     // dispatcher, and provider-specific response handlers.
     let Some(repl) = cli::chat_repl::ChatRepl::new(cli::chat_repl::ChatReplArgs {
         model_override,
+        target_override,
         resume,
         session_id,
         coordinator,
@@ -1282,6 +1501,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn extract_stream_delta_reads_openai_shape() {
+        let json = serde_json::json!({
+            "choices": [{ "delta": { "content": "hello" } }]
+        });
+        assert_eq!(extract_stream_delta(&json), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn extract_stream_delta_reads_anthropic_text_delta() {
+        // The shape /v1/messages streams (including under OAuth Bearer auth).
+        let json = serde_json::json!({
+            "type": "content_block_delta",
+            "delta": { "type": "text_delta", "text": "world" }
+        });
+        assert_eq!(extract_stream_delta(&json), Some("world".to_string()));
+    }
+
+    #[test]
+    fn extract_stream_delta_ignores_non_text_events() {
+        // Anthropic thinking delta carries `delta.thinking`, not `delta.text`.
+        let thinking = serde_json::json!({
+            "type": "content_block_delta",
+            "delta": { "type": "thinking_delta", "thinking": "hmm" }
+        });
+        assert_eq!(extract_stream_delta(&thinking), None);
+        // Stream-lifecycle events have no printable text.
+        let stop = serde_json::json!({ "type": "message_stop" });
+        assert_eq!(extract_stream_delta(&stop), None);
+        // OpenAI role-opener delta (no content field).
+        let opener = serde_json::json!({ "choices": [{ "delta": { "role": "assistant" } }] });
+        assert_eq!(extract_stream_delta(&opener), None);
+    }
+
+    #[test]
     fn resolve_model_prefers_explicit_override() {
         let got = resolve_model_name(
             Some("custom-model".to_string()),
@@ -1301,17 +1554,19 @@ mod tests {
     fn resolve_model_per_target_defaults() {
         assert_eq!(
             resolve_model_name(None, None, "anthropic"),
-            "claude-opus-4-6"
+            "claude-opus-4-8"
         );
-        assert_eq!(resolve_model_name(None, None, "openai"), "gpt-5.2");
-        assert_eq!(resolve_model_name(None, None, "google"), "gemini-2.5-flash");
-        assert_eq!(resolve_model_name(None, None, "zai"), "glm-5");
-        assert_eq!(resolve_model_name(None, None, "deepseek"), "deepseek-chat");
-        assert_eq!(resolve_model_name(None, None, "qwen"), "qwen3.5-plus");
+        assert_eq!(resolve_model_name(None, None, "openai"), "gpt-5.5");
+        assert_eq!(resolve_model_name(None, None, "google"), "gemini-3.1-pro-preview");
+        assert_eq!(resolve_model_name(None, None, "zai"), "glm-5.2");
+        assert_eq!(resolve_model_name(None, None, "deepseek"), "deepseek-v4-pro");
+        assert_eq!(resolve_model_name(None, None, "qwen"), "qwen-3.7-plus");
+        assert_eq!(resolve_model_name(None, None, "kimi"), "kimi-k2.7-code");
+        assert_eq!(resolve_model_name(None, None, "minimax"), "minimax-m3");
         // Unknown target falls back to the OpenAI default.
         assert_eq!(
             resolve_model_name(None, None, "unknown-provider"),
-            "gpt-5.2"
+            "gpt-5.5"
         );
     }
 
@@ -1346,7 +1601,7 @@ mod tests {
             default_model_for_target("definitely-not-a-known-target"),
             DEFAULT_MODEL_FALLBACK
         );
-        assert_eq!(DEFAULT_MODEL_FALLBACK, "gpt-5.2");
+        assert_eq!(DEFAULT_MODEL_FALLBACK, "gpt-5.5");
     }
 
     /// #802 (companion): the table must not contain duplicate target keys —

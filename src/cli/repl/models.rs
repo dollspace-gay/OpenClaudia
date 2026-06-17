@@ -4,7 +4,7 @@ use openclaudia::{config, providers};
 pub fn get_available_models(provider: &str) -> Vec<&'static str> {
     match provider {
         "anthropic" => vec![
-            "claude-opus-4-6",
+            "claude-opus-4-8",
             "claude-sonnet-4-6",
             "claude-haiku-4-5-20251001",
             "claude-sonnet-4-5-20250929",
@@ -14,7 +14,7 @@ pub fn get_available_models(provider: &str) -> Vec<&'static str> {
             "claude-opus-4-20250514",
         ],
         "openai" => vec![
-            "gpt-5.2",
+            "gpt-5.5",
             "gpt-5.2-codex",
             "gpt-5",
             "gpt-5-mini",
@@ -41,9 +41,11 @@ pub fn get_available_models(provider: &str) -> Vec<&'static str> {
             "glm-4.6",
             "glm-4.5-flash",
         ],
-        "deepseek" => vec!["deepseek-chat", "deepseek-reasoner"],
+        "deepseek" => vec!["deepseek-v4-pro", "deepseek-reasoner"],
+        "kimi" => vec!["kimi-k2.7-code"],
+        "minimax" => vec!["minimax-m3"],
         "qwen" => vec![
-            "qwen3.5-plus",
+            "qwen-3.7-plus",
             "qwen3-max",
             "qwen-plus",
             "qwen-turbo",

@@ -23,6 +23,69 @@ use std::time::Duration;
 
 use crate::file_error::{self, FileError};
 
+/// Default model per provider (mirrors `src/main.rs` `DEFAULT_MODELS_BY_TARGET`).
+const DEFAULT_MODELS: &[(&str, &str)] = &[
+    ("anthropic", "claude-opus-4-8"),
+    ("google", "gemini-3.1-pro-preview"),
+    ("openai", "gpt-5.5"),
+    ("deepseek", "deepseek-v4-pro"),
+    ("qwen", "qwen-3.7-plus"),
+    ("zai", "glm-5.2"),
+    ("kimi", "kimi-k2.7-code"),
+    ("minimax", "minimax-m3"),
+];
+
+/// Resolve auth material for a `/provider` switch: `(api_key, oauth_token)`.
+///
+/// For Anthropic with no configured API key, loads Claude Code OAuth
+/// credentials (refreshing if expired) — the same priority as startup's
+/// `resolve_chat_auth`. That load is async, but the TUI runs on a
+/// current-thread tokio runtime that cannot `block_on` reentrantly, so it is
+/// driven on a short-lived helper-thread runtime via [`drive_future_blocking`].
+fn resolve_provider_auth(
+    provider: &str,
+    pconf: &crate::config::ProviderConfig,
+) -> Result<(Option<crate::providers::ApiKey>, Option<String>), String> {
+    if provider == "anthropic" && pconf.api_key.is_none() {
+        if !crate::claude_credentials::has_claude_code_credentials() {
+            return Err(
+                "no ANTHROPIC_API_KEY configured and no Claude Code credentials found".to_string(),
+            );
+        }
+        let creds = drive_future_blocking(crate::claude_credentials::load_credentials())?;
+        return Ok((None, Some(creds.access_token)));
+    }
+    if let Some(key) = &pconf.api_key {
+        return Ok((Some(key.clone()), None));
+    }
+    Err(format!(
+        "no API key configured for '{provider}' (set its api_key or the matching *_API_KEY env var)"
+    ))
+}
+
+/// Drive an async future to completion from a synchronous slash handler.
+///
+/// The TUI event loop runs on a current-thread tokio runtime, so neither
+/// `Handle::block_on` (reentrant panic) nor `block_in_place` (multi-thread
+/// only) is usable here. We offload to a short-lived helper thread with its
+/// own current-thread runtime and join it — the same discipline as
+/// `guardrails::drive_future_sync`'s current-thread branch.
+fn drive_future_blocking<F, T>(fut: F) -> T
+where
+    F: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tui: failed to build helper runtime for provider switch");
+        rt.block_on(fut)
+    })
+    .join()
+    .expect("tui: helper thread panicked during provider-switch auth")
+}
+
 /// Process-wide shutdown flag for the TUI event loop.
 ///
 /// crosslink #910: the original `run()` loop relied entirely on the
@@ -1783,6 +1846,11 @@ impl App {
     /// branches into the table; each is a 3-line entry once a sibling
     /// helper exists.
     fn handle_slash_command(&mut self, text: &str) -> bool {
+        // /provider <name> — switch provider + default model (prefix dispatch, takes arg)
+        if text.starts_with("/provider") {
+            self.slash_provider(text);
+            return true;
+        }
         if let Some(handler) = lookup_tui_slash(text) {
             handler(self);
             return true;
@@ -1867,6 +1935,90 @@ impl App {
             self.messages
                 .add(DisplayMessage::system(format!("Available skills:\n{list}")));
         }
+    }
+
+    /// Table-handler entry point for `/provider`.
+    ///
+    /// Switches the live provider/model AND re-resolves the transport
+    /// (endpoint + auth headers + OAuth token) so subsequent turns actually
+    /// reach the new provider. Updating the labels alone left requests
+    /// pointed at the previous provider's endpoint and key.
+    fn slash_provider(&mut self, text: &str) {
+        let name = text
+            .strip_prefix("/provider ")
+            .or_else(|| text.strip_prefix("/provider"))
+            .unwrap_or("")
+            .trim();
+        if name.is_empty() || name == "list" {
+            let providers: Vec<&str> = DEFAULT_MODELS.iter().map(|(p, _)| *p).collect();
+            self.messages.add(DisplayMessage::system(format!(
+                "Available providers: {}\nUsage: /provider <name>",
+                providers.join(", ")
+            )));
+            return;
+        }
+        let Some(&(_, default_model)) = DEFAULT_MODELS.iter().find(|(p, _)| *p == name) else {
+            self.messages.add(DisplayMessage::system(format!(
+                "Unknown provider: {name}. Use /provider list"
+            )));
+            return;
+        };
+        match self.reconfigure_provider(name, default_model) {
+            Ok(()) => self.messages.add(DisplayMessage::system(format!(
+                "Switched to {name} (model: {default_model})"
+            ))),
+            Err(e) => self.messages.add(DisplayMessage::system(format!(
+                "Cannot switch to {name}: {e}"
+            ))),
+        }
+    }
+
+    /// Re-resolve the endpoint, auth, and headers for `provider` and rewire
+    /// the live [`ApiClient`] so the next turn targets the new provider.
+    ///
+    /// Mirrors the startup auth resolution (`resolve_chat_auth` +
+    /// [`crate::pipeline::resolve_endpoint`] / [`crate::pipeline::resolve_headers`])
+    /// but lives in the lib so the TUI can switch providers mid-session.
+    /// Returns `Err` *without* mutating any state when the new provider has
+    /// no usable credentials, so the session stays on its working provider.
+    fn reconfigure_provider(&mut self, provider: &str, model: &str) -> Result<(), String> {
+        let config =
+            crate::config::load_config().map_err(|e| format!("config load failed: {e}"))?;
+        let pconf = config
+            .get_provider(provider)
+            .ok_or_else(|| format!("no configuration for provider '{provider}'"))?;
+
+        let (api_key, claude_code_token) = resolve_provider_auth(provider, pconf)?;
+
+        let extra_headers: Vec<(String, String)> = pconf
+            .headers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let endpoint = crate::pipeline::resolve_endpoint(
+            provider,
+            model,
+            &pconf.base_url,
+            claude_code_token.as_deref(),
+        )
+        .map_err(|e| format!("endpoint resolution failed: {e}"))?;
+        let headers = crate::pipeline::resolve_headers(
+            provider,
+            api_key.as_ref(),
+            claude_code_token.as_deref(),
+            &extra_headers,
+        )
+        .map_err(|e| format!("header resolution failed: {e}"))?;
+
+        // Commit only after every fallible step succeeded.
+        self.provider = provider.to_string();
+        self.chat_session.provider.clone_from(&self.provider);
+        self.model = model.to_string();
+        self.chat_session.model.clone_from(&self.model);
+        self.api_client.endpoint = endpoint;
+        self.api_client.headers = headers;
+        self.api_client.claude_code_token = claude_code_token;
+        Ok(())
     }
 
     /// Handle skill invocations and info/diagnostic commands.

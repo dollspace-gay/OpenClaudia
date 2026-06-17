@@ -43,3 +43,7 @@ tool_struggles.txt
 #   .claude/settings.local.json is per-developer, ignore separately if needed
 # === End crosslink managed ===
 .claude/worktrees/
+
+# oh-my-claudecode — machine-local orchestration state (never commit)
+.omc/
+.aider*

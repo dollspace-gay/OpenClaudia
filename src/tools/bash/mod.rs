@@ -141,10 +141,7 @@ impl BackgroundShellManager {
 
         #[cfg(windows)]
         let child = {
-            let mut cmd = match find_git_bash() {
-                Some(git_bash) => Command::new(git_bash),
-                None => Command::new("bash"),
-            };
+            let mut cmd = find_git_bash().map_or_else(|| Command::new("bash"), Command::new);
             cmd.args(["-c", command])
                 .current_dir(&cwd)
                 .stdout(Stdio::piped())
@@ -407,7 +404,7 @@ pub static BACKGROUND_SHELLS: std::sync::LazyLock<BackgroundShellManager> =
 
 /// Find Git Bash on Windows
 #[cfg(windows)]
-pub(crate) fn find_git_bash() -> Option<std::path::PathBuf> {
+fn find_git_bash() -> Option<std::path::PathBuf> {
     // Common Git Bash locations on Windows
     let paths = [
         r"C:\Program Files\Git\bin\bash.exe",
@@ -538,10 +535,7 @@ pub fn try_execute_bash(args: &HashMap<String, Value>) -> Result<ToolOutput, Too
 
     #[cfg(windows)]
     let output = {
-        let mut cmd = match find_git_bash() {
-            Some(git_bash) => Command::new(git_bash),
-            None => Command::new("bash"),
-        };
+        let mut cmd = find_git_bash().map_or_else(|| Command::new("bash"), Command::new);
         cmd.args(["-c", command]).current_dir(&cwd);
         apply_env_scrub(&mut cmd);
         cmd.output()

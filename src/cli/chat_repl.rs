@@ -57,6 +57,7 @@ use rustyline::error::ReadlineError;
 /// public `cmd_chat` signature stays a thin wrapper.
 pub struct ChatReplArgs {
     pub model_override: Option<String>,
+    pub target_override: Option<String>,
     pub resume: bool,
     pub session_id: Option<String>,
     pub coordinator: bool,
@@ -152,6 +153,7 @@ impl ChatRepl {
     /// initialized REPL. `Ok(None)` means setup printed a user-facing
     /// error and the caller should exit cleanly (matches the original
     /// `return Ok(())` branches of `cmd_chat`).
+    #[allow(clippy::too_many_lines)]
     pub async fn new(args: ChatReplArgs) -> anyhow::Result<Option<Self>> {
         use openclaudia::rules::RulesEngine;
 
@@ -172,6 +174,11 @@ impl ChatRepl {
         };
 
         let mut config = config;
+        // Explicit `--target` wins first; a model-name override may still
+        // re-detect the provider below (mirrors `cmd_tui`).
+        if let Some(ref target) = args.target_override {
+            config.proxy.target.clone_from(target);
+        }
         if let Some(ref m) = args.model_override {
             let detected = openclaudia::proxy::determine_provider(m, &config);
             if detected != config.proxy.target {

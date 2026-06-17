@@ -32,7 +32,7 @@ pub fn cmd_init(force: bool) -> anyhow::Result<()> {
 proxy:
   port: 8080
   host: "127.0.0.1"
-  target: anthropic  # Default provider: anthropic, openai, google, zai, deepseek, qwen
+  target: anthropic  # Default provider: anthropic, openai, google, zai, deepseek, qwen, minimax, kimi
 
 providers:
   anthropic:
@@ -52,6 +52,14 @@ providers:
   deepseek:
     base_url: https://api.deepseek.com
     # api_key: ${DEEPSEEK_API_KEY}
+  # Kimi/Moonshot (OpenAI-compatible) - Models: kimi-k2.7-code
+  kimi:
+    base_url: https://api.moonshot.cn
+    # api_key: ${KIMI_API_KEY}
+  # MiniMax (OpenAI-compatible) - Models: MiniMax-M3
+  minimax:
+    base_url: https://api.minimax.io/v1
+    # api_key: ${MINIMAX_API_KEY}
   # Qwen/Alibaba (OpenAI-compatible) - Models: qwen-turbo, qwen-plus
   qwen:
     base_url: https://dashscope.aliyuncs.com/compatible-mode

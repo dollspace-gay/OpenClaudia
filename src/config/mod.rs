@@ -181,6 +181,16 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
         .set_default(
             "providers.qwen.base_url",
             "https://dashscope.aliyuncs.com/compatible-mode",
+        )?
+        // MiniMax (OpenAI-compatible)
+        .set_default(
+            "providers.minimax.base_url",
+            "https://api.minimax.io/v1",
+        )?
+        // Kimi/Moonshot (OpenAI-compatible)
+        .set_default(
+            "providers.kimi.base_url",
+            "https://api.moonshot.cn",
         )?;
 
     // Load from project config file
@@ -233,6 +243,12 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
     }
     if let Ok(key) = std::env::var("QWEN_API_KEY") {
         builder = maybe_set_api_key(builder, "providers.qwen.api_key", key)?;
+    }
+    if let Ok(key) = std::env::var("KIMI_API_KEY") {
+        builder = maybe_set_api_key(builder, "providers.kimi.api_key", key)?;
+    }
+    if let Ok(key) = std::env::var("MINIMAX_API_KEY") {
+        builder = maybe_set_api_key(builder, "providers.minimax.api_key", key)?;
     }
 
     // `ApiKey::deserialize` (invoked transitively here) enforces non-empty,
