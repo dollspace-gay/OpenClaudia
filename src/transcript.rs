@@ -21,7 +21,7 @@ use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex, MutexGuard};
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,27 @@ fn git_bin() -> Result<&'static Path, String> {
 
 fn git_command() -> Result<Command, String> {
     Ok(Command::new(git_bin()?))
+}
+
+/// Per-cwd cache entry: last-observed git `HEAD` mtime + last branch
+/// result. `mtime = None` is a sentinel for "no git HEAD could be
+/// stat'd", which still memoises the negative answer so a non-repo
+/// directory does not pay a subprocess on every line.
+type BranchCacheEntry = (Option<SystemTime>, Option<String>);
+type BranchCache = std::collections::HashMap<PathBuf, BranchCacheEntry>;
+
+static GIT_BRANCH_CACHE: Mutex<Option<BranchCache>> = Mutex::new(None);
+
+fn git_branch_cache_guard(
+    operation: &'static str,
+) -> Option<MutexGuard<'static, Option<BranchCache>>> {
+    match GIT_BRANCH_CACHE.lock() {
+        Ok(guard) => Some(guard),
+        Err(err) => {
+            tracing::error!(operation, error = %err, "Git branch cache lock poisoned");
+            None
+        }
+    }
 }
 
 /// On-disk envelope around a raw chat message. Field names match
@@ -191,22 +212,10 @@ fn git_head_mtime(cwd: &Path) -> Option<SystemTime> {
 /// call.
 #[must_use]
 pub fn current_git_branch(cwd: &Path) -> Option<String> {
-    use std::collections::HashMap;
-    use std::sync::Mutex;
-
-    /// Per-cwd cache entry: last-observed git `HEAD` mtime + last branch
-    /// result. `mtime = None` is a sentinel for "no git HEAD could be
-    /// stat'd", which still memoises the negative answer so a non-repo
-    /// directory does not pay a subprocess on every line.
-    type BranchCacheEntry = (Option<SystemTime>, Option<String>);
-    type BranchCache = HashMap<PathBuf, BranchCacheEntry>;
-
-    static CACHE: Mutex<Option<BranchCache>> = Mutex::new(None);
-
     let head_mtime = git_head_mtime(cwd);
 
     {
-        let guard = CACHE.lock().ok();
+        let guard = git_branch_cache_guard("current_git_branch.read");
         if let Some(map) = guard.as_ref().and_then(|g| g.as_ref()) {
             if let Some((cached_mtime, cached_branch)) = map.get(cwd) {
                 if *cached_mtime == head_mtime {
@@ -233,8 +242,8 @@ pub fn current_git_branch(cwd: &Path) -> Option<String> {
         _ => None,
     };
 
-    if let Ok(mut guard) = CACHE.lock() {
-        let map = guard.get_or_insert_with(HashMap::new);
+    if let Some(mut guard) = git_branch_cache_guard("current_git_branch.write") {
+        let map = guard.get_or_insert_with(BranchCache::new);
         map.insert(cwd.to_path_buf(), (head_mtime, branch.clone()));
     }
 
