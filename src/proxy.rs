@@ -389,11 +389,19 @@ async fn list_models(State(_state): State<ProxyState>) -> impl IntoResponse {
     Json(serde_json::json!({
         "object": "list",
         "data": [
-            {"id": "claude-opus-4-6", "object": "model", "owned_by": "anthropic"},
+            {"id": "claude-fable-5", "object": "model", "owned_by": "anthropic"},
+            {"id": "claude-opus-4-8", "object": "model", "owned_by": "anthropic"},
+            {"id": "claude-opus-4-7", "object": "model", "owned_by": "anthropic"},
             {"id": "claude-sonnet-4-6", "object": "model", "owned_by": "anthropic"},
             {"id": "claude-haiku-4-5-20251001", "object": "model", "owned_by": "anthropic"},
-            {"id": "gpt-5.2", "object": "model", "owned_by": "openai"},
-            {"id": "gpt-4.1", "object": "model", "owned_by": "openai"},
+            {"id": "gpt-5.5", "object": "model", "owned_by": "openai"},
+            {"id": "gpt-5.4-mini", "object": "model", "owned_by": "openai"},
+            {"id": "gemini-3.5-flash", "object": "model", "owned_by": "google"},
+            {"id": "deepseek-v4-pro", "object": "model", "owned_by": "deepseek"},
+            {"id": "qwen3.7-plus", "object": "model", "owned_by": "qwen"},
+            {"id": "glm-5.2", "object": "model", "owned_by": "zai"},
+            {"id": "kimi-k2.7-code", "object": "model", "owned_by": "kimi"},
+            {"id": "MiniMax-M3", "object": "model", "owned_by": "minimax"},
         ]
     }))
 }

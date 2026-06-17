@@ -86,6 +86,14 @@ struct Cli {
     #[arg(short, long, global = true)]
     model: Option<String>,
 
+    /// Target provider to use for chat
+    #[arg(
+        short = 't',
+        long,
+        value_parser = PossibleValuesParser::new(openclaudia::providers::SUPPORTED_PROVIDERS),
+    )]
+    target: Option<String>,
+
     /// Resume the most recent chat session
     #[arg(long, alias = "continue")]
     resume: bool,
@@ -118,6 +126,10 @@ struct Cli {
         value_parser = PossibleValuesParser::new(openclaudia::modes::SUPPORTED_PRESETS),
     )]
     mode: Option<String>,
+
+    /// Send a single prompt and print the response to stdout
+    #[arg(short = 'p', long, value_name = "PROMPT")]
+    print: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -217,7 +229,7 @@ async fn main() -> anyhow::Result<()> {
         "openclaudia=info,tower_http=warn"
     };
 
-    let tui_mode_active = cli.command.is_none() && !cli.tui_mode;
+    let tui_mode_active = cli.command.is_none() && !cli.tui_mode && cli.print.is_none();
     let log_writer: tracing_subscriber::fmt::writer::BoxMakeWriter = if tui_mode_active {
         let file = open_tui_log_file(Path::new(".openclaudia/logs"), std::process::id());
         file.map_or_else(
@@ -245,11 +257,24 @@ async fn main() -> anyhow::Result<()> {
     let _ =
         openclaudia::migrations::run_all(&openclaudia::migrations::MigrationContext::from_env());
 
+    if let Some(prompt) = cli.print.clone() {
+        if cli.command.is_some() {
+            anyhow::bail!("--print cannot be used with subcommands");
+        }
+        return cli::print_mode::cmd_print(cli::print_mode::PrintOptions {
+            model_override: cli.model.clone(),
+            target_override: cli.target.clone(),
+            prompt,
+        })
+        .await;
+    }
+
     match cli.command {
         None if cli.tui_mode => {
             // Legacy rustyline REPL (--tui-mode is now the escape hatch name, kept for compat)
             cmd_chat(
                 cli.model,
+                cli.target,
                 cli.resume,
                 cli.session_id,
                 cli.coordinator,
@@ -267,6 +292,7 @@ async fn main() -> anyhow::Result<()> {
             }
             cmd_tui(TuiStartupOptions {
                 model_override: cli.model,
+                target_override: cli.target,
                 resume: cli.resume,
                 session_id: cli.session_id,
                 dangerously_skip_permissions: cli.dangerously_skip_permissions,
@@ -281,9 +307,9 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Acp {
             target,
             model: acp_model,
-        }) => cli::commands::acp::cmd_acp(target, acp_model.or(cli.model)).await,
+        }) => cli::commands::acp::cmd_acp(target.or(cli.target), acp_model.or(cli.model)).await,
         Some(Commands::Start { port, host, target }) => {
-            cli::commands::start::cmd_start(port, host, target).await
+            cli::commands::start::cmd_start(port, host, target.or(cli.target)).await
         }
         Some(Commands::Config) => cli::commands::config_cmd::cmd_config(),
         Some(Commands::Doctor) => cli::commands::doctor::cmd_doctor().await,
@@ -291,7 +317,7 @@ async fn main() -> anyhow::Result<()> {
             max_iterations,
             port,
             target,
-        }) => cli::commands::loop_cmd::cmd_loop(max_iterations, port, target).await,
+        }) => cli::commands::loop_cmd::cmd_loop(max_iterations, port, target.or(cli.target)).await,
     }
 }
 
@@ -301,6 +327,7 @@ async fn main() -> anyhow::Result<()> {
 /// then launches the ratatui interactive TUI with the API pipeline wired up.
 struct TuiStartupOptions {
     model_override: Option<String>,
+    target_override: Option<String>,
     resume: bool,
     session_id: Option<String>,
     dangerously_skip_permissions: bool,
@@ -329,8 +356,9 @@ async fn cmd_tui(options: TuiStartupOptions) -> anyhow::Result<()> {
         }
     })?;
 
-    // Auto-detect provider from model name
-    if let Some(ref model) = options.model_override {
+    if let Some(ref target) = options.target_override {
+        config.proxy.target.clone_from(target);
+    } else if let Some(ref model) = options.model_override {
         let detected = openclaudia::proxy::determine_provider(model, &config);
         if detected != config.proxy.target {
             config.proxy.target = detected;
@@ -1263,6 +1291,7 @@ fn build_chat_endpoint_and_headers(
 
 async fn cmd_chat(
     model_override: Option<String>,
+    target_override: Option<String>,
     resume: bool,
     session_id: Option<String>,
     coordinator: bool,
@@ -1276,6 +1305,7 @@ async fn cmd_chat(
     // dispatcher, and provider-specific response handlers.
     let Some(repl) = cli::chat_repl::ChatRepl::new(cli::chat_repl::ChatReplArgs {
         model_override,
+        target_override,
         resume,
         session_id,
         coordinator,
@@ -1377,24 +1407,27 @@ mod tests {
     fn resolve_model_per_target_defaults() {
         assert_eq!(
             resolve_model_name(None, None, "anthropic"),
-            "claude-opus-4-6"
+            "claude-opus-4-8"
         );
-        assert_eq!(resolve_model_name(None, None, "openai"), "gpt-5.2");
-        assert_eq!(resolve_model_name(None, None, "google"), "gemini-2.5-flash");
-        assert_eq!(resolve_model_name(None, None, "gemini"), "gemini-2.5-flash");
-        assert_eq!(resolve_model_name(None, None, "zai"), "glm-5");
-        assert_eq!(resolve_model_name(None, None, "glm"), "glm-5");
-        assert_eq!(resolve_model_name(None, None, "zhipu"), "glm-5");
-        assert_eq!(resolve_model_name(None, None, "deepseek"), "deepseek-chat");
-        assert_eq!(resolve_model_name(None, None, "qwen"), "qwen3.5-plus");
-        assert_eq!(resolve_model_name(None, None, "alibaba"), "qwen3.5-plus");
+        assert_eq!(resolve_model_name(None, None, "openai"), "gpt-5.5");
+        assert_eq!(resolve_model_name(None, None, "google"), "gemini-3.5-flash");
+        assert_eq!(resolve_model_name(None, None, "gemini"), "gemini-3.5-flash");
+        assert_eq!(resolve_model_name(None, None, "zai"), "glm-5.2");
+        assert_eq!(resolve_model_name(None, None, "glm"), "glm-5.2");
+        assert_eq!(resolve_model_name(None, None, "zhipu"), "glm-5.2");
+        assert_eq!(
+            resolve_model_name(None, None, "deepseek"),
+            "deepseek-v4-pro"
+        );
+        assert_eq!(resolve_model_name(None, None, "qwen"), "qwen3.7-plus");
+        assert_eq!(resolve_model_name(None, None, "alibaba"), "qwen3.7-plus");
         assert_eq!(resolve_model_name(None, None, "kimi"), "kimi-k2.7-code");
         assert_eq!(resolve_model_name(None, None, "moonshot"), "kimi-k2.7-code");
         assert_eq!(resolve_model_name(None, None, "minimax"), "MiniMax-M3");
         // Unknown target falls back to the OpenAI default.
         assert_eq!(
             resolve_model_name(None, None, "unknown-provider"),
-            "gpt-5.2"
+            "gpt-5.5"
         );
     }
 
@@ -1408,7 +1441,7 @@ mod tests {
     /// * removing or renaming an entry forces the test to be updated in
     ///   lockstep (no silent drift between the table and the resolver),
     /// * the literal model strings themselves are pinned — a stray edit
-    ///   from e.g. `claude-opus-4-6` to `claude-opus-4-7` will fail the
+    ///   from e.g. `claude-opus-4-8` to `claude-opus-4-9` will fail the
     ///   round-trip and force a deliberate version bump.
     #[test]
     fn default_models_table_is_canonical_for_resolver() {
@@ -1429,7 +1462,7 @@ mod tests {
             openclaudia::providers::default_model_for_target("definitely-not-a-known-target"),
             openclaudia::providers::DEFAULT_MODEL_FALLBACK
         );
-        assert_eq!(openclaudia::providers::DEFAULT_MODEL_FALLBACK, "gpt-5.2");
+        assert_eq!(openclaudia::providers::DEFAULT_MODEL_FALLBACK, "gpt-5.5");
     }
 
     /// #802 (companion): the table must not contain duplicate target keys —

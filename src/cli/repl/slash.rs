@@ -1374,11 +1374,23 @@ fn fast_model_for_provider(provider: &str) -> Option<&'static str> {
     };
     let preferred: &[&str] = match static_provider {
         "anthropic" => &["claude-haiku-4-5-20251001"],
-        "openai" => &["gpt-5-mini", "gpt-5-nano", "gpt-4.1-mini", "gpt-4o-mini"],
-        "google" => &["gemini-2.5-flash-lite", "gemini-3-flash-preview"],
-        "zai" => &["glm-4.7-flash", "glm-4.5-flash"],
-        "qwen" => &["qwen-turbo"],
-        "deepseek" => &["deepseek-chat"],
+        "openai" => &[
+            "gpt-5.4-mini",
+            "gpt-5.4-nano",
+            "gpt-5-mini",
+            "gpt-5-nano",
+            "gpt-4.1-mini",
+            "gpt-4o-mini",
+        ],
+        "google" => &[
+            "gemini-3.1-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-3-flash-preview",
+        ],
+        "zai" => &["glm-4.7-flashx", "glm-4.7-flash", "glm-4.5-airx"],
+        "qwen" => &["qwen3.6-flash", "qwen3.5-flash", "qwen-turbo"],
+        "deepseek" => &["deepseek-v4-flash", "deepseek-chat"],
         "kimi" => &["kimi-k2.7-code-highspeed", "moonshot-v1-8k"],
         "minimax" => &["MiniMax-M2.7-highspeed", "MiniMax-M2.5-highspeed"],
         _ => return None,

@@ -44,15 +44,15 @@ providers:
   google:
     base_url: https://generativelanguage.googleapis.com
     # api_key: ${GOOGLE_API_KEY}
-  # Z.AI/GLM (OpenAI-compatible) - Models: GLM-4.7, GLM-4.5-air
+  # Z.AI/GLM (OpenAI-compatible) - Models: glm-5.2, glm-5-turbo
   zai:
     base_url: https://api.z.ai/api/coding/paas/v4
     # api_key: ${ZAI_API_KEY}
-  # DeepSeek (OpenAI-compatible) - Models: deepseek-chat, deepseek-coder
+  # DeepSeek (OpenAI-compatible) - Models: deepseek-v4-pro, deepseek-v4-flash
   deepseek:
     base_url: https://api.deepseek.com
     # api_key: ${DEEPSEEK_API_KEY}
-  # Qwen/Alibaba (OpenAI-compatible) - Models: qwen-turbo, qwen-plus
+  # Qwen/Alibaba (OpenAI-compatible) - Models: qwen3.7-plus, qwen3.7-max
   qwen:
     base_url: https://dashscope.aliyuncs.com/compatible-mode
     # api_key: ${QWEN_API_KEY}

@@ -11,7 +11,7 @@ OpenClaudia is a Rust-based CLI that transforms any LLM into an agentic coding a
 - **Behavioral Modes** — Three-axis model (agency, quality, scope) with 8 presets and 6 modifiers for fine-grained control over AI behavior
 - **Multi-Provider Support** — Anthropic, OpenAI, Google Gemini, DeepSeek, Qwen, Z.AI/GLM, Kimi/Moonshot, MiniMax, Ollama, and any OpenAI-compatible server
 - **Local LLM Support** — Run with Ollama, LM Studio, LocalAI, or any OpenAI-compatible endpoint
-- **Auto-Detect Provider** — Pass `-m gemini-2.5-flash` and the provider is detected automatically
+- **Auto-Detect Provider** — Pass `-m gemini-3.5-flash` and the provider is detected automatically
 - **30+ Agentic Tools** — Bash, file ops, LSP, web search, notebooks, task tracking, plan mode, worktrees, cron scheduling, MCP resources
 - **Tool Execution Loop** — Multi-turn tool calling with automatic result feedback (works across all providers)
 - **Web Search** — Browser-feature builds support no-key DuckDuckGo/Bing scraping; Tavily or Brave APIs work in all builds
@@ -79,8 +79,8 @@ openclaudia init
 openclaudia
 
 # Use a specific model (provider auto-detected from model name)
-openclaudia -m gemini-2.5-flash
-openclaudia -m gpt-4o
+openclaudia -m gemini-3.5-flash
+openclaudia -m gpt-5.5
 openclaudia -m claude-sonnet-4-20250514
 
 # Start with a behavioral mode
@@ -158,7 +158,7 @@ session:
 #   mode: advisory           # advisory (single pass) or blocking (loop until clean)
 #   adversary:
 #     provider: google       # Must differ from proxy.target
-#     model: gemini-2.5-flash
+#     model: gemini-3.5-flash
 
 # Granular tool permissions
 # permissions:
@@ -347,42 +347,49 @@ The `keybindings:` config map customizes the legacy line-oriented REPL (`opencla
 
 ## Supported Models
 
+The lists below are the built-in `/model list` fallback catalog. Model names are not limited to this catalog: `openclaudia -m <model>` and `/model <model>` accept any upstream chat model ID that the selected provider endpoint supports.
+
 ### Anthropic
-- `claude-opus-4-6`, `claude-sonnet-4-6` — Latest (2026)
+- `claude-fable-5`, `claude-mythos-5`, `claude-mythos-preview` — Latest/highest-capability Claude 5 family
+- `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6` — Claude 4 family
 - `claude-haiku-4-5-20251001` — Fast, near-frontier
 - `claude-sonnet-4-5-20250929`, `claude-opus-4-5-20251101`, `claude-opus-4-1-20250805` — Legacy
 - `claude-sonnet-4-20250514`, `claude-opus-4-20250514` — Legacy
 
 ### OpenAI
-- `gpt-5.2`, `gpt-5.2-codex` — Latest (Dec 2025)
-- `gpt-5`, `gpt-5-mini`, `gpt-5-nano` — GPT-5 family (Aug 2025)
-- `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano` — Non-reasoning, 1M context
-- `o3`, `o4-mini` — Reasoning models
-- `gpt-4o`, `gpt-4o-mini` — Legacy
+- `gpt-5.5`, `gpt-5.5-pro`, `gpt-5.5-2026-04-23` — Latest frontier family
+- `gpt-5.4`, `gpt-5.4-pro`, `gpt-5.4-mini`, `gpt-5.4-mini-2026-03-17`, `gpt-5.4-nano` — Current GPT-5.4 family
+- `gpt-5.3-codex-spark`, `gpt-5.2`, `gpt-5.2-pro`, `gpt-5.2-codex` — Codex/previous frontier family
+- `gpt-5.1`, `gpt-5.1-codex`, `gpt-5.1-codex-max`, `gpt-5.1-codex-mini` — GPT-5.1 family
+- `gpt-5`, `gpt-5-pro`, `gpt-5-mini`, `gpt-5-nano` — GPT-5 family
+- `gpt-4.1`, `gpt-4.1-mini`, `o3-pro`, `o3`, `o4-mini`, `gpt-4o-mini` — Legacy chat/reasoning models
 
 ### Google Gemini
-- `gemini-3.1-pro-preview`, `gemini-3-flash-preview` — Latest (2026)
+- `gemini-3.5-flash`, `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite`, `gemini-3-flash-preview` — Gemini 3 family
 - `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` — Stable GA
 
 ### DeepSeek
-- `deepseek-chat` — V3.2, general (non-thinking)
-- `deepseek-reasoner` — V3.2, reasoning (thinking mode)
+- `deepseek-v4-pro`, `deepseek-v4-flash` — DeepSeek V4 family
+- `deepseek-chat`, `deepseek-reasoner` — Legacy V3.2 aliases
 
 ### Qwen
-- `qwen3.5-plus`, `qwen3-max` — Latest (2026)
+- `qwen3.7-plus`, `qwen3.7-plus-2026-05-26`, `qwen3.7-max`, `qwen3.7-max-2026-06-08`, `qwen3.7-max-preview` — Qwen 3.7 family
+- `qwen3.6-plus`, `qwen3.6-flash`, `qwen3.6-35b-a3b` — Qwen 3.6 family
+- `qwen3.5-plus`, `qwen3.5-flash`, `qwen3-max` — Previous generation
 - `qwen-plus`, `qwen-turbo` — General
 - `qwq-plus` — Reasoning
 - `qwen3-coder-plus` — Coding specialist
 
 ### Z.AI (GLM)
-- `glm-5` — Flagship (Feb 2026), 745B MoE
-- `glm-4.7`, `glm-4.7-flash` — Coding/reasoning
-- `glm-4.6`, `glm-4.5-flash` — Previous gen
+- `glm-5.2`, `glm-5.1`, `glm-5`, `glm-5-turbo` — GLM-5 family
+- `glm-4.7`, `glm-4.7-flashx`, `glm-4.7-flash` — GLM-4.7 family
+- `glm-4.6`, `glm-4.5-air`, `glm-4.5-airx`, `glm-4.5-flash` — Previous generation
 
 ### Kimi
 - `kimi-k2.7-code`, `kimi-k2.7-code-highspeed` — Coding-focused Kimi K2.7 models
 - `kimi-k2.6`, `kimi-k2.5` — General Kimi K-series models
 - `moonshot-v1-128k`, `moonshot-v1-32k`, `moonshot-v1-8k` — Moonshot V1 text models
+- `moonshot-v1-128k-vision-preview`, `moonshot-v1-32k-vision-preview`, `moonshot-v1-8k-vision-preview` — Moonshot V1 vision previews
 
 ### MiniMax
 - `MiniMax-M3` — Latest M-series language model
@@ -464,7 +471,7 @@ vdd:
   mode: advisory        # Single-pass review, findings injected as context
   adversary:
     provider: google    # Use a different provider than your builder
-    model: gemini-2.5-flash
+    model: gemini-3.5-flash
   static_analysis:
     auto_detect: true   # Automatically runs cargo clippy, cargo test, etc.
 ```

@@ -443,7 +443,7 @@ pub fn overload_fallback_for(model: &str) -> &'static str {
     let m = model.to_ascii_lowercase();
     // Claude family — opus → sonnet → haiku
     if m.contains("opus") {
-        return "claude-sonnet-4-5";
+        return "claude-sonnet-4-6";
     }
     if m.contains("sonnet") {
         return "claude-haiku-4-5";
@@ -452,13 +452,20 @@ pub fn overload_fallback_for(model: &str) -> &'static str {
         // Already the lightest tier — no further fallback.
         return "";
     }
-    // GPT family — gpt-4* → gpt-4o-mini; o-series → gpt-4o-mini
+    // GPT family — latest frontier/standard models → current mini/nano tiers.
+    if m.starts_with("gpt-5.5") || m.starts_with("gpt-5.4") {
+        return "gpt-5.4-mini";
+    }
+    if m.starts_with("gpt-5") {
+        return "gpt-5-mini";
+    }
+    // Older GPT/o-series families keep the legacy lightweight fallback.
     if m.starts_with("gpt-4") || m.starts_with("o1") || m.starts_with("o3") || m.starts_with("o4") {
         return "gpt-4o-mini";
     }
     // Gemini family — pro → flash
     if m.contains("gemini") && m.contains("pro") {
-        return "gemini-2.5-flash";
+        return "gemini-3.5-flash";
     }
     ""
 }
@@ -2946,11 +2953,11 @@ mod tests {
     #[test]
     fn issue_598_claude_family_downgrade_path() {
         assert_eq!(
-            overload_fallback_for("claude-opus-4-5"),
-            "claude-sonnet-4-5"
+            overload_fallback_for("claude-opus-4-8"),
+            "claude-sonnet-4-6"
         );
         assert_eq!(
-            overload_fallback_for("claude-sonnet-4-5"),
+            overload_fallback_for("claude-sonnet-4-6"),
             "claude-haiku-4-5"
         );
         // Haiku has no further downgrade — empty hint, but the event
@@ -2958,15 +2965,22 @@ mod tests {
         assert_eq!(overload_fallback_for("claude-haiku-4-5"), "");
     }
 
-    /// `#598-b`: GPT-4 / o-series degrade to gpt-4o-mini; Gemini Pro to
-    /// Gemini Flash; unknown model families return the empty hint.
+    /// `#598-b`: GPT-5 degrades to mini, GPT-4 / o-series degrade to
+    /// gpt-4o-mini, Gemini Pro degrades to Gemini Flash, and unknown
+    /// model families return the empty hint.
     #[test]
     fn issue_598_cross_provider_fallback_map() {
+        assert_eq!(overload_fallback_for("gpt-5.5"), "gpt-5.4-mini");
+        assert_eq!(overload_fallback_for("gpt-5.4"), "gpt-5.4-mini");
+        assert_eq!(overload_fallback_for("gpt-5"), "gpt-5-mini");
         assert_eq!(overload_fallback_for("gpt-4-turbo"), "gpt-4o-mini");
         assert_eq!(overload_fallback_for("gpt-4o"), "gpt-4o-mini");
         assert_eq!(overload_fallback_for("o1-preview"), "gpt-4o-mini");
         assert_eq!(overload_fallback_for("o3-mini"), "gpt-4o-mini");
-        assert_eq!(overload_fallback_for("gemini-2.5-pro"), "gemini-2.5-flash");
+        assert_eq!(
+            overload_fallback_for("gemini-3.1-pro-preview"),
+            "gemini-3.5-flash"
+        );
         // Unknown family — empty hint, distinct from a known mapping.
         assert_eq!(overload_fallback_for("llama-3-70b"), "");
         assert_eq!(overload_fallback_for(""), "");

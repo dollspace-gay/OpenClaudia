@@ -389,15 +389,15 @@ pub const SUPPORTED_PROVIDERS: &[&str] = &[
 /// change inside an existing session uses the same fallback model as a
 /// freshly-started session.
 pub const DEFAULT_MODELS_BY_TARGET: &[(&str, &str)] = &[
-    ("anthropic", "claude-opus-4-6"),
-    ("google", "gemini-2.5-flash"),
-    ("gemini", "gemini-2.5-flash"),
-    ("zai", "glm-5"),
-    ("glm", "glm-5"),
-    ("zhipu", "glm-5"),
-    ("deepseek", "deepseek-chat"),
-    ("qwen", "qwen3.5-plus"),
-    ("alibaba", "qwen3.5-plus"),
+    ("anthropic", "claude-opus-4-8"),
+    ("google", "gemini-3.5-flash"),
+    ("gemini", "gemini-3.5-flash"),
+    ("zai", "glm-5.2"),
+    ("glm", "glm-5.2"),
+    ("zhipu", "glm-5.2"),
+    ("deepseek", "deepseek-v4-pro"),
+    ("qwen", "qwen3.7-plus"),
+    ("alibaba", "qwen3.7-plus"),
     ("kimi", "kimi-k2.7-code"),
     ("moonshot", "kimi-k2.7-code"),
     ("minimax", "MiniMax-M3"),
@@ -405,7 +405,7 @@ pub const DEFAULT_MODELS_BY_TARGET: &[(&str, &str)] = &[
 
 /// Fallback model for targets not listed in [`DEFAULT_MODELS_BY_TARGET`].
 /// Currently every non-table target is treated as OpenAI-compatible.
-pub const DEFAULT_MODEL_FALLBACK: &str = "gpt-5.2";
+pub const DEFAULT_MODEL_FALLBACK: &str = "gpt-5.5";
 
 /// Look up the canonical default model for a target, or [`DEFAULT_MODEL_FALLBACK`].
 #[must_use]
@@ -1013,10 +1013,23 @@ mod tests {
             ProviderKind::Anthropic
         );
         assert_eq!(
+            ProviderKind::from_model("claude-fable-5"),
+            ProviderKind::Anthropic
+        );
+        assert_eq!(
+            ProviderKind::from_model("claude-mythos-5"),
+            ProviderKind::Anthropic
+        );
+        assert_eq!(
             ProviderKind::from_model("anthropic/claude-3"),
             ProviderKind::Anthropic
         );
         assert_eq!(ProviderKind::from_model("gpt-4o"), ProviderKind::OpenAI);
+        assert_eq!(ProviderKind::from_model("gpt-5.5"), ProviderKind::OpenAI);
+        assert_eq!(
+            ProviderKind::from_model("gpt-5.4-mini"),
+            ProviderKind::OpenAI
+        );
         assert_eq!(ProviderKind::from_model("o1-preview"), ProviderKind::OpenAI);
         assert_eq!(ProviderKind::from_model("o3-mini"), ProviderKind::OpenAI);
         assert_eq!(ProviderKind::from_model("o4-pro"), ProviderKind::OpenAI);
@@ -1025,15 +1038,29 @@ mod tests {
             ProviderKind::Google
         );
         assert_eq!(
+            ProviderKind::from_model("gemini-3.5-flash"),
+            ProviderKind::Google
+        );
+        assert_eq!(
             ProviderKind::from_model("deepseek-r1"),
             ProviderKind::DeepSeek
         );
+        assert_eq!(
+            ProviderKind::from_model("deepseek-v4-pro"),
+            ProviderKind::DeepSeek
+        );
         assert_eq!(ProviderKind::from_model("qwen-long"), ProviderKind::Qwen);
+        assert_eq!(ProviderKind::from_model("qwen3.7-plus"), ProviderKind::Qwen);
         assert_eq!(ProviderKind::from_model("qwq-32b"), ProviderKind::Qwen);
         assert_eq!(ProviderKind::from_model("qvq-72b"), ProviderKind::Qwen);
         assert_eq!(ProviderKind::from_model("glm-4"), ProviderKind::Zai);
+        assert_eq!(ProviderKind::from_model("GLM-5.2"), ProviderKind::Zai);
         assert_eq!(
             ProviderKind::from_model("kimi-k2.7-code"),
+            ProviderKind::Kimi
+        );
+        assert_eq!(
+            ProviderKind::from_model("kimi-k2.7-code-highspeed"),
             ProviderKind::Kimi
         );
         assert_eq!(

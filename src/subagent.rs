@@ -953,7 +953,7 @@ impl WorktreeIsolation {
 /// Map friendly model names to actual model IDs
 fn resolve_model_name(friendly: &str, _provider: &str) -> String {
     match friendly.to_lowercase().as_str() {
-        "opus" => "claude-opus-4-6".to_string(),
+        "opus" => "claude-opus-4-8".to_string(),
         "sonnet" => "claude-sonnet-4-6".to_string(),
         "haiku" => "claude-haiku-4-5-20251001".to_string(),
         other => other.to_string(),

@@ -1,75 +1,143 @@
 use openclaudia::{config, providers};
 
+const ANTHROPIC_MODELS: &[&str] = &[
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-mythos-preview",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5-20251001",
+    "claude-sonnet-4-5-20250929",
+    "claude-opus-4-5-20251101",
+    "claude-opus-4-1-20250805",
+    "claude-sonnet-4-20250514",
+    "claude-opus-4-20250514",
+];
+
+const OPENAI_MODELS: &[&str] = &[
+    "gpt-5.5",
+    "gpt-5.5-pro",
+    "gpt-5.5-2026-04-23",
+    "gpt-5.4",
+    "gpt-5.4-pro",
+    "gpt-5.4-mini",
+    "gpt-5.4-mini-2026-03-17",
+    "gpt-5.4-nano",
+    "gpt-5.3-codex-spark",
+    "gpt-5.2",
+    "gpt-5.2-pro",
+    "gpt-5.2-codex",
+    "gpt-5.1",
+    "gpt-5.1-codex",
+    "gpt-5.1-codex-max",
+    "gpt-5.1-codex-mini",
+    "gpt-5",
+    "gpt-5-pro",
+    "gpt-5-mini",
+    "gpt-5-nano",
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "o3-pro",
+    "o3",
+    "o4-mini",
+    "gpt-4o-mini",
+];
+
+const GOOGLE_MODELS: &[&str] = &[
+    "gemini-3.5-flash",
+    "gemini-3.1-pro-preview",
+    "gemini-3.1-flash-lite",
+    "gemini-3-flash-preview",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+];
+
+const ZAI_MODELS: &[&str] = &[
+    "glm-5.2",
+    "glm-5.1",
+    "glm-5",
+    "glm-5-turbo",
+    "glm-4.7",
+    "glm-4.7-flashx",
+    "glm-4.7-flash",
+    "glm-4.6",
+    "glm-4.5-air",
+    "glm-4.5-airx",
+    "glm-4.5-flash",
+];
+
+const DEEPSEEK_MODELS: &[&str] = &[
+    "deepseek-v4-pro",
+    "deepseek-v4-flash",
+    "deepseek-chat",
+    "deepseek-reasoner",
+];
+
+const QWEN_MODELS: &[&str] = &[
+    "qwen3.7-plus",
+    "qwen3.7-plus-2026-05-26",
+    "qwen3.7-max",
+    "qwen3.7-max-2026-06-08",
+    "qwen3.7-max-preview",
+    "qwen3.6-plus",
+    "qwen3.6-flash",
+    "qwen3.6-35b-a3b",
+    "qwen3.5-plus",
+    "qwen3.5-flash",
+    "qwen3-max",
+    "qwen-plus",
+    "qwen-turbo",
+    "qwq-plus",
+    "qwen3-coder-plus",
+];
+
+const KIMI_MODELS: &[&str] = &[
+    "kimi-k2.7-code",
+    "kimi-k2.7-code-highspeed",
+    "kimi-k2.6",
+    "kimi-k2.5",
+    "moonshot-v1-128k",
+    "moonshot-v1-32k",
+    "moonshot-v1-8k",
+    "moonshot-v1-128k-vision-preview",
+    "moonshot-v1-32k-vision-preview",
+    "moonshot-v1-8k-vision-preview",
+];
+
+const MINIMAX_MODELS: &[&str] = &[
+    "MiniMax-M3",
+    "MiniMax-M2.7",
+    "MiniMax-M2.7-highspeed",
+    "MiniMax-M2.5",
+    "MiniMax-M2.5-highspeed",
+    "MiniMax-M2.1",
+    "MiniMax-M2.1-highspeed",
+    "MiniMax-M2",
+];
+
 /// Get static list of models for a provider (fallback when API unavailable)
 pub fn get_available_models(provider: &str) -> Vec<&'static str> {
+    let provider = match provider {
+        "gemini" => "google",
+        "glm" | "zhipu" => "zai",
+        "alibaba" => "qwen",
+        "moonshot" => "kimi",
+        other => other,
+    };
+
     match provider {
-        "anthropic" => vec![
-            "claude-opus-4-6",
-            "claude-sonnet-4-6",
-            "claude-haiku-4-5-20251001",
-            "claude-sonnet-4-5-20250929",
-            "claude-opus-4-5-20251101",
-            "claude-opus-4-1-20250805",
-            "claude-sonnet-4-20250514",
-            "claude-opus-4-20250514",
-        ],
-        "openai" => vec![
-            "gpt-5.2",
-            "gpt-5.2-codex",
-            "gpt-5",
-            "gpt-5-mini",
-            "gpt-5-nano",
-            "gpt-4.1",
-            "gpt-4.1-mini",
-            "gpt-4.1-nano",
-            "o3",
-            "o4-mini",
-            "gpt-4o",
-            "gpt-4o-mini",
-        ],
-        "google" => vec![
-            "gemini-3.1-pro-preview",
-            "gemini-3-flash-preview",
-            "gemini-2.5-pro",
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
-        ],
-        "zai" => vec![
-            "glm-5",
-            "glm-4.7",
-            "glm-4.7-flash",
-            "glm-4.6",
-            "glm-4.5-flash",
-        ],
-        "deepseek" => vec!["deepseek-chat", "deepseek-reasoner"],
-        "qwen" => vec![
-            "qwen3.5-plus",
-            "qwen3-max",
-            "qwen-plus",
-            "qwen-turbo",
-            "qwq-plus",
-            "qwen3-coder-plus",
-        ],
-        "kimi" => vec![
-            "kimi-k2.7-code",
-            "kimi-k2.7-code-highspeed",
-            "kimi-k2.6",
-            "kimi-k2.5",
-            "moonshot-v1-128k",
-            "moonshot-v1-32k",
-            "moonshot-v1-8k",
-        ],
-        "minimax" => vec![
-            "MiniMax-M3",
-            "MiniMax-M2.7",
-            "MiniMax-M2.7-highspeed",
-            "MiniMax-M2.5",
-            "MiniMax-M2.5-highspeed",
-            "MiniMax-M2.1",
-            "MiniMax-M2.1-highspeed",
-            "MiniMax-M2",
-        ],
-        _ => vec!["gpt-5.2"],
+        "anthropic" => ANTHROPIC_MODELS.to_vec(),
+        "openai" => OPENAI_MODELS.to_vec(),
+        "google" => GOOGLE_MODELS.to_vec(),
+        "zai" => ZAI_MODELS.to_vec(),
+        "deepseek" => DEEPSEEK_MODELS.to_vec(),
+        "qwen" => QWEN_MODELS.to_vec(),
+        "kimi" => KIMI_MODELS.to_vec(),
+        "minimax" => MINIMAX_MODELS.to_vec(),
+        _ => vec![providers::DEFAULT_MODEL_FALLBACK],
     }
 }
 
@@ -190,6 +258,23 @@ mod tests {
                 models.len(),
                 unique.len(),
                 "static model list for {provider} must not contain duplicates"
+            );
+        }
+    }
+
+    #[test]
+    fn provider_aliases_return_canonical_static_model_lists() {
+        for (alias, canonical) in [
+            ("gemini", "google"),
+            ("glm", "zai"),
+            ("zhipu", "zai"),
+            ("alibaba", "qwen"),
+            ("moonshot", "kimi"),
+        ] {
+            assert_eq!(
+                get_available_models(alias),
+                get_available_models(canonical),
+                "static model list for alias {alias:?} must match canonical provider {canonical:?}"
             );
         }
     }

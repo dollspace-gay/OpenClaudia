@@ -60,6 +60,7 @@ use rustyline::error::ReadlineError;
 /// public `cmd_chat` signature stays a thin wrapper.
 pub struct ChatReplArgs {
     pub model_override: Option<String>,
+    pub target_override: Option<String>,
     pub resume: bool,
     pub session_id: Option<String>,
     pub coordinator: bool,
@@ -165,7 +166,10 @@ fn compile_extension_regex() -> Result<regex::Regex, String> {
         .map_err(|err| format!("failed to compile file extension detector regex: {err}"))
 }
 
-fn load_repl_config(model_override: Option<&str>) -> Option<config::AppConfig> {
+fn load_repl_config(
+    model_override: Option<&str>,
+    target_override: Option<&str>,
+) -> Option<config::AppConfig> {
     let mut config = match config::load_config() {
         Ok(config) => config,
         Err(err) => {
@@ -179,7 +183,9 @@ fn load_repl_config(model_override: Option<&str>) -> Option<config::AppConfig> {
         }
     };
 
-    if let Some(model) = model_override {
+    if let Some(target) = target_override {
+        config.proxy.target = target.to_string();
+    } else if let Some(model) = model_override {
         apply_model_provider_override(&mut config, model);
     }
 
@@ -214,7 +220,10 @@ impl ChatRepl {
             }
         };
 
-        let Some(config) = load_repl_config(args.model_override.as_deref()) else {
+        let Some(config) = load_repl_config(
+            args.model_override.as_deref(),
+            args.target_override.as_deref(),
+        ) else {
             return Ok(None);
         };
 

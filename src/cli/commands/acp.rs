@@ -62,15 +62,8 @@ pub async fn cmd_acp(
 
     let model = model_override
         .or_else(|| provider.model.clone())
-        .unwrap_or_else(|| match config.proxy.target.as_str() {
-            "anthropic" => "claude-opus-4-6".to_string(),
-            "google" | "gemini" => "gemini-2.5-flash".to_string(),
-            "zai" | "glm" | "zhipu" => "glm-5".to_string(),
-            "deepseek" => "deepseek-chat".to_string(),
-            "qwen" | "alibaba" => "qwen3.5-plus".to_string(),
-            "kimi" | "moonshot" => "kimi-k2.7-code".to_string(),
-            "minimax" => "MiniMax-M3".to_string(),
-            "openai" | &_ => "gpt-5.2".to_string(),
+        .unwrap_or_else(|| {
+            openclaudia::providers::default_model_for_target(&config.proxy.target).to_string()
         });
 
     openclaudia::acp::run_acp_server(config, model, api_key).await
