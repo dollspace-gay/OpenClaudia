@@ -887,7 +887,17 @@ fn run_shell_command_sync(command: &str, timeout_seconds: u64) -> ShellResult {
     // to drive it depending on the ambient runtime context.
     let fut = run_shell_command_async(program_owned, args_owned, cwd_owned, timeout_seconds);
 
-    drive_future_sync(fut)
+    match drive_future_sync(fut) {
+        Ok(result) => result,
+        Err(error) => {
+            error!(error = %error, "Quality gate: async runtime dispatch failed");
+            ShellResult::ExitFailed {
+                code: -1,
+                stdout: String::new(),
+                stderr: error,
+            }
+        }
+    }
 }
 
 /// Async core of [`run_shell_command_sync`] — extracted so the sync
@@ -1013,7 +1023,14 @@ async fn run_shell_command_async(
 ///   current-thread runtime from within itself would deadlock.
 /// * No runtime in scope: build a one-shot current-thread runtime and
 ///   `block_on` directly.
-fn drive_future_sync<F, T>(fut: F) -> T
+fn build_quality_gate_runtime(context: &'static str) -> Result<tokio::runtime::Runtime, String> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("guardrails: failed to build {context} tokio runtime: {e}"))
+}
+
+fn drive_future_sync<F, T>(fut: F) -> Result<T, String>
 where
     F: std::future::Future<Output = T> + Send + 'static,
     T: Send + 'static,
@@ -1021,28 +1038,24 @@ where
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         return match handle.runtime_flavor() {
             tokio::runtime::RuntimeFlavor::MultiThread => {
-                tokio::task::block_in_place(|| handle.block_on(fut))
+                Ok(tokio::task::block_in_place(|| handle.block_on(fut)))
             }
             // Current-thread or any other flavour: cannot block_on
             // from inside without deadlocking the single worker. Offload
             // to a dedicated short-lived runtime in a helper thread.
             _ => std::thread::spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("guardrails: failed to build helper tokio runtime");
-                rt.block_on(fut)
+                let rt = build_quality_gate_runtime("helper")?;
+                Ok(rt.block_on(fut))
             })
             .join()
-            .expect("guardrails: helper thread panicked while driving quality-gate command"),
+            .map_err(|_| {
+                "guardrails: helper thread panicked while driving quality-gate command".to_string()
+            })?,
         };
     }
     // No ambient runtime — build one just for this call.
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("guardrails: failed to build tokio runtime");
-    rt.block_on(fut)
+    let rt = build_quality_gate_runtime("quality-gate")?;
+    Ok(rt.block_on(fut))
 }
 
 // ==========================================================================
@@ -1687,6 +1700,12 @@ mod tests {
         assert!(results[0].passed);
         assert_eq!(results[0].exit_code, 0);
         assert!(results[0].stdout.contains("ok"));
+    }
+
+    #[test]
+    fn quality_gate_runtime_builder_succeeds() {
+        let runtime = build_quality_gate_runtime("test").expect("quality gate runtime builds");
+        drop(runtime);
     }
 
     #[test]
