@@ -19,7 +19,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, Command};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 // Fix #490 — per-request HTTP timeout cap. Stdio caps responses at 10 MiB
 // (`MAX_RESPONSE_SIZE`); the HTTP transport now caps wall-clock time at 60s
@@ -611,9 +611,7 @@ impl HttpTransport {
     /// session-id propagation contract end-to-end.
     #[must_use]
     pub fn session_id(&self) -> Option<String> {
-        self.session_id
-            .read()
-            .ok()
+        self.session_id_read_guard("session_id")
             .and_then(|g| g.as_ref().cloned())
     }
 
@@ -622,6 +620,32 @@ impl HttpTransport {
     /// pointer equality of the borrowed reference (fix #490).
     fn client() -> &'static reqwest::Client {
         &SHARED_MCP_HTTP_CLIENT
+    }
+
+    fn session_id_read_guard(
+        &self,
+        operation: &'static str,
+    ) -> Option<std::sync::RwLockReadGuard<'_, Option<String>>> {
+        match self.session_id.read() {
+            Ok(guard) => Some(guard),
+            Err(err) => {
+                error!(operation, error = %err, "MCP HTTP session id read lock poisoned");
+                None
+            }
+        }
+    }
+
+    fn session_id_write_guard(
+        &self,
+        operation: &'static str,
+    ) -> Option<std::sync::RwLockWriteGuard<'_, Option<String>>> {
+        match self.session_id.write() {
+            Ok(guard) => Some(guard),
+            Err(err) => {
+                error!(operation, error = %err, "MCP HTTP session id write lock poisoned");
+                None
+            }
+        }
     }
 }
 
@@ -691,7 +715,7 @@ impl McpTransport for HttpTransport {
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
         {
-            if let Ok(mut guard) = self.session_id.write() {
+            if let Some(mut guard) = self.session_id_write_guard("request.store_session_id") {
                 *guard = Some(sid);
             }
         }
