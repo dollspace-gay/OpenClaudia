@@ -21,7 +21,7 @@ pub use write::execute_write_file;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, MutexGuard};
 
 /// Maximum number of entries in the read tracker, per session, before
 /// the oldest write is evicted from the front of the list. Per-session so
@@ -88,6 +88,19 @@ impl ReadFileTracker {
         }
     }
 
+    fn buckets_guard(
+        &self,
+        operation: &'static str,
+    ) -> Option<MutexGuard<'_, HashMap<String, Bucket>>> {
+        match self.buckets.lock() {
+            Ok(guard) => Some(guard),
+            Err(err) => {
+                tracing::error!(operation, error = %err, "Read file tracker lock poisoned");
+                None
+            }
+        }
+    }
+
     /// Mark a file as having been read in the **current session**.
     ///
     /// `path` is canonicalized first. If canonicalization fails (file
@@ -112,13 +125,14 @@ impl ReadFileTracker {
             .counter
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let key = super::todo::current_session_key();
-        if let Ok(mut buckets) = self.buckets.lock() {
-            let files = buckets.entry(key).or_default();
-            // O(1) upsert: re-inserting refreshes the LRU stamp.
-            files.insert(resolved, stamp);
-            if files.len() > READ_TRACKER_MAX_ENTRIES {
-                Self::evict_lru(files);
-            }
+        let Some(mut buckets) = self.buckets_guard("mark_read") else {
+            return;
+        };
+        let files = buckets.entry(key).or_default();
+        // O(1) upsert: re-inserting refreshes the LRU stamp.
+        files.insert(resolved, stamp);
+        if files.len() > READ_TRACKER_MAX_ENTRIES {
+            Self::evict_lru(files);
         }
     }
 
@@ -151,11 +165,12 @@ impl ReadFileTracker {
             return false;
         };
         let key = super::todo::current_session_key();
-        self.buckets.lock().ok().is_some_and(|buckets| {
-            buckets
-                .get(&key)
-                .is_some_and(|f| f.contains_key(&check_path))
-        })
+        let Some(buckets) = self.buckets_guard("has_been_read") else {
+            return false;
+        };
+        buckets
+            .get(&key)
+            .is_some_and(|f| f.contains_key(&check_path))
     }
 
     /// Clear every session's bucket. Used by tests and at
@@ -165,9 +180,10 @@ impl ReadFileTracker {
     /// is no caller that has a session id without the thread-local
     /// guard, so adding it now would be dead code rejected by clippy.
     pub(crate) fn clear_all(&self) {
-        if let Ok(mut buckets) = self.buckets.lock() {
-            buckets.clear();
-        }
+        let Some(mut buckets) = self.buckets_guard("clear_all") else {
+            return;
+        };
+        buckets.clear();
     }
 }
 
