@@ -114,7 +114,9 @@ Configuration is stored in `.openclaudia/config.yaml`:
 proxy:
   port: 8080
   host: "127.0.0.1"
-  target: anthropic  # Provider: anthropic, openai, google, deepseek, qwen, zai, kimi, minimax, ollama, local
+  # Provider: anthropic, openai, google, deepseek, qwen, zai, kimi, minimax,
+  # ollama, local, lmstudio, localai, text-generation-webui
+  target: anthropic
 
 providers:
   anthropic:
@@ -143,9 +145,15 @@ providers:
   # Ollama for local LLM inference
   ollama:
     base_url: http://localhost:11434
-  # Any OpenAI-compatible local server (LM Studio, LocalAI, etc.)
+  # Any OpenAI-compatible local server (LM Studio, LocalAI, text-generation-webui, etc.)
   local:
     base_url: http://localhost:1234/v1
+  lmstudio:
+    base_url: http://localhost:1234/v1
+  localai:
+    base_url: http://localhost:8080/v1
+  text-generation-webui:
+    base_url: http://localhost:5000/v1
 
 session:
   timeout_minutes: 30
@@ -473,7 +481,7 @@ vdd:
   mode: advisory        # Single-pass review, findings injected as context
   adversary:
     provider: google    # Use a different provider than your builder
-    model: gemini-3.5-flash
+    model: gemini-3.1-pro-preview
   static_analysis:
     auto_detect: true   # Automatically runs cargo clippy, cargo test, etc.
 ```

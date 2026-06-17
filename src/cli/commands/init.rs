@@ -130,7 +130,8 @@ session:
 #   mode: advisory  # advisory = inject findings into next turn, blocking = loop until clean
 #   adversary:
 #     provider: google           # MUST differ from proxy.target
-#     model: gemini-2.5-pro      # Optional, uses provider default if omitted
+#     model: gemini-3.1-pro-preview
+#     # model is optional; omitted uses the provider default
 #     # api_key: ${GOOGLE_API_KEY}  # Optional, uses provider's key if omitted
 #     temperature: 0.3           # Lower = more deterministic critique
 #     max_tokens: 4096
