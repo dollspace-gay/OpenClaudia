@@ -2,8 +2,8 @@
 //!
 //! Pins OC's **current** contracts in `src/mcp.rs` against the Phase 1 spec
 //! from crosslink issue #528.  Goal is behavioral pinning, not bug-fixing.
-//! Where OC diverges from CC, the test asserts OC's *current* behaviour and
-//! references the gap issue that tracks the fix.
+//! Where OC diverges from CC, the test asserts OC's current behaviour and
+//! references the follow-up issue that tracks the remaining fix.
 //!
 //! ## Spec→test mapping
 //!
@@ -12,22 +12,24 @@
 //! | B1 Handshake  | `handshake_sends_correct_protocol_version`                       |
 //! |               | `handshake_no_elicitation_cap` (gap #613)                        |
 //! |               | `handshake_initialized_notification_error_swallowed`             |
-//! |               | `handshake_no_timeout_pin` (gap #628 — `#[ignore]`)              |
-//! | B2 Tool disc. | `tool_refresh_unconditional_no_cap_gate` (gap #627)              |
+//! |               | `handshake_initialize_timeout_returns_timeout_error` (fix #628)  |
+//! | B2 Tool disc. | `tool_refresh_skips_list_without_tools_cap` (fix #627)           |
 //! |               | `tool_refresh_with_tools_cap_parses_list`                        |
 //! |               | `supports_tool_list_changed_reads_capability`                    |
-//! | B3 Tool call  | `call_tool_returns_raw_value_does_not_inspect_is_error` (#625)   |
+//! | B3 Tool call  | `call_tool_is_error_returns_tool_reported_error` (fix #625)      |
 //! |               | `call_tool_unknown_tool_returns_tool_not_found`                  |
 //! |               | `call_tool_missing_server_returns_not_connected`                 |
 //! |               | `call_tool_with_timeout_returns_timeout_error`                   |
 //! | B4 Resource   | `list_resources_returns_empty_without_resources_cap`             |
 //! |               | `list_resources_calls_wire_when_cap_present`                     |
 //! | B5 Error code | `stdio_rpc_error_with_data_included_in_message`                  |
-//! |               | `http_rpc_error_drops_data_field` (gap #626)                     |
+//! |               | `http_rpc_error_preserves_data_field` (fix #626)                 |
 //! | B6 Disconnect | `stdio_mid_call_disconnect_returns_transport_error`              |
-//! |               | `no_reconnect_after_disconnect_pin` (gap #629 — `#[ignore]`)    |
+//! |               | `manager_marks_server_disconnected_after_transport_error` (fix #629) |
 
-use openclaudia::mcp::{McpError, McpManager, McpServer, StdioTransport};
+use openclaudia::mcp::{
+    HttpTransport, McpError, McpManager, McpServer, McpServerConfig, StdioTransport,
+};
 use serde_json::json;
 use std::time::Duration;
 use wiremock::matchers::{method, path};
@@ -185,44 +187,55 @@ async fn handshake_initialized_notification_error_swallowed() {
     );
 }
 
-/// B1 — Pin: handshake has NO connection-establishment timeout.
-///
-/// Gap: #628 (HIGH) — a non-responsive server hangs the process indefinitely.
-/// This test is `#[ignore]`d because executing it would require a server that
-/// never responds, which would block the test runner indefinitely.
-///
-/// To run manually and observe the hang: `cargo test -- --ignored
-/// handshake_no_timeout_pin`.
+/// B1 — The initialize handshake has a connection-establishment timeout.
 #[tokio::test]
-#[ignore = "gap #628: no handshake timeout — would block indefinitely; run manually to verify"]
-async fn handshake_no_timeout_pin() {
-    // If OC gains a timeout, this test should be updated to verify it fires.
-    // For now, existence of this test documents the gap.
-    unreachable!("this test must not be run in CI without a timeout wrapper");
+async fn handshake_initialize_timeout_returns_timeout_error() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {}
+                }))
+                .set_delay(Duration::from_secs(2)),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let transport = HttpTransport::__test_new_unchecked(&mock_server.uri());
+    let result = McpServer::new_with_config(
+        "timeout",
+        Box::new(transport),
+        McpServerConfig::new().with_initialize_timeout_secs(1),
+    )
+    .await;
+
+    match result {
+        Err(McpError::Timeout {
+            phase: "initialize",
+        }) => {}
+        Err(other) => panic!("initialize timeout must surface McpError::Timeout, got {other:?}"),
+        Ok(_) => panic!("initialize timeout must not succeed"),
+    }
 }
 
 // ─── B2: Tool discovery ─────────────────────────────────────────────────────
 
-/// B2 — `refresh_tools` issues `tools/list` even when `capabilities.tools`
-/// is absent from the initialize response.
-///
-/// Gap: #627 — CC guards on `client.capabilities?.tools`; OC does not.
-/// This test pins the current behaviour: the wire call happens regardless,
-/// and `McpServer::new` returns `Ok` (because the echo server still responds).
+/// B2 — `refresh_tools` skips `tools/list` when `capabilities.tools` is absent.
 #[tokio::test]
-async fn tool_refresh_unconditional_no_cap_gate() {
+async fn tool_refresh_skips_list_without_tools_cap() {
     // Echo server launched without tools capability in initialize response.
     let transport = spawn_echo_no_tools_cap();
     let server = McpServer::new("no-cap", Box::new(transport))
         .await
         .expect("McpServer::new must succeed even without tools capability");
 
-    // OC still sends tools/list unconditionally and populates tools.
-    // The echo server responds to tools/list regardless of advertised caps.
-    // This confirms OC skips no wire call (gap #627 behaviour pinned).
     assert!(
-        !server.tools().is_empty(),
-        "OC calls tools/list unconditionally even when capabilities.tools is absent (gap #627)"
+        server.tools().is_empty(),
+        "server without tools capability must not populate tools via tools/list"
     );
 }
 
@@ -236,13 +249,17 @@ async fn tool_refresh_with_tools_cap_parses_list() {
         .expect("McpServer::new");
 
     let tools = server.tools();
-    assert_eq!(tools.len(), 2, "echo server returns exactly two tools");
+    assert_eq!(tools.len(), 3, "echo server returns exactly three tools");
 
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
     assert!(names.contains(&"echo"), "tool 'echo' must be present");
     assert!(
         names.contains(&"fail_tool"),
         "tool 'fail_tool' must be present"
+    );
+    assert!(
+        names.contains(&"die_tool"),
+        "tool 'die_tool' must be present"
     );
 
     // Verify description round-trip
@@ -275,35 +292,28 @@ async fn supports_tool_list_changed_reads_capability() {
 
 // ─── B3: Tool call ──────────────────────────────────────────────────────────
 
-/// B3 — `call_tool` returns the raw result `Value` without inspecting
-/// the `isError` field.
-///
-/// Gap: #625 — CC throws `McpToolCallError` when `result.isError === true`.
-/// OC returns the payload as a success `Value`.  This test pins that behaviour
-/// so any future fix (which would return `Err`) triggers a test failure.
+/// B3 — `call_tool` converts MCP `isError:true` tool results into
+/// `McpError::ToolReportedError`.
 #[tokio::test]
-async fn call_tool_returns_raw_value_does_not_inspect_is_error() {
+async fn call_tool_is_error_returns_tool_reported_error() {
     let transport = spawn_echo_transport();
     let server = McpServer::new("is-error-test", Box::new(transport))
         .await
         .expect("McpServer::new");
 
     // `fail_tool` causes the echo server to return `{ "isError": true, ... }`
-    let result = server
+    let err = server
         .call_tool("fail_tool", json!({}))
         .await
-        .expect("OC must return Ok even when isError:true (gap #625)");
+        .expect_err("isError:true must surface as ToolReportedError");
 
-    // Confirm the raw payload is returned as-is, not converted to Err
-    assert_eq!(
-        result["isError"],
-        json!(true),
-        "isError:true payload must be returned as Ok(Value) — gap #625"
-    );
-    assert!(
-        result.get("content").is_some(),
-        "content array must be present in the raw result"
-    );
+    match err {
+        McpError::ToolReportedError { message } => assert!(
+            message.contains("tool-level error occurred"),
+            "tool error message should include content text, got {message}"
+        ),
+        other => panic!("expected ToolReportedError, got {other:?}"),
+    }
 }
 
 /// B3 — `call_tool` returns `McpError::ToolNotFound` for a name not in
@@ -486,20 +496,16 @@ async fn stdio_rpc_error_with_data_included_in_message() {
         msg.contains("custom server error"),
         "error message must appear: {msg}"
     );
-    // data field is present (stdio includes it; HTTP drops it — gap #626)
+    // data field is present
     assert!(
         msg.contains("extra context") || msg.contains("data"),
         "stdio transport must include data field in error message: {msg}"
     );
 }
 
-/// B5 — HTTP transport: `data` field in JSON-RPC errors is DROPPED.
-///
-/// Gap: #626 — HTTP `HttpTransport::request` formats errors as
-/// `"RPC error {code}: {message}"`, silently discarding the `data` value.
-/// This test pins that current behaviour.
+/// B5 — HTTP transport preserves `data` in JSON-RPC error messages.
 #[tokio::test]
-async fn http_rpc_error_drops_data_field() {
+async fn http_rpc_error_preserves_data_field() {
     use openclaudia::mcp::{HttpTransport, McpTransport};
 
     let mock_server = MockServer::start().await;
@@ -530,10 +536,9 @@ async fn http_rpc_error_drops_data_field() {
         "error msg must appear: {msg}"
     );
 
-    // Gap #626 — data is NOT present in the HTTP error message
     assert!(
-        !msg.contains("extra context"),
-        "HTTP transport drops data field (gap #626) — msg: {msg}"
+        msg.contains("extra context") || msg.contains("data"),
+        "HTTP transport must preserve data field (fix #626) — msg: {msg}"
     );
 }
 
@@ -543,15 +548,7 @@ async fn http_rpc_error_drops_data_field() {
 /// panic).  The echo server handles `die` by closing stdout without writing
 /// a response.
 ///
-/// OC's current behaviour: `StdioTransport` attempts to read a response line
-/// from the now-closed stdout pipe, receives EOF, and JSON-parsing fails
-/// (`"Failed to parse response: EOF while parsing a value at line 1 column 0"`).
-/// This surfaces as `McpError::Protocol`, **not** `McpError::Transport`.
-///
-/// The spec (B6) only requires an explicit error — not a specific variant.
-/// The variant choice (Protocol vs Transport for an EOF) is a minor OC quirk;
-/// CC uses the SDK which raises `McpError -32000 "Connection closed"`.
-/// Pinned as-is; a future fix may promote EOF → Transport.
+/// EOF before any response bytes now surfaces as `McpError::Transport`.
 #[tokio::test]
 async fn stdio_mid_call_disconnect_returns_transport_error() {
     use openclaudia::mcp::McpTransport;
@@ -563,38 +560,51 @@ async fn stdio_mid_call_disconnect_returns_transport_error() {
     assert!(ok.is_ok(), "first request must succeed: {ok:?}");
 
     // `die` causes the server to close stdout without writing a response.
-    // OC returns an explicit McpError (Transport or Protocol) — it does NOT panic.
-    let result = transport.request("die", None).await;
-    assert!(
-        matches!(
-            result,
-            Err(McpError::Transport(_) | McpError::Protocol(_))
+    let err = transport
+        .request("die", None)
+        .await
+        .expect_err("mid-call disconnect must return an explicit error");
+
+    match err {
+        McpError::Transport(msg) => assert!(
+            msg.contains("closed stdout"),
+            "disconnect transport error should explain closed stdout, got {msg}"
         ),
-        "mid-call disconnect must return McpError::Transport or McpError::Protocol (no panic), got {result:?}"
-    );
-    // Current OC behaviour: Protocol("Failed to parse response: EOF …")
-    // If this assertion ever fails with Transport(_), a future fix promoted the
-    // variant — update this comment and the assertion accordingly.
-    assert!(
-        matches!(result, Err(McpError::Protocol(_))),
-        "OC current behaviour: EOF on stdout yields McpError::Protocol (pinned)"
-    );
+        other => panic!("expected Transport on mid-call disconnect, got {other:?}"),
+    }
 }
 
-/// B6 — Pin: no automatic reconnection after disconnect.
-///
-/// Gap: #629 (HIGH) — CC clears the memoize cache in `onclose` so the next
-/// `connectToServer` call reconnects transparently.  OC holds the broken
-/// `McpServer` in the map indefinitely; subsequent calls return Transport errors.
-///
-/// `#[ignore]`d because it duplicates the above disconnect test semantics and
-/// requires a live server; the pinned behaviour is already captured by
-/// `stdio_mid_call_disconnect_returns_transport_error`.
+/// B6 — Manager marks a server disconnected after a transport error, leaving
+/// the entry registered for the reconnect path.
 #[tokio::test]
-#[ignore = "gap #629 (HIGH): no reconnect — behaviour pinned by stdio_mid_call_disconnect_returns_transport_error"]
-async fn no_reconnect_after_disconnect_pin() {
-    // When OC gains reconnection, this test should be updated to verify the
-    // reconnected server functions correctly.  Until then it documents gap #629.
+async fn manager_marks_server_disconnected_after_transport_error() {
+    let path = fixture_path();
+    let path_str = path.to_str().expect("fixture path must be UTF-8");
+    let manager = McpManager::new();
+
+    manager
+        .connect_stdio("flaky", "python3", &[path_str])
+        .await
+        .expect("connect stdio echo fixture");
+    assert!(manager.is_connected("flaky").await);
+    assert!(manager.is_live("flaky").await);
+
+    let err = manager
+        .call_tool("mcp__flaky__die_tool", json!({}))
+        .await
+        .expect_err("die_tool must close stdout and surface Transport");
+    assert!(
+        matches!(err, McpError::Transport(_)),
+        "die_tool should return Transport, got {err:?}"
+    );
+    assert!(
+        manager.is_connected("flaky").await,
+        "disconnected entry remains registered for reconnect"
+    );
+    assert!(
+        !manager.is_live("flaky").await,
+        "transport error must mark server entry disconnected"
+    );
 }
 
 // ─── Additional unit-level pins (no fixture needed) ─────────────────────────

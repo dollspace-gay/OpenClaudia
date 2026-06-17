@@ -6,7 +6,7 @@ responses to stdout.  Supports the following methods:
 
   initialize          -> canonical InitializeResult
   notifications/initialized -> ignored (no response)
-  tools/list          -> hardcoded list of two tools
+  tools/list          -> hardcoded tool list
   tools/call          -> echoes arguments back as result content
   resources/list      -> returns one resource
   resources/read      -> returns text content
@@ -106,6 +106,11 @@ def main():
                             "description": "Returns isError:true in result",
                             "inputSchema": {"type": "object", "properties": {}},
                         },
+                        {
+                            "name": "die_tool",
+                            "description": "Closes stdout to simulate a transport disconnect",
+                            "inputSchema": {"type": "object", "properties": {}},
+                        },
                     ]
                 },
             )
@@ -117,8 +122,8 @@ def main():
 
             if tool_name == "fail_tool":
                 # Return a tool-level error payload (isError=true).
-                # CC inspects this and throws McpToolCallError; OC returns it
-                # as a success Value (gap #625).
+                # OC must surface this as a ToolReportedError, not as a
+                # successful raw Value.
                 respond(
                     req_id,
                     {
@@ -128,6 +133,10 @@ def main():
                         ],
                     },
                 )
+            elif tool_name == "die_tool":
+                # Simulate transport disconnect during tools/call.
+                sys.stdout.close()
+                sys.exit(0)
             else:
                 respond(
                     req_id,
