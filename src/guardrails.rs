@@ -10,7 +10,7 @@
 use regex::Regex;
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -466,6 +466,16 @@ impl BlastRadiusGuard {
         }
     }
 
+    fn files_guard(
+        &self,
+        operation: &'static str,
+    ) -> Result<MutexGuard<'_, HashSet<String>>, String> {
+        self.files_this_turn.lock().map_err(|err| {
+            error!(operation, error = %err, "Blast radius file tracker lock poisoned");
+            format!("Blast radius: file access tracker lock poisoned: {err}")
+        })
+    }
+
     fn check_path(&self, path: &str) -> Result<(), String> {
         let normalized = normalize_path(path);
 
@@ -516,30 +526,9 @@ impl BlastRadiusGuard {
         }
 
         let normalized = normalize_path(path);
-        if let Ok(mut files) = self.files_this_turn.lock() {
-            files.insert(normalized);
-            // Crosslink #840: previously `u32::try_from(files.len()).unwrap_or(u32::MAX)`
-            // silently saturated when `files.len() > u32::MAX`. The comparison
-            // against `max_files_per_turn` (also `u32`) would still trigger
-            // — but a single combined "exceeded max" message can't tell an
-            // operator whether the cap was breached by a representable count
-            // (the normal case) or by a count so absurd it required pinning
-            // to `u32::MAX` (a likely bug or attack signal). Surface the
-            // overflow distinctly so monitoring dashboards can flag it.
-            let count = files.len();
-            let cap = self.config.max_files_per_turn;
-            let overflowed = u32::try_from(count).is_err();
-            let breached = overflowed || u32::try_from(count).is_ok_and(|n| n > cap);
-
-            if breached {
-                let msg = if overflowed {
-                    format!(
-                        "Blast radius: file count {count} overflowed u32 \
-                         (cap {cap}/turn) — likely a bug or attack signal"
-                    )
-                } else {
-                    format!("Blast radius: exceeded max files per turn ({count}/{cap})")
-                };
+        let mut files = match self.files_guard("record_access") {
+            Ok(files) => files,
+            Err(msg) => {
                 return match self.config.mode {
                     GuardrailMode::Strict => {
                         warn!("{} (BLOCKED)", msg);
@@ -551,12 +540,47 @@ impl BlastRadiusGuard {
                     }
                 };
             }
+        };
+        files.insert(normalized);
+        // Crosslink #840: previously `u32::try_from(files.len()).unwrap_or(u32::MAX)`
+        // silently saturated when `files.len() > u32::MAX`. The comparison
+        // against `max_files_per_turn` (also `u32`) would still trigger
+        // — but a single combined "exceeded max" message can't tell an
+        // operator whether the cap was breached by a representable count
+        // (the normal case) or by a count so absurd it required pinning
+        // to `u32::MAX` (a likely bug or attack signal). Surface the
+        // overflow distinctly so monitoring dashboards can flag it.
+        let count = files.len();
+        drop(files);
+        let cap = self.config.max_files_per_turn;
+        let overflowed = u32::try_from(count).is_err();
+        let breached = overflowed || u32::try_from(count).is_ok_and(|n| n > cap);
+
+        if breached {
+            let msg = if overflowed {
+                format!(
+                    "Blast radius: file count {count} overflowed u32 \
+                     (cap {cap}/turn) — likely a bug or attack signal"
+                )
+            } else {
+                format!("Blast radius: exceeded max files per turn ({count}/{cap})")
+            };
+            return match self.config.mode {
+                GuardrailMode::Strict => {
+                    warn!("{} (BLOCKED)", msg);
+                    Err(msg)
+                }
+                GuardrailMode::Advisory => {
+                    warn!("{} (advisory)", msg);
+                    Ok(())
+                }
+            };
         }
         Ok(())
     }
 
     fn reset_turn(&self) {
-        if let Ok(mut files) = self.files_this_turn.lock() {
+        if let Ok(mut files) = self.files_guard("reset_turn") {
             files.clear();
         }
     }
@@ -589,8 +613,18 @@ impl DiffMonitor {
         }
     }
 
+    fn stats_guard(&self, operation: &'static str) -> Option<MutexGuard<'_, DiffStatsInternal>> {
+        match self.stats.lock() {
+            Ok(guard) => Some(guard),
+            Err(err) => {
+                error!(operation, error = %err, "Diff monitor stats lock poisoned");
+                None
+            }
+        }
+    }
+
     fn record(&self, path: &str, lines_added: u32, lines_removed: u32) {
-        if let Ok(mut stats) = self.stats.lock() {
+        if let Some(mut stats) = self.stats_guard("record") {
             stats.lines_added += lines_added;
             stats.lines_removed += lines_removed;
             stats.files.insert(normalize_path(path));
@@ -605,60 +639,57 @@ impl DiffMonitor {
     }
 
     fn check_thresholds(&self) -> Option<DiffWarning> {
-        if let Ok(stats) = self.stats.lock() {
-            let total_lines = stats.lines_added + stats.lines_removed;
-            let total_files = u32::try_from(stats.files.len()).unwrap_or(u32::MAX);
+        let stats = self.stats_guard("check_thresholds")?;
+        let total_lines = stats.lines_added + stats.lines_removed;
+        let total_files = u32::try_from(stats.files.len()).unwrap_or(u32::MAX);
 
-            let mut warnings = Vec::new();
+        let mut warnings = Vec::new();
 
-            if self.config.max_lines_changed > 0 && total_lines > self.config.max_lines_changed {
-                warnings.push(format!(
-                    "lines changed {}/{}",
-                    total_lines, self.config.max_lines_changed
-                ));
-            }
-
-            if self.config.max_files_changed > 0 && total_files > self.config.max_files_changed {
-                warnings.push(format!(
-                    "files changed {}/{}",
-                    total_files, self.config.max_files_changed
-                ));
-            }
-
-            if warnings.is_empty() {
-                return None;
-            }
-
-            let message = format!("Diff size threshold exceeded: {}", warnings.join(", "));
-            warn!("{}", message);
-
-            Some(DiffWarning {
-                message,
-                stats: DiffStats {
-                    lines_added: stats.lines_added,
-                    lines_removed: stats.lines_removed,
-                    lines_changed: total_lines,
-                    files_changed: total_files,
-                    file_list: stats.files.iter().cloned().collect(),
-                },
-                action: self.config.action.clone(),
-            })
-        } else {
-            None
+        if self.config.max_lines_changed > 0 && total_lines > self.config.max_lines_changed {
+            warnings.push(format!(
+                "lines changed {}/{}",
+                total_lines, self.config.max_lines_changed
+            ));
         }
+
+        if self.config.max_files_changed > 0 && total_files > self.config.max_files_changed {
+            warnings.push(format!(
+                "files changed {}/{}",
+                total_files, self.config.max_files_changed
+            ));
+        }
+
+        if warnings.is_empty() {
+            return None;
+        }
+
+        let message = format!("Diff size threshold exceeded: {}", warnings.join(", "));
+        warn!("{}", message);
+
+        Some(DiffWarning {
+            message,
+            stats: DiffStats {
+                lines_added: stats.lines_added,
+                lines_removed: stats.lines_removed,
+                lines_changed: total_lines,
+                files_changed: total_files,
+                file_list: stats.files.iter().cloned().collect(),
+            },
+            action: self.config.action.clone(),
+        })
     }
 
     fn get_stats(&self) -> DiffStats {
-        self.stats.lock().map_or_else(
-            |_| DiffStats::default(),
-            |stats| DiffStats {
-                lines_added: stats.lines_added,
-                lines_removed: stats.lines_removed,
-                lines_changed: stats.lines_added + stats.lines_removed,
-                files_changed: u32::try_from(stats.files.len()).unwrap_or(u32::MAX),
-                file_list: stats.files.iter().cloned().collect(),
-            },
-        )
+        let Some(stats) = self.stats_guard("get_stats") else {
+            return DiffStats::default();
+        };
+        DiffStats {
+            lines_added: stats.lines_added,
+            lines_removed: stats.lines_removed,
+            lines_changed: stats.lines_added + stats.lines_removed,
+            files_changed: u32::try_from(stats.files.len()).unwrap_or(u32::MAX),
+            file_list: stats.files.iter().cloned().collect(),
+        }
     }
 }
 
