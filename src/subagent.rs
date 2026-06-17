@@ -44,6 +44,27 @@ fn git_command() -> Result<Command, String> {
     Ok(Command::new(git_bin()?))
 }
 
+fn agent_field_guard<'a, T>(
+    mutex: &'a Mutex<T>,
+    operation: &'static str,
+    agent_id: &str,
+    field: &'static str,
+) -> Option<MutexGuard<'a, T>> {
+    match mutex.lock() {
+        Ok(guard) => Some(guard),
+        Err(err) => {
+            tracing::error!(
+                operation,
+                agent_id,
+                field,
+                error = %err,
+                "Background agent field lock poisoned"
+            );
+            None
+        }
+    }
+}
+
 /// Agent types available for spawning
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -387,10 +408,11 @@ impl BackgroundAgentManager {
     /// Mark an agent as finished with a result
     pub fn finish(&self, id: &str, result: String) {
         if let Some(agent) = self.get(id) {
-            if let Ok(mut r) = agent.result.lock() {
+            if let Some(mut r) = agent_field_guard(&agent.result, "finish", id, "result") {
                 *r = Some(result);
             }
-            if let Ok(mut t) = agent.finished_at.lock() {
+            if let Some(mut t) = agent_field_guard(&agent.finished_at, "finish", id, "finished_at")
+            {
                 *t = Some(Instant::now());
             }
             agent.finished.store(true, Ordering::SeqCst);
@@ -400,10 +422,10 @@ impl BackgroundAgentManager {
     /// Mark an agent as failed with an error
     pub fn fail(&self, id: &str, error: String) {
         if let Some(agent) = self.get(id) {
-            if let Ok(mut e) = agent.error.lock() {
+            if let Some(mut e) = agent_field_guard(&agent.error, "fail", id, "error") {
                 *e = Some(error);
             }
-            if let Ok(mut t) = agent.finished_at.lock() {
+            if let Some(mut t) = agent_field_guard(&agent.finished_at, "fail", id, "finished_at") {
                 *t = Some(Instant::now());
             }
             agent.finished.store(true, Ordering::SeqCst);
@@ -665,6 +687,16 @@ impl TranscriptStore {
 pub(crate) static TRANSCRIPT_STORE: LazyLock<Mutex<TranscriptStore>> =
     LazyLock::new(|| Mutex::new(TranscriptStore::new()));
 
+fn transcript_store_guard(operation: &'static str) -> Option<MutexGuard<'static, TranscriptStore>> {
+    match TRANSCRIPT_STORE.lock() {
+        Ok(guard) => Some(guard),
+        Err(err) => {
+            tracing::error!(operation, error = %err, "Subagent transcript store lock poisoned");
+            None
+        }
+    }
+}
+
 /// Guards the one-shot spawn of the transcript sweeper task. Calling
 /// `spawn_transcript_sweeper` more than once is a no-op.
 static SWEEPER_INIT: Once = Once::new();
@@ -689,8 +721,7 @@ pub(crate) fn spawn_transcript_sweeper() -> bool {
                 ticker.tick().await;
                 loop {
                     ticker.tick().await;
-                    let removed = TRANSCRIPT_STORE
-                        .lock()
+                    let removed = transcript_store_guard("sweep")
                         .map_or(0, |mut store| store.sweep(Instant::now()));
                     if removed > 0 {
                         tracing::debug!(
@@ -732,7 +763,7 @@ fn store_transcript(agent_id: &str, mut messages: Vec<Value>, agent_type: AgentT
         messages.drain(..dropped);
     }
 
-    if let Ok(mut store) = TRANSCRIPT_STORE.lock() {
+    if let Some(mut store) = transcript_store_guard("store_transcript") {
         store.insert(
             agent_id.to_string(),
             StoredTranscript {
@@ -755,7 +786,7 @@ fn load_transcript(agent_id: &str) -> Option<(Vec<Value>, AgentType)> {
     // the rest of the function body. The clippy
     // `significant_drop_tightening` lint flags holding a `MutexGuard`
     // longer than necessary.
-    let snapshot = TRANSCRIPT_STORE.lock().ok().and_then(|store| {
+    let snapshot = transcript_store_guard("load_transcript").and_then(|store| {
         store
             .get(agent_id)
             .map(|entry| (entry.messages.clone(), entry.agent_type, entry.created_at))
@@ -1852,8 +1883,10 @@ pub fn execute_agent_output_tool<S: BuildHasher>(
 
     if finished {
         // Get the result or error
-        let result = agent.result.lock().ok().and_then(|r| r.clone());
-        let error = agent.error.lock().ok().and_then(|e| e.clone());
+        let result = agent_field_guard(&agent.result, "agent_output", agent_id, "result")
+            .and_then(|r| r.clone());
+        let error = agent_field_guard(&agent.error, "agent_output", agent_id, "error")
+            .and_then(|e| e.clone());
 
         // Crosslink #422: once a finished agent has had its output consumed
         // by the caller, drop the map entry so the manager cannot leak
