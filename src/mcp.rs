@@ -36,14 +36,17 @@ const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_mins(1);
 /// `src/web.rs` (commit `fec15a20`, crosslink #368): one client, built
 /// once, reused across every `HttpTransport`. Per-request overrides
 /// (`HTTP_REQUEST_TIMEOUT`) are still applied at the call site.
-static SHARED_MCP_HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+static SHARED_MCP_HTTP_CLIENT: LazyLock<Result<reqwest::Client, String>> =
+    LazyLock::new(build_shared_mcp_http_client);
+
+fn build_shared_mcp_http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .pool_idle_timeout(Duration::from_secs(90))
         .connect_timeout(Duration::from_secs(10))
         .tcp_keepalive(Duration::from_mins(1))
         .build()
-        .expect("shared reqwest client for MCP builds with default features")
-});
+        .map_err(|err| format!("failed to build shared MCP HTTP client: {err}"))
+}
 
 // Fix #445 point 1 — ring-buffer cap for the background stderr drain.
 const STDERR_BUFFER_CAP: usize = 1024 * 1024;
@@ -574,7 +577,7 @@ impl HttpTransport {
         // Touch the static so the client is eagerly built on first
         // construction. Cheap, idempotent, and surfaces a build error
         // at transport-creation time rather than first-request time.
-        LazyLock::force(&SHARED_MCP_HTTP_CLIENT);
+        Self::client()?;
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             request_id: AtomicU64::new(1),
@@ -596,7 +599,6 @@ impl HttpTransport {
     #[doc(hidden)]
     #[must_use]
     pub fn __test_new_unchecked(base_url: &str) -> Self {
-        LazyLock::force(&SHARED_MCP_HTTP_CLIENT);
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             request_id: AtomicU64::new(1),
@@ -618,8 +620,11 @@ impl HttpTransport {
     /// Returns the process-wide shared client. Used so call sites do
     /// not have to name the static directly and so tests can assert
     /// pointer equality of the borrowed reference (fix #490).
-    fn client() -> &'static reqwest::Client {
-        &SHARED_MCP_HTTP_CLIENT
+    fn client() -> Result<&'static reqwest::Client, McpError> {
+        match &*SHARED_MCP_HTTP_CLIENT {
+            Ok(client) => Ok(client),
+            Err(err) => Err(McpError::Transport(err.clone())),
+        }
     }
 
     fn session_id_read_guard(
@@ -675,7 +680,7 @@ impl McpTransport for HttpTransport {
         //   both even though we currently parse only the JSON branch).
         // * Echo any captured `Mcp-Session-Id` so the server can route
         //   subsequent requests to the same logical session.
-        let mut builder = Self::client()
+        let mut builder = Self::client()?
             .post(&self.base_url)
             .timeout(HTTP_REQUEST_TIMEOUT)
             .header("Accept", "application/json, text/event-stream")
@@ -2255,14 +2260,32 @@ mod tests {
         let a = HttpTransport::__test_new_unchecked("http://example.invalid/a");
         let b = HttpTransport::__test_new_unchecked("http://example.invalid/b");
         // Force the LazyLock so the static is materialised.
-        let direct = &*SHARED_MCP_HTTP_CLIENT;
+        let direct = match &*SHARED_MCP_HTTP_CLIENT {
+            Ok(client) => client,
+            Err(err) => panic!("shared MCP HTTP client must initialize: {err}"),
+        };
+        let client_a = match HttpTransport::client() {
+            Ok(client) => client,
+            Err(err) => panic!("transport client accessor must initialize: {err}"),
+        };
+        let client_b = match HttpTransport::client() {
+            Ok(client) => client,
+            Err(err) => panic!("transport client accessor must initialize: {err}"),
+        };
         let _ = &a;
         let _ = &b;
-        let p_a = std::ptr::from_ref::<reqwest::Client>(HttpTransport::client());
-        let p_b = std::ptr::from_ref::<reqwest::Client>(HttpTransport::client());
+        let p_a = std::ptr::from_ref::<reqwest::Client>(client_a);
+        let p_b = std::ptr::from_ref::<reqwest::Client>(client_b);
         let p_d = std::ptr::from_ref::<reqwest::Client>(direct);
         assert_eq!(p_a, p_b, "two HttpTransports must share one client");
         assert_eq!(p_a, p_d, "shared client must equal the static itself");
+    }
+
+    #[test]
+    fn shared_mcp_http_client_builder_succeeds() {
+        if let Err(err) = build_shared_mcp_http_client() {
+            panic!("shared MCP HTTP client builder must succeed: {err}");
+        }
     }
 
     /// Fix #490: per-request timeout is set on the `RequestBuilder`
@@ -2300,9 +2323,13 @@ mod tests {
             params: None,
         };
         let start = std::time::Instant::now();
+        let client = match HttpTransport::client() {
+            Ok(client) => client,
+            Err(err) => panic!("shared MCP HTTP client must initialize: {err}"),
+        };
         let result = tokio::time::timeout(
             Duration::from_secs(5),
-            HttpTransport::client()
+            client
                 .post(&url)
                 .timeout(Duration::from_millis(250))
                 .json(&body)
