@@ -51,6 +51,29 @@ fn git_command() -> Result<Command, String> {
     Ok(Command::new(git_bin()?))
 }
 
+fn open_tui_log_file(dir: &Path, pid: u32) -> Option<std::fs::File> {
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!(
+            "Failed to create TUI log directory '{}': {e}",
+            dir.display()
+        );
+        return None;
+    }
+
+    let path = dir.join(format!("tui-{pid}.log"));
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        Ok(file) => Some(file),
+        Err(e) => {
+            eprintln!("Failed to open TUI log file '{}': {e}", path.display());
+            None
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "openclaudia")]
 #[command(author, version, about = "Open-source universal agent harness")]
@@ -196,15 +219,7 @@ async fn main() -> anyhow::Result<()> {
 
     let tui_mode_active = cli.command.is_none() && !cli.tui_mode;
     let log_writer: tracing_subscriber::fmt::writer::BoxMakeWriter = if tui_mode_active {
-        let dir = std::path::Path::new(".openclaudia/logs");
-        let file = std::fs::create_dir_all(dir).ok().and_then(|()| {
-            let path = dir.join(format!("tui-{}.log", std::process::id()));
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-                .ok()
-        });
+        let file = open_tui_log_file(Path::new(".openclaudia/logs"), std::process::id());
         file.map_or_else(
             || tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::sink),
             |f| tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::sync::Mutex::new(f)),
@@ -1289,6 +1304,26 @@ mod tests {
             .expect("write .openclaudia file");
 
         assert!(open_project_memory_db(dir.path()).is_none());
+    }
+
+    #[test]
+    fn open_tui_log_file_creates_log_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_dir = dir.path().join("logs");
+
+        let file = open_tui_log_file(&log_dir, 42).expect("log file");
+        drop(file);
+
+        assert!(log_dir.join("tui-42.log").exists());
+    }
+
+    #[test]
+    fn open_tui_log_file_returns_none_when_log_dir_path_is_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_dir = dir.path().join("logs");
+        std::fs::write(&log_dir, b"not a directory").expect("write log-dir file");
+
+        assert!(open_tui_log_file(&log_dir, 42).is_none());
     }
 
     #[test]
