@@ -18,7 +18,7 @@ use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, Once};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, Once};
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 use uuid::Uuid;
@@ -299,14 +299,30 @@ pub struct BackgroundAgent {
 
 /// Manager for background agents
 pub struct BackgroundAgentManager {
-    agents: Mutex<HashMap<String, Arc<BackgroundAgent>>>,
+    agents: Mutex<BackgroundAgentMap>,
 }
+
+type BackgroundAgentMap = HashMap<String, Arc<BackgroundAgent>>;
 
 impl BackgroundAgentManager {
     #[must_use]
     pub fn new() -> Self {
         Self {
             agents: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn agents_guard(&self, operation: &'static str) -> Option<MutexGuard<'_, BackgroundAgentMap>> {
+        match self.agents.lock() {
+            Ok(guard) => Some(guard),
+            Err(err) => {
+                tracing::error!(
+                    operation,
+                    error = %err,
+                    "Background agent registry lock poisoned"
+                );
+                None
+            }
         }
     }
 
@@ -342,7 +358,7 @@ impl BackgroundAgentManager {
         // the spawn that causes it (crosslink #422).
         self.gc();
 
-        let Ok(mut agents) = self.agents.lock() else {
+        let Some(mut agents) = self.agents_guard("register_with_id") else {
             return false;
         };
         if agents.contains_key(id) {
@@ -364,7 +380,8 @@ impl BackgroundAgentManager {
 
     /// Get an agent by ID
     pub fn get(&self, id: &str) -> Option<Arc<BackgroundAgent>> {
-        self.agents.lock().ok()?.get(id).cloned()
+        let agents = self.agents_guard("get")?;
+        agents.get(id).cloned()
     }
 
     /// Mark an agent as finished with a result
@@ -405,27 +422,26 @@ impl BackgroundAgentManager {
     /// — including the TUI agent list — never observe leaked stale entries.
     pub fn list(&self) -> Vec<(String, AgentType, String, bool)> {
         self.gc();
-        self.agents.lock().map_or_else(
-            |_| Vec::new(),
-            |agents| {
-                agents
-                    .iter()
-                    .map(|(id, agent)| {
-                        (
-                            id.clone(),
-                            agent.agent_type,
-                            agent.task.clone(),
-                            agent.finished.load(Ordering::SeqCst),
-                        )
-                    })
-                    .collect()
-            },
-        )
+        let Some(agents) = self.agents_guard("list") else {
+            return Vec::new();
+        };
+        agents
+            .iter()
+            .map(|(id, agent)| {
+                (
+                    id.clone(),
+                    agent.agent_type,
+                    agent.task.clone(),
+                    agent.finished.load(Ordering::SeqCst),
+                )
+            })
+            .collect()
     }
 
     /// Remove an agent unconditionally
     pub fn remove(&self, id: &str) -> Option<Arc<BackgroundAgent>> {
-        self.agents.lock().ok()?.remove(id)
+        let mut agents = self.agents_guard("remove")?;
+        agents.remove(id)
     }
 
     /// Garbage-collect finished agents older than [`FINISHED_AGENT_TTL_SECS`].
@@ -439,7 +455,7 @@ impl BackgroundAgentManager {
     /// treated as a no-op).
     pub fn gc(&self) -> usize {
         let now = Instant::now();
-        let Ok(mut agents) = self.agents.lock() else {
+        let Some(mut agents) = self.agents_guard("gc") else {
             return 0;
         };
         let before = agents.len();
@@ -464,7 +480,7 @@ impl BackgroundAgentManager {
     /// every finished agent up-front rather than wait for TTL expiry.
     /// Returns the number of agents removed.
     pub fn cleanup_finished(&self) -> usize {
-        let Ok(mut agents) = self.agents.lock() else {
+        let Some(mut agents) = self.agents_guard("cleanup_finished") else {
             return 0;
         };
         let before = agents.len();
