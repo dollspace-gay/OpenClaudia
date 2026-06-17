@@ -13,14 +13,28 @@ use tracing::{debug, info, warn};
 /// the trailing extension out of a glob pattern.  Matches a literal `.`
 /// followed by 1-8 alphanumeric characters at the end of the pattern, with an
 /// optional tail of glob metacharacters (`*?]}\)`).  See crosslink #796.
-fn glob_extension_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
+fn compile_glob_extension_regex(pattern: &str) -> Option<Regex> {
+    match Regex::new(pattern) {
+        Ok(regex) => Some(regex),
+        Err(error) => {
+            warn!(
+                pattern,
+                error = %error,
+                "Invalid glob-extension regex; glob rule inference disabled",
+            );
+            None
+        }
+    }
+}
+
+fn glob_extension_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
         // Pattern: `.<ext>` optionally followed by glob metacharacters, anchored
-        // at end-of-string.  Capture group 1 is the bare extension.
-        Regex::new(r"\.([A-Za-z0-9]{1,8})[\*\?\]\}\)]*$")
-            .expect("static glob-extension regex must compile")
+        // at end-of-string. Capture group 1 is the bare extension.
+        compile_glob_extension_regex(r"\.([A-Za-z0-9]{1,8})[\*\?\]\}\)]*$")
     })
+    .as_ref()
 }
 
 /// Single source-of-truth for `language -> extensions` mapping.
@@ -296,9 +310,11 @@ pub fn extract_extensions_from_tool_input(
             // `src/util`) must yield no extensions — the previous code
             // returned the bare segment as a fake extension.
             if let Some(pattern) = input.get("pattern").and_then(|v| v.as_str()) {
-                if let Some(caps) = glob_extension_regex().captures(pattern) {
-                    if let Some(ext) = caps.get(1) {
-                        extensions.push(ext.as_str().to_string());
+                if let Some(regex) = glob_extension_regex() {
+                    if let Some(caps) = regex.captures(pattern) {
+                        if let Some(ext) = caps.get(1) {
+                            extensions.push(ext.as_str().to_string());
+                        }
                     }
                 }
             }
@@ -426,6 +442,11 @@ mod tests {
         let input = serde_json::json!({"pattern": "**/*.ts"});
         let exts = extract_extensions_from_tool_input("Glob", &input);
         assert_eq!(exts, vec!["ts"]);
+    }
+
+    #[test]
+    fn invalid_glob_extension_regex_is_skipped() {
+        assert!(compile_glob_extension_regex("[").is_none());
     }
 
     /// #796: glob extension extraction must only return the trailing `.ext`,

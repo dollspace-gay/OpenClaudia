@@ -170,26 +170,40 @@ impl TuiSession {
 }
 
 /// Compiled regex for `@"quoted path"` and `@bare-path` file references.
-///
-/// The pattern is a hard-coded literal that must compile; `expect` is the
-/// correct idiom here (`unwrap` would give a less actionable panic message).
-static FILE_REF_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"@"([^"]+)"|@(\S+)"#)
-        .expect("FILE_REF_RE pattern is a hard-coded literal — must compile")
-});
+static FILE_REF_RE: std::sync::LazyLock<Option<regex::Regex>> =
+    std::sync::LazyLock::new(|| compile_file_ref_regex(FILE_REF_PATTERN));
+
+const FILE_REF_PATTERN: &str = r#"@"([^"]+)"|@(\S+)"#;
+
+fn compile_file_ref_regex(pattern: &str) -> Option<regex::Regex> {
+    match regex::Regex::new(pattern) {
+        Ok(regex) => Some(regex),
+        Err(error) => {
+            tracing::warn!(
+                pattern,
+                error = %error,
+                "Invalid TUI file-reference regex; @file expansion disabled",
+            );
+            None
+        }
+    }
+}
 
 /// Expand @filename references in user input by inlining file contents.
 fn expand_file_refs(input: &str) -> String {
     if !input.contains('@') {
         return input.to_string();
     }
+    let Some(file_ref_re) = (*FILE_REF_RE).as_ref() else {
+        return input.to_string();
+    };
     let mut result = input.to_string();
     let mut replacements = Vec::new();
 
     // Get project root for path traversal validation
     let cwd = std::env::current_dir().unwrap_or_default();
 
-    for cap in FILE_REF_RE.captures_iter(input) {
+    for cap in file_ref_re.captures_iter(input) {
         let full_match = match cap.get(0) {
             Some(m) => m.as_str(),
             None => continue,
@@ -3190,7 +3204,7 @@ async fn handle_turn_result(
 
 #[cfg(test)]
 mod tests {
-    use super::expand_file_refs;
+    use super::{compile_file_ref_regex, expand_file_refs};
     use super::{current_exe_command, git_bin, ApiClient, App, AppEvent, SpawnTarget};
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
@@ -3551,6 +3565,11 @@ mod tests {
         // touching the regex.  Output must equal the input exactly.
         let input = "hello world, no references here";
         assert_eq!(expand_file_refs(input), input);
+    }
+
+    #[test]
+    fn invalid_file_ref_regex_is_skipped() {
+        assert!(compile_file_ref_regex("[").is_none());
     }
 
     #[test]

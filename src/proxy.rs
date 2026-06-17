@@ -440,10 +440,24 @@ async fn run_pre_tool_use_hooks(
 /// no single match can scan an unbounded run of dotted characters — closes
 /// the ReDoS-shaped concern in crosslink #819 alongside the per-request
 /// byte cap enforced by [`extract_extensions_from_messages`].
-static EXTENSION_PATTERN: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"[\w/\\.-]{1,256}\.([a-zA-Z0-9]{1,10})\b")
-        .expect("EXTENSION_PATTERN is a valid static regex")
-});
+static EXTENSION_PATTERN: std::sync::LazyLock<Option<regex::Regex>> =
+    std::sync::LazyLock::new(|| compile_extension_pattern(EXTENSION_PATTERN_SOURCE));
+
+const EXTENSION_PATTERN_SOURCE: &str = r"[A-Za-z0-9_/\\.-]{1,256}\.([A-Za-z0-9]{1,10})\b";
+
+fn compile_extension_pattern(pattern: &str) -> Option<regex::Regex> {
+    match regex::Regex::new(pattern) {
+        Ok(regex) => Some(regex),
+        Err(error) => {
+            warn!(
+                pattern,
+                error = %error,
+                "Invalid extension extraction regex; request-message rule inference disabled",
+            );
+            None
+        }
+    }
+}
 
 /// Max bytes of message text the extension scanner is allowed to look at per
 /// request. A 1 MiB user message previously made the regex sweep the whole
@@ -465,8 +479,10 @@ const EXTENSION_UNIQUE_CAP: usize = 32;
 fn extract_extensions_from_messages(messages: &[ChatMessage]) -> Vec<String> {
     use std::collections::HashSet;
 
+    let Some(extension_pattern) = (*EXTENSION_PATTERN).as_ref() else {
+        return Vec::new();
+    };
     let mut extensions: HashSet<String> = HashSet::new();
-    let extension_pattern = &*EXTENSION_PATTERN;
     let mut remaining = EXTENSION_SCAN_BUDGET_BYTES;
 
     // Helper closure: scan a single borrowed text slice into `extensions`,
@@ -2151,6 +2167,32 @@ mod tests {
             .await
             .expect("read response body");
         serde_json::from_slice(&bytes).expect("response body must be JSON")
+    }
+
+    #[test]
+    fn invalid_extension_pattern_is_skipped() {
+        assert!(compile_extension_pattern("[").is_none());
+    }
+
+    #[test]
+    fn extract_extensions_from_messages_finds_text_paths() {
+        let regex =
+            compile_extension_pattern(EXTENSION_PATTERN_SOURCE).expect("source regex compiles");
+        assert!(
+            regex.is_match("inspect src/main.rs and docs/README.md"),
+            "source regex must match file paths in text"
+        );
+
+        let mut extensions = extract_extensions_from_messages(&[ChatMessage {
+            role: "user".to_string(),
+            content: MessageContent::Text("inspect src/main.rs and docs/README.md".to_string()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }]);
+        extensions.sort();
+
+        assert_eq!(extensions, vec!["md", "rs"]);
     }
 
     #[tokio::test]
