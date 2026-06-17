@@ -6,11 +6,10 @@
 //! # Single-source-of-truth registries
 //!
 //! The four axis/modifier registries (`AGENCY_FRAGMENTS`, `QUALITY_FRAGMENTS`,
-//! `SCOPE_FRAGMENTS`, `MODIFIERS`) are the *only* mapping between an enum
-//! variant and its prompt content. Accessors and tests iterate these
-//! constants; adding a new variant requires touching exactly one entry plus
-//! the enum definition itself (which the `every_*_variant_appears_*` tests
-//! enforce).
+//! `SCOPE_FRAGMENTS`, `MODIFIERS`) enumerate public metadata for each enum
+//! variant. Accessors are exhaustive `match`es over the same named fragment
+//! constants, so missing variants are compile errors instead of runtime
+//! panics; tests keep the registries aligned with those enums.
 
 use super::{Agency, Modifier, Quality, Scope};
 
@@ -35,56 +34,45 @@ pub const BASE_FRAGMENTS: &[(&str, &str)] = &[
 // Single-source registries: enum variant -> embedded markdown
 // =========================================================================
 //
-// Each table below is the *only* place that wires a variant to its content.
-// Tests enforce that every enum variant appears exactly once; accessors and
-// listing functions iterate these tables.
+// Tests enforce that every enum variant appears exactly once; listing
+// functions iterate these tables.
+
+pub const AGENCY_AUTONOMOUS_FRAGMENT: &str =
+    include_str!("../../prompts/axis/agency/autonomous.md");
+pub const AGENCY_COLLABORATIVE_FRAGMENT: &str =
+    include_str!("../../prompts/axis/agency/collaborative.md");
+pub const AGENCY_SURGICAL_FRAGMENT: &str = include_str!("../../prompts/axis/agency/surgical.md");
 
 /// Agency axis: variant -> embedded fragment.
 pub const AGENCY_FRAGMENTS: &[(Agency, &str)] = &[
-    (
-        Agency::Autonomous,
-        include_str!("../../prompts/axis/agency/autonomous.md"),
-    ),
-    (
-        Agency::Collaborative,
-        include_str!("../../prompts/axis/agency/collaborative.md"),
-    ),
-    (
-        Agency::Surgical,
-        include_str!("../../prompts/axis/agency/surgical.md"),
-    ),
+    (Agency::Autonomous, AGENCY_AUTONOMOUS_FRAGMENT),
+    (Agency::Collaborative, AGENCY_COLLABORATIVE_FRAGMENT),
+    (Agency::Surgical, AGENCY_SURGICAL_FRAGMENT),
 ];
+
+pub const QUALITY_ARCHITECT_FRAGMENT: &str =
+    include_str!("../../prompts/axis/quality/architect.md");
+pub const QUALITY_PRAGMATIC_FRAGMENT: &str =
+    include_str!("../../prompts/axis/quality/pragmatic.md");
+pub const QUALITY_MINIMAL_FRAGMENT: &str = include_str!("../../prompts/axis/quality/minimal.md");
 
 /// Quality axis: variant -> embedded fragment.
 pub const QUALITY_FRAGMENTS: &[(Quality, &str)] = &[
-    (
-        Quality::Architect,
-        include_str!("../../prompts/axis/quality/architect.md"),
-    ),
-    (
-        Quality::Pragmatic,
-        include_str!("../../prompts/axis/quality/pragmatic.md"),
-    ),
-    (
-        Quality::Minimal,
-        include_str!("../../prompts/axis/quality/minimal.md"),
-    ),
+    (Quality::Architect, QUALITY_ARCHITECT_FRAGMENT),
+    (Quality::Pragmatic, QUALITY_PRAGMATIC_FRAGMENT),
+    (Quality::Minimal, QUALITY_MINIMAL_FRAGMENT),
 ];
+
+pub const SCOPE_UNRESTRICTED_FRAGMENT: &str =
+    include_str!("../../prompts/axis/scope/unrestricted.md");
+pub const SCOPE_ADJACENT_FRAGMENT: &str = include_str!("../../prompts/axis/scope/adjacent.md");
+pub const SCOPE_NARROW_FRAGMENT: &str = include_str!("../../prompts/axis/scope/narrow.md");
 
 /// Scope axis: variant -> embedded fragment.
 pub const SCOPE_FRAGMENTS: &[(Scope, &str)] = &[
-    (
-        Scope::Unrestricted,
-        include_str!("../../prompts/axis/scope/unrestricted.md"),
-    ),
-    (
-        Scope::Adjacent,
-        include_str!("../../prompts/axis/scope/adjacent.md"),
-    ),
-    (
-        Scope::Narrow,
-        include_str!("../../prompts/axis/scope/narrow.md"),
-    ),
+    (Scope::Unrestricted, SCOPE_UNRESTRICTED_FRAGMENT),
+    (Scope::Adjacent, SCOPE_ADJACENT_FRAGMENT),
+    (Scope::Narrow, SCOPE_NARROW_FRAGMENT),
 ];
 
 /// A single modifier's metadata.
@@ -100,108 +88,105 @@ pub struct ModifierEntry {
     pub description: &'static str,
 }
 
-/// Behavioral modifiers: the single source of truth pairing each `Modifier`
-/// variant with its name, embedded fragment, and description.  Accessors,
-/// listing functions, and tests all iterate this table.
+/// Behavioral modifiers registry pairing each `Modifier` variant with its
+/// name, embedded fragment, and description. Listing functions and tests
+/// iterate this table.
+pub const MODIFIER_BOLD_FRAGMENT: &str = include_str!("../../prompts/modifiers/bold.md");
+pub const MODIFIER_DEBUG_FRAGMENT: &str = include_str!("../../prompts/modifiers/debug.md");
+pub const MODIFIER_METHODICAL_FRAGMENT: &str =
+    include_str!("../../prompts/modifiers/methodical.md");
+pub const MODIFIER_DIRECTOR_FRAGMENT: &str = include_str!("../../prompts/modifiers/director.md");
+pub const MODIFIER_READONLY_FRAGMENT: &str = include_str!("../../prompts/modifiers/readonly.md");
+pub const MODIFIER_CONTEXT_PACING_FRAGMENT: &str =
+    include_str!("../../prompts/modifiers/context-pacing.md");
+
 pub const MODIFIERS: &[ModifierEntry] = &[
     ModifierEntry {
         variant: Modifier::Bold,
         name: "bold",
-        fragment: include_str!("../../prompts/modifiers/bold.md"),
+        fragment: MODIFIER_BOLD_FRAGMENT,
         description: "Confident, idiomatic code — no hedging",
     },
     ModifierEntry {
         variant: Modifier::Debug,
         name: "debug",
-        fragment: include_str!("../../prompts/modifiers/debug.md"),
+        fragment: MODIFIER_DEBUG_FRAGMENT,
         description: "Investigation-first debugging",
     },
     ModifierEntry {
         variant: Modifier::Methodical,
         name: "methodical",
-        fragment: include_str!("../../prompts/modifiers/methodical.md"),
+        fragment: MODIFIER_METHODICAL_FRAGMENT,
         description: "Step-by-step precision",
     },
     ModifierEntry {
         variant: Modifier::Director,
         name: "director",
-        fragment: include_str!("../../prompts/modifiers/director.md"),
+        fragment: MODIFIER_DIRECTOR_FRAGMENT,
         description: "Orchestrate subagents, delegate implementation",
     },
     ModifierEntry {
         variant: Modifier::Readonly,
         name: "readonly",
-        fragment: include_str!("../../prompts/modifiers/readonly.md"),
+        fragment: MODIFIER_READONLY_FRAGMENT,
         description: "No file modifications — read and explain only",
     },
     ModifierEntry {
         variant: Modifier::ContextPacing,
         name: "context-pacing",
-        fragment: include_str!("../../prompts/modifiers/context-pacing.md"),
+        fragment: MODIFIER_CONTEXT_PACING_FRAGMENT,
         description: "Pace work to context limits — clean pause points",
     },
 ];
 
 // =========================================================================
-// Accessor functions — single table lookup per axis.
+// Accessor functions — exhaustive enum dispatch.
 // =========================================================================
 //
-// The accessors are no longer `const fn` because slice iteration is not yet
-// stable in const context.  They are still trivial, branch-free linear
-// scans over a six-or-fewer-element array — effectively free at runtime.
+// These are `const fn` so missing enum variants become compile-time failures
+// instead of runtime misses in the registries.
 
 /// Get the prompt fragment for an agency value.
-///
-/// # Panics
-/// Panics if the `AGENCY_FRAGMENTS` table is missing an entry for `agency`.
-/// The `every_agency_variant_appears_in_table` test enforces this at build
-/// time of the test suite.
 #[must_use]
-pub fn agency_fragment(agency: Agency) -> &'static str {
-    AGENCY_FRAGMENTS
-        .iter()
-        .find(|(a, _)| *a == agency)
-        .map(|(_, s)| *s)
-        .expect("AGENCY_FRAGMENTS is missing an entry for an Agency variant")
+pub const fn agency_fragment(agency: Agency) -> &'static str {
+    match agency {
+        Agency::Autonomous => AGENCY_AUTONOMOUS_FRAGMENT,
+        Agency::Collaborative => AGENCY_COLLABORATIVE_FRAGMENT,
+        Agency::Surgical => AGENCY_SURGICAL_FRAGMENT,
+    }
 }
 
 /// Get the prompt fragment for a quality value.
-///
-/// # Panics
-/// Panics if the `QUALITY_FRAGMENTS` table is missing an entry for `quality`.
 #[must_use]
-pub fn quality_fragment(quality: Quality) -> &'static str {
-    QUALITY_FRAGMENTS
-        .iter()
-        .find(|(q, _)| *q == quality)
-        .map(|(_, s)| *s)
-        .expect("QUALITY_FRAGMENTS is missing an entry for a Quality variant")
+pub const fn quality_fragment(quality: Quality) -> &'static str {
+    match quality {
+        Quality::Architect => QUALITY_ARCHITECT_FRAGMENT,
+        Quality::Pragmatic => QUALITY_PRAGMATIC_FRAGMENT,
+        Quality::Minimal => QUALITY_MINIMAL_FRAGMENT,
+    }
 }
 
 /// Get the prompt fragment for a scope value.
-///
-/// # Panics
-/// Panics if the `SCOPE_FRAGMENTS` table is missing an entry for `scope`.
 #[must_use]
-pub fn scope_fragment(scope: Scope) -> &'static str {
-    SCOPE_FRAGMENTS
-        .iter()
-        .find(|(s, _)| *s == scope)
-        .map(|(_, s)| *s)
-        .expect("SCOPE_FRAGMENTS is missing an entry for a Scope variant")
+pub const fn scope_fragment(scope: Scope) -> &'static str {
+    match scope {
+        Scope::Unrestricted => SCOPE_UNRESTRICTED_FRAGMENT,
+        Scope::Adjacent => SCOPE_ADJACENT_FRAGMENT,
+        Scope::Narrow => SCOPE_NARROW_FRAGMENT,
+    }
 }
 
 /// Get the prompt fragment for a modifier.
-///
-/// # Panics
-/// Panics if the `MODIFIERS` table is missing an entry for `modifier`.
 #[must_use]
-pub fn modifier_fragment(modifier: Modifier) -> &'static str {
-    MODIFIERS
-        .iter()
-        .find(|e| e.variant == modifier)
-        .map(|e| e.fragment)
-        .expect("MODIFIERS is missing an entry for a Modifier variant")
+pub const fn modifier_fragment(modifier: Modifier) -> &'static str {
+    match modifier {
+        Modifier::Bold => MODIFIER_BOLD_FRAGMENT,
+        Modifier::Debug => MODIFIER_DEBUG_FRAGMENT,
+        Modifier::Methodical => MODIFIER_METHODICAL_FRAGMENT,
+        Modifier::Director => MODIFIER_DIRECTOR_FRAGMENT,
+        Modifier::Readonly => MODIFIER_READONLY_FRAGMENT,
+        Modifier::ContextPacing => MODIFIER_CONTEXT_PACING_FRAGMENT,
+    }
 }
 
 #[cfg(test)]
