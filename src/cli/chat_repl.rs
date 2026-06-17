@@ -149,6 +149,7 @@ struct SseFrameCtx<'a> {
 
 /// Spinner template — uses indicatif placeholder syntax, not `format!`.
 const SPINNER_TMPL: &str = "{spinner:.cyan} {msg}";
+const EXTENSION_REGEX_PATTERN: &str = r"[\w/\\.-]+\.([a-zA-Z0-9]{1,10})\b";
 
 fn active_provider_for_turn(config: &config::AppConfig) -> Result<&config::ProviderConfig, String> {
     config.active_provider().ok_or_else(|| {
@@ -157,6 +158,43 @@ fn active_provider_for_turn(config: &config::AppConfig) -> Result<&config::Provi
             config.proxy.target
         )
     })
+}
+
+fn compile_extension_regex() -> Result<regex::Regex, String> {
+    regex::Regex::new(EXTENSION_REGEX_PATTERN)
+        .map_err(|err| format!("failed to compile file extension detector regex: {err}"))
+}
+
+fn load_repl_config(model_override: Option<&str>) -> Option<config::AppConfig> {
+    let mut config = match config::load_config() {
+        Ok(config) => config,
+        Err(err) => {
+            if config::config_file_exists() {
+                eprintln!("Failed to parse configuration: {err}");
+                eprintln!("Check your .openclaudia/config.yaml for syntax errors.");
+            } else {
+                eprintln!("No configuration found. Run 'openclaudia init' first.");
+            }
+            return None;
+        }
+    };
+
+    if let Some(model) = model_override {
+        apply_model_provider_override(&mut config, model);
+    }
+
+    Some(config)
+}
+
+fn apply_model_provider_override(config: &mut config::AppConfig, model: &str) {
+    let detected = openclaudia::proxy::determine_provider(model, config);
+    if detected != config.proxy.target {
+        eprintln!(
+            "[debug] Model '{}' detected as provider '{}' (overriding target '{}')",
+            model, detected, config.proxy.target
+        );
+        config.proxy.target = detected;
+    }
 }
 
 impl ChatRepl {
@@ -168,32 +206,17 @@ impl ChatRepl {
         use openclaudia::rules::RulesEngine;
 
         chdir_to_git_root();
-        let ext_regex = regex::Regex::new(r"[\w/\\.-]+\.([a-zA-Z0-9]{1,10})\b").unwrap();
-
-        let config = match config::load_config() {
-            Ok(c) => c,
-            Err(e) => {
-                if config::config_file_exists() {
-                    eprintln!("Failed to parse configuration: {e}");
-                    eprintln!("Check your .openclaudia/config.yaml for syntax errors.");
-                } else {
-                    eprintln!("No configuration found. Run 'openclaudia init' first.");
-                }
+        let ext_regex = match compile_extension_regex() {
+            Ok(regex) => regex,
+            Err(err) => {
+                eprintln!("{err}");
                 return Ok(None);
             }
         };
 
-        let mut config = config;
-        if let Some(ref m) = args.model_override {
-            let detected = openclaudia::proxy::determine_provider(m, &config);
-            if detected != config.proxy.target {
-                eprintln!(
-                    "[debug] Model '{}' detected as provider '{}' (overriding target '{}')",
-                    m, detected, config.proxy.target
-                );
-                config.proxy.target = detected;
-            }
-        }
+        let Some(config) = load_repl_config(args.model_override.as_deref()) else {
+            return Ok(None);
+        };
 
         let initial_behavior_mode = match parse_initial_behavior_mode(args.mode_arg.as_deref()) {
             Ok(m) => m,
@@ -3604,5 +3627,18 @@ providers: {}
     fn rustyline_editor_mode_construction_is_fallible_not_panicking() {
         let _ = new_rustyline_editor(rustyline::EditMode::Emacs);
         let _ = new_rustyline_editor(rustyline::EditMode::Vi);
+    }
+
+    #[test]
+    fn extension_regex_construction_is_fallible_not_panicking() {
+        let regex = compile_extension_regex()
+            .expect("built-in file extension detector regex should compile");
+
+        let captures: Vec<_> = regex
+            .captures_iter("Review src/main.rs and crates/foo/lib.test.ts")
+            .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+            .collect();
+
+        assert_eq!(captures, ["rs", "ts"]);
     }
 }

@@ -7,16 +7,17 @@ pub async fn cmd_start(
     host: Option<String>,
     target: Option<String>,
 ) -> anyhow::Result<()> {
+    if !config::config_file_exists() {
+        error!("No configuration found. Run 'openclaudia init' first.");
+        anyhow::bail!("no configuration found; run `openclaudia init` first");
+    }
+
     let mut config = match config::load_config() {
         Ok(c) => c,
         Err(e) => {
-            if config::config_file_exists() {
-                error!("Failed to parse configuration: {}", e);
-                eprintln!("Check your .openclaudia/config.yaml for syntax errors.");
-            } else {
-                error!("No configuration found. Run 'openclaudia init' first.");
-            }
-            return Ok(());
+            error!("Failed to parse configuration: {}", e);
+            eprintln!("Check your .openclaudia/config.yaml for syntax errors.");
+            anyhow::bail!("invalid configuration: {e}");
         }
     };
 
@@ -32,33 +33,46 @@ pub async fn cmd_start(
 
     guardrails::configure(&config.guardrails);
 
-    if let Some(provider) = config.active_provider() {
-        if provider.api_key.is_none() {
-            let env_var = match config.proxy.target.as_str() {
-                "anthropic" => "ANTHROPIC_API_KEY",
-                "openai" => "OPENAI_API_KEY",
-                "google" => "GOOGLE_API_KEY",
-                "zai" => "ZAI_API_KEY",
-                "deepseek" => "DEEPSEEK_API_KEY",
-                "qwen" => "QWEN_API_KEY",
-                _ => "API_KEY",
-            };
-            if config.proxy.target == "anthropic" {
-                tracing::warn!(
-                    "No API key configured for '{}'. OAuth authentication is available.",
-                    config.proxy.target
-                );
-                info!(
-                    "Visit http://localhost:{}/auth/device to authenticate with Claude Max",
-                    config.proxy.port
-                );
-            } else {
-                error!(
-                    "No API key configured for provider '{}'. Set {} environment variable.",
-                    config.proxy.target, env_var
-                );
-                return Ok(());
-            }
+    let Some(provider) = config.active_provider() else {
+        error!(
+            "No provider configured for target '{}'",
+            config.proxy.target
+        );
+        anyhow::bail!(
+            "no provider configured for target '{}'",
+            config.proxy.target
+        );
+    };
+
+    if provider.api_key.is_none() {
+        let env_var = match config.proxy.target.as_str() {
+            "anthropic" => "ANTHROPIC_API_KEY",
+            "openai" => "OPENAI_API_KEY",
+            "google" => "GOOGLE_API_KEY",
+            "zai" => "ZAI_API_KEY",
+            "deepseek" => "DEEPSEEK_API_KEY",
+            "qwen" => "QWEN_API_KEY",
+            _ => "API_KEY",
+        };
+        if config.proxy.target == "anthropic" {
+            tracing::warn!(
+                "No API key configured for '{}'. OAuth authentication is available.",
+                config.proxy.target
+            );
+            info!(
+                "Visit http://localhost:{}/auth/device to authenticate with Claude Max",
+                config.proxy.port
+            );
+        } else {
+            error!(
+                "No API key configured for provider '{}'. Set {} environment variable.",
+                config.proxy.target, env_var
+            );
+            anyhow::bail!(
+                "no API key configured for provider '{}'; set {} environment variable",
+                config.proxy.target,
+                env_var
+            );
         }
     }
 

@@ -2,7 +2,13 @@ use openclaudia::config;
 use tracing::{error, info};
 
 /// Show current configuration
-pub fn cmd_config() {
+pub fn cmd_config() -> anyhow::Result<()> {
+    if !config::config_file_exists() {
+        error!("No configuration found.");
+        info!("Run 'openclaudia init' to create a configuration file.");
+        anyhow::bail!("no configuration found; run `openclaudia init` first");
+    }
+
     match config::load_config() {
         Ok(config) => {
             println!("OpenClaudia Configuration\n");
@@ -25,15 +31,12 @@ pub fn cmd_config() {
             println!("Session:");
             println!("  Timeout: {} minutes", config.session.timeout_minutes);
             println!("  Persist path: {}", config.session.persist_path.display());
+            Ok(())
         }
         Err(e) => {
-            if config::config_file_exists() {
-                error!("Failed to parse configuration: {}", e);
-                info!("Check your .openclaudia/config.yaml for syntax errors.");
-            } else {
-                error!("No configuration found.");
-                info!("Run 'openclaudia init' to create a configuration file.");
-            }
+            error!("Failed to parse configuration: {}", e);
+            info!("Check your .openclaudia/config.yaml for syntax errors.");
+            anyhow::bail!("invalid configuration: {e}");
         }
     }
 }

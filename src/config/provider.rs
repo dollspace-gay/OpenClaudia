@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use std::collections::HashMap;
+use url::Url;
 
 // Re-export `ApiKey` so `crate::config::provider::ApiKey` resolves for
 // the ProviderConfig field type declaration below. The free-function
@@ -24,6 +25,54 @@ pub use crate::providers::api_key::ApiKey;
 /// malformed, uses a forbidden scheme, or points to a non-public address.
 pub fn validate_base_url(url: &str) -> Result<(), String> {
     crate::web::validate_url(url).map_err(|e| format!("provider base_url '{url}' rejected: {e}"))
+}
+
+/// Validate a provider `base_url`, allowing private/loopback hosts only for
+/// explicitly local provider targets.
+///
+/// Remote providers keep the full SSRF guard from [`validate_base_url`].
+/// Local providers intentionally point at loopback or LAN services such as
+/// Ollama, LM Studio, `LocalAI`, and text-generation-webui, so their validation
+/// is limited to URL shape and HTTP(S) schemes.
+///
+/// # Errors
+///
+/// Returns an error when a remote provider URL fails the full SSRF guard, or
+/// when a local provider URL is malformed, lacks a host, or uses a non-HTTP
+/// scheme.
+pub fn validate_provider_base_url(provider_name: &str, url: &str) -> Result<(), String> {
+    if is_local_provider_name(provider_name) {
+        validate_local_provider_base_url(provider_name, url)
+    } else {
+        validate_base_url(url)
+    }
+}
+
+fn is_local_provider_name(provider_name: &str) -> bool {
+    matches!(
+        provider_name.to_ascii_lowercase().as_str(),
+        "ollama" | "local" | "lmstudio" | "localai" | "text-generation-webui"
+    )
+}
+
+fn validate_local_provider_base_url(provider_name: &str, url: &str) -> Result<(), String> {
+    let parsed = Url::parse(url).map_err(|e| {
+        format!("provider '{provider_name}' base_url '{url}' rejected: invalid URL: {e}")
+    })?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        scheme => {
+            return Err(format!(
+                "provider '{provider_name}' base_url '{url}' rejected: scheme '{scheme}' is not allowed; use http or https"
+            ));
+        }
+    }
+    if parsed.host_str().is_none() {
+        return Err(format!(
+            "provider '{provider_name}' base_url '{url}' rejected: missing host"
+        ));
+    }
+    Ok(())
 }
 
 /// Thinking/reasoning mode configuration

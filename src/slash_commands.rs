@@ -1,25 +1,27 @@
-//! Canonical list of slash commands the chat seams expose.
+//! Canonical slash-command catalogues.
 //!
-//! This is the single source of truth referenced by both:
-//! - the CLI's `slash_help()` printer (long-form list)
-//! - the TUI `HelpOverlay` cheatsheet (compact scrollable overlay)
+//! There are two user-facing chat seams:
+//! - the legacy line-oriented REPL, which exposes the broad command
+//!   registry in [`SLASH_SECTIONS`]
+//! - the default full-screen TUI, which currently implements a smaller
+//!   command set in [`TUI_SLASH_SECTIONS`]
 //!
-//! Per crosslink #499, the two seams previously hand-maintained parallel
-//! lists that drifted (TUI listed ~15 commands; CLI listed ~50). Both now
-//! iterate [`SLASH_COMMANDS`] for their "Slash commands" section so adding
-//! or renaming a command is a single edit here.
+//! Keep these catalogues honest for the seam that renders them. The TUI
+//! must not import the legacy table and advertise commands that route to
+//! `Unknown command` in `App::handle_slash_command`.
 //!
-//! Entries are grouped by section to preserve the visual structure both
-//! seams render. The TUI overlay flattens to one "Slash commands" pane;
-//! the CLI printer renders each section as its own heading.
+//! Entries are grouped by section to preserve the visual structure each
+//! seam renders. The legacy CLI printer renders each section as its own
+//! heading; the TUI overlay renders the smaller TUI-specific sections.
 //!
 //! Out of scope for this table:
 //! - Keybindings (TUI-only; see `tui/components/help.rs`)
 //! - Shell `!cmd`, note `#text`, file `@path` syntax (CLI-only)
 //! - `/plugin-name:command` open-ended plugin dispatch (registry bypass)
 //!
-//! When a new slash command is added to `CommandRegistry`, append it here
-//! with a one-line description. The doctest below enforces non-emptiness.
+//! When a new slash command is added to `CommandRegistry`, append it to
+//! [`SLASH_SECTIONS`]. When a command is implemented in `tui::app::App`,
+//! append it to [`TUI_SLASH_SECTIONS`] with the TUI-specific behavior.
 
 /// A single slash-command entry: invocation form + one-line description.
 ///
@@ -185,6 +187,49 @@ const MANAGEMENT: &[SlashCommand] = &[
     cmd("/hooks", "Open the lifecycle hooks overlay"),
 ];
 
+const TUI_CORE: &[SlashCommand] = &[
+    cmd("/help, ?", "Show the TUI help overlay"),
+    cmd("/clear", "Clear the visible transcript"),
+    cmd("/exit, /quit", "Exit the TUI"),
+    cmd(
+        "/status",
+        "Show model, provider, effort, and token estimate",
+    ),
+    cmd("/mode", "Toggle between Build and Plan modes"),
+    cmd("/effort [low|medium|high]", "Set or cycle effort level"),
+];
+
+const TUI_SESSIONS: &[SlashCommand] = &[
+    cmd("/sessions, /list", "List saved sessions"),
+    cmd("/resume, /continue", "Open the session picker"),
+    cmd("/load <id>", "Resume a saved session by ID prefix"),
+    cmd("/continue <id>", "Resume a saved session by ID prefix"),
+    cmd("/rename <title>", "Rename the current session"),
+    cmd("/export", "Export the current conversation to markdown"),
+    cmd("/undo", "Undo the last message exchange"),
+    cmd("/redo", "Redo the last undone message exchange"),
+    cmd("/rewind [N]", "Show turns or rewind the last N turns"),
+];
+
+const TUI_DIAGNOSTICS: &[SlashCommand] = &[
+    cmd("/cost", "Show session cost estimate"),
+    cmd("/context", "Show context usage breakdown"),
+    cmd(
+        "/files [dir]",
+        "List files in the current or given directory",
+    ),
+    cmd("/diff", "Show git diff summary"),
+    cmd("/review", "Show a truncated git diff for review"),
+    cmd("/doctor", "Run inline diagnostics"),
+    cmd("/init", "Initialize project config if absent"),
+];
+
+const TUI_SKILLS: &[SlashCommand] = &[
+    cmd("/skill, /skills", "List available skills"),
+    cmd("/skill <name>", "Invoke a skill as the next prompt"),
+    cmd("/<skill-name>", "Invoke a skill by name"),
+];
+
 /// All sections in the order they should render.
 ///
 /// Iterated by both `slash_help()` (CLI printer) and `HelpOverlay`
@@ -221,11 +266,40 @@ pub const SLASH_SECTIONS: &[SlashSection] = &[
     },
 ];
 
+/// Slash commands implemented by the default full-screen TUI.
+///
+/// This table intentionally excludes legacy REPL-only commands such as
+/// `/connect`, `/model`, `/config path`, `/login`, `/plugin`, and the
+/// management-overlay stubs until `tui::app::App` implements them.
+pub const TUI_SLASH_SECTIONS: &[SlashSection] = &[
+    SlashSection {
+        title: "TUI Slash Commands",
+        commands: TUI_CORE,
+    },
+    SlashSection {
+        title: "TUI Sessions",
+        commands: TUI_SESSIONS,
+    },
+    SlashSection {
+        title: "TUI Diagnostics",
+        commands: TUI_DIAGNOSTICS,
+    },
+    SlashSection {
+        title: "TUI Skills",
+        commands: TUI_SKILLS,
+    },
+];
+
 /// Flat iterator over every command across every section.
 ///
-/// Useful for the TUI overlay (one pane) and for tab-completion sources.
+/// Useful for legacy REPL help checks and tab-completion sources.
 pub fn all_commands() -> impl Iterator<Item = &'static SlashCommand> {
     SLASH_SECTIONS.iter().flat_map(|s| s.commands.iter())
+}
+
+/// Flat iterator over every default-TUI command.
+pub fn all_tui_commands() -> impl Iterator<Item = &'static SlashCommand> {
+    TUI_SLASH_SECTIONS.iter().flat_map(|s| s.commands.iter())
 }
 
 #[cfg(test)]
@@ -242,6 +316,19 @@ mod tests {
             assert!(
                 !section.commands.is_empty(),
                 "section {} has no commands",
+                section.title
+            );
+            for c in section.commands {
+                assert!(c.invocation.starts_with('/'));
+                assert!(!c.description.is_empty());
+            }
+        }
+        assert!(!TUI_SLASH_SECTIONS.is_empty());
+        for section in TUI_SLASH_SECTIONS {
+            assert!(!section.title.is_empty());
+            assert!(
+                !section.commands.is_empty(),
+                "TUI section {} has no commands",
                 section.title
             );
             for c in section.commands {
@@ -288,6 +375,32 @@ mod tests {
             assert!(
                 invocations.contains(&canonical),
                 "CC-parity command {canonical} missing from SLASH_SECTIONS"
+            );
+        }
+    }
+
+    #[test]
+    fn tui_table_excludes_legacy_repl_only_commands() {
+        let invocations: Vec<&str> = all_tui_commands().map(|c| c.invocation).collect();
+        for legacy_only in [
+            "/connect",
+            "/model",
+            "/config path",
+            "/login",
+            "/plugin",
+            "/mcp",
+            "/permissions",
+            "/hooks",
+        ] {
+            assert!(
+                !invocations.contains(&legacy_only),
+                "TUI help must not advertise unimplemented legacy command {legacy_only}"
+            );
+        }
+        for tui_command in ["/help, ?", "/load <id>", "/doctor", "/skill, /skills"] {
+            assert!(
+                invocations.contains(&tui_command),
+                "TUI help missing implemented command {tui_command}"
             );
         }
     }

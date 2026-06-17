@@ -566,6 +566,18 @@ impl ToolHandler for CrosslinkHandler {
 
 // ── web ───────────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "browser")]
+const WEB_FETCH_DESCRIPTION: &str = "Fetch the content of a web page and return it as markdown. Uses direct HTTP first, then a headless Chromium fallback for JavaScript-rendered pages or browser challenges. Use this to read documentation, articles, or other web content.";
+
+#[cfg(not(feature = "browser"))]
+const WEB_FETCH_DESCRIPTION: &str = "Fetch the content of a web page and return it as markdown using direct HTTP. This build does not include JavaScript rendering or headless-browser challenge handling; rebuild with the default `browser` feature for that fallback.";
+
+#[cfg(feature = "browser")]
+const WEB_SEARCH_DESCRIPTION: &str = "Search the web and return relevant results. Uses DuckDuckGo/Bing browser scraping by default (free, no API key), then falls back to Tavily or Brave APIs if configured. Returns titles, snippets, and URLs. `allowed_domains` / `blocked_domains` mirror Claude Code's WebSearchTool — results are filtered to domains that match (or don't match) the respective list.";
+
+#[cfg(not(feature = "browser"))]
+const WEB_SEARCH_DESCRIPTION: &str = "Search the web and return relevant results via Tavily or Brave APIs when configured. This build does not include DuckDuckGo/Bing headless-browser scraping, so free no-key search requires rebuilding with the default `browser` feature. Returns titles, snippets, and URLs. `allowed_domains` / `blocked_domains` mirror Claude Code's WebSearchTool — results are filtered to domains that match (or don't match) the respective list.";
+
 struct WebFetchHandler;
 impl ToolHandler for WebFetchHandler {
     fn name(&self) -> &'static str {
@@ -576,7 +588,7 @@ impl ToolHandler for WebFetchHandler {
             "type": "function",
             "function": {
                 "name": "web_fetch",
-                "description": "Fetch the content of a web page and return it as markdown. Handles JavaScript rendering and bypasses most bot detection. Use this to read documentation, articles, or any web content.",
+                "description": WEB_FETCH_DESCRIPTION,
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -605,7 +617,7 @@ impl ToolHandler for WebSearchHandler {
             "type": "function",
             "function": {
                 "name": "web_search",
-                "description": "Search the web and return relevant results. Uses DuckDuckGo by default (free, no API key). Falls back to Tavily or Brave API if configured. Returns titles, snippets, and URLs. `allowed_domains` / `blocked_domains` mirror Claude Code's WebSearchTool — results are filtered to domains that match (or don't match) the respective list.",
+                "description": WEB_SEARCH_DESCRIPTION,
                 "parameters": {
                     "type": "object",
                     "properties": {

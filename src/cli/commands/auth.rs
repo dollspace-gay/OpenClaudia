@@ -27,7 +27,7 @@ fn spawn_browser_opener(auth_url: &str) {
 /// Authenticate with Claude Max subscription via OAuth
 pub async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
     use openclaudia::oauth::{parse_auth_code, OAuthClient, OAuthStore, PkceParams};
-    use std::io::{self, Write};
+    use std::io::{self, IsTerminal, Write};
 
     let store = OAuthStore::new();
 
@@ -94,8 +94,11 @@ pub async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
     println!("Step 1: Open this URL in your browser:\n");
     println!("  {auth_url}\n");
 
-    // Try to open browser automatically
-    spawn_browser_opener(&auth_url);
+    let stdin = io::stdin();
+    if stdin.is_terminal() {
+        // Try to open browser automatically only for interactive use.
+        spawn_browser_opener(&auth_url);
+    }
 
     println!("Step 2: Sign in to Claude and authorize the application.");
     println!("Step 3: Copy the code shown (format: CODE#STATE)\n");
@@ -104,12 +107,12 @@ pub async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
     io::stdout().flush()?;
 
     let mut code_input = String::new();
-    io::stdin().read_line(&mut code_input)?;
+    stdin.read_line(&mut code_input)?;
     let code_input = code_input.trim();
 
     if code_input.is_empty() {
         eprintln!("No code provided. Authentication cancelled.");
-        return Ok(());
+        anyhow::bail!("authentication cancelled: no code provided");
     }
 
     let (code, parsed_state) = parse_auth_code(code_input);
@@ -118,7 +121,7 @@ pub async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
     if let Some(ref state) = parsed_state {
         if state != expected_state {
             eprintln!("State mismatch! This could be a CSRF attack. Authentication cancelled.");
-            return Ok(());
+            anyhow::bail!("authentication cancelled: OAuth state mismatch");
         }
     }
 

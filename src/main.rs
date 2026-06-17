@@ -94,7 +94,7 @@ struct Cli {
     #[arg(long)]
     session_id: Option<String>,
 
-    /// Run in coordinator mode (multi-agent orchestration)
+    /// Run the legacy REPL in coordinator mode (requires --tui-mode)
     #[arg(long)]
     coordinator: bool,
 
@@ -107,7 +107,7 @@ struct Cli {
     #[arg(long)]
     dangerously_skip_permissions: bool,
 
-    /// Launch full-screen interactive TUI (experimental)
+    /// Launch legacy line-oriented REPL instead of the default full-screen TUI
     #[arg(long)]
     tui_mode: bool,
 
@@ -260,7 +260,19 @@ async fn main() -> anyhow::Result<()> {
         }
         None => {
             // Default: full-screen TUI
-            cmd_tui(cli.model).await
+            if cli.coordinator {
+                anyhow::bail!(
+                    "--coordinator is only supported by the legacy REPL; pass --tui-mode to use it"
+                );
+            }
+            cmd_tui(TuiStartupOptions {
+                model_override: cli.model,
+                resume: cli.resume,
+                session_id: cli.session_id,
+                dangerously_skip_permissions: cli.dangerously_skip_permissions,
+                mode_arg: cli.mode,
+            })
+            .await
         }
         Some(Commands::Init { force }) => cli::commands::init::cmd_init(force),
         Some(Commands::Auth { status, logout }) => {
@@ -273,10 +285,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Start { port, host, target }) => {
             cli::commands::start::cmd_start(port, host, target).await
         }
-        Some(Commands::Config) => {
-            cli::commands::config_cmd::cmd_config();
-            Ok(())
-        }
+        Some(Commands::Config) => cli::commands::config_cmd::cmd_config(),
         Some(Commands::Doctor) => cli::commands::doctor::cmd_doctor().await,
         Some(Commands::Loop {
             max_iterations,
@@ -290,7 +299,18 @@ async fn main() -> anyhow::Result<()> {
 ///
 /// Loads config, resolves the provider/model/API key, builds the system prompt,
 /// then launches the ratatui interactive TUI with the API pipeline wired up.
-async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
+struct TuiStartupOptions {
+    model_override: Option<String>,
+    resume: bool,
+    session_id: Option<String>,
+    dangerously_skip_permissions: bool,
+    mode_arg: Option<String>,
+}
+
+async fn cmd_tui(options: TuiStartupOptions) -> anyhow::Result<()> {
+    let behavior_mode =
+        parse_initial_behavior_mode(options.mode_arg.as_deref()).map_err(|e| anyhow::anyhow!(e))?;
+
     // Crosslink #797: every configuration-load / provider-resolve /
     // auth-resolve failure path used to print to stderr and return
     // `Ok(())`, giving exit code 0 even on a broken setup. `set -e`
@@ -310,7 +330,7 @@ async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
     })?;
 
     // Auto-detect provider from model name
-    if let Some(ref model) = model_override {
+    if let Some(ref model) = options.model_override {
         let detected = openclaudia::proxy::determine_provider(model, &config);
         if detected != config.proxy.target {
             config.proxy.target = detected;
@@ -341,7 +361,11 @@ async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
         );
     };
 
-    let model = resolve_model_name(model_override, provider.model.clone(), &config.proxy.target);
+    let model = resolve_model_name(
+        options.model_override,
+        provider.model.clone(),
+        &config.proxy.target,
+    );
     // Crosslink #433: a typo'd `proxy.target` now surfaces as an explicit
     // error here, instead of being silently mapped to `OpenAIAdapter` and
     // producing 4xx responses from the upstream that the user can't
@@ -364,28 +388,57 @@ async fn cmd_tui(model_override: Option<String>) -> anyhow::Result<()> {
     )?;
 
     guardrails::configure(&config.guardrails);
-    tui_launch(&config, &model, endpoint, headers, claude_code_token).await
+    tui_launch(TuiLaunchOptions {
+        config: &config,
+        model: &model,
+        endpoint,
+        headers,
+        claude_code_token,
+        behavior_mode: &behavior_mode,
+        resume: options.resume,
+        session_id: options.session_id.as_deref(),
+        dangerously_skip_permissions: options.dangerously_skip_permissions,
+    })
+    .await
 }
 
 /// Build TUI system resources (memory, prompt, hooks, rules) and launch the app.
 ///
 /// Extracted from `cmd_tui` to keep that function under the line limit.
-async fn tui_launch(
-    config: &config::AppConfig,
-    model: &str,
+struct TuiLaunchOptions<'a> {
+    config: &'a config::AppConfig,
+    model: &'a str,
     endpoint: String,
     headers: Vec<(String, String)>,
     claude_code_token: Option<String>,
-) -> anyhow::Result<()> {
+    behavior_mode: &'a openclaudia::modes::BehaviorMode,
+    resume: bool,
+    session_id: Option<&'a str>,
+    dangerously_skip_permissions: bool,
+}
+
+async fn tui_launch(options: TuiLaunchOptions<'_>) -> anyhow::Result<()> {
     use openclaudia::hooks::{load_claude_code_hooks, merge_hooks_config, HookEngine};
     use openclaudia::rules::RulesEngine;
+
+    let TuiLaunchOptions {
+        config,
+        model,
+        endpoint,
+        headers,
+        claude_code_token,
+        behavior_mode,
+        resume,
+        session_id,
+        dangerously_skip_permissions,
+    } = options;
 
     let cwd_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let memory_db: Option<memory::MemoryDb> = open_project_memory_db(&cwd_path);
 
     let cwd = cwd_path.to_string_lossy().to_string();
     let tui_prompt_blocks = prompt::build_system_prompt_blocks(
-        &openclaudia::modes::BehaviorMode::default(),
+        behavior_mode,
         None,
         None,
         memory_db.as_ref(),
@@ -429,7 +482,12 @@ async fn tui_launch(
     );
     app.hook_engine = Some(hook_engine);
     app.memory_db = memory_db.map(std::sync::Arc::new);
+    app.permission_mgr = Some(std::sync::Arc::new(init_permission_manager(
+        config,
+        dangerously_skip_permissions,
+    )));
     app.rules_content = rules_content;
+    app.apply_startup_resume(resume, session_id);
     app.run()
         .await
         .map_err(|e| anyhow::anyhow!("TUI error: {e}"))

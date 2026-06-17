@@ -5,6 +5,11 @@ pub async fn cmd_acp(
     target_override: Option<String>,
     model_override: Option<String>,
 ) -> anyhow::Result<()> {
+    if !config::config_file_exists() {
+        eprintln!("No configuration found. Run 'openclaudia init' first.");
+        anyhow::bail!("no configuration found; run `openclaudia init` first");
+    }
+
     let config = match config::load_config() {
         Ok(mut c) => {
             if let Some(ref target) = target_override {
@@ -13,13 +18,9 @@ pub async fn cmd_acp(
             c
         }
         Err(e) => {
-            if config::config_file_exists() {
-                eprintln!("Failed to parse configuration: {e}");
-                eprintln!("Check your .openclaudia/config.yaml for syntax errors.");
-                anyhow::bail!("invalid configuration: {e}");
-            }
-            eprintln!("No configuration found. Run 'openclaudia init' first.");
-            anyhow::bail!("no configuration found; run `openclaudia init` first");
+            eprintln!("Failed to parse configuration: {e}");
+            eprintln!("Check your .openclaudia/config.yaml for syntax errors.");
+            anyhow::bail!("invalid configuration: {e}");
         }
     };
 

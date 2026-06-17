@@ -132,9 +132,10 @@ pub fn format_fetch_output(title: Option<&str>, url: &str, content: &str) -> Str
 
 /// Fetch a URL and return its body rendered as Markdown.
 ///
-/// Delegates to [`web::fetch_url`], which runs a two-tier fallback:
-/// direct HTTP via the shared client first, then headless Chromium
-/// for pages that need JavaScript or get blocked at the WAF edge.
+/// Delegates to [`web::fetch_url`], which always tries direct HTTP
+/// via the shared client first. Browser-feature builds then fall back
+/// to headless Chromium for pages that need JavaScript or get blocked
+/// at the WAF edge.
 /// HTML responses are converted to Markdown locally via `htmd`;
 /// non-HTML bodies (JSON, plain text, RSS, …) are returned verbatim.
 pub fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool) {
@@ -218,7 +219,8 @@ fn domain_list(args: &HashMap<String, Value>, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Search the web using Tavily or Brave API (or `DuckDuckGo` fallback).
+/// Search the web using browser-backed DuckDuckGo/Bing when compiled
+/// with the `browser` feature, then Tavily or Brave API backends.
 ///
 /// Supports Claude Code-compatible `allowed_domains` / `blocked_domains`
 /// filtering: results from domains matching `blocked_domains` are
@@ -240,8 +242,9 @@ pub fn execute_web_search(args: &HashMap<String, Value>) -> (String, bool) {
     let allowed = domain_list(args, "allowed_domains");
     let blocked = domain_list(args, "blocked_domains");
 
-    // Load web config from environment
-    // Falls back to DuckDuckGo with headless browser if no API keys configured
+    // Load web config from environment. Browser-feature builds try
+    // DuckDuckGo/Bing browser scraping before configured API backends;
+    // no-browser builds fall through to the API backends.
     let config = WebConfig::from_env();
 
     // Shared runtime; never construct a fresh one per call (crosslink #368).

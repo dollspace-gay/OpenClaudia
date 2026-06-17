@@ -665,19 +665,8 @@ impl App {
         self.overlay = Some(ActiveOverlay::Help(super::components::HelpOverlay::new()));
     }
 
-    /// Resume the session whose id equals or prefix-matches `id`.
-    /// Shared between the log-selector overlay (exact id) and the
-    /// `/load` / `/continue` text commands (prefix match). No-op
-    /// with a user-visible system message when no match is found.
-    fn resume_session_by_id(&mut self, id: &str) {
-        let sessions = list_sessions();
-        let Some(loaded) = sessions.iter().find(|s| s.id.starts_with(id)).cloned() else {
-            self.messages.add(DisplayMessage::error(format!(
-                "No session found with id prefix '{id}'.",
-            )));
-            return;
-        };
-        self.chat_session.clone_from(&loaded);
+    fn apply_loaded_session(&mut self, loaded: &TuiSession) {
+        self.chat_session.clone_from(loaded);
         self.session_messages.clone_from(&loaded.messages);
         self.model.clone_from(&loaded.model);
         self.provider.clone_from(&loaded.provider);
@@ -711,6 +700,46 @@ impl App {
                 content: content.to_string(),
             });
         }
+    }
+
+    /// Resume the session whose id equals or prefix-matches `id`.
+    /// Shared between the log-selector overlay (exact id) and the
+    /// `/load` / `/continue` text commands (prefix match). No-op
+    /// with a user-visible system message when no match is found.
+    fn resume_session_by_id(&mut self, id: &str) {
+        let sessions = list_sessions();
+        let Some(loaded) = sessions.into_iter().find(|s| s.id.starts_with(id)) else {
+            self.messages.add(DisplayMessage::error(format!(
+                "No session found with id prefix '{id}'.",
+            )));
+            return;
+        };
+        self.apply_loaded_session(&loaded);
+    }
+
+    /// Apply top-level `--resume` / `--session-id` startup options.
+    ///
+    /// The default full-screen TUI is the primary binary mode, so these
+    /// CLI flags must affect it instead of silently applying only to the
+    /// legacy line REPL. A specific `--session-id` takes precedence over
+    /// `--resume`; otherwise `--resume` loads the most recently updated
+    /// saved TUI session.
+    pub fn apply_startup_resume(&mut self, resume: bool, session_id: Option<&str>) {
+        if let Some(id) = session_id {
+            self.resume_session_by_id(id);
+            return;
+        }
+
+        if !resume {
+            return;
+        }
+
+        let Some(loaded) = list_sessions().into_iter().next() else {
+            self.messages
+                .add(DisplayMessage::system("No saved sessions to resume."));
+            return;
+        };
+        self.apply_loaded_session(&loaded);
     }
 
     /// Open the log-selector (session picker) overlay seeded with
@@ -3205,7 +3234,10 @@ async fn handle_turn_result(
 #[cfg(test)]
 mod tests {
     use super::{compile_file_ref_regex, expand_file_refs};
-    use super::{current_exe_command, git_bin, ApiClient, App, AppEvent, SpawnTarget};
+    use super::{
+        current_exe_command, git_bin, save_session, ApiClient, App, AppEvent, SpawnTarget,
+        TuiSession,
+    };
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
@@ -3632,6 +3664,68 @@ mod tests {
                 None => std::env::remove_var(self.key),
             }
         }
+    }
+
+    #[test]
+    fn startup_resume_loads_most_recent_saved_session() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _guard = EnvGuard::set("XDG_DATA_HOME", tmp.path());
+
+        let mut older = TuiSession::new("old-model", "old-provider");
+        older.id = "older-session".to_string();
+        older.updated_at = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .expect("valid timestamp")
+            .with_timezone(&chrono::Utc);
+        older
+            .messages
+            .push(serde_json::json!({"role": "user", "content": "older"}));
+
+        let mut newer = TuiSession::new("new-model", "new-provider");
+        newer.id = "newer-session".to_string();
+        newer.updated_at = chrono::DateTime::parse_from_rfc3339("2026-01-02T00:00:00Z")
+            .expect("valid timestamp")
+            .with_timezone(&chrono::Utc);
+        newer
+            .messages
+            .push(serde_json::json!({"role": "user", "content": "newer"}));
+
+        save_session(&older).expect("older session should save");
+        save_session(&newer).expect("newer session should save");
+
+        let mut app = App::new("initial-model", "initial-provider");
+        app.apply_startup_resume(true, None);
+
+        assert_eq!(app.chat_session.id, "newer-session");
+        assert_eq!(app.model, "new-model");
+        assert_eq!(app.provider, "new-provider");
+        assert_eq!(app.session_messages[0]["content"], "newer");
+    }
+
+    #[test]
+    fn startup_session_id_takes_precedence_over_resume() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _guard = EnvGuard::set("XDG_DATA_HOME", tmp.path());
+
+        let mut older = TuiSession::new("old-model", "old-provider");
+        older.id = "older-session".to_string();
+        older.updated_at = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .expect("valid timestamp")
+            .with_timezone(&chrono::Utc);
+
+        let mut newer = TuiSession::new("new-model", "new-provider");
+        newer.id = "newer-session".to_string();
+        newer.updated_at = chrono::DateTime::parse_from_rfc3339("2026-01-02T00:00:00Z")
+            .expect("valid timestamp")
+            .with_timezone(&chrono::Utc);
+
+        save_session(&older).expect("older session should save");
+        save_session(&newer).expect("newer session should save");
+
+        let mut app = App::new("initial-model", "initial-provider");
+        app.apply_startup_resume(true, Some("older"));
+
+        assert_eq!(app.chat_session.id, "older-session");
+        assert_eq!(app.model, "old-model");
     }
 
     #[test]

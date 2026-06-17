@@ -26,8 +26,11 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 
-use openclaudia::config::{validate_base_url, AppConfig, PermissionsConfig};
+use openclaudia::config::{
+    validate_base_url, validate_provider_base_url, AppConfig, PermissionsConfig,
+};
 use openclaudia::providers::api_key::{ApiKey, ApiKeyError};
+use serde_yaml::Value as YamlValue;
 
 // ───────────────────────────────────────────────────────────────────────────
 // Section A — validate_base_url adversarial inputs
@@ -71,6 +74,35 @@ fn validate_base_url_refuses_loopback_and_private_addresses() {
             "{url:?} must be refused as SSRF; got {outcome:?}"
         );
     }
+}
+
+#[test]
+fn provider_base_url_validation_allows_local_provider_loopback_urls_only() {
+    for provider in [
+        "ollama",
+        "local",
+        "lmstudio",
+        "localai",
+        "text-generation-webui",
+    ] {
+        assert!(
+            validate_provider_base_url(provider, "http://localhost:11434").is_ok(),
+            "local provider {provider} must allow localhost base_url"
+        );
+        assert!(
+            validate_provider_base_url(provider, "http://10.0.0.5:1234/v1").is_ok(),
+            "local provider {provider} must allow private-network base_url"
+        );
+    }
+
+    assert!(
+        validate_provider_base_url("anthropic", "http://localhost:11434").is_err(),
+        "remote providers must keep SSRF guard for localhost"
+    );
+    assert!(
+        validate_provider_base_url("ollama", "file:///tmp/socket").is_err(),
+        "local provider validation must still reject non-http schemes"
+    );
 }
 
 #[test]
@@ -344,4 +376,49 @@ providers:
     let cfg: AppConfig = serde_yaml::from_str(yaml).expect("yaml ok");
     let active = cfg.active_provider().expect("active provider must resolve");
     assert_eq!(active.base_url, "https://api.openai.com");
+}
+
+fn readme_config_file_example_yaml() -> &'static str {
+    include_str!("../README.md")
+        .split_once("### Config File")
+        .expect("README must have Config File section")
+        .1
+        .split_once("```yaml")
+        .expect("Config File section must contain a yaml block")
+        .1
+        .split_once("```")
+        .expect("Config File yaml block must be closed")
+        .0
+}
+
+#[test]
+fn readme_config_file_example_uses_real_schema_and_valid_provider_urls() {
+    let yaml = readme_config_file_example_yaml();
+    let root: YamlValue = serde_yaml::from_str(yaml).expect("README config sample is valid YAML");
+    let mapping = root.as_mapping().expect("README config sample root is map");
+    assert!(
+        !mapping.contains_key(YamlValue::String("thinking".to_string())),
+        "README must not document ignored top-level thinking config"
+    );
+
+    let cfg: AppConfig = serde_yaml::from_str(yaml).expect("README config sample deserializes");
+    assert_eq!(
+        cfg.session.max_turns, 0,
+        "README sample must show default unlimited max_turns"
+    );
+    assert_eq!(
+        cfg.providers["anthropic"].thinking.budget_tokens,
+        Some(10_000),
+        "README sample must place Anthropic thinking under providers.anthropic"
+    );
+    assert_eq!(
+        cfg.providers["openai"].thinking.reasoning_effort.as_deref(),
+        Some("medium"),
+        "README sample must place OpenAI reasoning effort under providers.openai"
+    );
+
+    for (name, provider) in &cfg.providers {
+        validate_provider_base_url(name, &provider.base_url)
+            .unwrap_or_else(|err| panic!("README provider {name:?} base_url must validate: {err}"));
+    }
 }

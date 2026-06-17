@@ -79,7 +79,9 @@ session:
   timeout_minutes: 30
   persist_path: .openclaudia/session
 
-# Keyboard shortcuts - map key combinations to actions
+# Legacy line REPL keybindings (`openclaudia --tui-mode`)
+# Map key combinations to actions. The default full-screen TUI currently
+# uses its built-in shortcuts; type /help there to view them.
 # Available actions: new_session, list_sessions, export, copy_response,
 #   editor, models, toggle_mode, cancel, status, help, clear, exit, undo, redo, compact
 # Set any key to "none" to disable it

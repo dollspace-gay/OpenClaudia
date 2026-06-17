@@ -1,13 +1,14 @@
 //! Web tools for `OpenClaudia`
 //!
 //! Provides web access capabilities for agents:
-//! - `web_fetch`: Fetch URL content via a two-tier fallback —
-//!   direct HTTP first, then headless Chromium for JS-heavy or
-//!   Cloudflare-fronted pages. HTML responses are converted to
+//! - `web_fetch`: Fetch URL content via direct HTTP, then headless
+//!   Chromium for JS-heavy or Cloudflare-fronted pages when the
+//!   `browser` feature is compiled. HTML responses are converted to
 //!   Markdown locally via `htmd` (no third-party render service).
-//! - `web_search`: Search the web via Tavily, Brave API, or
-//!   `DuckDuckGo` (headless browser).
-//! - `web_browser`: Full browser automation via headless Chromium.
+//! - `web_search`: Search the web via Tavily, Brave API, or browser
+//!   scraping (`DuckDuckGo`/Bing) when the `browser` feature is compiled.
+//! - `web_browser`: Full browser automation via headless Chromium in
+//!   `browser` builds.
 
 use futures::StreamExt;
 use reqwest::redirect;
@@ -701,7 +702,8 @@ struct BraveResult {
     description: String,
 }
 
-/// Search the web using `DuckDuckGo` (default) or configured API provider
+/// Search the web using browser-backed `DuckDuckGo`/Bing when compiled
+/// with the `browser` feature, then configured API providers.
 ///
 /// # Errors
 ///
@@ -711,10 +713,9 @@ pub async fn search_web(
     config: &WebConfig,
     limit: usize,
 ) -> Result<Vec<SearchResult>, String> {
-    // Tier 1 — DuckDuckGo via headless Chromium (free, no API key).
-    // DDG aggressively flags headless browsers and serves a CAPTCHA;
-    // we detect that case inside `search_duckduckgo` and surface a
-    // specific "bot-blocked" error so the chain knows to keep trying.
+    // Tier 1 — DuckDuckGo via headless Chromium in browser builds
+    // (free, no API key). No-browser builds return a feature-gated
+    // error and fall through to the API tiers.
     let ddg_error = match search_duckduckgo(query, limit) {
         Ok(results) => return Ok(results),
         Err(e) => {
@@ -723,9 +724,9 @@ pub async fn search_web(
         }
     };
 
-    // Tier 2 — Bing HTML scrape via headless Chromium. Different
-    // bot-detection stack from DDG; sometimes lets the browser
-    // through where DDG doesn't.
+    // Tier 2 — Bing HTML scrape via headless Chromium in browser
+    // builds. No-browser builds return a feature-gated error and
+    // fall through to the API tiers.
     let bing_error = match search_bing(query, limit) {
         Ok(results) if !results.is_empty() => return Ok(results),
         Ok(_) => "Bing returned zero results (likely bot-challenged)".to_string(),

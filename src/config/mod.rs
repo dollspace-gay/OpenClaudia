@@ -36,7 +36,10 @@ pub use crate::keybindings::{
 pub use memory::MemoryConfig;
 pub use path_validation::{validate_persist_path, PathValidationError, ALLOW_OUT_OF_ROOT_ENV};
 pub use permissions::PermissionsConfig;
-pub use provider::{adaptive_budget_for, validate_base_url, ProviderConfig, ThinkingConfig};
+pub use provider::{
+    adaptive_budget_for, validate_base_url, validate_provider_base_url, ProviderConfig,
+    ThinkingConfig,
+};
 pub use proxy::ProxyConfig;
 pub use session::{SessionConfig, TokenTrackingConfig};
 pub use stop_conditions::{StopConditionsConfig, StopReason, TokenTotals};
@@ -258,7 +261,7 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
     names.sort();
     for name in names {
         let provider = &config.providers[name];
-        if let Err(e) = provider::validate_base_url(&provider.base_url) {
+        if let Err(e) = provider::validate_provider_base_url(name, &provider.base_url) {
             return Err(ConfigError::Message(format!(
                 "provider '{name}' has invalid base_url: {e}"
             )));

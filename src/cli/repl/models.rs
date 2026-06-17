@@ -84,3 +84,83 @@ pub async fn fetch_dynamic_models(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::get_available_models;
+
+    fn documented_models_for_heading(readme: &str, heading: &str) -> Vec<String> {
+        let supported_models = readme
+            .split_once("## Supported Models")
+            .expect("README must document supported models")
+            .1
+            .split_once("## Behavioral Modes")
+            .expect("supported models section must end before behavioral modes")
+            .0;
+        let heading_marker = format!("### {heading}");
+        let section = supported_models
+            .split_once(&heading_marker)
+            .unwrap_or_else(|| panic!("README missing supported-model heading {heading:?}"))
+            .1
+            .split("### ")
+            .next()
+            .expect("provider model section");
+
+        section
+            .lines()
+            .flat_map(|line| {
+                let mut models = Vec::new();
+                let mut rest = line;
+                while let Some((_, after_open)) = rest.split_once('`') {
+                    let Some((model, after_close)) = after_open.split_once('`') else {
+                        break;
+                    };
+                    if !model.is_empty() {
+                        models.push(model.to_string());
+                    }
+                    rest = after_close;
+                }
+                models
+            })
+            .collect()
+    }
+
+    #[test]
+    fn readme_supported_models_match_static_repl_model_lists() {
+        let readme = include_str!("../../../README.md");
+
+        for (heading, provider) in [
+            ("Anthropic", "anthropic"),
+            ("OpenAI", "openai"),
+            ("Google Gemini", "google"),
+            ("DeepSeek", "deepseek"),
+            ("Qwen", "qwen"),
+            ("Z.AI (GLM)", "zai"),
+        ] {
+            let documented = documented_models_for_heading(readme, heading);
+            let static_models: Vec<String> = get_available_models(provider)
+                .into_iter()
+                .map(str::to_string)
+                .collect();
+            assert_eq!(
+                documented, static_models,
+                "README supported models for {heading} must match get_available_models({provider:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn static_model_lists_do_not_contain_duplicates() {
+        for provider in ["anthropic", "openai", "google", "deepseek", "qwen", "zai"] {
+            let models = get_available_models(provider);
+            let unique: BTreeSet<_> = models.iter().copied().collect();
+            assert_eq!(
+                models.len(),
+                unique.len(),
+                "static model list for {provider} must not contain duplicates"
+            );
+        }
+    }
+}

@@ -14,7 +14,7 @@ OpenClaudia is a Rust-based CLI that transforms any LLM into an agentic coding a
 - **Auto-Detect Provider** — Pass `-m gemini-2.5-flash` and the provider is detected automatically
 - **30+ Agentic Tools** — Bash, file ops, LSP, web search, notebooks, task tracking, plan mode, worktrees, cron scheduling, MCP resources
 - **Tool Execution Loop** — Multi-turn tool calling with automatic result feedback (works across all providers)
-- **Web Search** — DuckDuckGo (free, no API key), Tavily, or Brave APIs
+- **Web Search** — Browser-feature builds support no-key DuckDuckGo/Bing scraping; Tavily or Brave APIs work in all builds
 - **Auto-Learning Memory** — Automatically captures coding patterns, error resolutions, file relationships, and user preferences across sessions
 - **Background Shells** — Run long-running processes, check output, and kill them on demand
 - **Thinking Mode** — Extended reasoning for Anthropic, OpenAI o1/o3, Gemini 2.5, DeepSeek R1, Qwen QwQ, GLM
@@ -25,7 +25,7 @@ OpenClaudia is a Rust-based CLI that transforms any LLM into an agentic coding a
 - **Permissions** — Granular tool-level allow/deny rules with glob patterns
 - **Task Management** — Built-in task tracking with dependencies and status workflow
 - **LSP Integration** — Language Server Protocol support for go-to-definition, find-references, hover, and more
-- **Subagent System** — Spawn autonomous agents for parallel work with coordinator mode
+- **Subagent System** — Spawn autonomous agents from the agent loop; coordinator infrastructure is experimental and not wired into the default TUI yet
 - **ACP Server** — Agent Control Protocol server for agent interoperability via stdin/stdout
 - **Git Worktrees** — Create, manage, and switch between isolated git worktrees
 - **Cron Scheduling** — Create, list, and delete recurring scheduled jobs
@@ -46,11 +46,6 @@ OpenClaudia is a Rust-based CLI that transforms any LLM into an agentic coding a
 - **Git Bash** (Windows only) — Comes with [Git for Windows](https://git-scm.com/download/win)
   - OpenClaudia uses Git Bash on Windows for Unix command compatibility
   - Ensure Git is in your PATH
-
-### Optional
-
-- **Chainlink** — Task tracking CLI for issue management
-  - Install from: https://github.com/dollspace-gay/chainlink
 
 ## Installation
 
@@ -122,12 +117,23 @@ proxy:
 providers:
   anthropic:
     base_url: https://api.anthropic.com
+    thinking:
+      enabled: false
+      budget_tokens: 10000        # Anthropic thinking budget
   openai:
     base_url: https://api.openai.com
+    thinking:
+      reasoning_effort: "medium"  # OpenAI o1/o3/o4: low, medium, high
   google:
     base_url: https://generativelanguage.googleapis.com
+    thinking:
+      budget_tokens: 10000        # Google Gemini 2.5 thinking budget
+  zai:
+    base_url: https://api.z.ai/api/coding/paas/v4
   deepseek:
     base_url: https://api.deepseek.com
+  qwen:
+    base_url: https://dashscope.aliyuncs.com/compatible-mode
   # Ollama for local LLM inference
   ollama:
     base_url: http://localhost:11434
@@ -135,16 +141,10 @@ providers:
   local:
     base_url: http://localhost:1234/v1
 
-# Thinking/reasoning mode configuration
-thinking:
-  enabled: false
-  budget_tokens: 10000        # Anthropic, Google Gemini 2.5
-  reasoning_effort: "medium"  # OpenAI o1/o3: low, medium, high
-
 session:
   timeout_minutes: 30
   persist_path: .openclaudia/session
-  max_turns: 25  # 0 = unlimited agentic loop iterations
+  max_turns: 0  # 0 = unlimited agentic loop iterations; set nonzero to cap tool loops
 
 # Verification-Driven Development (VDD) - Adversarial code review
 # vdd:
@@ -156,10 +156,14 @@ session:
 
 # Granular tool permissions
 # permissions:
-#   denied_tools: ["bash"]
-#   denied_commands: ["rm -rf /"]
+#   enabled: true
+#   default_allow:
+#     - "git status"
+#     - "src/**"
+#   mcp:
+#     filesystem: ["read_file", "list_directory"]
 
-# Customize keybindings
+# Legacy line REPL keybindings (`openclaudia --tui-mode`)
 keybindings:
   ctrl-x n: new_session
   ctrl-x x: export
@@ -170,13 +174,13 @@ keybindings:
 ## CLI Commands
 
 ```bash
-openclaudia                    # Start interactive chat (default)
+openclaudia                    # Start full-screen interactive TUI (default)
 openclaudia -m <model>         # Use specific model (auto-detects provider)
 openclaudia -v                 # Verbose logging
 openclaudia --resume           # Resume last session
 openclaudia --session-id <id>  # Resume specific session
-openclaudia --coordinator      # Multi-agent coordinator mode
-openclaudia --tui-mode         # Full-screen TUI (experimental)
+openclaudia --coordinator --tui-mode  # Legacy REPL coordinator prompt mode
+openclaudia --tui-mode         # Legacy line-oriented REPL
 openclaudia --mode <preset>    # Start with a behavioral mode preset
 
 openclaudia init               # Initialize config in current directory
@@ -194,125 +198,79 @@ openclaudia acp                # Start ACP server on stdin/stdout
 openclaudia acp -m <model>     # ACP with specific model
 
 openclaudia loop               # Start iteration mode with Stop hooks
-openclaudia loop -m 10         # Max 10 iterations
+openclaudia loop -n 10         # Max 10 iterations
 
 openclaudia config             # Show current configuration
 openclaudia doctor             # Check connectivity and API keys
 ```
 
-## Slash Commands (In Chat)
+## Slash Commands (Default TUI)
 
-### Navigation & Sessions
+The default full-screen TUI intentionally exposes a focused slash-command set. The legacy line-oriented REPL (`openclaudia --tui-mode`) has additional commands; type `/help` there for that registry.
+
+### TUI Core
 
 | Command | Description |
 |---------|-------------|
-| `/help`, `/?` | Show help message |
-| `/new`, `/clear` | Start new conversation |
+| `/help`, `?` | Show the TUI help overlay |
+| `/clear` | Clear the visible transcript |
+| `/exit`, `/quit` | Exit the TUI |
+| `/status` | Show model, provider, effort, and token estimate |
+| `/mode` | Toggle between Build and Plan modes |
+| `/effort [low\|medium\|high]` | Set or cycle effort level |
+
+### TUI Sessions
+
+| Command | Description |
+|---------|-------------|
 | `/sessions`, `/list` | List saved sessions |
-| `/continue <n>`, `/load <n>`, `/resume <n>` | Load session by number |
+| `/resume`, `/continue` | Open the session picker |
+| `/load <id>`, `/continue <id>` | Resume a saved session by ID prefix |
+| `/rename <title>` | Rename the current session |
 | `/export` | Export conversation to markdown |
-| `/history` | Show all messages in current session |
 | `/undo` | Undo last message exchange |
-| `/redo` | Redo last undone exchange |
-| `/exit`, `/quit`, `/q` | Exit the chat |
+| `/redo` | Redo last undone message exchange |
+| `/rewind [N]` | Show turns or rewind the last N turns |
 
-### Model & Configuration
-
-| Command | Description |
-|---------|-------------|
-| `/model` | Show current model |
-| `/models` | List available models |
-| `/model <name>` | Switch to different model mid-session |
-| `/config` | Show current configuration |
-| `/config path` | Show config file locations |
-| `/connect`, `/auth` | Configure API keys |
-| `/login` | Check authentication status |
-| `/effort [low\|medium\|high]` | Set effort level |
-| `/mode` | Show current behavioral mode and list presets |
-| `/mode <preset>` | Switch behavioral mode (create, extend, safe, refactor, explore, debug, methodical, director) |
-| `/mode <preset> +<modifier>` | Switch mode with additional modifiers (bold, debug, methodical, director, readonly, context-pacing) |
-| `/plan` | Toggle Build/Plan mode |
-| `/vim` | Toggle vim mode |
-
-### Session Info
+### TUI Diagnostics
 
 | Command | Description |
 |---------|-------------|
-| `/status`, `/info` | Show session status |
-| `/rename <title>` | Rename current session |
 | `/cost` | Show session cost estimate |
-| `/context` | Show context window usage breakdown |
-| `/compact`, `/summarize` | Summarize old messages to save context |
-| `/version`, `/v`, `/about` | Show version and system info |
-| `/debug` | Show internal state (paths, env, config) |
+| `/context` | Show context usage breakdown |
+| `/files [dir]` | List files in the current or given directory |
+| `/diff` | Show git diff summary |
+| `/review` | Show a truncated git diff for review |
 | `/doctor` | Run inline diagnostics |
+| `/init` | Initialize project config if absent |
 
-### Project & Development
-
-| Command | Description |
-|---------|-------------|
-| `/review` | Review uncommitted git changes |
-| `/commit` | Auto-commit with generated message |
-| `/commit-push-pr` | Commit, push, and create PR |
-| `/find <query>`, `/f <query>` | Fuzzy-find files in project |
-| `/init` | Initialize project config |
-| `/editor`, `/edit`, `/e` | Open external editor for long messages |
-| `/copy`, `/yank`, `/y` | Copy last response to clipboard |
-
-### Display
+### TUI Skills
 
 | Command | Description |
 |---------|-------------|
-| `/theme [name]` | List or switch color themes |
-| `/keys`, `/keybindings` | Show keybindings |
+| `/skill`, `/skills` | List available skills |
+| `/skill <name>` | Invoke a skill as the next prompt |
+| `/<skill-name>` | Invoke a skill by name |
 
-### Plugins & Skills
-
-| Command | Description |
-|---------|-------------|
-| `/plugin` | List installed plugins |
-| `/plugin install <name>` | Install a plugin |
-| `/plugin enable/disable <name>` | Enable or disable a plugin |
-| `/plugin marketplace list` | List marketplace sources |
-| `/skill <name>` | Load and invoke a skill |
-| `/<plugin>:<command>` | Run a plugin command |
-
-### Shell & Files
+### TUI Shell & Files
 
 | Command | Description |
 |---------|-------------|
 | `!<command>` | Run shell command directly |
 | `@<file>` | Attach file to prompt |
 
-### Memory & Activity Commands
-
-| Command | Description |
-|---------|-------------|
-| `/memory` | Show auto-learning statistics |
-| `/memory patterns` | Show learned coding patterns |
-| `/memory errors <file>` | Show known error patterns for a file |
-| `/memory prefs` | Show learned user preferences |
-| `/memory files <file>` | Show file co-edit relationships |
-| `/memory reset` | Reset all learned data (with confirmation) |
-| `/activity` | Show recent session activities |
-| `/activity files` | Show recently modified files |
-| `/activity tools` | Show recent tool usage |
-
-## Keyboard Shortcuts
+## Keyboard Shortcuts (Default TUI)
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl-X N` | New session |
-| `Ctrl-X L` | List sessions |
-| `Ctrl-X X` | Export conversation |
-| `Ctrl-X Y` | Copy last response |
-| `Ctrl-X E` | Open external editor |
-| `Ctrl-X M` | Show models |
-| `Ctrl-X S` | Show status |
-| `Ctrl-X H` | Show help |
-| `Tab` | Toggle Build/Plan mode |
-| `Escape` | Cancel current response |
-| `F2` | Show models |
+| `Enter` | Send message |
+| `Backspace`, `Delete` | Edit input |
+| `Left`, `Right`, `Home`, `End` | Move input cursor |
+| `Up`, `Down`, `PageUp`, `PageDown` | Scroll transcript |
+| `Esc` | Close overlays, dismiss prompts, or cancel streaming |
+| `Ctrl-C` | Cancel current turn or exit when idle |
+
+The `keybindings:` config map customizes the legacy line-oriented REPL (`openclaudia --tui-mode`). The default full-screen TUI currently uses the shortcuts above.
 
 ## Available Tools
 
@@ -326,12 +284,14 @@ openclaudia doctor             # Check connectivity and API keys
 | `read_file` | Read file contents (supports images, PDFs, Jupyter notebooks) with optional offset/limit |
 | `write_file` | Create or overwrite files |
 | `edit_file` | Targeted string replacement edits (requires reading file first) |
-| `list_files` | List directory contents with glob patterns |
+| `list_files` | List directory contents |
+| `glob` | Find files by glob pattern |
+| `grep` | Search file contents by regex |
 | `notebook_edit` | Edit Jupyter notebook cells (replace, insert, delete) |
 | `web_fetch` | Fetch web pages as markdown |
-| `web_search` | Search the web (DuckDuckGo free, or Tavily/Brave APIs) |
-| `web_browser` | Full headless browser for JavaScript-heavy pages |
-| `chainlink` | Issue and task tracking via Chainlink CLI |
+| `web_search` | Search the web; browser builds include no-key DuckDuckGo/Bing scraping, and Tavily/Brave APIs work in all builds |
+| `web_browser` | Full headless browser for JavaScript-heavy pages (default `browser` feature) |
+| `crosslink` | Issue tracking and cross-session work memory via the embedded Crosslink library |
 
 ### Code Intelligence
 
@@ -350,8 +310,10 @@ openclaudia doctor             # Check connectivity and API keys
 | `task_update` | Update task status (pending/in_progress/completed), add dependencies |
 | `task_get` | Get full details of a task by ID |
 | `task_list` | List all tasks with status summary |
-| `todo_write` | Simple to-do list (fallback when Chainlink unavailable) |
+| `todo_write` | Simple to-do list (fallback when Crosslink issue tracking is unavailable) |
 | `todo_read` | Read current to-do list |
+| `skill` | Load a reusable prompt skill by name |
+| `tool_search` | Fetch deferred tool schemas by name or keyword |
 
 ### Git Worktree Tools
 
@@ -385,7 +347,7 @@ openclaudia doctor             # Check connectivity and API keys
 - `claude-sonnet-4-20250514`, `claude-opus-4-20250514` — Legacy
 
 ### OpenAI
-- `gpt-5.2`, `gpt-5.2-codex`, `gpt-5.2-pro` — Latest (Dec 2025)
+- `gpt-5.2`, `gpt-5.2-codex` — Latest (Dec 2025)
 - `gpt-5`, `gpt-5-mini`, `gpt-5-nano` — GPT-5 family (Aug 2025)
 - `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano` — Non-reasoning, 1M context
 - `o3`, `o4-mini` — Reasoning models
@@ -492,7 +454,7 @@ vdd:
 - **Advisory** — Single adversary pass after each response. Findings are displayed and injected into context for the next turn.
 - **Blocking** — Full adversarial loop. The builder must revise until the adversary's findings converge to false positives (confabulation threshold).
 
-Findings include CWE classifications, severity levels (CRITICAL/HIGH/MEDIUM/LOW/INFO), and can automatically create Chainlink issues for tracking.
+Findings include CWE classifications, severity levels (CRITICAL/HIGH/MEDIUM/LOW/INFO), and can automatically create Crosslink issues for tracking.
 
 ## Hooks
 
@@ -562,7 +524,7 @@ cargo build
 # Release build
 cargo build --release
 
-# Without browser feature (smaller binary, no headless Chrome)
+# Without browser feature (smaller binary; web_search requires Tavily or Brave API keys)
 cargo build --release --no-default-features
 
 # Run all tests
@@ -594,7 +556,7 @@ OpenClaudia is built with:
 - **tracing** — Structured logging
 
 Default features (can be disabled with `--no-default-features`):
-- **headless_chrome** — Headless browser for DuckDuckGo web search
+- **headless_chrome** — Headless browser fallback for web_fetch and no-key DuckDuckGo/Bing web search
 - **scraper** — HTML parsing for search result extraction
 
 ## License

@@ -1,7 +1,7 @@
 use openclaudia::{
     config,
     mcp::McpManager,
-    plugins::{PluginError, PluginManager},
+    plugins::PluginManager,
     providers::{get_adapter, ProviderAdapter, ProviderError},
     rules::RulesEngine,
     session::SessionManager,
@@ -23,42 +23,61 @@ fn lookup_doctor_adapter(
 pub async fn cmd_doctor() -> anyhow::Result<()> {
     println!("OpenClaudia Doctor\n");
 
+    let mut has_failures = false;
+
     // Check configuration
     print!("Configuration... ");
-    match config::load_config() {
-        Ok(config) => {
-            println!("OK");
+    let loaded_config = if config::config_file_exists() {
+        match config::load_config() {
+            Ok(config) => {
+                println!("OK");
 
-            for (name, provider) in &config.providers {
-                print!("  {name} API key... ");
-                if provider.api_key.is_some() {
-                    println!("configured");
-                } else {
-                    println!("NOT SET");
+                for (name, provider) in &config.providers {
+                    print!("  {name} API key... ");
+                    if provider.api_key.is_some() {
+                        println!("configured");
+                    } else {
+                        println!("NOT SET");
+                    }
+                    if let Some(model) = &provider.model {
+                        println!("    Default model: {model}");
+                    }
                 }
-                if let Some(model) = &provider.model {
-                    println!("    Default model: {model}");
-                }
+
+                Some(config)
             }
-
-            print!("\nConnectivity to {}... ", config.proxy.target);
-            if let Some(provider) = config.active_provider() {
-                let client = reqwest::Client::new();
-                match client.get(&provider.base_url).send().await {
-                    Ok(_) => println!("OK"),
-                    Err(e) => println!("FAILED: {e}"),
-                }
-            } else {
-                println!("SKIPPED (no provider configured)");
+            Err(e) => {
+                println!("FAILED: {e}");
+                println!(
+                    "\nConfig file exists but has errors. Check your .openclaudia/config.yaml for syntax errors."
+                );
+                has_failures = true;
+                None
             }
         }
-        Err(e) => {
-            println!("FAILED: {e}");
-            if config::config_file_exists() {
-                println!("\nConfig file exists but has errors. Check your .openclaudia/config.yaml for syntax errors.");
-            } else {
-                println!("\nRun 'openclaudia init' to create a configuration file.");
+    } else {
+        println!("MISSING (No configuration found)");
+        println!("\nRun 'openclaudia init' to create a configuration file.");
+        has_failures = true;
+        None
+    };
+
+    if let Some(config) = &loaded_config {
+        print!("\nConnectivity to {}... ", config.proxy.target);
+        if let Some(provider) = config.active_provider() {
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()?;
+            match client.get(&provider.base_url).send().await {
+                Ok(_) => println!("OK"),
+                Err(e) => {
+                    println!("FAILED: {e}");
+                    has_failures = true;
+                }
             }
+        } else {
+            println!("FAILED (no provider configured)");
+            has_failures = true;
         }
     }
 
@@ -172,12 +191,10 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
         for err in errors {
             println!("  Error: {err}");
         }
+        has_failures = true;
     } else {
         println!("none found");
     }
-
-    let not_found_err = PluginError::NotFound("test-plugin".to_string());
-    info!("Plugin error test: {}", not_found_err);
 
     // Test MCP manager functionality
     print!("\nMCP Manager... ");
@@ -197,72 +214,38 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
         println!("  Server: {name} (list_changed: {supports_list_changed})");
     }
 
-    match mcp_manager
-        .call_tool("test_tool", serde_json::json!({}))
-        .await
-    {
-        Ok(result) => println!("  Tool result: {result}"),
-        Err(e) => info!("  Expected error (no server): {}", e),
-    }
-
-    match mcp_manager
-        .call_tool_with_timeout("test_tool", serde_json::json!({}), Duration::from_secs(1))
-        .await
-    {
-        Ok(result) => println!("  Timeout tool result: {result}"),
-        Err(e) => info!("  Expected timeout error: {}", e),
-    }
-
-    let _ = mcp_manager.disconnect("nonexistent").await;
-    let _ = mcp_manager.disconnect_all().await;
-
     // Check session state
     print!("\nSession... ");
-    let mut session_manager = SessionManager::new(".openclaudia/session");
-    match session_manager.get_handoff_context() {
-        Ok(Some(handoff)) => println!("found handoff context ({} bytes)", handoff.len()),
-        Ok(None) => {}
-        Err(err) => println!("handoff unreadable: {err}"),
-    }
+    let session_dir = PathBuf::from(".openclaudia/session");
+    if session_dir.exists() {
+        let session_manager = SessionManager::new(&session_dir);
+        match session_manager.get_handoff_context() {
+            Ok(Some(handoff)) => println!("found handoff context ({} bytes)", handoff.len()),
+            Ok(None) => {}
+            Err(err) => {
+                println!("handoff unreadable: {err}");
+                has_failures = true;
+            }
+        }
 
-    let sessions = session_manager.list_sessions();
-    if sessions.is_empty() {
-        println!("  No previous sessions");
+        let sessions = session_manager.list_sessions();
+        if sessions.is_empty() {
+            println!("  No previous sessions");
+        } else {
+            println!("  Previous sessions: {}", sessions.len());
+            for session in sessions.iter().take(3) {
+                println!(
+                    "    - {} ({:?}, {} requests)",
+                    session.id, session.mode, session.request_count
+                );
+            }
+            if sessions.len() > 10 {
+                println!("  Note: Consider running cleanup (>10 sessions stored)");
+            }
+        }
     } else {
-        println!("  Previous sessions: {}", sessions.len());
-        for session in sessions.iter().take(3) {
-            println!(
-                "    - {} ({:?}, {} requests)",
-                session.id, session.mode, session.request_count
-            );
-        }
-        if sessions.len() > 10 {
-            println!("  Note: Consider running cleanup (>10 sessions stored)");
-            session_manager.cleanup_old_sessions(10);
-        }
+        println!("  No previous sessions");
     }
-
-    let session = session_manager.start_initializer();
-    let session_id = session.id.clone();
-    info!("Test session created: {}", session_id);
-
-    if let Some(session) = session_manager.get_session_mut() {
-        session.add_tokens(100);
-        session.complete_task("Doctor check task");
-        session.add_modified_file("src/main.rs");
-        info!(
-            "Session updated: {} tokens, {} completed tasks",
-            session.total_tokens(),
-            session.progress.completed_tasks.len()
-        );
-    }
-
-    if let Some(loaded) = session_manager.load_session(&session_id) {
-        info!("Loaded session: {} (mode: {:?})", loaded.id, loaded.mode);
-    }
-
-    let coding_session = session_manager.start_coding(&session_id);
-    info!("Coding session: {}", coding_session.id);
 
     // Test rules reload and rules_dir
     print!("\nRules engine... ");
@@ -293,12 +276,9 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
         Err(e) => {
             println!("FAILED: {e}");
             info!("Provider adapter lookup failed: {}", e);
+            has_failures = true;
         }
     }
-
-    let _invalid = ProviderError::InvalidResponse("test".to_string());
-    let _unsupported = ProviderError::Unsupported("test feature".to_string());
-    info!("Provider error variants OK");
 
     let custom_paths = vec![PathBuf::from(".openclaudia/plugins")];
     let mut custom_plugin_manager = PluginManager::with_paths(custom_paths);
@@ -318,30 +298,14 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
     let session_hooks = custom_plugin_manager.hooks_for_event("session_start");
     info!("Session start hooks: {}", session_hooks.len());
 
-    let _ = custom_plugin_manager.enable("test-plugin");
-    let _ = custom_plugin_manager.disable("test-plugin");
     let reload_errors = custom_plugin_manager.reload();
     info!("Plugin reload: {} errors", reload_errors.len());
 
-    // Test proxy MCP functions
-    print!("\nProxy MCP functions... ");
-    let mcp_for_proxy = std::sync::Arc::new(tokio::sync::RwLock::new(McpManager::new()));
-
-    match openclaudia::proxy::handle_mcp_tool_call(
-        &mcp_for_proxy,
-        "test_tool",
-        serde_json::json!({}),
-    )
-    .await
-    {
-        Ok(result) => info!("MCP tool result: {}", result),
-        Err(e) => info!("Expected MCP error: {}", e),
+    println!("\nDoctor check complete.");
+    if has_failures {
+        anyhow::bail!("doctor found one or more failures");
     }
 
-    openclaudia::proxy::shutdown_mcp(&mcp_for_proxy).await;
-    println!("OK");
-
-    println!("\nDoctor check complete.");
     Ok(())
 }
 

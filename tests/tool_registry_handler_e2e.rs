@@ -12,6 +12,8 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 
+use std::collections::BTreeSet;
+
 use openclaudia::tools::registry::registry;
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -33,6 +35,52 @@ fn registered_tool_names() -> Vec<String> {
                 .map(String::from)
         })
         .collect()
+}
+
+fn readme_available_tool_names() -> BTreeSet<String> {
+    let readme = include_str!("../README.md");
+    let available_tools = readme
+        .split_once("## Available Tools")
+        .expect("README must document available tools")
+        .1
+        .split_once("## Supported Models")
+        .expect("README available-tools section must end before supported models")
+        .0;
+
+    available_tools
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if !trimmed.starts_with('|') {
+                return None;
+            }
+            let first_col = trimmed.split('|').nth(1)?.trim();
+            let after_tick = first_col.strip_prefix('`')?;
+            let tool_name = after_tick.split_once('`')?.0;
+            if tool_name.is_empty() {
+                None
+            } else {
+                Some(tool_name.to_string())
+            }
+        })
+        .collect()
+}
+
+fn registered_tool_description(tool_name: &str) -> String {
+    let defs = openclaudia::tools::get_tool_definitions();
+    defs.as_array()
+        .expect("tool definitions is array")
+        .iter()
+        .find_map(|def| {
+            let function = def.get("function")?;
+            let name = function.get("name")?.as_str()?;
+            if name == tool_name {
+                function.get("description")?.as_str().map(str::to_string)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| panic!("registered tool {tool_name:?} must have a description"))
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -271,4 +319,94 @@ fn every_registered_tool_has_lookup_handler_and_definition() {
         let _ = handler.definition();
         let _ = handler.permission_target();
     }
+}
+
+#[test]
+fn readme_available_tools_match_registered_tool_names() {
+    let registered: BTreeSet<String> = registered_tool_names().into_iter().collect();
+    let documented = readme_available_tool_names();
+
+    let missing_from_readme: Vec<_> = registered.difference(&documented).cloned().collect();
+    assert!(
+        missing_from_readme.is_empty(),
+        "README Available Tools must document every registered tool; missing {missing_from_readme:?}"
+    );
+
+    let extra_in_readme: Vec<_> = documented
+        .difference(&registered)
+        .filter(|name| !(cfg!(not(feature = "browser")) && name.as_str() == "web_browser"))
+        .cloned()
+        .collect();
+    assert!(
+        extra_in_readme.is_empty(),
+        "README Available Tools must not advertise unregistered tools; extra {extra_in_readme:?}"
+    );
+
+    for must_document in ["crosslink", "glob", "grep", "skill", "tool_search"] {
+        assert!(
+            documented.contains(must_document),
+            "README Available Tools must document registered tool {must_document:?}"
+        );
+    }
+    assert!(
+        !documented.contains("chainlink"),
+        "README must not advertise the removed Chainlink CLI tool"
+    );
+    let readme = include_str!("../README.md");
+    assert!(
+        !readme.contains("Chainlink") && !readme.contains("chainlink"),
+        "README must not advertise the removed Chainlink CLI dependency"
+    );
+}
+
+#[test]
+fn web_tool_descriptions_match_browser_feature_set() {
+    let fetch_description = registered_tool_description("web_fetch");
+    let search_description = registered_tool_description("web_search");
+
+    if cfg!(feature = "browser") {
+        assert!(
+            fetch_description.contains("headless Chromium fallback")
+                && fetch_description.contains("JavaScript-rendered"),
+            "browser build web_fetch description must advertise browser fallback; got {fetch_description:?}"
+        );
+        assert!(
+            search_description.contains("DuckDuckGo/Bing browser scraping"),
+            "browser build web_search description must advertise browser-backed search; got {search_description:?}"
+        );
+    } else {
+        assert!(
+            fetch_description.contains("direct HTTP")
+                && fetch_description.contains("does not include JavaScript rendering"),
+            "no-browser web_fetch description must not imply browser fallback; got {fetch_description:?}"
+        );
+        assert!(
+            search_description.contains("Tavily or Brave APIs")
+                && search_description.contains("does not include DuckDuckGo/Bing"),
+            "no-browser web_search description must point at API backends; got {search_description:?}"
+        );
+        assert!(
+            !fetch_description.contains("headless Chromium fallback"),
+            "no-browser web_fetch description must not advertise unavailable browser fallback"
+        );
+    }
+}
+
+#[test]
+fn readme_web_search_docs_explain_browser_feature_boundary() {
+    let readme = include_str!("../README.md");
+
+    assert!(
+        readme.contains("no-key DuckDuckGo/Bing scraping"),
+        "README must explain that no-key web search is browser-backed"
+    );
+    assert!(
+        readme.contains("web_search requires Tavily or Brave API keys"),
+        "README no-default-features build note must explain web_search's API-key requirement"
+    );
+    assert!(
+        !readme.contains("DuckDuckGo (free, no API key), Tavily, or Brave APIs")
+            && !readme.contains("DuckDuckGo free, or Tavily/Brave APIs"),
+        "README must not imply every build has no-key DuckDuckGo search"
+    );
 }

@@ -22,7 +22,7 @@ use ratatui::{
 };
 
 use super::{Overlay, OverlayAction};
-use crate::slash_commands::SLASH_SECTIONS;
+use crate::slash_commands::TUI_SLASH_SECTIONS;
 
 /// One line in the cheatsheet — a shortcut and what it does.
 struct Shortcut {
@@ -31,9 +31,8 @@ struct Shortcut {
 }
 
 /// Keybinding-only sections (Input / Navigation / Thinking). Slash
-/// commands are sourced from [`crate::slash_commands::SLASH_SECTIONS`]
-/// per crosslink #499 so this overlay and the CLI's `slash_help()` stay
-/// in sync by construction.
+/// commands are sourced from [`crate::slash_commands::TUI_SLASH_SECTIONS`]
+/// so this overlay only advertises commands implemented by the default TUI.
 const KEYBIND_SECTIONS: &[(&str, &[Shortcut])] = &[
     (
         "Input",
@@ -43,12 +42,12 @@ const KEYBIND_SECTIONS: &[(&str, &[Shortcut])] = &[
                 description: "send message",
             },
             Shortcut {
-                keys: "Shift+Enter",
-                description: "insert newline",
+                keys: "Backspace / Delete",
+                description: "edit input",
             },
             Shortcut {
-                keys: "Ctrl+L",
-                description: "clear the screen",
+                keys: "Left / Right / Home / End",
+                description: "move input cursor",
             },
             Shortcut {
                 keys: "Ctrl+C",
@@ -65,7 +64,7 @@ const KEYBIND_SECTIONS: &[(&str, &[Shortcut])] = &[
             },
             Shortcut {
                 keys: "Up / Down",
-                description: "previous / next input in history",
+                description: "scroll the transcript",
             },
             Shortcut {
                 keys: "Esc",
@@ -119,8 +118,7 @@ impl HelpOverlay {
     /// Sources:
     /// - Keybinding sections come from [`KEYBIND_SECTIONS`] (TUI-only).
     /// - Slash-command sections come from
-    ///   [`crate::slash_commands::SLASH_SECTIONS`] (shared with the CLI
-    ///   `slash_help` printer; see crosslink #499).
+    ///   [`crate::slash_commands::TUI_SLASH_SECTIONS`].
     fn build_lines() -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from(Span::styled(
@@ -151,8 +149,8 @@ impl HelpOverlay {
             lines.push(Line::from(""));
         }
 
-        // Slash commands — single source of truth shared with the CLI.
-        for section in SLASH_SECTIONS {
+        // Slash commands implemented by the default TUI.
+        for section in TUI_SLASH_SECTIONS {
             lines.push(Line::from(Span::styled(section.title, section_title_style)));
             for c in section.commands {
                 lines.push(Line::from(vec![
@@ -308,15 +306,14 @@ mod tests {
     fn sections_non_empty() {
         // Guard: if someone deletes the cheatsheet by accident, this
         // test fails rather than shipping an empty overlay. Covers both
-        // the keybinding-only sections (local) and the shared
-        // slash-command table.
+        // the keybinding-only sections (local) and the TUI slash-command table.
         assert!(!KEYBIND_SECTIONS.is_empty());
         for (title, shortcuts) in KEYBIND_SECTIONS {
             assert!(!title.is_empty());
             assert!(!shortcuts.is_empty(), "section {title} has no shortcuts");
         }
-        assert!(!SLASH_SECTIONS.is_empty());
-        for section in SLASH_SECTIONS {
+        assert!(!TUI_SLASH_SECTIONS.is_empty());
+        for section in TUI_SLASH_SECTIONS {
             assert!(!section.title.is_empty());
             assert!(
                 !section.commands.is_empty(),
@@ -326,26 +323,36 @@ mod tests {
         }
     }
 
-    /// The slash-command table is the bridge between TUI and CLI help
-    /// (crosslink #499). If the table somehow stops feeding into the
-    /// rendered overlay, this test catches it before users notice.
+    /// The TUI slash-command table must feed the rendered overlay. If
+    /// the overlay drifts back to the legacy REPL catalogue, this test
+    /// catches it before users see unsupported commands in `/help`.
     #[test]
-    fn rendered_lines_include_shared_slash_commands() {
+    fn rendered_lines_include_tui_slash_commands_only() {
         let lines = HelpOverlay::build_lines();
         let rendered: String = lines
             .into_iter()
             .flat_map(|l| l.spans.into_iter().map(|s| s.content.into_owned()))
             .collect::<Vec<_>>()
             .join("\n");
-        // Both a section title and a representative command from the
-        // shared table must show up.
         assert!(
-            rendered.contains("Slash Commands"),
-            "rendered overlay missing 'Slash Commands' section title"
+            rendered.contains("TUI Slash Commands"),
+            "rendered overlay missing TUI slash section title"
         );
         assert!(
-            rendered.contains("/compact"),
-            "rendered overlay missing a representative shared command"
+            rendered.contains("/load <id>"),
+            "rendered overlay missing a representative TUI command"
+        );
+        assert!(
+            !rendered.contains("/connect"),
+            "rendered overlay must not advertise legacy REPL-only commands"
+        );
+        assert!(
+            !rendered.contains("Shift+Enter") && !rendered.contains("Ctrl+L"),
+            "rendered overlay must not advertise unimplemented TUI shortcuts"
+        );
+        assert!(
+            !rendered.contains("previous / next input in history"),
+            "rendered overlay must describe Up/Down as transcript scrolling"
         );
     }
 }
