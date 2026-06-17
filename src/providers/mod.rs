@@ -20,6 +20,7 @@ mod deepseek;
 mod google;
 mod kimi;
 mod minimax;
+mod model_catalog;
 mod ollama;
 mod openai;
 mod openai_compat;
@@ -48,6 +49,11 @@ pub use google::{
 };
 pub use kimi::KimiAdapter;
 pub use minimax::MiniMaxAdapter;
+pub use model_catalog::{
+    canonical_static_catalog_provider, static_models_for_provider, ANTHROPIC_MODELS,
+    DEEPSEEK_MODELS, GOOGLE_MODELS, KIMI_MODELS, MINIMAX_MODELS, OPENAI_MODELS, QWEN_MODELS,
+    STATIC_MODEL_CATALOG_PROVIDERS, ZAI_MODELS,
+};
 pub use ollama::OllamaAdapter;
 pub use openai::OpenAIAdapter;
 pub use qwen::QwenAdapter;

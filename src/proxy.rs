@@ -29,7 +29,7 @@ use crate::hooks::{
 use crate::mcp::McpManager;
 use crate::oauth::OAuthStore;
 use crate::plugins::PluginManager;
-use crate::providers::{get_adapter, ApiKey};
+use crate::providers::{self, get_adapter, ApiKey};
 use crate::rules::{extract_extensions_from_tool_input, RulesEngine};
 use crate::session::{get_session_context, SessionManager, TokenUsage};
 use crate::vdd::{VddEngine, VddResult};
@@ -384,26 +384,31 @@ async fn auth_status(State(state): State<ProxyState>, headers: HeaderMap) -> imp
     }
 }
 
-/// List available models (returns configured provider's models)
-async fn list_models(State(_state): State<ProxyState>) -> impl IntoResponse {
-    Json(serde_json::json!({
+fn static_model_list_json() -> Value {
+    let data: Vec<Value> = providers::STATIC_MODEL_CATALOG_PROVIDERS
+        .iter()
+        .flat_map(|provider| {
+            providers::static_models_for_provider(provider)
+                .iter()
+                .map(move |id| {
+                    serde_json::json!({
+                        "id": *id,
+                        "object": "model",
+                        "owned_by": *provider,
+                    })
+                })
+        })
+        .collect();
+
+    serde_json::json!({
         "object": "list",
-        "data": [
-            {"id": "claude-fable-5", "object": "model", "owned_by": "anthropic"},
-            {"id": "claude-opus-4-8", "object": "model", "owned_by": "anthropic"},
-            {"id": "claude-opus-4-7", "object": "model", "owned_by": "anthropic"},
-            {"id": "claude-sonnet-4-6", "object": "model", "owned_by": "anthropic"},
-            {"id": "claude-haiku-4-5-20251001", "object": "model", "owned_by": "anthropic"},
-            {"id": "gpt-5.5", "object": "model", "owned_by": "openai"},
-            {"id": "gpt-5.4-mini", "object": "model", "owned_by": "openai"},
-            {"id": "gemini-3.5-flash", "object": "model", "owned_by": "google"},
-            {"id": "deepseek-v4-pro", "object": "model", "owned_by": "deepseek"},
-            {"id": "qwen3.7-plus", "object": "model", "owned_by": "qwen"},
-            {"id": "glm-5.2", "object": "model", "owned_by": "zai"},
-            {"id": "kimi-k2.7-code", "object": "model", "owned_by": "kimi"},
-            {"id": "MiniMax-M3", "object": "model", "owned_by": "minimax"},
-        ]
-    }))
+        "data": data
+    })
+}
+
+/// List available fallback models across supported providers.
+async fn list_models(State(_state): State<ProxyState>) -> impl IntoResponse {
+    Json(static_model_list_json())
 }
 
 /// Run `PreToolUse` hooks for tool calls in the response
@@ -2138,6 +2143,35 @@ mod tests {
             "providers": {}
         }))
         .expect("minimal_config must deserialise")
+    }
+
+    #[test]
+    fn proxy_static_model_list_uses_shared_provider_catalog() {
+        let response = static_model_list_json();
+        let ids: std::collections::BTreeSet<&str> = response["data"]
+            .as_array()
+            .expect("model list data must be an array")
+            .iter()
+            .map(|item| {
+                item["id"]
+                    .as_str()
+                    .expect("model list entries must have string ids")
+            })
+            .collect();
+
+        assert!(
+            ids.contains("claude-opus-4-7"),
+            "proxy /v1/models must include claude-opus-4-7"
+        );
+
+        for provider in providers::STATIC_MODEL_CATALOG_PROVIDERS {
+            for model in providers::static_models_for_provider(provider) {
+                assert!(
+                    ids.contains(model),
+                    "proxy /v1/models missing {model} from {provider} static catalog"
+                );
+            }
+        }
     }
 
     async fn upstream_response(
