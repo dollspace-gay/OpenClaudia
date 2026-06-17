@@ -97,6 +97,7 @@ pub const GOOGLE_MODELS: &[&str] = &[
 pub const ZAI_MODELS: &[&str] = &[
     "glm-5.2",
     "glm-5.1",
+    "glm-5.1-highspeed",
     "glm-5",
     "glm-5-turbo",
     "glm-4.7",
@@ -198,6 +199,14 @@ mod tests {
         assert!(
             static_models_for_provider("anthropic").contains(&"claude-opus-4-7"),
             "Anthropic static catalog must include claude-opus-4-7"
+        );
+    }
+
+    #[test]
+    fn zai_catalog_includes_glm_5_1_highspeed() {
+        assert!(
+            static_models_for_provider("zai").contains(&"glm-5.1-highspeed"),
+            "Z.AI static catalog must include glm-5.1-highspeed"
         );
     }
 }

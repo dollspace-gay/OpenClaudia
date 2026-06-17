@@ -2122,6 +2122,7 @@ pub async fn connect_mcp_servers(
 ) {
     let mcp = mcp_manager.write().await;
     for (plugin, server) in plugin_manager.all_mcp_servers() {
+        let tool_timeout = server.timeout.map(std::time::Duration::from_millis);
         match server.transport.as_str() {
             "stdio" => {
                 if server.always_load.is_some() {
@@ -2138,13 +2139,6 @@ pub async fn connect_mcp_servers(
                         "MCP stdio server declares HTTP headers; ignoring headers for stdio transport"
                     );
                 }
-                if server.timeout.is_some() {
-                    warn!(
-                        server = %server.name,
-                        plugin = %plugin.name(),
-                        "MCP per-server timeout is not wired yet; using default transport timeout"
-                    );
-                }
                 if let Some(command) = &server.command {
                     let args: Vec<&str> = server
                         .args
@@ -2152,7 +2146,13 @@ pub async fn connect_mcp_servers(
                         .map(std::string::String::as_str)
                         .collect();
                     match mcp
-                        .connect_stdio_with_env(&server.name, command, &args, &server.env)
+                        .connect_stdio_with_env_and_timeout(
+                            &server.name,
+                            command,
+                            &args,
+                            &server.env,
+                            tool_timeout,
+                        )
                         .await
                     {
                         Ok(()) => {
@@ -2181,15 +2181,13 @@ pub async fn connect_mcp_servers(
                         );
                         continue;
                     }
-                    if server.timeout.is_some() {
-                        warn!(
-                            server = %server.name,
-                            plugin = %plugin.name(),
-                            "MCP per-server timeout is not wired yet; using default transport timeout"
-                        );
-                    }
                     match mcp
-                        .connect_http_with_headers(&server.name, url, &server.headers)
+                        .connect_http_with_headers_and_timeout(
+                            &server.name,
+                            url,
+                            &server.headers,
+                            tool_timeout,
+                        )
                         .await
                     {
                         Ok(()) => {

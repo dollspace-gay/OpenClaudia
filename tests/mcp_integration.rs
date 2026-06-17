@@ -323,7 +323,7 @@ async fn tool_refresh_with_tools_cap_parses_list() {
         .expect("McpServer::new");
 
     let tools = server.tools();
-    assert_eq!(tools.len(), 3, "echo server returns exactly three tools");
+    assert_eq!(tools.len(), 4, "echo server returns exactly four tools");
 
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
     assert!(names.contains(&"echo"), "tool 'echo' must be present");
@@ -334,6 +334,10 @@ async fn tool_refresh_with_tools_cap_parses_list() {
     assert!(
         names.contains(&"die_tool"),
         "tool 'die_tool' must be present"
+    );
+    assert!(
+        names.contains(&"slow_tool"),
+        "tool 'slow_tool' must be present"
     );
 
     // Verify description round-trip
@@ -505,6 +509,48 @@ async fn call_tool_with_timeout_returns_timeout_error() {
     assert!(
         matches!(result, Err(McpError::Timeout { .. })),
         "expected Timeout, got {result:?}"
+    );
+}
+
+/// B3 — a per-server timeout configured on the manager limits ordinary
+/// `call_tool` requests without requiring the caller to use the explicit
+/// wrapper. This pins the plugin `.mcp.json` `timeout` path, which stores
+/// milliseconds per server.
+#[tokio::test]
+async fn manager_per_server_tool_timeout_limits_stdio_call() {
+    let path = fixture_path();
+    let path_str = path.to_str().expect("fixture path must be UTF-8");
+    let manager = McpManager::new();
+
+    manager
+        .connect_stdio_with_env_and_timeout(
+            "slow",
+            "python3",
+            &[path_str],
+            &HashMap::new(),
+            Some(Duration::from_millis(50)),
+        )
+        .await
+        .expect("connect stdio echo fixture");
+
+    let started = std::time::Instant::now();
+    let result = manager.call_tool("mcp__slow__slow_tool", json!({})).await;
+
+    assert!(
+        matches!(result, Err(McpError::Timeout { .. })),
+        "expected Timeout from configured per-server deadline, got {result:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "per-server timeout should fire before the fixture's 2s sleep"
+    );
+    assert!(
+        manager.is_connected("slow").await,
+        "timed-out entry remains registered for reconnect"
+    );
+    assert!(
+        !manager.is_live("slow").await,
+        "timeout must drop the transport to avoid stale JSON-RPC responses"
     );
 }
 

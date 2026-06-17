@@ -24,6 +24,7 @@ Environment variables:
 import json
 import os
 import sys
+import time
 
 
 def respond(req_id, result):
@@ -111,6 +112,11 @@ def main():
                             "description": "Closes stdout to simulate a transport disconnect",
                             "inputSchema": {"type": "object", "properties": {}},
                         },
+                        {
+                            "name": "slow_tool",
+                            "description": "Sleeps before returning",
+                            "inputSchema": {"type": "object", "properties": {}},
+                        },
                     ]
                 },
             )
@@ -137,6 +143,15 @@ def main():
                 # Simulate transport disconnect during tools/call.
                 sys.stdout.close()
                 sys.exit(0)
+            elif tool_name == "slow_tool":
+                time.sleep(2)
+                respond(
+                    req_id,
+                    {
+                        "isError": False,
+                        "content": [{"type": "text", "text": "slow result"}],
+                    },
+                )
             else:
                 respond(
                     req_id,

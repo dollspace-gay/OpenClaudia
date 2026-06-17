@@ -390,7 +390,7 @@ The lists below are the built-in `/model list` fallback catalog. Model names are
 - `qwen3-coder-plus` — Coding specialist
 
 ### Z.AI (GLM)
-- `glm-5.2`, `glm-5.1`, `glm-5`, `glm-5-turbo` — GLM-5 family
+- `glm-5.2`, `glm-5.1`, `glm-5.1-highspeed`, `glm-5`, `glm-5-turbo` — GLM-5 family
 - `glm-4.7`, `glm-4.7-flashx`, `glm-4.7-flash` — GLM-4.7 family
 - `glm-4.6`, `glm-4.5`, `glm-4.5-air`, `glm-4.5-x`, `glm-4.5-airx`, `glm-4.5-flash`, `glm-4-32b-0414-128k` — Previous generation
 

@@ -1463,6 +1463,7 @@ const BACKOFF: [Duration; MAX_RECONNECT_ATTEMPTS as usize] = [
 struct ServerEntry {
     spec: ConnectionSpec,
     server: Option<McpServer>,
+    tool_timeout: Option<Duration>,
     failed_attempts: u32,
     last_failure: Option<std::time::Instant>,
     cached_tools: Vec<McpTool>,
@@ -1471,11 +1472,20 @@ struct ServerEntry {
 
 impl ServerEntry {
     fn new(spec: ConnectionSpec, server: McpServer) -> Self {
+        Self::new_with_tool_timeout(spec, server, None)
+    }
+
+    fn new_with_tool_timeout(
+        spec: ConnectionSpec,
+        server: McpServer,
+        tool_timeout: Option<Duration>,
+    ) -> Self {
         let cached_tools = server.tools().to_vec();
         let supports_list_changed = server.supports_tool_list_changed();
         Self {
             spec,
             server: Some(server),
+            tool_timeout,
             failed_attempts: 0,
             last_failure: None,
             cached_tools,
@@ -1578,6 +1588,24 @@ impl McpManager {
         args: &[&str],
         env: &HashMap<String, String>,
     ) -> Result<(), McpError> {
+        self.connect_stdio_with_env_and_timeout(name, command, args, env, None)
+            .await
+    }
+
+    /// Connect to an MCP server via stdio with extra child environment
+    /// and an optional per-tool-call timeout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `McpError` if spawning or initializing the server fails.
+    pub async fn connect_stdio_with_env_and_timeout(
+        &self,
+        name: &str,
+        command: &str,
+        args: &[&str],
+        env: &HashMap<String, String>,
+        tool_timeout: Option<Duration>,
+    ) -> Result<(), McpError> {
         let spec = ConnectionSpec::Stdio {
             command: command.to_string(),
             args: args.iter().map(|s| (*s).to_string()).collect(),
@@ -1585,7 +1613,7 @@ impl McpManager {
         };
         let transport = spec.build_transport()?;
         let server = McpServer::new(name, transport).await?;
-        let entry = ServerEntry::new(spec, server);
+        let entry = ServerEntry::new_with_tool_timeout(spec, server, tool_timeout);
         self.servers.lock().await.insert(name.to_string(), entry);
         Ok(())
     }
@@ -1612,13 +1640,31 @@ impl McpManager {
         url: &str,
         headers: &HashMap<String, String>,
     ) -> Result<(), McpError> {
+        self.connect_http_with_headers_and_timeout(name, url, headers, None)
+            .await
+    }
+
+    /// Connect to an MCP server via HTTP with static headers and an optional
+    /// per-tool-call timeout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `McpError` if URL/header validation, connection, or
+    /// initialization fails.
+    pub async fn connect_http_with_headers_and_timeout(
+        &self,
+        name: &str,
+        url: &str,
+        headers: &HashMap<String, String>,
+        tool_timeout: Option<Duration>,
+    ) -> Result<(), McpError> {
         let spec = ConnectionSpec::Http {
             url: url.to_string(),
             headers: headers.clone(),
         };
         let transport = spec.build_transport()?;
         let server = McpServer::new(name, transport).await?;
-        let entry = ServerEntry::new(spec, server);
+        let entry = ServerEntry::new_with_tool_timeout(spec, server, tool_timeout);
         self.servers.lock().await.insert(name.to_string(), entry);
         Ok(())
     }
@@ -1782,9 +1828,25 @@ impl McpManager {
             return Err(McpError::ServerUnreachable(server_name.to_string()));
         };
 
-        let outcome = server.call_tool(tool_name, arguments).await;
+        let tool_timeout = entry.tool_timeout;
+        let outcome = if let Some(deadline) = tool_timeout {
+            tokio::time::timeout(deadline, server.call_tool(tool_name, arguments))
+                .await
+                .unwrap_or_else(|_| {
+                    warn!(
+                        tool = %full_name,
+                        timeout_ms = deadline.as_millis(),
+                        "MCP tool call timed out"
+                    );
+                    Err(McpError::Timeout {
+                        phase: "tools/call",
+                    })
+                })
+        } else {
+            server.call_tool(tool_name, arguments).await
+        };
         if let Err(ref e) = outcome {
-            if matches!(e, McpError::Transport(_)) {
+            if matches!(e, McpError::Transport(_) | McpError::Timeout { .. }) {
                 entry.mark_disconnected();
             }
         }
@@ -2981,6 +3043,7 @@ mod tests {
         let entry = ServerEntry {
             spec,
             server: None,
+            tool_timeout: None,
             failed_attempts: MAX_RECONNECT_ATTEMPTS,
             last_failure: Some(std::time::Instant::now()),
             cached_tools: vec![],
@@ -3020,6 +3083,7 @@ mod tests {
         let entry = ServerEntry {
             spec,
             server: None,
+            tool_timeout: None,
             failed_attempts: 0,
             last_failure: Some(std::time::Instant::now()),
             cached_tools: vec![],
@@ -3082,6 +3146,7 @@ mod tests {
         let entry = ServerEntry {
             spec,
             server: None,
+            tool_timeout: None,
             failed_attempts: 0,
             last_failure: None, // ⇒ backoff_elapsed() is true
             cached_tools: vec![],
