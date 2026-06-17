@@ -1282,26 +1282,48 @@ mod web_tools {
     use super::*;
 
     #[test]
-    fn test_web_fetch_basic() {
-        // Test with a reliable public URL
+    fn test_web_fetch_rejects_loopback_without_network_io() {
         let tool_call = make_tool_call(
             "web_fetch",
             &json!({
-                "url": "https://httpbin.org/html",
-                "prompt": "Extract the main heading"
+                "url": "http://127.0.0.1:1/html",
+                "prompt": "Extract the main heading",
             }),
         );
 
         let result = execute_tool(&tool_call);
 
-        // This is a real network call - might fail in CI/offline environments
-        // We check if it either succeeded or failed gracefully
-        if !result.is_error {
-            assert!(
-                !result.content.is_empty(),
-                "Should return content from fetch"
-            );
-        }
+        assert!(result.is_error, "loopback web_fetch must be rejected");
+        assert!(
+            result.content.contains("reserved/internal")
+                || result.content.contains("metadata endpoint"),
+            "SSRF rejection should explain the blocked target: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    #[ignore = "requires outbound network access; default suite must stay deterministic"]
+    fn test_web_fetch_live_https_smoke() {
+        let tool_call = make_tool_call(
+            "web_fetch",
+            &json!({
+                "url": "https://example.com/",
+                "prompt": "Extract the page title",
+            }),
+        );
+
+        let result = execute_tool(&tool_call);
+
+        assert!(
+            !result.is_error,
+            "live web_fetch smoke failed: {}",
+            result.content
+        );
+        assert!(
+            !result.content.is_empty(),
+            "web_fetch should return content"
+        );
     }
 
     #[test]

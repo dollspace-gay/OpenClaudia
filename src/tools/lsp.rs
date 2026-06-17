@@ -1263,8 +1263,8 @@ fn lsp_position_to_user_coordinate(v: u64) -> u32 {
 ///     `{kind, value}`,
 ///   * an array of any of the above.
 ///
-/// All three shapes collapse to a single newline-joined string for
-/// terminal rendering — callers do not need the structured form.
+/// All three shapes collapse to text for terminal rendering — array elements
+/// are separated by blank lines to preserve distinct hover blocks.
 fn extract_hover_contents(contents: &Value) -> String {
     if let Some(s) = contents.as_str() {
         return s.to_string();
@@ -1277,7 +1277,7 @@ fn extract_hover_contents(contents: &Value) -> String {
             .iter()
             .filter_map(extract_hover_array_element)
             .collect::<Vec<_>>()
-            .join("\n");
+            .join("\n\n");
     }
     String::new()
 }
@@ -1685,7 +1685,7 @@ mod tests {
     fn test_parse_hover_array_contents() {
         let resp = json!({"result": {"contents": ["line1", {"value": "line2"}]}});
         let result = parse_lsp_response(LspAction::Hover, "test.rs", &resp);
-        assert_eq!(result.hover_text, Some("line1\nline2".to_string()));
+        assert_eq!(result.hover_text, Some("line1\n\nline2".to_string()));
     }
 
     #[test]
@@ -1980,21 +1980,18 @@ mod tests {
     // Spec B2: hover — hover text extraction
     // ───────────────────────────────────────
 
-    /// B2a — OC joins `MarkedString` array items with "\n" (single newline).
-    /// CC uses "\n\n" (double newline). Pinning OC's current join separator.
-    /// Gap: array join should be "\n\n" per CC spec.
+    /// B2a — `MarkedString` array items are separated by blank lines so
+    /// independent hover blocks do not run together.
     #[test]
-    fn spec_b2_array_join_single_newline_not_double() {
+    fn spec_b2_array_join_uses_blank_line_between_blocks() {
         let resp = json!({"result": {"contents": ["first", {"value": "second"}, "third"]}});
         let result = parse_lsp_response(LspAction::Hover, "test.rs", &resp);
         let text = result.hover_text.unwrap();
-        // Pinning: OC uses "\n" not "\n\n".
-        assert_eq!(text, "first\nsecond\nthird");
-        // Asserting absence of double-newline explicitly (the gap from CC).
         assert!(
-            !text.contains("\n\n"),
-            "OC uses single '\\n' between array items; gap vs CC which uses '\\n\\n'"
+            text.contains("\n\n"),
+            "hover blocks must be separated by a blank line"
         );
+        assert_eq!(text, "first\n\nsecond\n\nthird");
     }
 
     /// B2b — OC does NOT prepend a range-qualified prefix even when

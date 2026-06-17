@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::future::Future;
 use std::sync::LazyLock;
+use std::time::Duration;
 use tokio::runtime::Runtime;
 
 /// Process-wide shared tokio runtime used to drive the async web tools
@@ -26,6 +27,16 @@ use tokio::runtime::Runtime;
 /// they participate in the caller's own runtime (no nested-runtime
 /// panic and no thread-jump to the shared runtime).
 static SHARED_RUNTIME: LazyLock<Result<Runtime, String>> = LazyLock::new(build_shared_runtime);
+
+/// Maximum wall-clock time a synchronous web-tool caller will wait for its
+/// async task to report back. Individual HTTP requests and browser fallbacks
+/// keep their own tighter timeouts where possible; this is the outer guard
+/// that prevents a stuck renderer, resolver, or future regression from
+/// wedging the CLI forever.
+const WEB_TOOL_DISPATCH_TIMEOUT: Duration = Duration::from_secs(90);
+
+#[cfg(feature = "browser")]
+const WEB_BROWSER_TOOL_TIMEOUT: Duration = Duration::from_secs(45);
 
 fn build_shared_runtime() -> Result<Runtime, String> {
     tokio::runtime::Builder::new_multi_thread()
@@ -68,6 +79,14 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
+    run_blocking_with_timeout(fut, WEB_TOOL_DISPATCH_TIMEOUT)
+}
+
+fn run_blocking_with_timeout<F>(fut: F, timeout: Duration) -> Result<F::Output, String>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
     let (tx, rx) = std::sync::mpsc::channel();
     let runtime = SHARED_RUNTIME.as_ref().map_err(Clone::clone)?;
     runtime.spawn(async move {
@@ -76,11 +95,15 @@ where
         // panicking from inside the runtime.
         let _ = tx.send(fut.await);
     });
-    rx.recv().map_err(|e| {
-        format!(
+    rx.recv_timeout(timeout).map_err(|e| match e {
+        std::sync::mpsc::RecvTimeoutError::Timeout => format!(
+            "SHARED_RUNTIME web-tool task timed out after {} seconds",
+            timeout.as_secs()
+        ),
+        std::sync::mpsc::RecvTimeoutError::Disconnected => format!(
             "SHARED_RUNTIME web-tool task panicked or the runtime was shut down before delivering \
              a result: {e}"
-        )
+        ),
     })
 }
 
@@ -305,7 +328,23 @@ pub fn execute_web_browser(args: &HashMap<String, Value>) -> (String, bool) {
         );
     }
 
-    match web::fetch_with_browser(url) {
+    let url_owned = url.to_string();
+    let result = match run_blocking(async move {
+        let task = tokio::task::spawn_blocking(move || web::fetch_with_browser(&url_owned));
+        match tokio::time::timeout(WEB_BROWSER_TOOL_TIMEOUT, task).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(join_err)) => Err(format!("browser fetch task panicked: {join_err}")),
+            Err(_) => Err(format!(
+                "browser fetch timed out after {} seconds",
+                WEB_BROWSER_TOOL_TIMEOUT.as_secs()
+            )),
+        }
+    }) {
+        Ok(result) => result,
+        Err(e) => return (format!("Browser fetch failed: {e}"), true),
+    };
+
+    match result {
         Ok(fetch_result) => (
             format_fetch_output(
                 fetch_result.title.as_deref(),
@@ -439,6 +478,20 @@ mod tests {
         assert!(
             err.contains("panicked") || err.contains("delivering a result"),
             "error must explain the failed dispatch: {err}"
+        );
+    }
+
+    #[test]
+    fn run_blocking_timeout_returns_error_instead_of_hanging() {
+        let result = run_blocking_with_timeout(
+            async { std::future::pending::<usize>().await },
+            Duration::from_millis(50),
+        );
+
+        let err = result.expect_err("pending task must hit dispatcher timeout");
+        assert!(
+            err.contains("timed out"),
+            "timeout error must explain the failed dispatch: {err}"
         );
     }
 
