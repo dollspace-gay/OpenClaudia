@@ -104,11 +104,12 @@ pub async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
         if let Some(path) = persist_path {
             if path.exists() {
                 std::fs::remove_file(&path)?;
-                println!("Logged out. OAuth sessions cleared.");
+                println!("Native OAuth sessions cleared.");
             } else {
-                println!("No OAuth sessions to clear.");
+                println!("No native OAuth sessions to clear.");
             }
         }
+        println!("Shared Claude credentials were not deleted.");
         return Ok(());
     }
 

@@ -107,7 +107,7 @@ const CORE: &[SlashCommand] = &[
     cmd("/cost", "Show session cost estimate"),
     cmd("/context", "Show context window usage breakdown"),
     cmd("/login", "Check authentication status"),
-    cmd("/logout", "Show how to clear credentials"),
+    cmd("/logout", "Show how to clear Claude credentials manually"),
 ];
 
 const MEMORY: &[SlashCommand] = &[

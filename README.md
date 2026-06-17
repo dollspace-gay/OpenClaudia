@@ -194,7 +194,7 @@ openclaudia init --force       # Overwrite existing config
 
 openclaudia auth               # Authenticate with Claude Max (OAuth)
 openclaudia auth --status      # Check auth status
-openclaudia auth --logout      # Clear stored credentials
+openclaudia auth --logout      # Clear native OAuth session cache
 
 openclaudia start              # Start as proxy server
 openclaudia start -p 9090      # Custom port

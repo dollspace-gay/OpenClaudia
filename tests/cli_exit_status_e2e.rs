@@ -269,6 +269,33 @@ fn auth_status_with_malformed_credentials_exits_nonzero() {
 }
 
 #[test]
+fn auth_logout_describes_native_session_scope() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    let output = isolated_command(&cwd, &home)
+        .args(["auth", "--logout"])
+        .output()
+        .expect("openclaudia auth --logout must run");
+
+    assert!(
+        output.status.success(),
+        "auth --logout with no native sessions should still succeed; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("No native OAuth sessions to clear")
+            && combined.contains("Shared Claude credentials were not deleted"),
+        "logout output must describe what was and was not cleared; got {combined:?}"
+    );
+}
+
+#[test]
 fn start_rejects_model_flag_instead_of_ignoring_it() {
     let cwd = tempfile::tempdir().expect("cwd tempdir");
     let home = tempfile::tempdir().expect("home tempdir");
@@ -352,6 +379,10 @@ fn readme_cli_examples_do_not_advertise_stale_tui_or_coordinator_modes() {
     assert!(
         readme.contains("openclaudia --coordinator --tui-mode"),
         "README must show --coordinator with the required legacy REPL flag"
+    );
+    assert!(
+        readme.contains("openclaudia auth --logout      # Clear native OAuth session cache"),
+        "README must not imply auth --logout deletes shared Claude credentials"
     );
     assert!(
         !readme.contains("openclaudia --coordinator      # Multi-agent coordinator mode"),

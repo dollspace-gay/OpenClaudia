@@ -143,7 +143,7 @@ enum Commands {
         #[arg(long)]
         status: bool,
 
-        /// Log out and clear stored OAuth session
+        /// Clear native OAuth session cache without deleting shared Claude credentials
         #[arg(long)]
         logout: bool,
     },
