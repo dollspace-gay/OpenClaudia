@@ -1069,6 +1069,13 @@ async fn resolve_chat_auth(
         }));
     }
 
+    if openclaudia::config::is_local_provider_name(target) {
+        return Ok(Some(ChatAuth {
+            api_key: None,
+            claude_code_token: None,
+        }));
+    }
+
     let env_var = match target {
         "openai" => "OPENAI_API_KEY",
         "google" | "gemini" => "GOOGLE_API_KEY",

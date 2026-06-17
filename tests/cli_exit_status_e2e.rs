@@ -1,8 +1,10 @@
 use std::{
     fs,
-    io::Write,
+    io::{BufRead, BufReader, Read, Write},
     net::TcpListener,
     process::{Command, Output, Stdio},
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
 
 const CONFIG_ENV_VARS: &[&str] = &[
@@ -138,19 +140,25 @@ providers:
 }
 
 fn write_local_provider_config(cwd: &tempfile::TempDir) {
+    write_local_provider_config_with_base_url(cwd, "http://localhost:1234/v1");
+}
+
+fn write_local_provider_config_with_base_url(cwd: &tempfile::TempDir, base_url: &str) {
     let config_dir = cwd.path().join(".openclaudia");
     fs::create_dir_all(&config_dir).expect("config dir");
     fs::write(
         config_dir.join("config.yaml"),
-        r#"
+        format!(
+            r#"
 proxy:
   port: 8080
   host: "127.0.0.1"
   target: local
 providers:
   local:
-    base_url: http://localhost:1234/v1
+    base_url: {base_url}
 "#,
+        ),
     )
     .expect("config file");
 }
@@ -177,6 +185,99 @@ fn held_loopback_port() -> (TcpListener, u16) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind held port");
     let port = listener.local_addr().expect("local addr").port();
     (listener, port)
+}
+
+fn spawn_local_sse_server_rejecting_auth() -> (JoinHandle<Result<(), String>>, String) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind local sse server");
+    listener
+        .set_nonblocking(true)
+        .expect("set local sse listener nonblocking");
+    let addr = listener.local_addr().expect("local sse addr");
+    let base_url = format!("http://{addr}");
+
+    let handle = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let (mut stream, _) = loop {
+            match listener.accept() {
+                Ok(accepted) => break accepted,
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Err("local SSE server timed out waiting for request".to_string());
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(err) => return Err(format!("local SSE accept failed: {err}")),
+            }
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .map_err(|err| format!("set read timeout failed: {err}"))?;
+
+        let mut reader = BufReader::new(
+            stream
+                .try_clone()
+                .map_err(|err| format!("clone stream failed: {err}"))?,
+        );
+        let mut request_head = String::new();
+        loop {
+            let mut line = String::new();
+            let bytes = reader
+                .read_line(&mut line)
+                .map_err(|err| format!("read request header failed: {err}"))?;
+            if bytes == 0 {
+                return Err("client closed before completing request headers".to_string());
+            }
+            if line == "\r\n" {
+                break;
+            }
+            request_head.push_str(&line);
+        }
+
+        if !request_head.starts_with("POST /v1/chat/completions ") {
+            return Err(format!(
+                "unexpected local provider request: {request_head:?}"
+            ));
+        }
+        if request_head
+            .lines()
+            .any(|line| line.to_ascii_lowercase().starts_with("authorization:"))
+        {
+            return Err(format!(
+                "keyless local provider request must not send Authorization header: {request_head:?}"
+            ));
+        }
+
+        let content_length = request_head
+            .lines()
+            .find_map(|line| {
+                line.split_once(':').and_then(|(name, value)| {
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+            })
+            .unwrap_or(0);
+        let mut request_body = vec![0; content_length];
+        reader
+            .read_exact(&mut request_body)
+            .map_err(|err| format!("read request body failed: {err}"))?;
+        if !String::from_utf8_lossy(&request_body).contains("\"stream\":true") {
+            return Err("local --print request should ask for streaming".to_string());
+        }
+
+        let body =
+            "data: {\"choices\":[{\"delta\":{\"content\":\"local ok\"}}]}\n\ndata: [DONE]\n\n";
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .map_err(|err| format!("write local SSE response failed: {err}"))?;
+        Ok(())
+    });
+
+    (handle, base_url)
 }
 
 #[test]
@@ -319,6 +420,61 @@ fn acp_rejects_keyless_remote_provider_before_handshake() {
     assert!(
         combined.contains("OPENAI_API_KEY"),
         "remote ACP auth failure should name the provider env var; got {combined:?}"
+    );
+}
+
+#[test]
+fn print_accepts_keyless_local_provider_and_sends_no_auth_header() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    let (server, base_url) = spawn_local_sse_server_rejecting_auth();
+    write_local_provider_config_with_base_url(&cwd, &base_url);
+
+    let output = isolated_command(&cwd, &home)
+        .args(["--print", "hello"])
+        .output()
+        .expect("openclaudia --print must run");
+
+    let server_result = server.join().expect("local SSE server thread should join");
+    assert!(
+        server_result.is_ok(),
+        "local SSE server failed: {:?}",
+        server_result.err()
+    );
+    assert!(
+        output.status.success(),
+        "print should succeed for keyless local provider; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "local ok\n");
+}
+
+#[test]
+fn print_rejects_keyless_remote_provider_before_request() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    write_openai_provider_config(&cwd);
+
+    let output = isolated_command(&cwd, &home)
+        .args(["--print", "hello"])
+        .output()
+        .expect("openclaudia --print must run");
+
+    assert!(
+        !output.status.success(),
+        "print should reject a remote provider with no API key; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("OPENAI_API_KEY"),
+        "remote print auth failure should name the provider env var; got {combined:?}"
     );
 }
 
