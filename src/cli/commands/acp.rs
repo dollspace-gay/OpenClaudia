@@ -36,19 +36,11 @@ pub async fn cmd_acp(
     };
 
     let api_key = if let Some(k) = &provider.api_key {
-        k.clone()
+        Some(k.clone())
+    } else if config::is_local_provider_name(&config.proxy.target) {
+        None
     } else {
-        let env_var = match config.proxy.target.as_str() {
-            "anthropic" => "ANTHROPIC_API_KEY",
-            "openai" => "OPENAI_API_KEY",
-            "google" | "gemini" => "GOOGLE_API_KEY",
-            "zai" | "glm" | "zhipu" => "ZAI_API_KEY",
-            "deepseek" => "DEEPSEEK_API_KEY",
-            "qwen" | "alibaba" => "QWEN_API_KEY",
-            "kimi" | "moonshot" => "KIMI_API_KEY or MOONSHOT_API_KEY",
-            "minimax" => "MINIMAX_API_KEY",
-            _ => "API_KEY",
-        };
+        let env_var = super::provider_api_key_env_var(&config.proxy.target);
         eprintln!(
             "No API key configured for '{}'. Set {} or add to config.",
             config.proxy.target, env_var

@@ -139,8 +139,10 @@ pub struct AcpServer {
     messages: Vec<Value>,
     /// Model name
     model: String,
-    /// API key (redacting newtype — see crosslink #256)
-    api_key: crate::providers::ApiKey,
+    /// Optional provider API key (redacting newtype — see crosslink #256).
+    /// Local/OpenAI-compatible providers may run without one; remote providers
+    /// are validated by the CLI before the ACP server starts.
+    api_key: Option<crate::providers::ApiKey>,
     /// Library-layer permission manager. Every tool call dispatched from
     /// `execute_tool_via_openclaudia` consults this gate — closes
     /// crosslink #505 for the ACP path.
@@ -462,7 +464,7 @@ impl AcpServer {
     pub fn new(
         config: AppConfig,
         model: String,
-        api_key: crate::providers::ApiKey,
+        api_key: Option<crate::providers::ApiKey>,
         stdout_tx: mpsc::UnboundedSender<String>,
     ) -> Self {
         let persist_dir = dirs::data_dir()
@@ -1058,8 +1060,27 @@ impl AcpServer {
             );
 
             // Build HTTP request with headers
-            let mut headers = adapter.get_headers(&self.api_key);
-            headers.extend(provider.headers.iter().map(|(k, v)| (k.clone(), v.clone())));
+            let extra_headers: Vec<(String, String)> = provider
+                .headers
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            let headers = match crate::pipeline::resolve_headers(
+                &self.config.proxy.target,
+                self.api_key.as_ref(),
+                None,
+                &extra_headers,
+            ) {
+                Ok(headers) => headers,
+                Err(e) => {
+                    self.send_session_update(
+                        acp_session_id,
+                        "agent_message_chunk",
+                        &json!({"type": "text", "text": format!("Provider error: {}", e)}),
+                    );
+                    return "error".to_string();
+                }
+            };
 
             let mut req = client.post(&endpoint).json(&transformed);
             for (key, value) in &headers {
@@ -2266,7 +2287,7 @@ struct AcpToolResult {
 pub async fn run_acp_server(
     config: AppConfig,
     model: String,
-    api_key: crate::providers::ApiKey,
+    api_key: Option<crate::providers::ApiKey>,
 ) -> Result<()> {
     // Set up stdout writer channel — all writes go through this to avoid interleaving
     let (stdout_tx, mut stdout_rx) = mpsc::unbounded_channel::<String>();

@@ -155,6 +155,24 @@ providers:
     .expect("config file");
 }
 
+fn write_openai_provider_config(cwd: &tempfile::TempDir) {
+    let config_dir = cwd.path().join(".openclaudia");
+    fs::create_dir_all(&config_dir).expect("config dir");
+    fs::write(
+        config_dir.join("config.yaml"),
+        r#"
+proxy:
+  port: 8080
+  host: "127.0.0.1"
+  target: openai
+providers:
+  openai:
+    base_url: https://api.openai.com/v1
+"#,
+    )
+    .expect("config file");
+}
+
 fn held_loopback_port() -> (TcpListener, u16) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind held port");
     let port = listener.local_addr().expect("local addr").port();
@@ -244,6 +262,64 @@ fn loop_without_config_exits_nonzero() {
 #[test]
 fn acp_without_config_exits_nonzero() {
     assert_missing_config_is_failure(&["acp"]);
+}
+
+#[test]
+fn acp_accepts_keyless_local_provider_until_stdin_eof() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    write_local_provider_config(&cwd);
+
+    let output = isolated_command(&cwd, &home)
+        .arg("acp")
+        .stdin(Stdio::null())
+        .output()
+        .expect("openclaudia acp must run");
+
+    assert!(
+        output.status.success(),
+        "acp should start and exit cleanly on EOF for keyless local provider; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !combined.contains("No API key configured") && !combined.contains("Set API_KEY"),
+        "local ACP mode must not require an API key; got {combined:?}"
+    );
+}
+
+#[test]
+fn acp_rejects_keyless_remote_provider_before_handshake() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    write_openai_provider_config(&cwd);
+
+    let output = isolated_command(&cwd, &home)
+        .arg("acp")
+        .stdin(Stdio::null())
+        .output()
+        .expect("openclaudia acp must run");
+
+    assert!(
+        !output.status.success(),
+        "acp should reject a remote provider with no API key; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("OPENAI_API_KEY"),
+        "remote ACP auth failure should name the provider env var; got {combined:?}"
+    );
 }
 
 #[test]
