@@ -1,8 +1,9 @@
 //! Shared `OpenAI`-compatible adapter for providers that accept Chat Completions
-//! requests on the wire (`OpenAI`, `DeepSeek`, Qwen, Z.AI/GLM, plus the generic
-//! `LM Studio` / `LocalAI` / `text-generation-webui` fallbacks).
+//! requests on the wire (`OpenAI`, `DeepSeek`, Qwen, Z.AI/GLM,
+//! Kimi/Moonshot, `MiniMax`, plus the generic `LM Studio` / `LocalAI` /
+//! `text-generation-webui` fallbacks).
 //!
-//! All four upstream services accept the same canonical `OpenAI`
+//! These upstream services accept the same canonical `OpenAI`
 //! `ChatCompletionRequest` body and return responses in `OpenAI` shape.
 //! They differ only on:
 //!
@@ -15,7 +16,7 @@
 //!   `thinking: { type: enabled }`, `reasoning_effort`, etc.),
 //! - whether `/v1/models` listing is supported.
 //!
-//! Rather than carry four near-identical copies of `ProviderAdapter`
+//! Rather than carry near-identical copies of `ProviderAdapter`
 //! impls, those variations are parameterized on this struct.
 //!
 //! Behavioural preservation: every request emitted by this adapter is
@@ -41,6 +42,8 @@ use super::{ApiKey, ProviderAdapter, ProviderError};
 /// constructors `const fn`, and avoids handing out raw function pointers.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum ThinkingInjector {
+    /// No provider-specific thinking parameter is emitted.
+    None,
     /// `OpenAI` o1/o3/o4 reasoning models.
     ///
     /// Sets `reasoning_effort` to the configured value (default
@@ -79,6 +82,7 @@ impl ThinkingInjector {
     /// (currently only `OpenAiReasoningEffort`).
     fn inject(self, body: &mut Value, thinking: &ThinkingConfig, model: &str) {
         match self {
+            Self::None => {}
             Self::OpenAiReasoningEffort => {
                 if thinking.enabled {
                     let is_reasoning_model = model.starts_with("o1")
@@ -141,13 +145,13 @@ impl ThinkingInjector {
 /// name, endpoint, thinking-mode encoding, and capabilities.
 ///
 /// Provider-specific adapters (`OpenAIAdapter`, `DeepSeekAdapter`,
-/// `QwenAdapter`, `ZaiAdapter`) are thin newtypes around an instance of
-/// this struct.
+/// `QwenAdapter`, `ZaiAdapter`, `KimiAdapter`, and `MiniMaxAdapter`) are
+/// thin newtypes around an instance of this struct.
 pub(super) struct OpenAiCompatibleAdapter {
     name: &'static str,
     /// Path returned from [`ProviderAdapter::chat_endpoint`]. Stored as
     /// `&'static str` (rather than a closure) because every observed
-    /// variation is a string constant — three providers use
+    /// variation is a string constant — most providers use
     /// `/v1/chat/completions`, Z.AI uses `/chat/completions`.
     chat_path: &'static str,
     thinking: ThinkingInjector,

@@ -41,10 +41,12 @@ pub async fn cmd_acp(
         let env_var = match config.proxy.target.as_str() {
             "anthropic" => "ANTHROPIC_API_KEY",
             "openai" => "OPENAI_API_KEY",
-            "google" => "GOOGLE_API_KEY",
-            "zai" => "ZAI_API_KEY",
+            "google" | "gemini" => "GOOGLE_API_KEY",
+            "zai" | "glm" | "zhipu" => "ZAI_API_KEY",
             "deepseek" => "DEEPSEEK_API_KEY",
-            "qwen" => "QWEN_API_KEY",
+            "qwen" | "alibaba" => "QWEN_API_KEY",
+            "kimi" | "moonshot" => "KIMI_API_KEY or MOONSHOT_API_KEY",
+            "minimax" => "MINIMAX_API_KEY",
             _ => "API_KEY",
         };
         eprintln!(
@@ -62,10 +64,12 @@ pub async fn cmd_acp(
         .or_else(|| provider.model.clone())
         .unwrap_or_else(|| match config.proxy.target.as_str() {
             "anthropic" => "claude-opus-4-6".to_string(),
-            "google" => "gemini-2.5-flash".to_string(),
-            "zai" => "glm-5".to_string(),
+            "google" | "gemini" => "gemini-2.5-flash".to_string(),
+            "zai" | "glm" | "zhipu" => "glm-5".to_string(),
             "deepseek" => "deepseek-chat".to_string(),
-            "qwen" => "qwen3.5-plus".to_string(),
+            "qwen" | "alibaba" => "qwen3.5-plus".to_string(),
+            "kimi" | "moonshot" => "kimi-k2.7-code".to_string(),
+            "minimax" => "MiniMax-M3".to_string(),
             "openai" | &_ => "gpt-5.2".to_string(),
         });
 

@@ -293,7 +293,7 @@ fn each_provider_returns_none_for_other_providers_response_shape() {
 #[test]
 fn each_provider_returns_none_on_empty_object() {
     let empty = json!({});
-    for name in &["anthropic", "openai", "google", "ollama"] {
+    for name in &["anthropic", "openai", "google", "kimi", "minimax", "ollama"] {
         let adapter = get_adapter(name).unwrap();
         assert!(
             adapter.extract_response_text(&empty).is_none(),
@@ -305,7 +305,7 @@ fn each_provider_returns_none_on_empty_object() {
 #[test]
 fn each_provider_returns_none_on_null_value() {
     let nul = serde_json::Value::Null;
-    for name in &["anthropic", "openai", "google", "ollama"] {
+    for name in &["anthropic", "openai", "google", "kimi", "minimax", "ollama"] {
         let adapter = get_adapter(name).unwrap();
         assert!(
             adapter.extract_response_text(&nul).is_none(),
@@ -317,7 +317,7 @@ fn each_provider_returns_none_on_null_value() {
 #[test]
 fn each_provider_returns_none_on_garbled_array_at_root() {
     let arr = json!(["not", "an", "object"]);
-    for name in &["anthropic", "openai", "google", "ollama"] {
+    for name in &["anthropic", "openai", "google", "kimi", "minimax", "ollama"] {
         let adapter = get_adapter(name).unwrap();
         assert!(
             adapter.extract_response_text(&arr).is_none(),

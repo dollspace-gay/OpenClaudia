@@ -190,6 +190,12 @@ pub fn configure_provider_api_key() {
         ("deepseek", "DeepSeek", "DEEPSEEK_API_KEY"),
         ("qwen", "Qwen (Alibaba)", "QWEN_API_KEY"),
         ("zai", "Z.AI (GLM)", "ZAI_API_KEY"),
+        (
+            "kimi",
+            "Kimi (Moonshot)",
+            "KIMI_API_KEY or MOONSHOT_API_KEY",
+        ),
+        ("minimax", "MiniMax", "MINIMAX_API_KEY"),
     ];
 
     println!("\n=== Configure API Provider ===\n");

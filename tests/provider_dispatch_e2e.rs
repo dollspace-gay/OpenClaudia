@@ -33,6 +33,8 @@ const ALIASES: &[(&str, &[&str])] = &[
     ("deepseek", &[]),
     ("qwen", &["alibaba"]),
     ("zai", &["glm", "zhipu"]),
+    ("kimi", &["moonshot"]),
+    ("minimax", &[]),
     ("ollama", &[]),
 ];
 
@@ -145,6 +147,8 @@ fn each_adapter_reports_its_documented_canonical_name() {
         ("deepseek", "deepseek"),
         ("qwen", "qwen"),
         ("zai", "zai"),
+        ("kimi", "kimi"),
+        ("minimax", "minimax"),
         ("ollama", "ollama"),
     ];
     for (lookup, expected_name) in expected {
@@ -214,14 +218,14 @@ fn anthropic_does_not_advertise_model_listing() {
 }
 
 #[test]
-fn openai_and_ollama_advertise_model_listing() {
+fn openai_kimi_and_ollama_advertise_model_listing() {
     // Authoring discovery: the OpenAiCompatibleAdapter
     // constructor takes a `supports_models: bool`. Only
-    // `openai` and `ollama` pass `true` — DeepSeek, Qwen,
-    // and Z.AI all pass `false` because their /v1/models
+    // `openai`, `kimi`, and `ollama` pass `true` — DeepSeek, Qwen,
+    // Z.AI, and MiniMax pass `false` because their /v1/models
     // endpoints either don't exist or return non-standard
     // shapes. Pinning the actual contract here.
-    for provider in &["openai", "ollama"] {
+    for provider in &["openai", "kimi", "ollama"] {
         let adapter = get_adapter(provider)
             .unwrap_or_else(|e| panic!("{provider} adapter must resolve: {e}"));
         assert!(
@@ -232,14 +236,14 @@ fn openai_and_ollama_advertise_model_listing() {
 }
 
 #[test]
-fn deepseek_qwen_zai_do_not_advertise_model_listing() {
+fn deepseek_qwen_zai_minimax_do_not_advertise_model_listing() {
     // Counter-test pinning the disable contract for
     // providers that don't expose a usable /v1/models.
     // A future change that flips one to `true` will fail
     // here and call out the migration: ensure the endpoint
     // actually exists AND that fetch_models can parse the
     // response shape.
-    for provider in &["deepseek", "qwen", "zai"] {
+    for provider in &["deepseek", "qwen", "zai", "minimax"] {
         let adapter = get_adapter(provider)
             .unwrap_or_else(|e| panic!("{provider} adapter must resolve: {e}"));
         assert!(
@@ -254,8 +258,8 @@ fn deepseek_qwen_zai_do_not_advertise_model_listing() {
 fn models_endpoint_mentions_models_for_listing_capable_adapters() {
     // Only adapters that advertise model listing need a
     // sensible endpoint. We check both names that DO
-    // support it — both endpoints must mention `models`.
-    for provider in &["openai", "ollama"] {
+    // support it — each endpoint must mention `models`.
+    for provider in &["openai", "kimi", "ollama"] {
         let adapter = get_adapter(provider).expect("adapter");
         let endpoint = adapter.models_endpoint();
         assert!(

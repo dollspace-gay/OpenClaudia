@@ -184,7 +184,11 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
         .set_default(
             "providers.qwen.base_url",
             "https://dashscope.aliyuncs.com/compatible-mode",
-        )?;
+        )?
+        // Kimi/Moonshot (OpenAI-compatible)
+        .set_default("providers.kimi.base_url", "https://api.moonshot.ai/v1")?
+        // MiniMax (OpenAI-compatible)
+        .set_default("providers.minimax.base_url", "https://api.minimax.io/v1")?;
 
     // Load from project config file
     let project_config = PathBuf::from(".openclaudia/config.yaml");
@@ -236,6 +240,20 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
     }
     if let Ok(key) = std::env::var("QWEN_API_KEY") {
         builder = maybe_set_api_key(builder, "providers.qwen.api_key", key)?;
+    }
+    let kimi_key = std::env::var("KIMI_API_KEY")
+        .ok()
+        .filter(|key| !key.trim().is_empty())
+        .or_else(|| {
+            std::env::var("MOONSHOT_API_KEY")
+                .ok()
+                .filter(|key| !key.trim().is_empty())
+        });
+    if let Some(key) = kimi_key {
+        builder = maybe_set_api_key(builder, "providers.kimi.api_key", key)?;
+    }
+    if let Ok(key) = std::env::var("MINIMAX_API_KEY") {
+        builder = maybe_set_api_key(builder, "providers.minimax.api_key", key)?;
     }
 
     // `ApiKey::deserialize` (invoked transitively here) enforces non-empty,
@@ -289,16 +307,34 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
     Ok(config)
 }
 
+fn canonical_provider_config_key(name: &str) -> Option<&'static str> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "anthropic" => Some("anthropic"),
+        "openai" => Some("openai"),
+        "google" | "gemini" => Some("google"),
+        "deepseek" => Some("deepseek"),
+        "qwen" | "alibaba" => Some("qwen"),
+        "zai" | "glm" | "zhipu" => Some("zai"),
+        "kimi" | "moonshot" => Some("kimi"),
+        "minimax" => Some("minimax"),
+        "ollama" => Some("ollama"),
+        "local" | "lmstudio" | "localai" | "text-generation-webui" => Some("local"),
+        _ => None,
+    }
+}
+
 /// Get the active provider configuration
 impl AppConfig {
     #[must_use]
     pub fn active_provider(&self) -> Option<&ProviderConfig> {
-        self.providers.get(&self.proxy.target)
+        self.get_provider(&self.proxy.target)
     }
 
     #[must_use]
     pub fn get_provider(&self, name: &str) -> Option<&ProviderConfig> {
-        self.providers.get(name)
+        self.providers
+            .get(name)
+            .or_else(|| canonical_provider_config_key(name).and_then(|key| self.providers.get(key)))
     }
 }
 
@@ -396,6 +432,99 @@ mod tests {
         assert!(config.get_provider("openai").is_some());
         assert!(config.get_provider("anthropic").is_some());
         assert!(config.get_provider("nonexistent").is_none());
+    }
+
+    #[test]
+    fn app_config_get_provider_falls_back_from_alias_to_canonical_key() {
+        let mut providers = HashMap::new();
+        providers.insert(
+            "kimi".to_string(),
+            ProviderConfig {
+                api_key: Some(test_api_key("kimi-key")),
+                base_url: "https://api.moonshot.ai/v1".to_string(),
+                model: None,
+                headers: HashMap::new(),
+                thinking: ThinkingConfig::default(),
+            },
+        );
+
+        let config = AppConfig {
+            proxy: ProxyConfig {
+                target: "moonshot".to_string(),
+                ..Default::default()
+            },
+            providers,
+            hooks: HooksConfig::default(),
+            session: SessionConfig::default(),
+            keybindings: KeybindingsConfig::default(),
+            vdd: VddConfig::default(),
+            guardrails: GuardrailsConfig::default(),
+            permissions: PermissionsConfig::default(),
+            memory: MemoryConfig::default(),
+            web_fetch: WebFetchConfig::default(),
+            policy: crate::services::policy::EnterprisePolicy::default(),
+            managed_settings_path: None,
+        };
+
+        assert_eq!(
+            config
+                .active_provider()
+                .and_then(|provider| provider.api_key.as_ref())
+                .map(ApiKey::as_str),
+            Some("kimi-key-0000000000")
+        );
+        assert!(config.get_provider("MOONSHOT").is_some());
+    }
+
+    #[test]
+    fn app_config_get_provider_prefers_exact_alias_config_when_present() {
+        let mut providers = HashMap::new();
+        providers.insert(
+            "kimi".to_string(),
+            ProviderConfig {
+                api_key: Some(test_api_key("canonical")),
+                base_url: "https://api.moonshot.ai/v1".to_string(),
+                model: None,
+                headers: HashMap::new(),
+                thinking: ThinkingConfig::default(),
+            },
+        );
+        providers.insert(
+            "moonshot".to_string(),
+            ProviderConfig {
+                api_key: Some(test_api_key("alias")),
+                base_url: "https://proxy.example.com/v1".to_string(),
+                model: None,
+                headers: HashMap::new(),
+                thinking: ThinkingConfig::default(),
+            },
+        );
+
+        let config = AppConfig {
+            proxy: ProxyConfig {
+                target: "moonshot".to_string(),
+                ..Default::default()
+            },
+            providers,
+            hooks: HooksConfig::default(),
+            session: SessionConfig::default(),
+            keybindings: KeybindingsConfig::default(),
+            vdd: VddConfig::default(),
+            guardrails: GuardrailsConfig::default(),
+            permissions: PermissionsConfig::default(),
+            memory: MemoryConfig::default(),
+            web_fetch: WebFetchConfig::default(),
+            policy: crate::services::policy::EnterprisePolicy::default(),
+            managed_settings_path: None,
+        };
+
+        assert_eq!(
+            config
+                .active_provider()
+                .and_then(|provider| provider.api_key.as_ref())
+                .map(ApiKey::as_str),
+            Some("alias-0000000000")
+        );
     }
 
     #[test]

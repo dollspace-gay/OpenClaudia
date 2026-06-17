@@ -34,6 +34,8 @@ fn provider_api_key_env_var(provider_name: &str) -> &'static str {
         "zai" | "glm" | "zhipu" => "ZAI_API_KEY",
         "deepseek" => "DEEPSEEK_API_KEY",
         "qwen" | "alibaba" => "QWEN_API_KEY",
+        "kimi" | "moonshot" => "KIMI_API_KEY or MOONSHOT_API_KEY",
+        "minimax" => "MINIMAX_API_KEY",
         _ => "API_KEY",
     }
 }
@@ -464,6 +466,18 @@ mod tests {
             active_provider_auth_requirement("openai", &provider_with_key(None)),
             ActiveProviderAuthRequirement::MissingApiKey {
                 env_var: "OPENAI_API_KEY"
+            }
+        );
+        assert_eq!(
+            active_provider_auth_requirement("moonshot", &provider_with_key(None)),
+            ActiveProviderAuthRequirement::MissingApiKey {
+                env_var: "KIMI_API_KEY or MOONSHOT_API_KEY"
+            }
+        );
+        assert_eq!(
+            active_provider_auth_requirement("minimax", &provider_with_key(None)),
+            ActiveProviderAuthRequirement::MissingApiKey {
+                env_var: "MINIMAX_API_KEY"
             }
         );
     }

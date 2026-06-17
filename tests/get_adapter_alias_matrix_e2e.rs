@@ -52,6 +52,18 @@ fn zai_canonical_resolves() {
 }
 
 #[test]
+fn kimi_canonical_resolves() {
+    let adapter = get_adapter("kimi").expect("kimi");
+    assert_eq!(adapter.name(), "kimi");
+}
+
+#[test]
+fn minimax_canonical_resolves() {
+    let adapter = get_adapter("minimax").expect("minimax");
+    assert_eq!(adapter.name(), "minimax");
+}
+
+#[test]
 fn ollama_canonical_resolves() {
     let _ = get_adapter("ollama").expect("ollama");
 }
@@ -98,7 +110,18 @@ fn qwen_alias_alibaba_resolves_to_same_adapter() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section E — Aliases — OpenAI-compatible local providers
+// Section E — Aliases — Kimi / Moonshot
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn kimi_alias_moonshot_resolves_to_same_adapter() {
+    let canonical = get_adapter("kimi").expect("kimi");
+    let alias = get_adapter("moonshot").expect("moonshot");
+    assert!(std::ptr::eq(canonical, alias));
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section F — Aliases — OpenAI-compatible local providers
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -130,7 +153,7 @@ fn openai_alias_text_generation_webui_resolves_to_same_adapter() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section F — Case-insensitivity
+// Section G — Case-insensitivity
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -158,8 +181,18 @@ fn dispatch_is_case_insensitive_for_alias_lmstudio() {
     assert!(std::ptr::eq(lower, mixed));
 }
 
+#[test]
+fn dispatch_is_case_insensitive_for_kimi_minimax() {
+    let kimi = get_adapter("kimi").expect("kimi");
+    let moonshot_upper = get_adapter("MOONSHOT").expect("moonshot");
+    let minimax = get_adapter("minimax").expect("minimax");
+    let minimax_mixed = get_adapter("MiniMax").expect("MiniMax");
+    assert!(std::ptr::eq(kimi, moonshot_upper));
+    assert!(std::ptr::eq(minimax, minimax_mixed));
+}
+
 // ───────────────────────────────────────────────────────────────────────────
-// Section G — Singleton sharing across calls
+// Section H — Singleton sharing across calls
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -185,7 +218,7 @@ fn distinct_providers_have_distinct_singletons() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section H — UnknownProvider error shape
+// Section I — UnknownProvider error shape
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -222,6 +255,9 @@ fn unknown_provider_error_carries_documented_supported_list() {
         "zai",
         "glm",
         "zhipu",
+        "kimi",
+        "moonshot",
+        "minimax",
         "ollama",
         "local",
         "lmstudio",
@@ -236,8 +272,8 @@ fn unknown_provider_error_carries_documented_supported_list() {
 }
 
 #[test]
-fn unknown_provider_supported_list_has_exactly_15_entries() {
-    // PINS COUNT: 15 documented names (7 canonical + 8 aliases).
+fn unknown_provider_supported_list_has_exactly_18_entries() {
+    // PINS COUNT: 18 documented names (9 canonical + 9 aliases).
     let outcome = get_adapter("xyz");
     let Err(err) = outcome else {
         panic!("expected Err")
@@ -247,8 +283,8 @@ fn unknown_provider_supported_list_has_exactly_15_entries() {
     };
     assert_eq!(
         supported.len(),
-        15,
-        "MUST list exactly 15 supported names; got {supported:?}"
+        18,
+        "MUST list exactly 18 supported names; got {supported:?}"
     );
 }
 
@@ -271,7 +307,7 @@ fn whitespace_only_provider_name_returns_unknown_provider_error() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section I — Cross-canonical-vs-alias adapter identity
+// Section J — Cross-canonical-vs-alias adapter identity
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -283,6 +319,7 @@ fn every_alias_resolves_to_a_canonical_adapter_singleton() {
         ("zai", "glm"),
         ("zai", "zhipu"),
         ("qwen", "alibaba"),
+        ("kimi", "moonshot"),
         ("openai", "local"),
         ("openai", "lmstudio"),
         ("openai", "localai"),

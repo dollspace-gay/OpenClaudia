@@ -57,6 +57,20 @@ fn get_adapter_qwen_alibaba_alias_resolves_to_qwen() {
 }
 
 #[test]
+fn get_adapter_kimi_moonshot_alias_resolves_to_kimi() {
+    let direct = get_adapter("kimi").expect("kimi");
+    let alias = get_adapter("moonshot").expect("moonshot alias");
+    assert_eq!(direct.name(), "kimi");
+    assert_eq!(direct.name(), alias.name());
+}
+
+#[test]
+fn get_adapter_minimax_resolves() {
+    let adapter = get_adapter("minimax").expect("minimax");
+    assert_eq!(adapter.name(), "minimax");
+}
+
+#[test]
 fn get_adapter_openai_compat_aliases_resolve_to_openai() {
     for alias in &["local", "lmstudio", "localai", "text-generation-webui"] {
         let a = get_adapter(alias).unwrap_or_else(|_| panic!("{alias} MUST resolve"));
@@ -123,6 +137,18 @@ fn deepseek_chat_endpoint_is_v1_chat_completions() {
 #[test]
 fn qwen_chat_endpoint_is_v1_chat_completions() {
     let a = get_adapter("qwen").unwrap();
+    assert_eq!(a.chat_endpoint("anything"), "/v1/chat/completions");
+}
+
+#[test]
+fn kimi_chat_endpoint_is_v1_chat_completions() {
+    let a = get_adapter("kimi").unwrap();
+    assert_eq!(a.chat_endpoint("anything"), "/v1/chat/completions");
+}
+
+#[test]
+fn minimax_chat_endpoint_is_v1_chat_completions() {
+    let a = get_adapter("minimax").unwrap();
     assert_eq!(a.chat_endpoint("anything"), "/v1/chat/completions");
 }
 
@@ -209,6 +235,26 @@ fn from_model_qwen_prefixes_including_qwq_qvq() {
 #[test]
 fn from_model_zai_glm_prefix() {
     assert_eq!(ProviderKind::from_model("glm-4"), ProviderKind::Zai);
+}
+
+#[test]
+fn from_model_kimi_and_moonshot_prefixes() {
+    assert_eq!(
+        ProviderKind::from_model("kimi-k2.7-code"),
+        ProviderKind::Kimi
+    );
+    assert_eq!(
+        ProviderKind::from_model("moonshot-v1-128k"),
+        ProviderKind::Kimi
+    );
+}
+
+#[test]
+fn from_model_minimax_prefixes() {
+    assert_eq!(
+        ProviderKind::from_model("MiniMax-M3"),
+        ProviderKind::MiniMax
+    );
 }
 
 #[test]

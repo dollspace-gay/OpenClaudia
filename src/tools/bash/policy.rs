@@ -67,6 +67,9 @@ pub fn is_sensitive_env(key: &str) -> bool {
             | "DASHSCOPE_API_KEY"
             | "ZAI_API_KEY"
             | "GLM_API_KEY"
+            | "KIMI_API_KEY"
+            | "MOONSHOT_API_KEY"
+            | "MINIMAX_API_KEY"
             | "OLLAMA_API_KEY"
             | "TAVILY_API_KEY"
             | "BRAVE_API_KEY"
@@ -789,6 +792,9 @@ mod tests {
             "DASHSCOPE_API_KEY",
             "ZAI_API_KEY",
             "GLM_API_KEY",
+            "KIMI_API_KEY",
+            "MOONSHOT_API_KEY",
+            "MINIMAX_API_KEY",
             "OLLAMA_API_KEY",
             "TAVILY_API_KEY",
             "BRAVE_API_KEY",

@@ -32,7 +32,7 @@ pub fn cmd_init(force: bool) -> anyhow::Result<()> {
 proxy:
   port: 8080
   host: "127.0.0.1"
-  target: anthropic  # Default provider: anthropic, openai, google, zai, deepseek, qwen
+  target: anthropic  # Default provider: anthropic, openai, google, zai, deepseek, qwen, kimi, minimax
 
 providers:
   anthropic:
@@ -56,6 +56,14 @@ providers:
   qwen:
     base_url: https://dashscope.aliyuncs.com/compatible-mode
     # api_key: ${QWEN_API_KEY}
+  # Kimi/Moonshot (OpenAI-compatible) - Models: kimi-k2.7-code, kimi-k2.6
+  kimi:
+    base_url: https://api.moonshot.ai/v1
+    # api_key: ${KIMI_API_KEY}  # or ${MOONSHOT_API_KEY}
+  # MiniMax (OpenAI-compatible) - Models: MiniMax-M3, MiniMax-M2.7
+  minimax:
+    base_url: https://api.minimax.io/v1
+    # api_key: ${MINIMAX_API_KEY}
 
 # Hooks run at key moments in the agent lifecycle
 # See: https://github.com/yourusername/openclaudia/docs/hooks.md

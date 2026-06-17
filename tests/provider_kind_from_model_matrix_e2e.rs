@@ -201,7 +201,48 @@ fn classify_bare_glm_as_zai() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section G — Case-insensitivity
+// Section G — Kimi / Moonshot
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn classify_kimi_prefix_as_kimi() {
+    assert_eq!(
+        ProviderKind::from_model("kimi-k2.7-code"),
+        ProviderKind::Kimi
+    );
+    assert_eq!(ProviderKind::from_model("kimi-k2.6"), ProviderKind::Kimi);
+}
+
+#[test]
+fn classify_moonshot_prefix_as_kimi() {
+    assert_eq!(
+        ProviderKind::from_model("moonshot-v1-128k"),
+        ProviderKind::Kimi
+    );
+    assert_eq!(
+        ProviderKind::from_model("moonshot-v1-8k"),
+        ProviderKind::Kimi
+    );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section H — MiniMax
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn classify_minimax_prefix_as_minimax() {
+    assert_eq!(
+        ProviderKind::from_model("MiniMax-M3"),
+        ProviderKind::MiniMax
+    );
+    assert_eq!(
+        ProviderKind::from_model("MiniMax-M2.7-highspeed"),
+        ProviderKind::MiniMax
+    );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section I — Case-insensitivity
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -241,8 +282,24 @@ fn classification_is_case_insensitive_for_openai_o_series() {
     assert_eq!(ProviderKind::from_model("GPT-4O"), ProviderKind::OpenAI);
 }
 
+#[test]
+fn classification_is_case_insensitive_for_kimi_minimax() {
+    assert_eq!(
+        ProviderKind::from_model("KIMI-K2.7-CODE"),
+        ProviderKind::Kimi
+    );
+    assert_eq!(
+        ProviderKind::from_model("MOONSHOT-V1-8K"),
+        ProviderKind::Kimi
+    );
+    assert_eq!(
+        ProviderKind::from_model("MINIMAX-M3"),
+        ProviderKind::MiniMax
+    );
+}
+
 // ───────────────────────────────────────────────────────────────────────────
-// Section H — Unknown fallback
+// Section J — Unknown fallback
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -286,7 +343,7 @@ fn classify_only_dash_or_whitespace_as_unknown() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section I — Round-trip with name()
+// Section K — Round-trip with name()
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -300,6 +357,9 @@ fn from_model_then_name_yields_canonical_provider_name() {
         ("qwen-max", "qwen"),
         ("qwq-32b", "qwen"),
         ("glm-4", "zai"),
+        ("kimi-k2.7-code", "kimi"),
+        ("moonshot-v1-8k", "kimi"),
+        ("MiniMax-M3", "minimax"),
         ("unknown_model", "unknown"),
     ];
     for (model, expected_name) in pairs {

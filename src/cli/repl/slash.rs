@@ -644,6 +644,9 @@ pub fn slash_debug(provider: &str, current_model: &str, msg_count: usize) {
         "DEEPSEEK_API_KEY",
         "QWEN_API_KEY",
         "ZAI_API_KEY",
+        "KIMI_API_KEY",
+        "MOONSHOT_API_KEY",
+        "MINIMAX_API_KEY",
         "EDITOR",
     ] {
         let status = if std::env::var(var).is_ok() {
@@ -1366,6 +1369,7 @@ fn fast_model_for_provider(provider: &str) -> Option<&'static str> {
         "gemini" => "google",
         "glm" | "zhipu" => "zai",
         "alibaba" => "qwen",
+        "moonshot" => "kimi",
         other => other,
     };
     let preferred: &[&str] = match static_provider {
@@ -1375,6 +1379,8 @@ fn fast_model_for_provider(provider: &str) -> Option<&'static str> {
         "zai" => &["glm-4.7-flash", "glm-4.5-flash"],
         "qwen" => &["qwen-turbo"],
         "deepseek" => &["deepseek-chat"],
+        "kimi" => &["kimi-k2.7-code-highspeed", "moonshot-v1-8k"],
+        "minimax" => &["MiniMax-M2.7-highspeed", "MiniMax-M2.5-highspeed"],
         _ => return None,
     };
     let available = get_available_models(static_provider);
@@ -2792,6 +2798,32 @@ mod tests {
                     if effort == "low" && model.is_none()
             ),
             "/fast must still lower effort for providers without a static fast model"
+        );
+    }
+
+    #[test]
+    fn spec_fast_kimi_uses_highspeed_model() {
+        let result = handle_slash_command("/fast", &mut ctx(), "kimi", "kimi-k2.7-code");
+        assert!(
+            matches!(
+                result,
+                Some(SlashCommandResult::FastMode { ref effort, ref model })
+                    if effort == "low" && model.as_deref() == Some("kimi-k2.7-code-highspeed")
+            ),
+            "/fast must switch Kimi sessions to the highspeed model"
+        );
+    }
+
+    #[test]
+    fn spec_fast_minimax_uses_highspeed_model() {
+        let result = handle_slash_command("/fast", &mut ctx(), "minimax", "MiniMax-M3");
+        assert!(
+            matches!(
+                result,
+                Some(SlashCommandResult::FastMode { ref effort, ref model })
+                    if effort == "low" && model.as_deref() == Some("MiniMax-M2.7-highspeed")
+            ),
+            "/fast must switch MiniMax sessions to a highspeed model"
         );
     }
 

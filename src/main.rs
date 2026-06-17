@@ -150,7 +150,7 @@ enum Commands {
         #[arg(long)]
         host: Option<String>,
 
-        /// Target provider (anthropic, openai, google, gemini, deepseek, qwen, alibaba, zai, glm, zhipu, ollama, local, lmstudio, localai, text-generation-webui)
+        /// Target provider (anthropic, openai, google, gemini, deepseek, qwen, alibaba, zai, glm, zhipu, kimi, moonshot, minimax, ollama, local, lmstudio, localai, text-generation-webui)
         #[arg(
             short,
             long,
@@ -190,7 +190,7 @@ enum Commands {
         #[arg(short, long)]
         port: Option<u16>,
 
-        /// Target provider (anthropic, openai, google, gemini, deepseek, qwen, alibaba, zai, glm, zhipu, ollama, local, lmstudio, localai, text-generation-webui)
+        /// Target provider (anthropic, openai, google, gemini, deepseek, qwen, alibaba, zai, glm, zhipu, kimi, moonshot, minimax, ollama, local, lmstudio, localai, text-generation-webui)
         #[arg(
             short,
             long,
@@ -956,9 +956,16 @@ fn chdir_to_git_root() {
 const DEFAULT_MODELS_BY_TARGET: &[(&str, &str)] = &[
     ("anthropic", "claude-opus-4-6"),
     ("google", "gemini-2.5-flash"),
+    ("gemini", "gemini-2.5-flash"),
     ("zai", "glm-5"),
+    ("glm", "glm-5"),
+    ("zhipu", "glm-5"),
     ("deepseek", "deepseek-chat"),
     ("qwen", "qwen3.5-plus"),
+    ("alibaba", "qwen3.5-plus"),
+    ("kimi", "kimi-k2.7-code"),
+    ("moonshot", "kimi-k2.7-code"),
+    ("minimax", "MiniMax-M3"),
 ];
 
 /// Fallback model for targets not listed in [`DEFAULT_MODELS_BY_TARGET`].
@@ -1076,10 +1083,12 @@ async fn resolve_chat_auth(
 
     let env_var = match target {
         "openai" => "OPENAI_API_KEY",
-        "google" => "GOOGLE_API_KEY",
-        "zai" => "ZAI_API_KEY",
+        "google" | "gemini" => "GOOGLE_API_KEY",
+        "zai" | "glm" | "zhipu" => "ZAI_API_KEY",
         "deepseek" => "DEEPSEEK_API_KEY",
-        "qwen" => "QWEN_API_KEY",
+        "qwen" | "alibaba" => "QWEN_API_KEY",
+        "kimi" | "moonshot" => "KIMI_API_KEY or MOONSHOT_API_KEY",
+        "minimax" => "MINIMAX_API_KEY",
         _ => "API_KEY",
     };
     eprintln!("No API key configured for '{target}'. Set {env_var} or add to config.");
@@ -1408,9 +1417,16 @@ mod tests {
         );
         assert_eq!(resolve_model_name(None, None, "openai"), "gpt-5.2");
         assert_eq!(resolve_model_name(None, None, "google"), "gemini-2.5-flash");
+        assert_eq!(resolve_model_name(None, None, "gemini"), "gemini-2.5-flash");
         assert_eq!(resolve_model_name(None, None, "zai"), "glm-5");
+        assert_eq!(resolve_model_name(None, None, "glm"), "glm-5");
+        assert_eq!(resolve_model_name(None, None, "zhipu"), "glm-5");
         assert_eq!(resolve_model_name(None, None, "deepseek"), "deepseek-chat");
         assert_eq!(resolve_model_name(None, None, "qwen"), "qwen3.5-plus");
+        assert_eq!(resolve_model_name(None, None, "alibaba"), "qwen3.5-plus");
+        assert_eq!(resolve_model_name(None, None, "kimi"), "kimi-k2.7-code");
+        assert_eq!(resolve_model_name(None, None, "moonshot"), "kimi-k2.7-code");
+        assert_eq!(resolve_model_name(None, None, "minimax"), "MiniMax-M3");
         // Unknown target falls back to the OpenAI default.
         assert_eq!(
             resolve_model_name(None, None, "unknown-provider"),

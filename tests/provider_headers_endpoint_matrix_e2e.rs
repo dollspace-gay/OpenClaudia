@@ -218,6 +218,26 @@ fn qwen_chat_endpoint_matches_openai() {
 }
 
 #[test]
+fn kimi_chat_endpoint_matches_openai() {
+    let openai = get_adapter("openai").expect("openai");
+    let kimi = get_adapter("kimi").expect("kimi");
+    assert_eq!(
+        kimi.chat_endpoint("kimi-k2.7-code"),
+        openai.chat_endpoint("kimi-k2.7-code")
+    );
+}
+
+#[test]
+fn minimax_chat_endpoint_matches_openai() {
+    let openai = get_adapter("openai").expect("openai");
+    let minimax = get_adapter("minimax").expect("minimax");
+    assert_eq!(
+        minimax.chat_endpoint("MiniMax-M3"),
+        openai.chat_endpoint("MiniMax-M3")
+    );
+}
+
+#[test]
 fn zai_chat_endpoint_uses_no_v1_prefix_distinct_from_openai() {
     // AUTHORING DISCOVERY: Z.AI (BigModel) hosts at
     // `/chat/completions` WITHOUT the `/v1/` prefix that
@@ -259,6 +279,22 @@ fn zai_headers_use_bearer_like_openai() {
     assert!(auth.starts_with("Bearer "));
 }
 
+#[test]
+fn kimi_headers_use_bearer_like_openai() {
+    let adapter = get_adapter("kimi").expect("kimi");
+    let headers = adapter.get_headers(&key());
+    let auth = header(&headers, "authorization").expect("auth");
+    assert!(auth.starts_with("Bearer "));
+}
+
+#[test]
+fn minimax_headers_use_bearer_like_openai() {
+    let adapter = get_adapter("minimax").expect("minimax");
+    let headers = adapter.get_headers(&key());
+    let auth = header(&headers, "authorization").expect("auth");
+    assert!(auth.starts_with("Bearer "));
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Section F — supports_model_listing
 // ───────────────────────────────────────────────────────────────────────────
@@ -282,6 +318,15 @@ fn openai_supports_model_listing() {
 }
 
 #[test]
+fn kimi_supports_model_listing() {
+    let adapter = get_adapter("kimi").expect("kimi");
+    assert!(
+        adapter.supports_model_listing(),
+        "Kimi MUST support OpenAI-style /v1/models"
+    );
+}
+
+#[test]
 fn anthropic_does_not_support_model_listing() {
     // PINS DOC: Anthropic doesn't expose a /v1/models endpoint.
     let adapter = get_adapter("anthropic").expect("anthropic");
@@ -300,6 +345,15 @@ fn google_does_not_support_openai_style_model_listing() {
     assert!(
         !adapter.supports_model_listing(),
         "Google MUST NOT advertise OpenAI-style model listing"
+    );
+}
+
+#[test]
+fn minimax_does_not_advertise_openai_style_model_listing() {
+    let adapter = get_adapter("minimax").expect("minimax");
+    assert!(
+        !adapter.supports_model_listing(),
+        "MiniMax MUST NOT advertise model listing until its response shape is parsed"
     );
 }
 

@@ -50,6 +50,25 @@ pub fn get_available_models(provider: &str) -> Vec<&'static str> {
             "qwq-plus",
             "qwen3-coder-plus",
         ],
+        "kimi" => vec![
+            "kimi-k2.7-code",
+            "kimi-k2.7-code-highspeed",
+            "kimi-k2.6",
+            "kimi-k2.5",
+            "moonshot-v1-128k",
+            "moonshot-v1-32k",
+            "moonshot-v1-8k",
+        ],
+        "minimax" => vec![
+            "MiniMax-M3",
+            "MiniMax-M2.7",
+            "MiniMax-M2.7-highspeed",
+            "MiniMax-M2.5",
+            "MiniMax-M2.5-highspeed",
+            "MiniMax-M2.1",
+            "MiniMax-M2.1-highspeed",
+            "MiniMax-M2",
+        ],
         _ => vec!["gpt-5.2"],
     }
 }
@@ -138,6 +157,8 @@ mod tests {
             ("DeepSeek", "deepseek"),
             ("Qwen", "qwen"),
             ("Z.AI (GLM)", "zai"),
+            ("Kimi", "kimi"),
+            ("MiniMax", "minimax"),
         ] {
             let documented = documented_models_for_heading(readme, heading);
             let static_models: Vec<String> = get_available_models(provider)
@@ -153,7 +174,16 @@ mod tests {
 
     #[test]
     fn static_model_lists_do_not_contain_duplicates() {
-        for provider in ["anthropic", "openai", "google", "deepseek", "qwen", "zai"] {
+        for provider in [
+            "anthropic",
+            "openai",
+            "google",
+            "deepseek",
+            "qwen",
+            "zai",
+            "kimi",
+            "minimax",
+        ] {
             let models = get_available_models(provider);
             let unique: BTreeSet<_> = models.iter().copied().collect();
             assert_eq!(

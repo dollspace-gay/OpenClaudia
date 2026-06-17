@@ -1071,14 +1071,16 @@ mod tests {
     #[test]
     fn issue_602_other_providers_default_to_none_stream_endpoint() {
         use crate::providers::{
-            AnthropicAdapter, DeepSeekAdapter, OllamaAdapter, OpenAIAdapter, ProviderAdapter,
-            QwenAdapter, ZaiAdapter,
+            AnthropicAdapter, DeepSeekAdapter, KimiAdapter, MiniMaxAdapter, OllamaAdapter,
+            OpenAIAdapter, ProviderAdapter, QwenAdapter, ZaiAdapter,
         };
         let anthropic = AnthropicAdapter::new();
         let openai = OpenAIAdapter::new();
         let deepseek = DeepSeekAdapter::new();
         let qwen = QwenAdapter::new();
         let zai = ZaiAdapter::new();
+        let kimi = KimiAdapter::new();
+        let minimax = MiniMaxAdapter::new();
         let ollama = OllamaAdapter::new();
         let cases: Vec<(&str, &dyn ProviderAdapter)> = vec![
             ("anthropic", &anthropic),
@@ -1086,6 +1088,8 @@ mod tests {
             ("deepseek", &deepseek),
             ("qwen", &qwen),
             ("zai", &zai),
+            ("kimi", &kimi),
+            ("minimax", &minimax),
             ("ollama", &ollama),
         ];
         for (name, adapter) in cases {

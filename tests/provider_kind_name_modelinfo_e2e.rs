@@ -51,6 +51,16 @@ fn provider_kind_name_zai() {
 }
 
 #[test]
+fn provider_kind_name_kimi() {
+    assert_eq!(ProviderKind::Kimi.name(), "kimi");
+}
+
+#[test]
+fn provider_kind_name_minimax() {
+    assert_eq!(ProviderKind::MiniMax.name(), "minimax");
+}
+
+#[test]
 fn provider_kind_name_unknown_returns_unknown_string() {
     assert_eq!(ProviderKind::Unknown.name(), "unknown");
 }
@@ -64,6 +74,8 @@ fn provider_kind_name_strings_are_pairwise_distinct() {
         ProviderKind::DeepSeek,
         ProviderKind::Qwen,
         ProviderKind::Zai,
+        ProviderKind::Kimi,
+        ProviderKind::MiniMax,
         ProviderKind::Unknown,
     ];
     let mut names: Vec<&'static str> = variants.iter().map(ProviderKind::name).collect();
@@ -90,6 +102,8 @@ fn provider_kind_name_returns_lowercase_ascii() {
         ProviderKind::DeepSeek,
         ProviderKind::Qwen,
         ProviderKind::Zai,
+        ProviderKind::Kimi,
+        ProviderKind::MiniMax,
         ProviderKind::Unknown,
     ] {
         let name = variant.name();
@@ -122,6 +136,9 @@ fn classify_then_name_round_trips_for_each_provider() {
         ("qwq-32b", "qwen"),
         ("qvq-72b", "qwen"),
         ("glm-4-flash", "zai"),
+        ("kimi-k2.7-code", "kimi"),
+        ("moonshot-v1-128k", "kimi"),
+        ("MiniMax-M3", "minimax"),
     ];
     for (model, expected_name) in &cases {
         let kind = ProviderKind::from_model(model);

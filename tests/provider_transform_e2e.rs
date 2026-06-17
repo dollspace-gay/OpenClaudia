@@ -206,7 +206,16 @@ fn openai_extract_token_usage_from_native_envelope() {
 
 #[test]
 fn extract_token_usage_returns_none_on_missing_usage_block() {
-    for provider in &["anthropic", "openai", "google", "deepseek", "qwen", "zai"] {
+    for provider in &[
+        "anthropic",
+        "openai",
+        "google",
+        "deepseek",
+        "qwen",
+        "zai",
+        "kimi",
+        "minimax",
+    ] {
         let adapter = get_adapter(provider).unwrap_or_else(|_| panic!("{provider} adapter"));
         let outcome = adapter.extract_token_usage(&json!({"id": "x", "model": "y"}));
         assert!(
@@ -218,7 +227,16 @@ fn extract_token_usage_returns_none_on_missing_usage_block() {
 
 #[test]
 fn extract_token_usage_returns_none_on_empty_response() {
-    for provider in &["anthropic", "openai", "google", "deepseek", "qwen", "zai"] {
+    for provider in &[
+        "anthropic",
+        "openai",
+        "google",
+        "deepseek",
+        "qwen",
+        "zai",
+        "kimi",
+        "minimax",
+    ] {
         let adapter = get_adapter(provider).unwrap_or_else(|_| panic!("{provider} adapter"));
         let outcome = adapter.extract_token_usage(&json!({}));
         assert!(
@@ -261,7 +279,16 @@ fn openai_extract_response_text_pulls_choices_message_content() {
 
 #[test]
 fn extract_response_text_returns_none_on_garbage() {
-    for provider in &["anthropic", "openai", "google", "deepseek", "qwen", "zai"] {
+    for provider in &[
+        "anthropic",
+        "openai",
+        "google",
+        "deepseek",
+        "qwen",
+        "zai",
+        "kimi",
+        "minimax",
+    ] {
         let adapter = get_adapter(provider).unwrap_or_else(|_| panic!("{provider} adapter"));
         // Various garbage shapes — none should crash; all should
         // return None.
@@ -315,7 +342,7 @@ fn anthropic_headers_use_xapikey_and_anthropic_version() {
 #[test]
 fn openai_compat_headers_use_authorization_bearer() {
     use openclaudia::providers::api_key::ApiKey;
-    for provider in &["openai", "deepseek", "qwen", "zai"] {
+    for provider in &["openai", "deepseek", "qwen", "zai", "kimi", "minimax"] {
         let adapter = get_adapter(provider).unwrap_or_else(|_| panic!("{provider} adapter"));
         let key = ApiKey::try_from_string("sk-test-PRODUCTION-KEY".to_string()).unwrap();
         let headers = adapter.get_headers(&key);
@@ -361,7 +388,7 @@ fn google_chat_endpoint_embeds_model_name() {
 
 #[test]
 fn openai_compat_chat_endpoint_is_chat_completions() {
-    for provider in &["openai", "deepseek", "qwen", "zai"] {
+    for provider in &["openai", "deepseek", "qwen", "zai", "kimi", "minimax"] {
         let adapter = get_adapter(provider).unwrap_or_else(|_| panic!("{provider} adapter"));
         let endpoint = adapter.chat_endpoint("any-model");
         assert!(

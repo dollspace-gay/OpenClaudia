@@ -7,6 +7,8 @@
 //! - `DeepSeek` API (with thinking/reasoning support)
 //! - Qwen/Alibaba API (with thinking support)
 //! - Z.AI/GLM API (with thinking support)
+//! - Kimi/Moonshot API
+//! - `MiniMax` API
 //! - Ollama (local LLM inference)
 //! - Any OpenAI-compatible server (LM Studio, `LocalAI`, etc.)
 //!
@@ -16,6 +18,8 @@ mod anthropic;
 pub mod api_key;
 mod deepseek;
 mod google;
+mod kimi;
+mod minimax;
 mod ollama;
 mod openai;
 mod openai_compat;
@@ -42,6 +46,8 @@ pub use google::{
     convert_tools_to_gemini, convert_tools_to_gemini_functions, extract_gemini_text_content,
     GoogleAdapter,
 };
+pub use kimi::KimiAdapter;
+pub use minimax::MiniMaxAdapter;
 pub use ollama::OllamaAdapter;
 pub use openai::OpenAIAdapter;
 pub use qwen::QwenAdapter;
@@ -130,7 +136,8 @@ pub trait ProviderAdapter: Send + Sync {
     /// Get the endpoint path for *streaming* chat completions, when the
     /// provider exposes one that differs from [`Self::chat_endpoint`].
     ///
-    /// Most providers (Anthropic, `OpenAI`, `DeepSeek`, Qwen, Z.AI) toggle
+    /// Most providers (Anthropic, `OpenAI`, `DeepSeek`, Qwen, Z.AI,
+    /// Kimi/Moonshot, `MiniMax`) toggle
     /// streaming via the `stream: true` request field on the same URL, so
     /// the default implementation returns `None` — the caller continues to
     /// use [`Self::chat_endpoint`].
@@ -257,6 +264,8 @@ pub enum ProviderKind {
     DeepSeek,
     Qwen,
     Zai,
+    Kimi,
+    MiniMax,
     Unknown,
 }
 
@@ -290,6 +299,12 @@ impl ProviderKind {
         if m.starts_with("qwen") || m.starts_with("qwq") || m.starts_with("qvq") {
             return Self::Qwen;
         }
+        if m.starts_with("kimi") || m.starts_with("moonshot") {
+            return Self::Kimi;
+        }
+        if m.starts_with("minimax") {
+            return Self::MiniMax;
+        }
         if m.starts_with("glm") {
             return Self::Zai;
         }
@@ -307,6 +322,8 @@ impl ProviderKind {
             Self::DeepSeek => "deepseek",
             Self::Qwen => "qwen",
             Self::Zai => "zai",
+            Self::Kimi => "kimi",
+            Self::MiniMax => "minimax",
             Self::Unknown => "unknown",
         }
     }
@@ -334,6 +351,8 @@ static GOOGLE: GoogleAdapter = GoogleAdapter::new();
 static DEEPSEEK: DeepSeekAdapter = DeepSeekAdapter::new();
 static QWEN: QwenAdapter = QwenAdapter::new();
 static ZAI: ZaiAdapter = ZaiAdapter::new();
+static KIMI: KimiAdapter = KimiAdapter::new();
+static MINIMAX: MiniMaxAdapter = MiniMaxAdapter::new();
 static OLLAMA: OllamaAdapter = OllamaAdapter::new();
 
 /// Canonical names accepted by [`get_adapter`]. Aliases are listed in the
@@ -354,6 +373,9 @@ pub const SUPPORTED_PROVIDERS: &[&str] = &[
     "zai",
     "glm",
     "zhipu",
+    "kimi",
+    "moonshot",
+    "minimax",
     "ollama",
     "local",
     "lmstudio",
@@ -392,6 +414,8 @@ pub fn get_adapter(provider: &str) -> Result<&'static dyn ProviderAdapter, Provi
         "zai" | "glm" | "zhipu" => &ZAI,
         "deepseek" => &DEEPSEEK,
         "qwen" | "alibaba" => &QWEN,
+        "kimi" | "moonshot" => &KIMI,
+        "minimax" => &MINIMAX,
         "ollama" => &OLLAMA,
         // OpenAI-compatible providers: explicitly named (no silent fallback
         // for unrecognised names — see the `_ =>` arm below).
@@ -654,10 +678,16 @@ mod tests {
         assert_eq!(get_adapter("zai").unwrap().name(), "zai");
         assert_eq!(get_adapter("glm").unwrap().name(), "zai");
         assert_eq!(get_adapter("zhipu").unwrap().name(), "zai");
-        // DeepSeek and Qwen have dedicated adapters for thinking support
+        // DeepSeek and Qwen have dedicated adapters for thinking support.
         assert_eq!(get_adapter("deepseek").unwrap().name(), "deepseek");
         assert_eq!(get_adapter("qwen").unwrap().name(), "qwen");
         assert_eq!(get_adapter("alibaba").unwrap().name(), "qwen");
+        // Kimi/Moonshot and MiniMax are OpenAI-compatible, but their
+        // thinking controls are provider-specific and intentionally
+        // not mapped to OpenAI reasoning_effort.
+        assert_eq!(get_adapter("kimi").unwrap().name(), "kimi");
+        assert_eq!(get_adapter("moonshot").unwrap().name(), "kimi");
+        assert_eq!(get_adapter("minimax").unwrap().name(), "minimax");
         // Ollama for local LLM inference
         assert_eq!(get_adapter("ollama").unwrap().name(), "ollama");
         // OpenAI-compatible local providers
@@ -921,6 +951,8 @@ mod tests {
         assert_eq!(ProviderKind::DeepSeek.name(), "deepseek");
         assert_eq!(ProviderKind::Qwen.name(), "qwen");
         assert_eq!(ProviderKind::Zai.name(), "zai");
+        assert_eq!(ProviderKind::Kimi.name(), "kimi");
+        assert_eq!(ProviderKind::MiniMax.name(), "minimax");
         assert_eq!(ProviderKind::Unknown.name(), "unknown");
         for kind in [
             ProviderKind::Anthropic,
@@ -929,6 +961,8 @@ mod tests {
             ProviderKind::DeepSeek,
             ProviderKind::Qwen,
             ProviderKind::Zai,
+            ProviderKind::Kimi,
+            ProviderKind::MiniMax,
         ] {
             let adapter = get_adapter(kind.name()).expect("known provider");
             assert_eq!(
@@ -965,6 +999,18 @@ mod tests {
         assert_eq!(ProviderKind::from_model("qwq-32b"), ProviderKind::Qwen);
         assert_eq!(ProviderKind::from_model("qvq-72b"), ProviderKind::Qwen);
         assert_eq!(ProviderKind::from_model("glm-4"), ProviderKind::Zai);
+        assert_eq!(
+            ProviderKind::from_model("kimi-k2.7-code"),
+            ProviderKind::Kimi
+        );
+        assert_eq!(
+            ProviderKind::from_model("moonshot-v1-128k"),
+            ProviderKind::Kimi
+        );
+        assert_eq!(
+            ProviderKind::from_model("MiniMax-M3"),
+            ProviderKind::MiniMax
+        );
     }
 
     #[test]
@@ -1293,6 +1339,9 @@ mod tests {
             ("zai", "zai"),
             ("glm", "zai"),
             ("zhipu", "zai"),
+            ("kimi", "kimi"),
+            ("moonshot", "kimi"),
+            ("minimax", "minimax"),
             ("ollama", "ollama"),
             ("local", "openai"),
             ("lmstudio", "openai"),

@@ -1472,10 +1472,10 @@ fn build_chat_completion_request(
 /// Provider transformation is delegated to the canonical
 /// [`crate::providers::ProviderAdapter`] trait so subagent dispatch
 /// supports every provider the proxy supports (Anthropic, `OpenAI`,
-/// `Google`/`Gemini`, `DeepSeek`, Qwen, Z.AI/GLM, Ollama,
-/// `OpenAI`-compatible) instead of a hardcoded Anthropic-vs-`OpenAI`
-/// branch. The previous implementation duplicated provider
-/// transformation logic from `src/providers/` and only handled two
+/// `Google`/`Gemini`, `DeepSeek`, Qwen, Z.AI/GLM, Kimi/Moonshot,
+/// `MiniMax`, Ollama, `OpenAI`-compatible) instead of a hardcoded
+/// Anthropic-vs-`OpenAI` branch. The previous implementation duplicated
+/// provider transformation logic from `src/providers/` and only handled two
 /// out of seven formats — see crosslink #407.
 ///
 /// `api_key` is an optional [`crate::providers::ApiKey`]; when `None`

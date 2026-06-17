@@ -36,8 +36,8 @@
 
 use openclaudia::config::ThinkingConfig;
 use openclaudia::providers::{
-    get_adapter, AnthropicAdapter, ApiKey, DeepSeekAdapter, GoogleAdapter, OllamaAdapter,
-    OpenAIAdapter, ProviderAdapter, QwenAdapter, ZaiAdapter,
+    get_adapter, AnthropicAdapter, ApiKey, DeepSeekAdapter, GoogleAdapter, KimiAdapter,
+    MiniMaxAdapter, OllamaAdapter, OpenAIAdapter, ProviderAdapter, QwenAdapter, ZaiAdapter,
 };
 use openclaudia::proxy::{ChatCompletionRequest, ChatMessage, ContentPart, MessageContent};
 use proptest::prelude::*;
@@ -80,6 +80,8 @@ fn all_adapters() -> Vec<(&'static str, Box<dyn ProviderAdapter>)> {
         ("deepseek", Box::new(DeepSeekAdapter::new())),
         ("qwen", Box::new(QwenAdapter::new())),
         ("zai", Box::new(ZaiAdapter::new())),
+        ("kimi", Box::new(KimiAdapter::new())),
+        ("minimax", Box::new(MiniMaxAdapter::new())),
         ("ollama", Box::new(OllamaAdapter::new())),
     ]
 }
@@ -311,7 +313,7 @@ fn google_stream_endpoint_differs_from_chat() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section 5: OpenAI-compat (DeepSeek / Qwen / Z.AI / OpenAI / Ollama)
+// Section 5: OpenAI-compat (DeepSeek / Qwen / Z.AI / Kimi / MiniMax / OpenAI / Ollama)
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -324,6 +326,8 @@ fn openai_compat_adapters_keep_messages_intact() {
         ("deepseek", Box::new(DeepSeekAdapter::new())),
         ("qwen", Box::new(QwenAdapter::new())),
         ("zai", Box::new(ZaiAdapter::new())),
+        ("kimi", Box::new(KimiAdapter::new())),
+        ("minimax", Box::new(MiniMaxAdapter::new())),
         ("ollama", Box::new(OllamaAdapter::new())),
     ] {
         let req = minimal_request("test-model");

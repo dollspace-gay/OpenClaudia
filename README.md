@@ -9,7 +9,7 @@ OpenClaudia is a Rust-based CLI that transforms any LLM into an agentic coding a
 ## Features
 
 - **Behavioral Modes** — Three-axis model (agency, quality, scope) with 8 presets and 6 modifiers for fine-grained control over AI behavior
-- **Multi-Provider Support** — Anthropic, OpenAI, Google Gemini, DeepSeek, Qwen, Z.AI/GLM, Ollama, and any OpenAI-compatible server
+- **Multi-Provider Support** — Anthropic, OpenAI, Google Gemini, DeepSeek, Qwen, Z.AI/GLM, Kimi/Moonshot, MiniMax, Ollama, and any OpenAI-compatible server
 - **Local LLM Support** — Run with Ollama, LM Studio, LocalAI, or any OpenAI-compatible endpoint
 - **Auto-Detect Provider** — Pass `-m gemini-2.5-flash` and the provider is detected automatically
 - **30+ Agentic Tools** — Bash, file ops, LSP, web search, notebooks, task tracking, plan mode, worktrees, cron scheduling, MCP resources
@@ -101,6 +101,8 @@ openclaudia --mode debug      # Investigation-first debugging
 | `DEEPSEEK_API_KEY` | DeepSeek | For DeepSeek |
 | `QWEN_API_KEY` | Qwen/Alibaba | For Qwen |
 | `ZAI_API_KEY` | Z.AI (GLM) | For Z.AI |
+| `KIMI_API_KEY` or `MOONSHOT_API_KEY` | Kimi/Moonshot | For Kimi |
+| `MINIMAX_API_KEY` | MiniMax | For MiniMax |
 | `TAVILY_API_KEY` | Web search | Optional |
 | `BRAVE_API_KEY` | Web search (alt) | Optional |
 
@@ -112,7 +114,7 @@ Configuration is stored in `.openclaudia/config.yaml`:
 proxy:
   port: 8080
   host: "127.0.0.1"
-  target: anthropic  # Provider: anthropic, openai, google, deepseek, qwen, zai, ollama, local
+  target: anthropic  # Provider: anthropic, openai, google, deepseek, qwen, zai, kimi, minimax, ollama, local
 
 providers:
   anthropic:
@@ -134,6 +136,10 @@ providers:
     base_url: https://api.deepseek.com
   qwen:
     base_url: https://dashscope.aliyuncs.com/compatible-mode
+  kimi:
+    base_url: https://api.moonshot.ai/v1
+  minimax:
+    base_url: https://api.minimax.io/v1
   # Ollama for local LLM inference
   ollama:
     base_url: http://localhost:11434
@@ -372,6 +378,18 @@ The `keybindings:` config map customizes the legacy line-oriented REPL (`opencla
 - `glm-5` — Flagship (Feb 2026), 745B MoE
 - `glm-4.7`, `glm-4.7-flash` — Coding/reasoning
 - `glm-4.6`, `glm-4.5-flash` — Previous gen
+
+### Kimi
+- `kimi-k2.7-code`, `kimi-k2.7-code-highspeed` — Coding-focused Kimi K2.7 models
+- `kimi-k2.6`, `kimi-k2.5` — General Kimi K-series models
+- `moonshot-v1-128k`, `moonshot-v1-32k`, `moonshot-v1-8k` — Moonshot V1 text models
+
+### MiniMax
+- `MiniMax-M3` — Latest M-series language model
+- `MiniMax-M2.7`, `MiniMax-M2.7-highspeed` — M2.7 family
+- `MiniMax-M2.5`, `MiniMax-M2.5-highspeed` — M2.5 family
+- `MiniMax-M2.1`, `MiniMax-M2.1-highspeed` — M2.1 family
+- `MiniMax-M2` — Earlier agentic reasoning model
 
 ### Ollama (Local)
 - Popular: `llama3.1`, `deepseek-r1`, `gemma3`, `qwen3`, `mistral`, `phi4`, `llava`

@@ -114,6 +114,9 @@ fn determine_provider_dispatches_by_model_prefix() {
         ("qwen-max", "qwen"),
         ("qwq-32b", "qwen"),
         ("glm-4-32b", "zai"),
+        ("kimi-k2.7-code", "kimi"),
+        ("moonshot-v1-128k", "kimi"),
+        ("MiniMax-M3", "minimax"),
     ] {
         let got = determine_provider(model, &config);
         assert_eq!(

@@ -228,7 +228,16 @@ fn resolve_headers_token_takes_precedence_over_api_key() {
 
 #[test]
 fn endpoint_and_headers_both_succeed_for_documented_provider_matrix() {
-    let providers = ["anthropic", "openai", "google", "deepseek", "qwen", "zai"];
+    let providers = [
+        "anthropic",
+        "openai",
+        "google",
+        "deepseek",
+        "qwen",
+        "zai",
+        "kimi",
+        "minimax",
+    ];
     let models = [
         "claude-sonnet-4-5",
         "gpt-4o",
@@ -236,6 +245,8 @@ fn endpoint_and_headers_both_succeed_for_documented_provider_matrix() {
         "deepseek-chat",
         "qwen2.5",
         "glm-4",
+        "kimi-k2.7-code",
+        "MiniMax-M3",
     ];
     let api_key = key();
     for (provider, model) in providers.iter().zip(models.iter()) {

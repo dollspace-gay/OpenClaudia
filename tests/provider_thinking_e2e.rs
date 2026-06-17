@@ -1,9 +1,10 @@
 //! End-to-end tests for the provider-specific thinking-config
 //! injection matrix.
 //!
-//! Sprint 29 of the verification effort. The 4 OpenAI-compatible
-//! adapters (`OpenAI`, `DeepSeek`, `Qwen`, `Z.AI`/GLM) each inject
-//! `thinking` mode into the request body via a different shape:
+//! Sprint 29 of the verification effort. OpenAI-compatible adapters
+//! either inject `thinking` mode into the request body via a documented
+//! provider-specific shape, or explicitly no-op when the upstream uses
+//! provider-specific thinking controls not modeled here:
 //!
 //!   - **`OpenAI`**: `reasoning_effort: "low|medium|high"`,
 //!     ONLY for o1/o3/o4 models.
@@ -13,6 +14,7 @@
 //!   - **`Z.AI`/GLM**: `thinking: {type: "enabled"|"disabled"}`,
 //!     plus `clear_thinking: false` when
 //!     `preserve_across_turns=true`.
+//!   - **Kimi/MiniMax**: no generic thinking field emitted.
 //!
 //! This file pins each branch of the dispatch with positive +
 //! negative cases.
@@ -320,4 +322,50 @@ fn each_provider_uses_a_distinct_thinking_field() {
     // the disabled variant separates them — Section B/C pin that.
     // No cross-provider equality assertion here because it would
     // be tautological for the enabled case.
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section G — Kimi / MiniMax: unsupported generic thinking is a no-op
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn kimi_thinking_does_not_emit_openai_or_provider_specific_fields() {
+    let adapter = get_adapter("kimi").expect("kimi adapter");
+    let req = minimal_request("kimi-k2.7-code");
+    let body = adapter
+        .transform_request_with_thinking(&req, &enabled_thinking(Some("high")))
+        .expect("transform");
+
+    for field in [
+        "reasoning_effort",
+        "enable_thinking",
+        "thinking",
+        "clear_thinking",
+    ] {
+        assert!(
+            body.get(field).is_none(),
+            "Kimi MUST NOT receive unsupported thinking field {field:?}; got {body}"
+        );
+    }
+}
+
+#[test]
+fn minimax_thinking_does_not_emit_openai_or_provider_specific_fields() {
+    let adapter = get_adapter("minimax").expect("minimax adapter");
+    let req = minimal_request("MiniMax-M3");
+    let body = adapter
+        .transform_request_with_thinking(&req, &enabled_thinking(Some("high")))
+        .expect("transform");
+
+    for field in [
+        "reasoning_effort",
+        "enable_thinking",
+        "thinking",
+        "clear_thinking",
+    ] {
+        assert!(
+            body.get(field).is_none(),
+            "MiniMax MUST NOT receive unsupported thinking field {field:?}; got {body}"
+        );
+    }
 }
