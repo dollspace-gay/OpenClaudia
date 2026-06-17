@@ -211,8 +211,10 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
     // Check session state
     print!("\nSession... ");
     let mut session_manager = SessionManager::new(".openclaudia/session");
-    if let Some(handoff) = session_manager.get_handoff_context() {
-        println!("found handoff context ({} bytes)", handoff.len());
+    match session_manager.get_handoff_context() {
+        Ok(Some(handoff)) => println!("found handoff context ({} bytes)", handoff.len()),
+        Ok(None) => {}
+        Err(err) => println!("handoff unreadable: {err}"),
     }
 
     let sessions = session_manager.list_sessions();

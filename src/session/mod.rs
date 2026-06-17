@@ -874,11 +874,23 @@ impl SessionManager {
         }
     }
 
-    /// Get the handoff context from the last session
-    #[must_use]
-    pub fn get_handoff_context(&self) -> Option<String> {
+    /// Get the handoff context from the last session.
+    ///
+    /// Returns `Ok(None)` when no handoff file exists. Other read failures
+    /// are returned to the caller so diagnostics do not silently treat a
+    /// broken handoff file as missing.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying I/O error when `handoff.md` exists but cannot
+    /// be read as a file.
+    pub fn get_handoff_context(&self) -> std::io::Result<Option<String>> {
         let handoff_path = self.persist_dir.join("handoff.md");
-        fs::read_to_string(&handoff_path).ok()
+        match fs::read_to_string(&handoff_path) {
+            Ok(context) => Ok(Some(context)),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err),
+        }
     }
 
     /// List all persisted sessions
@@ -1100,6 +1112,42 @@ mod tests {
         let loaded = manager.load_session(&session.id);
         assert!(loaded.is_some());
         assert_eq!(loaded.unwrap().id, session.id);
+    }
+
+    #[test]
+    fn get_handoff_context_reports_missing_saved_and_unreadable_states() {
+        let dir = TempDir::new().unwrap();
+        let persist_dir = dir.path().join("sessions");
+        let mut manager = SessionManager::new(&persist_dir);
+
+        assert!(
+            matches!(manager.get_handoff_context(), Ok(None)),
+            "missing handoff file should not be an error"
+        );
+
+        manager.get_or_create_session();
+        manager
+            .end_session(Some("handoff notes"))
+            .expect("end_session must write handoff");
+        let handoff = manager
+            .get_handoff_context()
+            .expect("saved handoff should be readable")
+            .expect("saved handoff should be present");
+        assert!(
+            handoff.contains("handoff notes"),
+            "saved handoff should include explicit notes"
+        );
+
+        fs::remove_file(persist_dir.join("handoff.md")).expect("remove handoff file");
+        fs::create_dir(persist_dir.join("handoff.md")).expect("create unreadable handoff path");
+        let err = manager
+            .get_handoff_context()
+            .expect_err("directory handoff path must surface as a read error");
+        assert_ne!(
+            err.kind(),
+            std::io::ErrorKind::NotFound,
+            "broken handoff path must not be collapsed into missing"
+        );
     }
 
     #[test]
