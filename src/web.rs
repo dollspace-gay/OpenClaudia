@@ -88,7 +88,10 @@ pub(crate) async fn read_bounded_text(
 /// One client, built once, reused everywhere. Tuned for the web-fetch
 /// hot path: 90s idle pool, 10s connect timeout, TCP keepalive. The
 /// per-request `timeout` overrides are still set at the call site.
-pub(crate) static SHARED_HTTP_CLIENT: LazyLock<Client> = LazyLock::new(|| {
+pub(crate) static SHARED_HTTP_CLIENT: LazyLock<Result<Client, String>> =
+    LazyLock::new(build_shared_http_client);
+
+fn build_shared_http_client() -> Result<Client, String> {
     Client::builder()
         .pool_idle_timeout(Duration::from_secs(90))
         .connect_timeout(Duration::from_secs(10))
@@ -99,8 +102,12 @@ pub(crate) static SHARED_HTTP_CLIENT: LazyLock<Client> = LazyLock::new(|| {
         // (which only runs on the initial URL) is bypassed entirely.
         .redirect(ssrf_redirect_policy())
         .build()
-        .expect("shared reqwest client builds with default features")
-});
+        .map_err(|e| format!("failed to build shared web HTTP client: {e}"))
+}
+
+fn shared_http_client() -> Result<&'static Client, String> {
+    SHARED_HTTP_CLIENT.as_ref().map_err(Clone::clone)
+}
 
 /// Build a [`redirect::Policy`] that re-validates every redirect target through
 /// the synchronous SSRF guard (crosslink #671).
@@ -602,7 +609,7 @@ pub async fn fetch_url(url: &str) -> Result<FetchResult, String> {
 /// text, RSS, robots.txt, …) are returned verbatim so the agent sees
 /// what the server actually sent.
 async fn fetch_url_direct(url: &str) -> Result<FetchResult, String> {
-    let response = SHARED_HTTP_CLIENT
+    let response = shared_http_client()?
         .get(url)
         .timeout(Duration::from_secs(30))
         // A real browser-shaped UA reduces the rate at which sites
@@ -917,7 +924,7 @@ async fn search_tavily(
     };
 
     // Shared client + per-request timeout (crosslink #368).
-    let response = SHARED_HTTP_CLIENT
+    let response = shared_http_client()?
         .post(TAVILY_API_URL)
         .timeout(Duration::from_secs(15))
         .json(&request)
@@ -958,7 +965,7 @@ async fn search_brave(
     limit: usize,
 ) -> Result<Vec<SearchResult>, String> {
     // Shared client + per-request timeout (crosslink #368).
-    let response = SHARED_HTTP_CLIENT
+    let response = shared_http_client()?
         .get(BRAVE_SEARCH_URL)
         .timeout(Duration::from_secs(15))
         .header("X-Subscription-Token", api_key)
@@ -1303,6 +1310,12 @@ mod tests {
     fn test_web_config_from_env() {
         // Just test that it doesn't panic
         let _config = WebConfig::from_env();
+    }
+
+    #[test]
+    fn shared_http_client_builder_succeeds() {
+        let client = build_shared_http_client().expect("shared HTTP client builder must succeed");
+        drop(client);
     }
 
     #[test]
@@ -1748,7 +1761,12 @@ mod tests {
             .mount(&server)
             .await;
         let url = server.uri();
-        let response = SHARED_HTTP_CLIENT.get(&url).send().await.unwrap();
+        let response = shared_http_client()
+            .unwrap()
+            .get(&url)
+            .send()
+            .await
+            .unwrap();
         let out = read_bounded_text(response, 8 * 1024, &url).await.unwrap();
         assert_eq!(out, body, "small body must be returned verbatim");
     }
@@ -1765,7 +1783,12 @@ mod tests {
             .mount(&server)
             .await;
         let url = server.uri();
-        let response = SHARED_HTTP_CLIENT.get(&url).send().await.unwrap();
+        let response = shared_http_client()
+            .unwrap()
+            .get(&url)
+            .send()
+            .await
+            .unwrap();
         let err = read_bounded_text(response, MAX_WEB_FETCH_BYTES, &url)
             .await
             .expect_err("11 MiB body must trip the 10 MiB cap");
@@ -1802,7 +1825,12 @@ mod tests {
             .mount(&server)
             .await;
         let url = server.uri();
-        let response = SHARED_HTTP_CLIENT.get(&url).send().await.unwrap();
+        let response = shared_http_client()
+            .unwrap()
+            .get(&url)
+            .send()
+            .await
+            .unwrap();
         // Cap > body so the streaming accumulator drains every chunk; the test
         // proves the running total stays accurate across multiple chunks.
         let out = read_bounded_text(response, MAX_WEB_FETCH_BYTES, &url)
@@ -1837,7 +1865,12 @@ mod tests {
             .mount(&server)
             .await;
         let url = server.uri();
-        let response = SHARED_HTTP_CLIENT.get(&url).send().await.unwrap();
+        let response = shared_http_client()
+            .unwrap()
+            .get(&url)
+            .send()
+            .await
+            .unwrap();
         // Sanity: reqwest surfaced the advertised Content-Length.
         assert_eq!(
             response.content_length(),
