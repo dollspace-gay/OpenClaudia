@@ -16,6 +16,18 @@ pub fn execute_kill_shell(args: &HashMap<String, Value>) -> (String, bool) {
     }
 }
 
+/// Kill every background shell owned by an agent/session id.
+pub fn execute_kill_shells_for_agent(args: &HashMap<String, Value>) -> (String, bool) {
+    let Some(agent_id) = args.get("agent_id").and_then(|v| v.as_str()) else {
+        return ("Missing 'agent_id' argument".to_string(), true);
+    };
+    if agent_id.is_empty() {
+        return ("Missing 'agent_id' argument".to_string(), true);
+    }
+
+    (BACKGROUND_SHELLS.kill_for_agent(agent_id), false)
+}
+
 /// Terminate a process and its entire process group.
 ///
 /// On Unix, sends SIGTERM to the process group (negative PID) via `libc::kill`,

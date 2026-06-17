@@ -2253,34 +2253,35 @@ mod phase2_spec_pins {
         // registry that does not declare a PermissionTarget AND is not in
         // this list will fail this test until a decision is made.
         const KNOWN_SAFE: &[&str] = &[
-            "bash_output",        // reads buffered output, no mutation
-            "kill_shell",         // operates on internal shell handles
-            "read_file",          // pure read
-            "list_files",         // pure read
-            "glob",               // pure read (#567)
-            "grep",               // pure read (#568)
-            "crosslink",          // library-backed issue tracker
-            "web_fetch",          // network read
-            "web_search",         // network read
-            "web_browser",        // network read
-            "todo_write",         // in-memory session state
-            "todo_read",          // in-memory session state
-            "ask_user_question",  // user interaction
-            "task_create",        // session task state
-            "task_update",        // session task state
-            "task_get",           // session task state
-            "task_list",          // session task state
-            "enter_plan_mode",    // mode flag
-            "exit_plan_mode",     // mode flag
-            "list_mcp_resources", // MCP read (stub today)
-            "read_mcp_resource",  // MCP read (stub today)
-            "lsp",                // LSP read
-            "enter_worktree",     // git worktree create (gated separately)
-            "exit_worktree",      // git worktree remove (gated separately)
-            "list_worktrees",     // git read
-            "cron_create",        // schedule registration (gated separately)
-            "cron_delete",        // schedule removal (gated separately)
-            "cron_list",          // schedule read
+            "bash_output",           // reads buffered output, no mutation
+            "kill_shell",            // operates on internal shell handles
+            "kill_shells_for_agent", // operates on internal shell handles
+            "read_file",             // pure read
+            "list_files",            // pure read
+            "glob",                  // pure read (#567)
+            "grep",                  // pure read (#568)
+            "crosslink",             // library-backed issue tracker
+            "web_fetch",             // network read
+            "web_search",            // network read
+            "web_browser",           // network read
+            "todo_write",            // in-memory session state
+            "todo_read",             // in-memory session state
+            "ask_user_question",     // user interaction
+            "task_create",           // session task state
+            "task_update",           // session task state
+            "task_get",              // session task state
+            "task_list",             // session task state
+            "enter_plan_mode",       // mode flag
+            "exit_plan_mode",        // mode flag
+            "list_mcp_resources",    // MCP read (stub today)
+            "read_mcp_resource",     // MCP read (stub today)
+            "lsp",                   // LSP read
+            "enter_worktree",        // git worktree create (gated separately)
+            "exit_worktree",         // git worktree remove (gated separately)
+            "list_worktrees",        // git read
+            "cron_create",           // schedule registration (gated separately)
+            "cron_delete",           // schedule removal (gated separately)
+            "cron_list",             // schedule read
             // crosslink #612 / #614 — pure read-side: skill loads a markdown
             // body from disk; tool_search returns schemas from the registry.
             // Neither mutates user state.

@@ -649,7 +649,13 @@ mod plan_mode_tests {
         // Previously-blocklisted write/mutate tools: each must be refused
         // by the hard default-deny path now that PLAN_MODE_BLOCKED_TOOLS
         // is gone (crosslink #341).
-        for blocked in &["bash", "edit_file", "kill_shell", "todo_write"] {
+        for blocked in &[
+            "bash",
+            "edit_file",
+            "kill_shell",
+            "kill_shells_for_agent",
+            "todo_write",
+        ] {
             assert!(
                 !is_tool_allowed_in_plan_mode(blocked, &state.plan_realpath, &no_args),
                 "{blocked} must be refused by hard default-deny after #341"

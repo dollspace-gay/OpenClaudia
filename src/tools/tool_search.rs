@@ -267,8 +267,9 @@ mod tests {
         let mut args = HashMap::new();
         args.insert("query".to_string(), json!("+kill shell"));
         let (text, _is_err) = execute_tool_search(&args);
-        // kill_shell is the only kill-named handler in the registry.
+        // Agent-scoped cleanup should appear alongside single-shell cleanup.
         assert!(text.contains("\"name\":\"kill_shell\""));
+        assert!(text.contains("\"name\":\"kill_shells_for_agent\""));
         assert!(!text.contains("\"name\":\"bash\""));
     }
 

@@ -131,7 +131,13 @@ fn plan_mode_allowed_tools_includes_documented_read_only_tools() {
 #[test]
 fn plan_mode_allowed_tools_excludes_mutation_tools() {
     // Mutation tools MUST NOT be in the plan-mode allowlist.
-    for tool in &["write_file", "edit_file", "bash"] {
+    for tool in &[
+        "write_file",
+        "edit_file",
+        "bash",
+        "kill_shell",
+        "kill_shells_for_agent",
+    ] {
         assert!(
             !PLAN_MODE_ALLOWED_TOOLS.contains(tool),
             "{tool:?} MUST NOT be in PLAN_MODE_ALLOWED_TOOLS (mutation)"

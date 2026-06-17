@@ -8,7 +8,7 @@
 //! Spec: crosslink #526
 //! Phase 2 issue: crosslink #541
 
-use openclaudia::tools::{execute_tool, FunctionCall, ToolCall};
+use openclaudia::tools::{execute_tool, FunctionCall, SessionIdGuard, ToolCall};
 use serde_json::{json, Value};
 
 fn make_tool_call(name: &str, args: &Value) -> ToolCall {
@@ -316,24 +316,97 @@ fn b2d_kill_shell_unknown_id_returns_not_found_error() {
     );
 }
 
-/// B2e — GAP: OC has no agent-scoped bulk kill (`killShellTasksForAgent`)
+/// B2e — `kill_shells_for_agent(agent_id)` terminates only that agent's shells.
 ///
 /// CC: killShellTasks.ts:53-72 exposes `killShellTasksForAgent(agentId)`.
-/// OC: no equivalent. Pinning the absence. Ref crosslink #584.
-///
-/// GAP: crosslink #584 — agent-scoped shell cleanup missing.
-/// The tool dispatch does not recognise a "`kill_shells_for_agent`" tool.
+/// OC: `SessionIdGuard` supplies the same owner bucket used by subagent tool
+/// calls, and this tool performs agent-scoped cleanup. Closes crosslink #584.
 #[test]
-fn b2e_gap_584_no_agent_scoped_kill_tool() {
+#[cfg(unix)]
+fn b2e_kill_shells_for_agent_terminates_only_matching_agent_shells() {
+    let alpha = "gap584-agent-alpha";
+    let beta = "gap584-agent-beta";
+
+    let alpha_spawn = {
+        let _guard = SessionIdGuard::set(alpha);
+        execute_tool(&make_tool_call(
+            "bash",
+            &json!({ "command": "sleep 30", "run_in_background": true }),
+        ))
+    };
+    assert!(!alpha_spawn.is_error, "alpha spawn must succeed");
+    let alpha_shell = extract_shell_id(&alpha_spawn.content);
+
+    let beta_spawn = {
+        let _guard = SessionIdGuard::set(beta);
+        execute_tool(&make_tool_call(
+            "bash",
+            &json!({ "command": "sleep 30", "run_in_background": true }),
+        ))
+    };
+    assert!(!beta_spawn.is_error, "beta spawn must succeed");
+    let beta_shell = extract_shell_id(&beta_spawn.content);
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
     let result = execute_tool(&make_tool_call(
         "kill_shells_for_agent",
-        &json!({ "agent_id": "test-agent" }),
+        &json!({ "agent_id": alpha }),
     ));
-    // OC has no "kill_shells_for_agent" tool; dispatch must return is_error=true
-    // or an unknown-tool response. This pins the absence for crosslink #584.
     assert!(
-        result.is_error || result.content.to_lowercase().contains("unknown"),
-        "B2e: kill_shells_for_agent must not exist in OC (gap #584); got: {}",
+        !result.is_error,
+        "B2e: kill_shells_for_agent must succeed; got: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("Terminated 1 background shell")
+            && result.content.contains(alpha)
+            && result.content.contains(&alpha_shell),
+        "B2e: cleanup result must name the killed alpha shell; got: {}",
+        result.content
+    );
+
+    let alpha_poll = execute_tool(&make_tool_call(
+        "bash_output",
+        &json!({ "shell_id": alpha_shell }),
+    ));
+    assert!(
+        alpha_poll.is_error,
+        "B2e: killed alpha shell must be removed from lookup; got: {}",
+        alpha_poll.content
+    );
+
+    let beta_poll = execute_tool(&make_tool_call(
+        "bash_output",
+        &json!({ "shell_id": beta_shell.clone() }),
+    ));
+    assert!(
+        !beta_poll.is_error,
+        "B2e: beta shell must remain available after alpha cleanup; got: {}",
+        beta_poll.content
+    );
+
+    let _cleanup = execute_tool(&make_tool_call(
+        "kill_shell",
+        &json!({ "shell_id": beta_shell }),
+    ));
+}
+
+/// B2f — agent-scoped cleanup is idempotent when no shells match.
+#[test]
+fn b2f_kill_shells_for_agent_no_matches_succeeds() {
+    let result = execute_tool(&make_tool_call(
+        "kill_shells_for_agent",
+        &json!({ "agent_id": "gap584-agent-without-shells" }),
+    ));
+    assert!(
+        !result.is_error,
+        "B2f: no-match cleanup must be idempotent success; got: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("No background shells found"),
+        "B2f: no-match cleanup must explain that nothing matched; got: {}",
         result.content
     );
 }

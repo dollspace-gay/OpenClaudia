@@ -126,6 +126,7 @@ fn dispatch_tuple_message_non_empty_for_every_known_tool_with_empty_args() {
         "bash",
         "bash_output",
         "kill_shell",
+        "kill_shells_for_agent",
         "read_file",
         "write_file",
         "edit_file",

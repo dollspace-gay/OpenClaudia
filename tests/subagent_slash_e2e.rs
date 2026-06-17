@@ -202,6 +202,7 @@ fn general_purpose_has_read_and_write_tools() {
     assert!(tools.contains(&"write_file"));
     assert!(tools.contains(&"edit_file"));
     assert!(tools.contains(&"bash"));
+    assert!(tools.contains(&"kill_shells_for_agent"));
 }
 
 // ───────────────────────────────────────────────────────────────────────────

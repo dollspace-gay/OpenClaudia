@@ -9,7 +9,7 @@ pub mod path_constraints;
 // sites use the same path.
 pub mod policy;
 
-pub use kill::{execute_kill_shell, terminate_process_tree};
+pub use kill::{execute_kill_shell, execute_kill_shells_for_agent, terminate_process_tree};
 pub use output::execute_bash_output;
 pub use path_constraints::{
     check_command_against_global, clear_global as clear_global_path_constraints,
@@ -93,6 +93,8 @@ struct BackgroundShell {
     stdout_buffer: Arc<Mutex<Vec<String>>>,
     stderr_buffer: Arc<Mutex<Vec<String>>>,
     command: String,
+    /// Session or subagent bucket that created this shell.
+    owner: String,
     /// Liveness signal — true once the wait thread has reaped the child.
     ///
     /// # Fix for crosslink #674
@@ -156,6 +158,7 @@ impl BackgroundShellManager {
         validate_command(command)?;
 
         let shell_id = safe_truncate(&Uuid::new_v4().to_string(), 8).to_string();
+        let owner = super::todo::current_session_key();
         // IMPORTANT: Set current_dir to ensure bash runs in the same directory as the process
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
@@ -283,6 +286,7 @@ impl BackgroundShellManager {
             stdout_buffer,
             stderr_buffer,
             command: command.to_string(),
+            owner,
             finished,
             reaped,
             exit_status,
@@ -409,6 +413,45 @@ impl BackgroundShellManager {
         } else {
             Err(format!("Shell '{shell_id}' not found"))
         }
+    }
+
+    /// Kill every background shell owned by a session or subagent id.
+    pub(crate) fn kill_for_agent(&self, agent_id: &str) -> String {
+        let mut shells = recover_mutex_lock(&self.shells, "kill_for_agent", "shells", None);
+        let shell_ids: Vec<String> = shells
+            .iter()
+            .filter(|(_, shell)| shell.owner == agent_id)
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        if shell_ids.is_empty() {
+            return format!("No background shells found for agent '{agent_id}'.");
+        }
+
+        let mut removed = Vec::with_capacity(shell_ids.len());
+        for shell_id in shell_ids {
+            if let Some(shell) = shells.remove(&shell_id) {
+                removed.push((shell_id, shell));
+            }
+        }
+        drop(shells);
+
+        let mut killed_ids = Vec::with_capacity(removed.len());
+        for (shell_id, shell) in removed {
+            if !shell.finished.load(Ordering::SeqCst) {
+                terminate_process_tree(shell.pid);
+            }
+            shell.finished.store(true, Ordering::SeqCst);
+            shell.reaped.store(true, Ordering::SeqCst);
+            killed_ids.push(shell_id);
+        }
+
+        format!(
+            "Terminated {} background shell(s) for agent '{}': {}",
+            killed_ids.len(),
+            agent_id,
+            killed_ids.join(", ")
+        )
     }
 
     /// List all background shells

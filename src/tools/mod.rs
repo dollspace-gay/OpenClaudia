@@ -910,6 +910,7 @@ mod tests {
             "bash",
             "bash_output",
             "kill_shell",
+            "kill_shells_for_agent",
             "read_file",
             "write_file",
             "edit_file",

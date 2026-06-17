@@ -281,6 +281,7 @@ The `keybindings:` config map customizes the legacy line-oriented REPL (`opencla
 | `bash` | Execute shell commands with optional timeout and background mode |
 | `bash_output` | Get output from background shells or list all running shells |
 | `kill_shell` | Terminate a background shell by ID |
+| `kill_shells_for_agent` | Terminate all background shells owned by an agent or session |
 | `read_file` | Read file contents (supports images, PDFs, Jupyter notebooks) with optional offset/limit |
 | `write_file` | Create or overwrite files |
 | `edit_file` | Targeted string replacement edits (requires reading file first) |

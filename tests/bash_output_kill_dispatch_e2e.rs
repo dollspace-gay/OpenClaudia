@@ -37,6 +37,17 @@ fn dispatch_kill_shell(args: &HashMap<String, Value>) -> (String, bool) {
         .expect("kill_shell must be registered")
 }
 
+fn dispatch_kill_shells_for_agent(args: &HashMap<String, Value>) -> (String, bool) {
+    let mut ctx = ToolContext {
+        memory_db: None,
+        app_config: None,
+        task_mgr: None,
+    };
+    registry()
+        .dispatch("kill_shells_for_agent", args, &mut ctx)
+        .expect("kill_shells_for_agent must be registered")
+}
+
 fn args_with(entries: &[(&str, Value)]) -> HashMap<String, Value> {
     let mut m = HashMap::new();
     for (k, v) in entries {
@@ -161,6 +172,46 @@ fn kill_shell_with_null_shell_id_treated_as_missing() {
     assert!(msg.contains("Missing 'shell_id' argument"));
 }
 
+#[test]
+fn kill_shells_for_agent_with_no_agent_id_returns_documented_error() {
+    let (msg, is_err) = dispatch_kill_shells_for_agent(&HashMap::new());
+    assert!(is_err);
+    assert!(
+        msg.contains("Missing 'agent_id' argument"),
+        "MUST surface documented missing-agent_id; got {msg:?}"
+    );
+}
+
+#[test]
+fn kill_shells_for_agent_with_non_string_agent_id_treated_as_missing() {
+    let args = args_with(&[("agent_id", json!(42))]);
+    let (msg, is_err) = dispatch_kill_shells_for_agent(&args);
+    assert!(is_err);
+    assert!(
+        msg.contains("Missing 'agent_id' argument"),
+        "non-string agent_id MUST surface missing-arg; got {msg:?}"
+    );
+}
+
+#[test]
+fn kill_shells_for_agent_with_empty_agent_id_treated_as_missing() {
+    let args = args_with(&[("agent_id", json!(""))]);
+    let (msg, is_err) = dispatch_kill_shells_for_agent(&args);
+    assert!(is_err);
+    assert!(msg.contains("Missing 'agent_id' argument"));
+}
+
+#[test]
+fn kill_shells_for_agent_with_unknown_agent_id_is_idempotent_success() {
+    let args = args_with(&[("agent_id", json!("no-shells-for-this-agent"))]);
+    let (msg, is_err) = dispatch_kill_shells_for_agent(&args);
+    assert!(!is_err);
+    assert!(
+        msg.contains("No background shells found"),
+        "unknown agent cleanup should be idempotent; got {msg:?}"
+    );
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Section D — kill_shell: unknown shell_id
 // ───────────────────────────────────────────────────────────────────────────
@@ -212,6 +263,17 @@ fn kill_shell_never_panics_on_arbitrary_extra_args() {
     // No panic.
 }
 
+#[test]
+fn kill_shells_for_agent_never_panics_on_arbitrary_extra_args() {
+    let args = args_with(&[
+        ("agent_id", json!("xyz")),
+        ("extra", json!({"k": "v"})),
+        ("count", json!(42)),
+    ]);
+    let (_msg, _is_err) = dispatch_kill_shells_for_agent(&args);
+    // No panic.
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Section F — Cross-tool consistency
 // ───────────────────────────────────────────────────────────────────────────
@@ -220,6 +282,7 @@ fn kill_shell_never_panics_on_arbitrary_extra_args() {
 fn bash_output_and_kill_shell_both_registered_in_registry() {
     assert!(registry().get("bash_output").is_some());
     assert!(registry().get("kill_shell").is_some());
+    assert!(registry().get("kill_shells_for_agent").is_some());
 }
 
 #[test]

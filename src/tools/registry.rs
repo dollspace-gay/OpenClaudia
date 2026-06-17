@@ -238,6 +238,35 @@ impl ToolHandler for KillShellHandler {
     }
 }
 
+struct KillShellsForAgentHandler;
+impl ToolHandler for KillShellsForAgentHandler {
+    fn name(&self) -> &'static str {
+        "kill_shells_for_agent"
+    }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "kill_shells_for_agent",
+                "description": "Terminate all background shell processes owned by a specific subagent or session.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "agent_id": {
+                            "type": "string",
+                            "description": "The agent or session ID whose background shells should be terminated"
+                        }
+                    },
+                    "required": ["agent_id"]
+                }
+            }
+        })
+    }
+    fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
+        bash::execute_kill_shells_for_agent(args)
+    }
+}
+
 // ── file ─────────────────────────────────────────────────────────────────────
 
 struct ReadFileHandler;
@@ -1585,6 +1614,7 @@ static HANDLERS: &[&dyn ToolHandler] = &[
     &BashHandler,
     &BashOutputHandler,
     &KillShellHandler,
+    &KillShellsForAgentHandler,
     // file
     &ReadFileHandler,
     &WriteFileHandler,

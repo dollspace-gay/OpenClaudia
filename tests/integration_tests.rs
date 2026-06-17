@@ -1609,6 +1609,7 @@ mod tool_definitions {
             "bash",
             "bash_output",
             "kill_shell",
+            "kill_shells_for_agent",
             "web_fetch",
             "web_search",
             "todo_write",
@@ -2228,6 +2229,7 @@ mod subagent_tools {
         assert!(gp_tools.contains(&"write_file"));
         assert!(gp_tools.contains(&"edit_file"));
         assert!(gp_tools.contains(&"bash"));
+        assert!(gp_tools.contains(&"kill_shells_for_agent"));
 
         // Explore should be read-only
         let explore_tools = AgentType::Explore.allowed_tools();
@@ -2241,11 +2243,13 @@ mod subagent_tools {
         assert!(!plan_tools.contains(&"write_file"));
         assert!(!plan_tools.contains(&"edit_file"));
         assert!(!plan_tools.contains(&"bash"));
+        assert!(!plan_tools.contains(&"kill_shells_for_agent"));
 
         // Guide should be most restricted
         let guide_tools = AgentType::Guide.allowed_tools();
         assert!(guide_tools.contains(&"read_file"));
         assert!(!guide_tools.contains(&"bash")); // No bash for guide
+        assert!(!guide_tools.contains(&"kill_shells_for_agent"));
     }
 }
 
