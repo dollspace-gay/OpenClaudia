@@ -378,7 +378,7 @@ fn b2e_kill_shells_for_agent_terminates_only_matching_agent_shells() {
 
     let beta_poll = execute_tool(&make_tool_call(
         "bash_output",
-        &json!({ "shell_id": beta_shell.clone() }),
+        &json!({ "shell_id": beta_shell }),
     ));
     assert!(
         !beta_poll.is_error,

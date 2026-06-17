@@ -440,7 +440,7 @@ fn b3_process_sse_event_openai_reasoning_content_delta() {
     }
 }
 
-/// MiniMax can emit reasoning as structured details instead of plain text.
+/// `MiniMax` can emit reasoning as structured details instead of plain text.
 #[test]
 fn b3_process_sse_event_reasoning_details_delta() {
     use openclaudia::pipeline::{process_sse_event, SseAction};

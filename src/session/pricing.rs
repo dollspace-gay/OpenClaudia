@@ -35,8 +35,8 @@
 //! ## Fast-mode pricing tier (#642)
 //!
 //! Claude Opus fast mode bills at a premium rate that varies by model:
-//! Opus 4.6 / 4.7 use $30 input / $150 output per MTok, while Opus 4.8
-//! uses $10 input / $50 output per MTok. Per-model overrides live on
+//! Opus 4.6 / 4.7 use $30 input / $150 output per `MTok`, while Opus 4.8
+//! uses $10 input / $50 output per `MTok`. Per-model overrides live on
 //! [`ModelPricing::fast_mode_input_per_million`] /
 //! [`ModelPricing::fast_mode_output_per_million`] and the
 //! [`calculate_cost_fast_mode`] entry point swaps those rates in when

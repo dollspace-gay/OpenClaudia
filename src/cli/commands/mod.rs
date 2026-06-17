@@ -6,7 +6,7 @@ pub mod init;
 pub mod loop_cmd;
 pub mod start;
 
-pub(crate) fn provider_api_key_env_var(provider_name: &str) -> &'static str {
+fn provider_api_key_env_var(provider_name: &str) -> &'static str {
     match provider_name {
         "anthropic" => "ANTHROPIC_API_KEY",
         "openai" => "OPENAI_API_KEY",
@@ -20,7 +20,7 @@ pub(crate) fn provider_api_key_env_var(provider_name: &str) -> &'static str {
     }
 }
 
-pub(crate) fn can_start_without_api_key(provider_name: &str) -> bool {
+fn can_start_without_api_key(provider_name: &str) -> bool {
     provider_name.eq_ignore_ascii_case("anthropic")
         || openclaudia::config::is_local_provider_name(provider_name)
 }

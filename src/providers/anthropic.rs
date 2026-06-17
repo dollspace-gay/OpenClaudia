@@ -1543,7 +1543,7 @@ mod tests {
 
         match err {
             ProviderError::RequestFailed(msg) => {
-                assert!(msg.contains("missing string 'text'"), "{msg}")
+                assert!(msg.contains("missing string 'text'"), "{msg}");
             }
             other => panic!("expected RequestFailed, got {other:?}"),
         }

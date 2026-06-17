@@ -3522,11 +3522,11 @@ providers:
     #[test]
     fn active_provider_for_turn_reports_missing_provider() {
         let config: config::AppConfig = serde_yaml::from_str(
-            r#"
+            r"
 proxy:
   target: missing
 providers: {}
-"#,
+",
         )
         .expect("fixture config must parse");
 

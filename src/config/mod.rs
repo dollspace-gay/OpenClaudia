@@ -154,6 +154,7 @@ fn maybe_set_api_key(
 /// # Errors
 ///
 /// Returns an error if configuration files cannot be read or parsed.
+#[allow(clippy::too_many_lines)] // configuration source assembly is intentionally linear
 pub fn load_config() -> Result<AppConfig, ConfigError> {
     let mut builder = Config::builder();
 

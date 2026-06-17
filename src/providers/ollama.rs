@@ -539,7 +539,7 @@ mod tests {
         }
     }
 
-    fn base_tool_response(arguments: Value) -> Value {
+    fn base_tool_response(arguments: &Value) -> Value {
         json!({
             "model": "llama3",
             "message": {
@@ -698,7 +698,7 @@ mod tests {
 
     #[test]
     fn transform_response_serializes_object_tool_arguments() {
-        let response = base_tool_response(json!({"command": "pwd"}));
+        let response = base_tool_response(&json!({"command": "pwd"}));
         let out = OllamaAdapter::new()
             .transform_response(response, false)
             .expect("valid tool call should transform");
@@ -830,7 +830,7 @@ mod tests {
 
     #[test]
     fn transform_response_accepts_stringified_object_tool_arguments() {
-        let response = base_tool_response(json!(r#"{"command":"pwd"}"#));
+        let response = base_tool_response(&json!(r#"{"command":"pwd"}"#));
         let out = OllamaAdapter::new()
             .transform_response(response, false)
             .expect("stringified object arguments should transform");
@@ -840,7 +840,7 @@ mod tests {
 
     #[test]
     fn transform_response_errors_on_malformed_tool_argument_string() {
-        let response = base_tool_response(json!("{not json"));
+        let response = base_tool_response(&json!("{not json"));
         let err = OllamaAdapter::new()
             .transform_response(response, false)
             .expect_err("malformed tool arguments must fail");
@@ -855,7 +855,7 @@ mod tests {
 
     #[test]
     fn transform_response_errors_on_non_object_tool_arguments() {
-        let response = base_tool_response(json!([]));
+        let response = base_tool_response(&json!([]));
         let err = OllamaAdapter::new()
             .transform_response(response, false)
             .expect_err("non-object tool arguments must fail");

@@ -7,7 +7,7 @@
 //! provider-specific thinking controls not modeled here:
 //!
 //!   - **`OpenAI`**: `reasoning_effort: "low|medium|high"`,
-//!     only for OpenAI reasoning-family models.
+//!     only for `OpenAI` reasoning-family models.
 //!   - **`DeepSeek`**: `thinking: {type: "enabled"|"disabled"}`,
 //!     plus `reasoning_effort: "high"|"max"` when enabled.
 //!   - **`Qwen`**: `enable_thinking` ALWAYS written (true OR false).

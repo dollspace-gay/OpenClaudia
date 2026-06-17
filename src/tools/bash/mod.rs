@@ -158,6 +158,7 @@ impl BackgroundShellManager {
     /// the env allowlist via [`apply_env_scrub`] before spawn so that only
     /// a curated set of variables (`PATH`, `HOME`, `USER`, `CARGO_HOME`, ...)
     /// flows into the child. See crosslink #257 and #730.
+    #[allow(clippy::too_many_lines)] // spawn keeps the atomic reserve/spawn/insert sequence together
     pub(crate) fn spawn(&self, command: &str) -> Result<String, String> {
         validate_command(command)?;
 

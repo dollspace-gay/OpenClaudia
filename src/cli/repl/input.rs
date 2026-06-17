@@ -196,28 +196,6 @@ pub fn open_external_editor() -> Option<String> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn repl_editor_windows_shell_uses_resolved_cmd() {
-        let source = include_str!("input.rs");
-        let cfg_test = source
-            .find("#[cfg(test)]")
-            .expect("test marker must be present");
-        let production = &source[..cfg_test];
-
-        assert!(
-            !production.contains("Command::new(\"cmd\")")
-                && !production.contains("std::process::Command::new(\"cmd\")"),
-            "external editor wrapper must not invoke bare cmd"
-        );
-        assert!(
-            production.contains("which::which(binary)"),
-            "external editor wrapper must resolve cmd through the Rust resolver"
-        );
-    }
-}
-
 /// Expand @file references in input to include file contents
 pub fn expand_file_references(input: &str) -> String {
     use regex::Regex;
@@ -297,4 +275,26 @@ pub fn expand_file_references(input: &str) -> String {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn repl_editor_windows_shell_uses_resolved_cmd() {
+        let source = include_str!("input.rs");
+        let cfg_test = source
+            .find("#[cfg(test)]")
+            .expect("test marker must be present");
+        let production = &source[..cfg_test];
+
+        assert!(
+            !production.contains("Command::new(\"cmd\")")
+                && !production.contains("std::process::Command::new(\"cmd\")"),
+            "external editor wrapper must not invoke bare cmd"
+        );
+        assert!(
+            production.contains("which::which(binary)"),
+            "external editor wrapper must resolve cmd through the Rust resolver"
+        );
+    }
 }
