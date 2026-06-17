@@ -27,14 +27,30 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use uuid::Uuid;
 
 /// Maximum number of background shells allowed before refusing new ones
 const MAX_BACKGROUND_SHELLS: usize = 50;
+
+static BASH_BIN: LazyLock<Result<PathBuf, String>> = LazyLock::new(|| {
+    which::which("bash").map_err(|e| format!("bash binary not found on PATH: {e}"))
+});
+
+fn bash_bin() -> Result<&'static Path, String> {
+    match &*BASH_BIN {
+        Ok(path) => Ok(path.as_path()),
+        Err(msg) => Err(msg.clone()),
+    }
+}
+
+fn bash_command() -> Result<Command, String> {
+    Ok(Command::new(bash_bin()?))
+}
 
 /// Background shell process with captured output
 struct BackgroundShell {
@@ -143,7 +159,7 @@ impl BackgroundShellManager {
         let child = {
             let mut cmd = match find_git_bash() {
                 Some(git_bash) => Command::new(git_bash),
-                None => Command::new("bash"),
+                None => bash_command()?,
             };
             cmd.args(["-c", command])
                 .current_dir(&cwd)
@@ -155,7 +171,7 @@ impl BackgroundShellManager {
 
         #[cfg(not(windows))]
         let child = {
-            let mut cmd = Command::new("bash");
+            let mut cmd = bash_command()?;
             cmd.args(["-c", command])
                 .current_dir(&cwd)
                 .stdout(Stdio::piped())
@@ -533,7 +549,7 @@ pub fn try_execute_bash(args: &HashMap<String, Value>) -> Result<ToolOutput, Too
     let output = {
         let mut cmd = match find_git_bash() {
             Some(git_bash) => Command::new(git_bash),
-            None => Command::new("bash"),
+            None => bash_command().map_err(ToolError::External)?,
         };
         cmd.args(["-c", command]).current_dir(&cwd);
         apply_env_scrub(&mut cmd);
@@ -542,7 +558,7 @@ pub fn try_execute_bash(args: &HashMap<String, Value>) -> Result<ToolOutput, Too
 
     #[cfg(not(windows))]
     let output = {
-        let mut cmd = Command::new("bash");
+        let mut cmd = bash_command().map_err(ToolError::External)?;
         cmd.args(["-c", command]).current_dir(&cwd);
         apply_env_scrub(&mut cmd);
         cmd.output()
@@ -669,6 +685,31 @@ mod tests {
         assert!(
             production.contains("which::which(\"git\")"),
             "find_git_bash must locate git through the Rust resolver"
+        );
+    }
+
+    #[test]
+    fn bash_execution_uses_resolved_binary_path() {
+        let bash = bash_bin().expect("bash tests require bash on PATH");
+        assert!(
+            bash.is_absolute(),
+            "bash_bin must resolve bash to an absolute path, got {}",
+            bash.display()
+        );
+
+        let source = include_str!("mod.rs");
+        let cfg_test = source
+            .find("#[cfg(test)]")
+            .expect("test marker must be present");
+        let production = &source[..cfg_test];
+
+        assert!(
+            !production.contains("Command::new(\"bash\")"),
+            "production bash tool code must not invoke bare bash"
+        );
+        assert!(
+            production.contains("which::which(\"bash\")"),
+            "bash tool must locate bash through the Rust resolver"
         );
     }
 
