@@ -545,6 +545,37 @@ impl TranscriptStore {
         }
     }
 
+    fn rebuild_order_index(&mut self) {
+        self.order.clear();
+        self.order.extend(
+            self.entries
+                .iter()
+                .map(|(agent_id, transcript)| (transcript.created_at, agent_id.clone())),
+        );
+    }
+
+    fn order_index_matches_entries(&self) -> bool {
+        self.order.len() == self.entries.len()
+            && self.order.iter().all(|(created_at, agent_id)| {
+                self.entries
+                    .get(agent_id)
+                    .is_some_and(|transcript| transcript.created_at == *created_at)
+            })
+    }
+
+    fn repair_order_index_if_needed(&mut self) {
+        if self.order_index_matches_entries() {
+            return;
+        }
+
+        tracing::warn!(
+            entries = self.entries.len(),
+            order = self.order.len(),
+            "transcript store order index out of sync; rebuilding before eviction"
+        );
+        self.rebuild_order_index();
+    }
+
     /// Number of stored transcripts. Test-only.
     #[cfg(test)]
     fn len(&self) -> usize {
@@ -565,20 +596,26 @@ impl TranscriptStore {
         }
         self.order.insert((transcript.created_at, agent_id.clone()));
         self.entries.insert(agent_id, transcript);
+        self.repair_order_index_if_needed();
 
         // Enforce the hard cap. O(log N) per eviction.
         while self.entries.len() > MAX_STORED_TRANSCRIPTS {
-            // `order` is non-empty here: `entries.len() > 0` and the
-            // two indexes are kept in lockstep, so unwrap-on-None
-            // would indicate an invariant violation.
-            let oldest = self
-                .order
-                .iter()
-                .next()
-                .cloned()
-                .expect("order index must mirror entries when entries is non-empty");
+            let Some(oldest) = self.order.iter().next().cloned() else {
+                tracing::warn!(
+                    entries = self.entries.len(),
+                    "transcript store order index empty while over cap; rebuilding"
+                );
+                self.rebuild_order_index();
+                continue;
+            };
             self.order.remove(&oldest);
-            self.entries.remove(&oldest.1);
+            if self.entries.remove(&oldest.1).is_none() {
+                tracing::warn!(
+                    agent_id = %oldest.1,
+                    "transcript store order index referenced a missing entry; rebuilding"
+                );
+                self.rebuild_order_index();
+            }
         }
     }
 
@@ -3006,6 +3043,64 @@ mod tests {
         assert!(
             store.get("agent-050").is_some(),
             "newest entry must be retained"
+        );
+    }
+
+    #[test]
+    fn transcript_store_repairs_order_index_drift_before_eviction() {
+        let mut store = TranscriptStore::new();
+        let base = Instant::now();
+
+        for i in 0..MAX_STORED_TRANSCRIPTS {
+            let i_u64 = u64::try_from(i).expect("test index must fit in u64");
+            store.insert(
+                format!("agent-{i:03}"),
+                StoredTranscript {
+                    messages: vec![json!({"role": "user", "content": "x"})],
+                    agent_type: AgentType::Explore,
+                    created_at: base + Duration::from_micros(i_u64),
+                },
+            );
+        }
+
+        assert!(store.order.remove(&(base, "agent-000".to_string())));
+        store.order.insert((base, "missing-agent".to_string()));
+        assert_eq!(
+            store.order.len(),
+            store.entries.len(),
+            "test setup should simulate same-size index drift"
+        );
+
+        store.insert(
+            "agent-new".to_string(),
+            StoredTranscript {
+                messages: vec![json!({"role": "assistant", "content": "new"})],
+                agent_type: AgentType::Plan,
+                created_at: base
+                    + Duration::from_micros(
+                        u64::try_from(MAX_STORED_TRANSCRIPTS + 1)
+                            .expect("test cap must fit in u64"),
+                    ),
+            },
+        );
+
+        assert_eq!(
+            store.len(),
+            MAX_STORED_TRANSCRIPTS,
+            "repair must preserve the hard cap after index drift"
+        );
+        assert_eq!(
+            store.order.len(),
+            MAX_STORED_TRANSCRIPTS,
+            "repair must restore the order index"
+        );
+        assert!(
+            store.get("agent-000").is_none(),
+            "oldest transcript should be evicted after rebuilding the index"
+        );
+        assert!(
+            store.get("agent-new").is_some(),
+            "new transcript should survive repaired eviction"
         );
     }
 
