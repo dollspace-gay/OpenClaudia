@@ -2173,19 +2173,12 @@ pub async fn connect_mcp_servers(
                             "MCP alwaysLoad is a tool-search hint; OpenClaudia currently eager-loads MCP tools"
                         );
                     }
-                    if server.headers_helper.is_some() {
-                        warn!(
-                            server = %server.name,
-                            plugin = %plugin.name(),
-                            "MCP headersHelper is not supported yet; skipping server to avoid unauthenticated requests"
-                        );
-                        continue;
-                    }
                     match mcp
-                        .connect_http_with_headers_and_timeout(
+                        .connect_http_with_headers_helper_and_timeout(
                             &server.name,
                             url,
                             &server.headers,
+                            server.headers_helper.as_deref(),
                             tool_timeout,
                         )
                         .await

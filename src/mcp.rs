@@ -28,6 +28,7 @@ use tracing::{debug, error, info, warn};
 // per request via `RequestBuilder::timeout` so it overrides any global
 // default on the shared client.
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_mins(1);
+const HEADERS_HELPER_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Process-wide shared `reqwest::Client` for the HTTP MCP transport.
 ///
@@ -1431,6 +1432,8 @@ enum ConnectionSpec {
     Http {
         url: String,
         headers: HashMap<String, String>,
+        headers_helper: Option<String>,
+        server_name: String,
     },
 }
 
@@ -1443,11 +1446,130 @@ impl ConnectionSpec {
                     command, &argv, env,
                 )?))
             }
-            Self::Http { url, headers } => {
-                Ok(Box::new(HttpTransport::new_with_headers(url, headers)?))
+            Self::Http {
+                url,
+                headers,
+                headers_helper,
+                server_name,
+            } => {
+                let headers =
+                    resolve_http_headers(server_name, url, headers, headers_helper.as_deref())?;
+                Ok(Box::new(HttpTransport::new_with_headers(url, &headers)?))
             }
         }
     }
+}
+
+fn resolve_http_headers(
+    server_name: &str,
+    url: &str,
+    static_headers: &HashMap<String, String>,
+    headers_helper: Option<&str>,
+) -> Result<HashMap<String, String>, McpError> {
+    let mut headers = static_headers.clone();
+    if let Some(helper) = headers_helper {
+        let dynamic = run_headers_helper(helper, server_name, url)?;
+        merge_dynamic_headers(&mut headers, dynamic);
+    }
+    Ok(headers)
+}
+
+fn merge_dynamic_headers(headers: &mut HashMap<String, String>, dynamic: HashMap<String, String>) {
+    for (key, value) in dynamic {
+        if let Some(existing_key) = headers
+            .keys()
+            .find(|existing| existing.eq_ignore_ascii_case(&key))
+            .cloned()
+        {
+            headers.remove(&existing_key);
+        }
+        headers.insert(key, value);
+    }
+}
+
+fn run_headers_helper(
+    command: &str,
+    server_name: &str,
+    url: &str,
+) -> Result<HashMap<String, String>, McpError> {
+    if command.trim().is_empty() {
+        return Err(McpError::Transport(format!(
+            "MCP headersHelper for server '{server_name}' is empty"
+        )));
+    }
+
+    let mut env = HashMap::new();
+    env.insert(
+        "CLAUDE_CODE_MCP_SERVER_NAME".to_string(),
+        server_name.to_string(),
+    );
+    env.insert("CLAUDE_CODE_MCP_SERVER_URL".to_string(), url.to_string());
+
+    let (program, args) = shell_command(command);
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = crate::tools::command::run_with_timeout_with_env(
+        program,
+        &arg_refs,
+        None,
+        HEADERS_HELPER_TIMEOUT,
+        &env,
+    )
+    .map_err(|e| {
+        McpError::Transport(format!(
+            "MCP headersHelper for server '{server_name}' failed: {e}"
+        ))
+    })?;
+
+    if !output.status.success() {
+        let status = output.status.code().map_or_else(
+            || "terminated by signal".to_string(),
+            |code| code.to_string(),
+        );
+        return Err(McpError::Transport(format!(
+            "MCP headersHelper for server '{server_name}' exited with status {status}"
+        )));
+    }
+
+    parse_headers_helper_stdout(server_name, &output.stdout)
+}
+
+fn shell_command(command: &str) -> (&'static str, Vec<String>) {
+    #[cfg(windows)]
+    {
+        ("cmd", vec!["/C".to_string(), command.to_string()])
+    }
+    #[cfg(not(windows))]
+    {
+        ("sh", vec!["-c".to_string(), command.to_string()])
+    }
+}
+
+fn parse_headers_helper_stdout(
+    server_name: &str,
+    stdout: &[u8],
+) -> Result<HashMap<String, String>, McpError> {
+    let value: Value = serde_json::from_slice(stdout).map_err(|e| {
+        McpError::Protocol(format!(
+            "MCP headersHelper for server '{server_name}' did not emit valid JSON: {e}"
+        ))
+    })?;
+    let object = value.as_object().ok_or_else(|| {
+        McpError::Protocol(format!(
+            "MCP headersHelper for server '{server_name}' must emit a JSON object"
+        ))
+    })?;
+
+    let mut headers = HashMap::with_capacity(object.len());
+    for (key, value) in object {
+        let Some(value) = value.as_str() else {
+            return Err(McpError::Protocol(format!(
+                "MCP headersHelper for server '{server_name}' emitted non-string value for header \
+                 '{key}'"
+            )));
+        };
+        headers.insert(key.clone(), value.to_string());
+    }
+    Ok(headers)
 }
 
 /// Max reconnect attempts before [`McpError::ServerUnreachable`] (fix #629).
@@ -1658,9 +1780,30 @@ impl McpManager {
         headers: &HashMap<String, String>,
         tool_timeout: Option<Duration>,
     ) -> Result<(), McpError> {
+        self.connect_http_with_headers_helper_and_timeout(name, url, headers, None, tool_timeout)
+            .await
+    }
+
+    /// Connect to an MCP server via HTTP with static headers, an optional
+    /// dynamic headers helper, and an optional per-tool-call timeout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `McpError` if URL/header validation, helper execution,
+    /// connection, or initialization fails.
+    pub async fn connect_http_with_headers_helper_and_timeout(
+        &self,
+        name: &str,
+        url: &str,
+        headers: &HashMap<String, String>,
+        headers_helper: Option<&str>,
+        tool_timeout: Option<Duration>,
+    ) -> Result<(), McpError> {
         let spec = ConnectionSpec::Http {
             url: url.to_string(),
             headers: headers.clone(),
+            headers_helper: headers_helper.map(str::to_string),
+            server_name: name.to_string(),
         };
         let transport = spec.build_transport()?;
         let server = McpServer::new(name, transport).await?;
@@ -1698,6 +1841,8 @@ impl McpManager {
         let spec = ConnectionSpec::Http {
             url: url.to_string(),
             headers: headers.clone(),
+            headers_helper: None,
+            server_name: name.to_string(),
         };
         let transport: Box<dyn McpTransport> = Box::new(
             HttpTransport::__test_new_unchecked_with_headers(url, headers),
@@ -2081,6 +2226,98 @@ mod tests {
         // to exercise base_url normalisation without a real network.
         let transport = HttpTransport::__test_new_unchecked("http://localhost:8080/");
         assert_eq!(transport.base_url, "http://localhost:8080");
+    }
+
+    #[test]
+    fn headers_helper_stdout_must_be_json_object_with_string_values() {
+        let headers =
+            parse_headers_helper_stdout("svc", br#"{"Authorization":"Bearer dynamic"}"#).unwrap();
+        assert_eq!(
+            headers.get("Authorization").map(String::as_str),
+            Some("Bearer dynamic")
+        );
+
+        let non_object = parse_headers_helper_stdout("svc", br#"["not-an-object"]"#).unwrap_err();
+        assert!(
+            non_object.to_string().contains("must emit a JSON object"),
+            "unexpected error: {non_object}"
+        );
+
+        let non_string =
+            parse_headers_helper_stdout("svc", br#"{"Authorization":42}"#).unwrap_err();
+        assert!(
+            non_string.to_string().contains("non-string value"),
+            "unexpected error: {non_string}"
+        );
+    }
+
+    #[test]
+    fn headers_helper_dynamic_headers_override_static_case_insensitively() {
+        let mut headers = HashMap::from([
+            ("Authorization".to_string(), "Bearer static".to_string()),
+            ("X-Static".to_string(), "kept".to_string()),
+        ]);
+        let dynamic = HashMap::from([
+            ("authorization".to_string(), "Bearer dynamic".to_string()),
+            ("X-Dynamic".to_string(), "added".to_string()),
+        ]);
+
+        merge_dynamic_headers(&mut headers, dynamic);
+
+        assert_eq!(headers.len(), 3);
+        assert!(!headers.contains_key("Authorization"));
+        assert_eq!(
+            headers.get("authorization").map(String::as_str),
+            Some("Bearer dynamic")
+        );
+        assert_eq!(headers.get("X-Static").map(String::as_str), Some("kept"));
+        assert_eq!(headers.get("X-Dynamic").map(String::as_str), Some("added"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn headers_helper_receives_documented_server_environment() {
+        let command = concat!(
+            "printf '{\"X-Server\":\"%s\",\"X-Url\":\"%s\"}' ",
+            "\"$CLAUDE_CODE_MCP_SERVER_NAME\" \"$CLAUDE_CODE_MCP_SERVER_URL\""
+        );
+        let headers =
+            run_headers_helper(command, "internal-api", "https://mcp.example.test/mcp").unwrap();
+
+        assert_eq!(
+            headers.get("X-Server").map(String::as_str),
+            Some("internal-api")
+        );
+        assert_eq!(
+            headers.get("X-Url").map(String::as_str),
+            Some("https://mcp.example.test/mcp")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_http_headers_merges_static_and_helper_headers() {
+        let static_headers = HashMap::from([
+            ("Authorization".to_string(), "Bearer static".to_string()),
+            ("X-Static".to_string(), "kept".to_string()),
+        ]);
+        let command = "printf '{\"authorization\":\"Bearer dynamic\",\"X-Helper\":\"added\"}'";
+
+        let headers = resolve_http_headers(
+            "internal-api",
+            "https://mcp.example.test/mcp",
+            &static_headers,
+            Some(command),
+        )
+        .unwrap();
+
+        assert_eq!(
+            headers.get("authorization").map(String::as_str),
+            Some("Bearer dynamic")
+        );
+        assert!(!headers.contains_key("Authorization"));
+        assert_eq!(headers.get("X-Static").map(String::as_str), Some("kept"));
+        assert_eq!(headers.get("X-Helper").map(String::as_str), Some("added"));
     }
 
     #[test]

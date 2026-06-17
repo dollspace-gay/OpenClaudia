@@ -16,6 +16,7 @@
 //! backoff matches the schedule worktree.rs already used so trivial
 //! commands still see sub-millisecond exit-detection overhead.
 
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -51,11 +52,31 @@ pub fn run_with_timeout(
     cwd: Option<&Path>,
     timeout: Duration,
 ) -> Result<Output, CommandError> {
+    run_with_timeout_with_env(program, args, cwd, timeout, &HashMap::new())
+}
+
+/// Run `program` under `timeout`, applying additional environment variables
+/// to the child process.
+///
+/// See [`run_with_timeout`] for timeout and error semantics.
+///
+/// # Errors
+///
+/// Returns the same structured [`CommandError`] variants as
+/// [`run_with_timeout`].
+pub fn run_with_timeout_with_env(
+    program: &(impl AsRef<OsStr> + ?Sized),
+    args: &[impl AsRef<OsStr>],
+    cwd: Option<&Path>,
+    timeout: Duration,
+    env: &HashMap<String, String>,
+) -> Result<Output, CommandError> {
     let program_str = program.as_ref().to_string_lossy().into_owned();
     let mut cmd = Command::new(program);
     cmd.args(args.iter().map(AsRef::as_ref))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    cmd.envs(env);
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
     }
