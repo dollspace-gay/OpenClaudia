@@ -359,10 +359,10 @@ The lists below are the built-in `/model list` fallback catalog. Model names are
 ### OpenAI
 - `gpt-5.5`, `gpt-5.5-pro`, `gpt-5.5-2026-04-23` — Latest frontier family
 - `gpt-5.4`, `gpt-5.4-pro`, `gpt-5.4-mini`, `gpt-5.4-mini-2026-03-17`, `gpt-5.4-nano` — Current GPT-5.4 family
-- `gpt-5.3-codex-spark`, `gpt-5.2`, `gpt-5.2-pro`, `gpt-5.2-codex` — Codex/previous frontier family
+- `gpt-5.3-codex`, `gpt-5.2`, `gpt-5.2-pro`, `gpt-5.2-codex` — Codex/previous frontier family
 - `gpt-5.1`, `gpt-5.1-codex`, `gpt-5.1-codex-max`, `gpt-5.1-codex-mini` — GPT-5.1 family
 - `gpt-5`, `gpt-5-pro`, `gpt-5-mini`, `gpt-5-nano` — GPT-5 family
-- `gpt-4.1`, `gpt-4.1-mini`, `o3-pro`, `o3`, `o4-mini`, `gpt-4o-mini` — Legacy chat/reasoning models
+- `gpt-4.1`, `gpt-4.1-mini`, `o3-pro`, `o3`, `o4-mini`, `chat-latest`, `gpt-4o-mini` — Legacy chat/reasoning models
 
 ### Google Gemini
 - `gemini-3.5-flash`, `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite`, `gemini-3-flash-preview` — Gemini 3 family

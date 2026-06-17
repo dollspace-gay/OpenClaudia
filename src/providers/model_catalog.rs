@@ -40,7 +40,7 @@ pub const OPENAI_MODELS: &[&str] = &[
     "gpt-5.4-mini",
     "gpt-5.4-mini-2026-03-17",
     "gpt-5.4-nano",
-    "gpt-5.3-codex-spark",
+    "gpt-5.3-codex",
     "gpt-5.2",
     "gpt-5.2-pro",
     "gpt-5.2-codex",
@@ -57,6 +57,7 @@ pub const OPENAI_MODELS: &[&str] = &[
     "o3-pro",
     "o3",
     "o4-mini",
+    "chat-latest",
     "gpt-4o-mini",
 ];
 

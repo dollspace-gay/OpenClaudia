@@ -23,7 +23,7 @@ impl MiniMaxAdapter {
             "minimax",
             "/v1/chat/completions",
             ThinkingInjector::None,
-            false,
+            true,
         ))
     }
 }

@@ -924,13 +924,8 @@ pub fn slash_model(
         return SlashCommandResult::Handled;
     }
     let new_model = args.trim().to_string();
-    let available = get_available_models(provider);
-    if available.contains(&new_model.as_str()) || !available.is_empty() {
-        println!("\nSwitching to model: \x1b[36m{new_model}\x1b[0m\n");
-        SlashCommandResult::SwitchModel(new_model)
-    } else {
-        SlashCommandResult::Handled
-    }
+    println!("\nSwitching to model: \x1b[36m{new_model}\x1b[0m\n");
+    SlashCommandResult::SwitchModel(new_model)
 }
 
 /// Split a slash-command argument string into shell-style tokens.
@@ -2956,20 +2951,19 @@ mod tests {
         );
     }
 
-    /// OC: `/model <name>` returns `SwitchModel` when a non-empty name is given.
-    /// The OC validation logic switches if `available.contains(&name) || !available.is_empty()`,
-    /// which always passes when the provider has any models.  Pin current contract.
+    /// OC: `/model <name>` returns `SwitchModel` for any non-empty upstream model ID.
+    /// Static catalog entries are discovery hints, not an allowlist.
     #[test]
-    fn spec_model_switch_returns_switch_model() {
+    fn spec_model_switch_accepts_arbitrary_upstream_model_id() {
         let result = handle_slash_command(
-            "/model claude-opus-4-5",
+            "/model claude-opus-4-99-future",
             &mut ctx(),
             "anthropic",
             "claude-sonnet-4-5",
         );
         assert!(
-            matches!(result, Some(SlashCommandResult::SwitchModel(_))),
-            "/model <name> must return SwitchModel"
+            matches!(result, Some(SlashCommandResult::SwitchModel(model)) if model == "claude-opus-4-99-future"),
+            "/model <name> must accept arbitrary upstream model IDs"
         );
     }
 

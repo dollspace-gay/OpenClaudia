@@ -349,11 +349,11 @@ fn google_does_not_support_openai_style_model_listing() {
 }
 
 #[test]
-fn minimax_does_not_advertise_openai_style_model_listing() {
+fn minimax_supports_model_listing() {
     let adapter = get_adapter("minimax").expect("minimax");
     assert!(
-        !adapter.supports_model_listing(),
-        "MiniMax MUST NOT advertise model listing until its response shape is parsed"
+        adapter.supports_model_listing(),
+        "MiniMax MUST support OpenAI-style /v1/models"
     );
 }
 
