@@ -25,7 +25,7 @@ use crate::config::{Hook, HookEntry, HookMatcherTarget, HookPolicy, HooksConfig}
 use crate::tools::is_sensitive_env;
 use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
@@ -297,6 +297,15 @@ impl HookInput {
     pub const fn match_event(&self) -> Option<&'static str> {
         Some(self.event.config_key())
     }
+}
+
+fn notification_input(notification_type: &str, data: Value) -> HookInput {
+    HookInput::new(HookEvent::Notification)
+        .with_extra(
+            "notification_type",
+            Value::String(notification_type.to_string()),
+        )
+        .with_extra("data", data)
 }
 
 /// Output from a hook execution
@@ -763,20 +772,8 @@ impl HookEngine {
     }
 
     /// Fire a notification event with type and data.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the constructed JSON object is not a map (should never happen).
     pub async fn fire_notification(&self, notification_type: &str, data: Value) -> Vec<HookResult> {
-        let extra = json!({
-            "notification_type": notification_type,
-            "data": data,
-        });
-
-        let mut input = HookInput::new(HookEvent::Notification);
-        for (k, v) in extra.as_object().unwrap() {
-            input = input.with_extra(k.clone(), v.clone());
-        }
+        let input = notification_input(notification_type, data);
 
         debug!(
             notification_type = %notification_type,
@@ -1033,6 +1030,21 @@ mod tests {
         assert_eq!(input.event, HookEvent::PreToolUse);
         assert_eq!(input.session_id, Some("test-session".to_string()));
         assert_eq!(input.tool_name, Some("Write".to_string()));
+    }
+
+    #[test]
+    fn notification_input_sets_expected_extra_fields() {
+        let input = notification_input("status", serde_json::json!({"ok": true}));
+
+        assert_eq!(input.event, HookEvent::Notification);
+        assert_eq!(
+            input.extra.get("notification_type"),
+            Some(&Value::String("status".to_string()))
+        );
+        assert_eq!(
+            input.extra.get("data"),
+            Some(&serde_json::json!({"ok": true}))
+        );
     }
 
     #[test]
