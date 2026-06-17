@@ -465,6 +465,7 @@ fn lookup_tui_slash(text: &str) -> Option<TuiSlashHandler> {
         .find_map(|(name, handler)| (*name == text).then_some(*handler))
 }
 
+#[derive(Debug)]
 struct ProviderSwitchAuth {
     api_key: Option<crate::providers::ApiKey>,
     claude_code_token: Option<String>,
@@ -511,6 +512,13 @@ async fn resolve_provider_switch_auth(
     if let Some(api_key) = &provider.api_key {
         return Ok(ProviderSwitchAuth {
             api_key: Some(api_key.clone()),
+            claude_code_token: None,
+        });
+    }
+
+    if crate::config::is_local_provider_name(target) {
+        return Ok(ProviderSwitchAuth {
+            api_key: None,
             claude_code_token: None,
         });
     }
@@ -3457,8 +3465,8 @@ async fn handle_turn_result(
 mod tests {
     use super::{compile_file_ref_regex, expand_file_refs};
     use super::{
-        current_exe_command, git_bin, save_session, ApiClient, App, AppEvent, ProviderSwitch,
-        SpawnTarget, TuiSession,
+        current_exe_command, git_bin, resolve_provider_switch_auth, save_session, ApiClient, App,
+        AppEvent, ProviderSwitch, SpawnTarget, TuiSession,
     };
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
@@ -3549,6 +3557,42 @@ mod tests {
         // Sanity: model/provider stay on App (not migrated into ApiClient).
         assert_eq!(app.model, "test-model");
         assert_eq!(app.provider, "anthropic");
+    }
+
+    fn provider_config_without_key(base_url: &str) -> crate::config::ProviderConfig {
+        crate::config::ProviderConfig {
+            api_key: None,
+            base_url: base_url.to_string(),
+            model: None,
+            headers: std::collections::HashMap::new(),
+            thinking: crate::config::ThinkingConfig::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_switch_auth_allows_keyless_local_provider() {
+        let provider = provider_config_without_key("http://localhost:1234/v1");
+
+        let auth = resolve_provider_switch_auth("local", &provider)
+            .await
+            .expect("local provider should not require an API key");
+
+        assert!(auth.api_key.is_none());
+        assert!(auth.claude_code_token.is_none());
+    }
+
+    #[tokio::test]
+    async fn provider_switch_auth_rejects_keyless_remote_provider() {
+        let provider = provider_config_without_key("https://api.openai.com/v1");
+
+        let err = resolve_provider_switch_auth("openai", &provider)
+            .await
+            .expect_err("remote provider should require an API key");
+
+        assert!(
+            err.contains("OPENAI_API_KEY"),
+            "remote provider auth error should name the env var; got {err:?}"
+        );
     }
 
     /// `set_api_config` writes through to `api_client`, not to ghost
