@@ -30,10 +30,16 @@ pub fn terminate_process_tree(pid: u32) {
     {
         use std::time::{Duration, Instant};
 
-        // libc::pid_t is i32; cast is safe because u32::MAX/2 > any realistic PID.
-        // POSIX guarantees pid_t fits in i32 and process-group IDs share the range.
-        let signed_pid = i32::try_from(pid)
-            .expect("INVARIANT: PID fits in i32 per POSIX (pid_t guarantees i32 range)");
+        // libc::pid_t is i32 on supported Unix targets. Child PIDs returned
+        // by the OS fit that range, but this public helper can be called with
+        // any u32.
+        let Ok(signed_pid) = i32::try_from(pid) else {
+            tracing::debug!(
+                pid,
+                "terminate_process_tree: PID exceeds supported Unix pid_t range"
+            );
+            return;
+        };
         // Negative pid targets the entire process group (POSIX kill(2)).
         let process_group_id = -signed_pid;
 
@@ -116,6 +122,13 @@ mod tests {
             production.contains("which::which(\"taskkill\")"),
             "production kill helper must locate taskkill through the Rust resolver"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminate_process_tree_ignores_pid_outside_pid_t_range() {
+        let out_of_range_pid = (i32::MAX as u32) + 1;
+        terminate_process_tree(out_of_range_pid);
     }
 
     // ── Phase 2 pinning tests (crosslink #541) ────────────────────────────────
