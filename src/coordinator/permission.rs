@@ -4,9 +4,9 @@
 //! N simultaneous `[y/n/a/d]?` dialogs collide. The bridge queues
 //! incoming permission requests per-teammate and serves them in
 //! arrival order so the user sees exactly one prompt at a time.
-//! An "always-allow for this run" cache makes `a` replies
-//! per-teammate so one teammate can't widen permissions for
-//! another.
+//! An "always-allow for this run" cache records `a` replies per
+//! teammate, tool, and target so one teammate or target can't widen
+//! permissions for another.
 //!
 //! Phase 1 ships the queue data structures + tests. Phase 3 wires
 //! the bridge into the event loop as the sole receiver of teammate
@@ -15,6 +15,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::teammate::TeammateId;
+
+type ToolTargetCache = HashMap<String, HashSet<String>>;
 
 /// A permission request from a specific teammate, parked in the leader
 /// bridge's FIFO until a decision is made.
@@ -57,16 +59,15 @@ impl std::fmt::Debug for QueuedPermission {
 pub struct LeaderPermissionBridge {
     /// FIFO of pending prompts.
     pending: VecDeque<QueuedPermission>,
-    /// Per-teammate cache of always-allowed tool names. The outer
-    /// `HashMap<TeammateId, _>` and inner `HashSet<String>` give O(1)
-    /// expected lookup in `is_always_allowed` (crosslink #808) — the
-    /// previous flat `HashSet<(TeammateId, String)>` had to fall back
-    /// to a linear `iter().any()` to dodge an owned-key allocation,
-    /// turning the hot dispatch-path check into O(K·Q).
+    /// Per-teammate cache of always-allowed tool targets. The outer
+    /// `HashMap<TeammateId, _>`, tool map, and target `HashSet<String>`
+    /// give O(1) expected lookup in `is_always_allowed` (crosslink
+    /// #808) while keeping the cache scoped to the specific target the
+    /// user approved.
     ///
-    /// Keyed per teammate → matches CC's "per-teammate `a` doesn't
-    /// leak across teammates" behavior.
-    always_allowed: HashMap<TeammateId, HashSet<String>>,
+    /// Keyed per teammate → tool → target so `a` replies don't leak
+    /// across teammates, tools, or commands/paths.
+    always_allowed: HashMap<TeammateId, ToolTargetCache>,
 }
 
 impl LeaderPermissionBridge {
@@ -99,27 +100,35 @@ impl LeaderPermissionBridge {
         self.pending.pop_front()
     }
 
-    /// Record an "always allow" decision. The pair
-    /// `(teammate_id, tool_name)` is marked so future requests
-    /// from that teammate for that tool bypass the queue entirely.
-    pub fn always_allow(&mut self, teammate: TeammateId, tool_name: impl Into<String>) {
+    /// Record an "always allow" decision for one teammate, tool, and target.
+    /// Future requests from that teammate for the same tool and target bypass
+    /// the queue; different targets still require permission.
+    pub fn always_allow(
+        &mut self,
+        teammate: TeammateId,
+        tool_name: impl Into<String>,
+        target: impl Into<String>,
+    ) {
         self.always_allowed
             .entry(teammate)
             .or_default()
-            .insert(tool_name.into());
+            .entry(tool_name.into())
+            .or_default()
+            .insert(target.into());
     }
 
     /// Check the always-allow cache. True → the request should
     /// skip enqueuing and resolve immediately as `Allow`.
     ///
-    /// O(1) expected — the per-teammate `HashSet<String>` lookup goes
-    /// through `HashSet::contains(&str)`, so the borrowed `tool_name`
-    /// never has to be cloned (crosslink #808).
+    /// O(1) expected — the target `HashSet<String>` lookup goes through
+    /// `HashSet::contains(&str)`, so borrowed lookup values never have
+    /// to be cloned (crosslink #808).
     #[must_use]
-    pub fn is_always_allowed(&self, teammate: &TeammateId, tool_name: &str) -> bool {
+    pub fn is_always_allowed(&self, teammate: &TeammateId, tool_name: &str, target: &str) -> bool {
         self.always_allowed
             .get(teammate)
-            .is_some_and(|tools| tools.contains(tool_name))
+            .and_then(|tools| tools.get(tool_name))
+            .is_some_and(|targets| targets.contains(target))
     }
 }
 
@@ -171,30 +180,32 @@ mod tests {
         let mut bridge = LeaderPermissionBridge::new();
         let t1 = TeammateId::new();
         let t2 = TeammateId::new();
-        bridge.always_allow(t1.clone(), "bash");
+        bridge.always_allow(t1.clone(), "bash", "git status");
 
-        // t1 + bash hits the cache; t1 + edit_file does not; t2 +
-        // bash does NOT — decisions are per-teammate to match CC.
-        assert!(bridge.is_always_allowed(&t1, "bash"));
-        assert!(!bridge.is_always_allowed(&t1, "edit_file"));
-        assert!(!bridge.is_always_allowed(&t2, "bash"));
+        // t1 + bash + target hits the cache; t1 + edit_file does
+        // not; t2 + bash does NOT — decisions are per-teammate to
+        // match CC.
+        assert!(bridge.is_always_allowed(&t1, "bash", "git status"));
+        assert!(!bridge.is_always_allowed(&t1, "edit_file", "src/main.rs"));
+        assert!(!bridge.is_always_allowed(&t2, "bash", "git status"));
     }
 
     #[test]
     fn always_allow_tracks_distinct_tools() {
         let mut bridge = LeaderPermissionBridge::new();
         let tm = TeammateId::new();
-        bridge.always_allow(tm.clone(), "bash");
-        bridge.always_allow(tm.clone(), "write_file");
-        assert!(bridge.is_always_allowed(&tm, "bash"));
-        assert!(bridge.is_always_allowed(&tm, "write_file"));
-        assert!(!bridge.is_always_allowed(&tm, "edit_file"));
+        bridge.always_allow(tm.clone(), "bash", "git status");
+        bridge.always_allow(tm.clone(), "write_file", "src/main.rs");
+        assert!(bridge.is_always_allowed(&tm, "bash", "git status"));
+        assert!(bridge.is_always_allowed(&tm, "write_file", "src/main.rs"));
+        assert!(!bridge.is_always_allowed(&tm, "edit_file", "src/main.rs"));
+        assert!(!bridge.is_always_allowed(&tm, "bash", "rm -rf /"));
     }
 
     #[test]
     fn is_idle_reflects_cache_entries_too() {
         let mut bridge = LeaderPermissionBridge::new();
-        bridge.always_allow(TeammateId::new(), "bash");
+        bridge.always_allow(TeammateId::new(), "bash", "git status");
         // Pending is empty but cache isn't — not idle. Matches the
         // semantic used by the default-coordinator-is-empty test
         // in mod.rs.
@@ -294,7 +305,7 @@ mod phase2_spec_pins {
 
     // ── B4-3 · always-allow cache isolation ───────────────────────────────
 
-    /// B4-deny-1: `always_allow` for t1+bash must NOT grant t2+bash.
+    /// B4-deny-1: `always_allow` for t1+bash+target must NOT grant t2+bash+target.
     /// Per-teammate isolation matches CC's "a reply doesn't leak across teammates".
     #[test]
     fn b4_always_allow_does_not_cross_teammate_boundary() {
@@ -302,32 +313,32 @@ mod phase2_spec_pins {
         let t1 = TeammateId::new();
         let t2 = TeammateId::new();
 
-        bridge.always_allow(t1.clone(), "bash");
+        bridge.always_allow(t1.clone(), "bash", "git status");
 
         assert!(
-            bridge.is_always_allowed(&t1, "bash"),
-            "t1+bash must be cached"
+            bridge.is_always_allowed(&t1, "bash", "git status"),
+            "t1+bash+target must be cached"
         );
         assert!(
-            !bridge.is_always_allowed(&t2, "bash"),
-            "B4: t2+bash must NOT be cached (per-teammate isolation)"
+            !bridge.is_always_allowed(&t2, "bash", "git status"),
+            "B4: t2+bash+target must NOT be cached (per-teammate isolation)"
         );
     }
 
-    /// B4-deny-2: `always_allow` for t1+bash must NOT grant `t1+edit_file`.
+    /// B4-deny-2: `always_allow` for t1+bash+target must NOT grant `t1+edit_file`.
     #[test]
     fn b4_always_allow_does_not_cross_tool_boundary() {
         let mut bridge = LeaderPermissionBridge::new();
         let tm = TeammateId::new();
-        bridge.always_allow(tm.clone(), "bash");
+        bridge.always_allow(tm.clone(), "bash", "git status");
 
-        assert!(bridge.is_always_allowed(&tm, "bash"));
+        assert!(bridge.is_always_allowed(&tm, "bash", "git status"));
         assert!(
-            !bridge.is_always_allowed(&tm, "edit_file"),
+            !bridge.is_always_allowed(&tm, "edit_file", "git status"),
             "B4: always_allow for bash must not grant edit_file"
         );
         assert!(
-            !bridge.is_always_allowed(&tm, "write_file"),
+            !bridge.is_always_allowed(&tm, "write_file", "git status"),
             "B4: always_allow for bash must not grant write_file"
         );
     }
@@ -338,30 +349,31 @@ mod phase2_spec_pins {
         let bridge = LeaderPermissionBridge::new();
         let tm = TeammateId::new();
         assert!(
-            !bridge.is_always_allowed(&tm, "nonexistent_tool"),
-            "B4: no always_allow entry must return false for any teammate+tool"
+            !bridge.is_always_allowed(&tm, "nonexistent_tool", "anything"),
+            "B4: no always_allow entry must return false for any teammate+tool+target"
         );
     }
 
-    /// B4-allow-1: distinct (teammate, tool) pairs are tracked independently.
+    /// B4-allow-1: distinct (teammate, tool, target) entries are tracked independently.
     #[test]
     fn b4_multiple_always_allow_pairs_tracked_independently() {
         let mut bridge = LeaderPermissionBridge::new();
         let t1 = TeammateId::new();
         let t2 = TeammateId::new();
 
-        bridge.always_allow(t1.clone(), "bash");
-        bridge.always_allow(t1.clone(), "write_file");
-        bridge.always_allow(t2.clone(), "edit_file");
+        bridge.always_allow(t1.clone(), "bash", "git status");
+        bridge.always_allow(t1.clone(), "write_file", "src/main.rs");
+        bridge.always_allow(t2.clone(), "edit_file", "src/lib.rs");
 
-        assert!(bridge.is_always_allowed(&t1, "bash"));
-        assert!(bridge.is_always_allowed(&t1, "write_file"));
-        assert!(bridge.is_always_allowed(&t2, "edit_file"));
+        assert!(bridge.is_always_allowed(&t1, "bash", "git status"));
+        assert!(bridge.is_always_allowed(&t1, "write_file", "src/main.rs"));
+        assert!(bridge.is_always_allowed(&t2, "edit_file", "src/lib.rs"));
 
         // Cross-checks must still fail.
-        assert!(!bridge.is_always_allowed(&t1, "edit_file"));
-        assert!(!bridge.is_always_allowed(&t2, "bash"));
-        assert!(!bridge.is_always_allowed(&t2, "write_file"));
+        assert!(!bridge.is_always_allowed(&t1, "edit_file", "src/lib.rs"));
+        assert!(!bridge.is_always_allowed(&t2, "bash", "git status"));
+        assert!(!bridge.is_always_allowed(&t2, "write_file", "src/main.rs"));
+        assert!(!bridge.is_always_allowed(&t1, "bash", "rm -rf /"));
     }
 
     // ── B4-4 · is_idle semantics ──────────────────────────────────────────
@@ -371,7 +383,7 @@ mod phase2_spec_pins {
     #[test]
     fn b4_is_idle_false_when_only_cache_populated() {
         let mut bridge = LeaderPermissionBridge::new();
-        bridge.always_allow(TeammateId::new(), "bash");
+        bridge.always_allow(TeammateId::new(), "bash", "git status");
         assert!(
             !bridge.is_idle(),
             "B4: bridge with non-empty always_allowed cache must not be idle"
@@ -396,7 +408,7 @@ mod phase2_spec_pins {
         let mut bridge = LeaderPermissionBridge::new();
         let tm = TeammateId::new();
         bridge.enqueue(req(&tm, "bash"));
-        bridge.always_allow(tm, "bash");
+        bridge.always_allow(tm, "bash", "git status");
         bridge.dequeue();
 
         // Pending is now empty, but cache still has an entry.
@@ -406,34 +418,25 @@ mod phase2_spec_pins {
         );
     }
 
-    // ── B4-5 · CC divergence gap: always_allow bypasses target/pattern check ─
+    // ── B4-5 · always_allow target/pattern isolation ──────────────────────
 
-    /// B4-gap-1 (SECURITY): OC `always_allow` is keyed (teammate, `tool_name`) only —
-    /// no target/pattern check. Granting `always_allow` for ("t1", "bash") bypasses
-    /// ALL bash permission checks for teammate t1 regardless of command.
-    ///
-    /// CC's equivalent always-allow goes through the full rule pipeline on the leader
-    /// side; there is no tool-name-only shortcut in CC.
-    ///
-    /// This test documents the current OC behaviour (no production code change).
+    /// B4-deny-4: `always_allow` for one bash target must NOT grant a
+    /// different bash target.
     #[test]
-    fn b4_gap_always_allow_has_no_target_restriction() {
+    fn b4_always_allow_does_not_cross_target_boundary() {
         let mut bridge = LeaderPermissionBridge::new();
         let tm = TeammateId::new();
 
-        // Grant always_allow for "bash" — no pattern restriction.
-        bridge.always_allow(tm.clone(), "bash");
+        bridge.always_allow(tm.clone(), "bash", "git status");
 
-        // A caller that honours is_always_allowed would skip enqueuing ANY bash
-        // request from tm, including dangerous commands.
-        // This test confirms the cache has no target dimension.
         assert!(
-            bridge.is_always_allowed(&tm, "bash"),
-            "B4 gap: is_always_allowed returns true for all bash commands, not just safe ones"
+            bridge.is_always_allowed(&tm, "bash", "git status"),
+            "B4: original bash target must be cached"
         );
-        // If a caller checked "rm -rf /" specifically, the cache still says true —
-        // the bridge has no mechanism to restrict to safe targets.
-        // (Callers must implement their own target check if needed; the bridge does not.)
+        assert!(
+            !bridge.is_always_allowed(&tm, "bash", "rm -rf /"),
+            "B4: always_allow for one bash target must not grant another"
+        );
     }
 
     // ── B4-6 · tool_args preserved in queued request ──────────────────────

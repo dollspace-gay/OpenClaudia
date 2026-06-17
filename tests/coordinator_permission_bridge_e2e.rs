@@ -1,6 +1,6 @@
 //! End-to-end tests for `coordinator::permission::LeaderPermissionBridge`
-//! FIFO queue + per-teammate always-allow cache + Debug-redaction
-//! of `QueuedPermission`.
+//! FIFO queue + per-teammate/tool/target always-allow cache +
+//! Debug-redaction of `QueuedPermission`.
 //!
 //! Sprint 76 of the verification effort. The internal unit tests
 //! cover basic flow; this file pins the multi-teammate
@@ -124,10 +124,10 @@ fn always_allow_for_teammate_a_does_not_leak_to_teammate_b() {
     let mut bridge = LeaderPermissionBridge::new();
     let alpha = TeammateId::new();
     let beta = TeammateId::new();
-    bridge.always_allow(alpha.clone(), "bash");
-    assert!(bridge.is_always_allowed(&alpha, "bash"));
+    bridge.always_allow(alpha.clone(), "bash", "git status");
+    assert!(bridge.is_always_allowed(&alpha, "bash", "git status"));
     assert!(
-        !bridge.is_always_allowed(&beta, "bash"),
+        !bridge.is_always_allowed(&beta, "bash", "git status"),
         "always-allow for alpha MUST NOT bypass beta's gate"
     );
 }
@@ -136,31 +136,43 @@ fn always_allow_for_teammate_a_does_not_leak_to_teammate_b() {
 fn always_allow_tracks_multiple_tools_per_teammate() {
     let mut bridge = LeaderPermissionBridge::new();
     let alpha = TeammateId::new();
-    bridge.always_allow(alpha.clone(), "bash");
-    bridge.always_allow(alpha.clone(), "read_file");
-    bridge.always_allow(alpha.clone(), "write_file");
-    assert!(bridge.is_always_allowed(&alpha, "bash"));
-    assert!(bridge.is_always_allowed(&alpha, "read_file"));
-    assert!(bridge.is_always_allowed(&alpha, "write_file"));
-    assert!(!bridge.is_always_allowed(&alpha, "edit_file"));
+    bridge.always_allow(alpha.clone(), "bash", "git status");
+    bridge.always_allow(alpha.clone(), "read_file", "README.md");
+    bridge.always_allow(alpha.clone(), "write_file", "src/main.rs");
+    assert!(bridge.is_always_allowed(&alpha, "bash", "git status"));
+    assert!(bridge.is_always_allowed(&alpha, "read_file", "README.md"));
+    assert!(bridge.is_always_allowed(&alpha, "write_file", "src/main.rs"));
+    assert!(!bridge.is_always_allowed(&alpha, "edit_file", "src/main.rs"));
+}
+
+#[test]
+fn always_allow_for_one_target_does_not_leak_to_another_target() {
+    let mut bridge = LeaderPermissionBridge::new();
+    let alpha = TeammateId::new();
+    bridge.always_allow(alpha.clone(), "bash", "git status");
+    assert!(bridge.is_always_allowed(&alpha, "bash", "git status"));
+    assert!(
+        !bridge.is_always_allowed(&alpha, "bash", "rm -rf /"),
+        "always-allow for one target MUST NOT bypass another target"
+    );
 }
 
 #[test]
 fn always_allow_is_idempotent_repeated_calls_no_effect() {
     let mut bridge = LeaderPermissionBridge::new();
     let alpha = TeammateId::new();
-    bridge.always_allow(alpha.clone(), "bash");
-    bridge.always_allow(alpha.clone(), "bash");
-    bridge.always_allow(alpha.clone(), "bash");
+    bridge.always_allow(alpha.clone(), "bash", "git status");
+    bridge.always_allow(alpha.clone(), "bash", "git status");
+    bridge.always_allow(alpha.clone(), "bash", "git status");
     // Idempotent — HashSet dedups; bridge stays consistent.
-    assert!(bridge.is_always_allowed(&alpha, "bash"));
+    assert!(bridge.is_always_allowed(&alpha, "bash", "git status"));
 }
 
 #[test]
 fn always_allow_unknown_teammate_lookup_returns_false() {
     let bridge = LeaderPermissionBridge::new();
     let alpha = TeammateId::new();
-    assert!(!bridge.is_always_allowed(&alpha, "bash"));
+    assert!(!bridge.is_always_allowed(&alpha, "bash", "git status"));
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -182,7 +194,7 @@ fn is_idle_false_when_anything_queued() {
 fn is_idle_false_when_always_allow_cache_has_entry() {
     let mut bridge = LeaderPermissionBridge::new();
     let alpha = TeammateId::new();
-    bridge.always_allow(alpha, "bash");
+    bridge.always_allow(alpha, "bash", "git status");
     assert!(
         !bridge.is_idle(),
         "is_idle MUST be false when cache has entries (per docstring)"
