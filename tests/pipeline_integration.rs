@@ -420,3 +420,48 @@ fn b3_process_sse_event_openai_text_delta() {
         other => panic!("expected SseAction::Text, got {other:?}"),
     }
 }
+
+/// OpenAI-compatible thinking providers stream reasoning before final content.
+#[test]
+fn b3_process_sse_event_openai_reasoning_content_delta() {
+    use openclaudia::pipeline::{process_sse_event, SseAction};
+    use openclaudia::tools::{AnthropicToolAccumulator, ToolCallAccumulator};
+
+    let event: Value = serde_json::json!({
+        "choices": [{ "delta": { "reasoning_content": "thinking" } }]
+    });
+    let mut ant = AnthropicToolAccumulator::new();
+    let mut oai = ToolCallAccumulator::new();
+
+    let action = process_sse_event(&event, false, &mut ant, &mut oai);
+    match action {
+        SseAction::Reasoning(text) => assert_eq!(text, "thinking"),
+        other => panic!("expected SseAction::Reasoning, got {other:?}"),
+    }
+}
+
+/// MiniMax can emit reasoning as structured details instead of plain text.
+#[test]
+fn b3_process_sse_event_reasoning_details_delta() {
+    use openclaudia::pipeline::{process_sse_event, SseAction};
+    use openclaudia::tools::{AnthropicToolAccumulator, ToolCallAccumulator};
+
+    let event: Value = serde_json::json!({
+        "choices": [{
+            "delta": {
+                "reasoning_details": [
+                    { "text": "first " },
+                    { "text": "second" }
+                ]
+            }
+        }]
+    });
+    let mut ant = AnthropicToolAccumulator::new();
+    let mut oai = ToolCallAccumulator::new();
+
+    let action = process_sse_event(&event, false, &mut ant, &mut oai);
+    match action {
+        SseAction::Reasoning(text) => assert_eq!(text, "first second"),
+        other => panic!("expected SseAction::Reasoning, got {other:?}"),
+    }
+}

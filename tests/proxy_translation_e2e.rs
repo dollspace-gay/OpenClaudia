@@ -242,6 +242,7 @@ fn chat_message_text_content_round_trips_through_json() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     let json_str = serde_json::to_string(&original).expect("serialize");
     let parsed: ChatMessage = serde_json::from_str(&json_str).expect("deserialize");
@@ -264,6 +265,7 @@ fn chat_message_with_tool_calls_round_trips() {
             "function": {"name": "bash", "arguments": "{\"command\":\"ls\"}"}
         })]),
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     let json_str = serde_json::to_string(&original).expect("serialize");
     let parsed: ChatMessage = serde_json::from_str(&json_str).expect("deserialize");

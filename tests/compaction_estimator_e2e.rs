@@ -29,6 +29,7 @@ fn user_text(content: &str) -> ChatMessage {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     }
 }
 
@@ -166,6 +167,7 @@ fn estimate_message_tokens_parts_with_text_and_image_url_charges_both() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     let tokens = estimate_message_tokens(&msg);
     // text portion + 1600 for image.
@@ -298,6 +300,7 @@ fn is_compact_boundary_message_false_for_non_marker_system_message() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     assert!(!is_compact_boundary_message(&msg));
 }

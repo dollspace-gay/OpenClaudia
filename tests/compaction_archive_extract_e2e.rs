@@ -35,6 +35,7 @@ fn user_msg(text: &str) -> ChatMessage {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     }
 }
 
@@ -45,6 +46,7 @@ fn assistant_msg(text: &str) -> ChatMessage {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     }
 }
 
@@ -196,6 +198,7 @@ fn extract_with_parts_content_does_not_panic() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     let _ids = extract_and_persist_memories(&[&msg], None, &db);
 }

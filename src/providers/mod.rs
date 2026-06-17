@@ -587,6 +587,7 @@ mod tests {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    extra: std::collections::HashMap::new(),
                 },
                 ChatMessage {
                     role: "user".to_string(),
@@ -594,6 +595,7 @@ mod tests {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    extra: std::collections::HashMap::new(),
                 },
             ],
             temperature: Some(0.7),

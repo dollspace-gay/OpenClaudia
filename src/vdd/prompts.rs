@@ -81,6 +81,7 @@ pub fn build_adversary_request(
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             },
             ChatMessage {
                 role: "user".to_string(),
@@ -88,6 +89,7 @@ pub fn build_adversary_request(
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             },
         ],
         temperature: Some(config.adversary.temperature),
@@ -136,6 +138,7 @@ pub fn build_revision_request(
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     });
 
     ChatCompletionRequest {

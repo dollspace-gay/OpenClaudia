@@ -37,6 +37,7 @@ fn make_request(n_messages: usize, chars_per_message: usize) -> ChatCompletionRe
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         })
         .collect();
     ChatCompletionRequest {

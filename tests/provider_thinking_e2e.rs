@@ -43,6 +43,7 @@ fn minimal_request(model: &str) -> ChatCompletionRequest {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         }],
         temperature: None,
         max_tokens: None,

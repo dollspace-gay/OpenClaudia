@@ -235,6 +235,7 @@ pub fn build_compact_boundary_message(
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     }
 }
 
@@ -898,6 +899,7 @@ impl ContextCompactor {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         });
 
         // Add non-system preserved messages
@@ -1505,6 +1507,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         }
     }
 
@@ -1767,6 +1770,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         };
 
         let tokens = estimate_message_tokens(&msg);
@@ -1789,6 +1793,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         };
 
         let tokens = estimate_message_tokens(&msg);
@@ -1842,6 +1847,7 @@ mod tests {
                     serde_json::json!({"id": "call_1", "type": "function", "function": {"name": "bash", "arguments": "{\"command\":\"ls\"}"}}),
                 ]),
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             },
             ChatMessage {
                 role: "tool".to_string(),
@@ -1849,6 +1855,7 @@ mod tests {
                 name: None,
                 tool_calls: None,
                 tool_call_id: Some("call_1".to_string()),
+                extra: std::collections::HashMap::new(),
             },
             create_test_message("user", "Recent message"),
         ];
@@ -1884,6 +1891,7 @@ mod tests {
                 name: None,
                 tool_calls: Some(vec![serde_json::json!({"id": "call_1"})]),
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             },
             create_test_message("user", "Recent message"),
         ];
@@ -1912,6 +1920,7 @@ mod tests {
                 name: None,
                 tool_calls: Some(vec![serde_json::json!({"id": "1"})]),
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             },
             ChatMessage {
                 role: "tool".to_string(),
@@ -1919,6 +1928,7 @@ mod tests {
                 name: None,
                 tool_calls: None,
                 tool_call_id: Some("1".to_string()),
+                extra: std::collections::HashMap::new(),
             },
         ];
 
@@ -2101,6 +2111,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         };
         assert!(!is_compact_boundary_message(&plain));
 
@@ -2110,6 +2121,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         };
         // Role check catches forged user-side markers.
         assert!(!is_compact_boundary_message(&user));
@@ -2125,6 +2137,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         };
         // The predicate still identifies the marker — caller wants to
         // know a boundary happened, even if the metadata line is lost.
@@ -2150,6 +2163,7 @@ mod tests {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             },
             ChatMessage {
                 role: "assistant".to_string(),
@@ -2157,6 +2171,7 @@ mod tests {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             },
             ChatMessage {
                 role: "user".to_string(),
@@ -2164,6 +2179,7 @@ mod tests {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             },
         ];
         let built = ContextCompactor::build_compacted_messages(
@@ -2283,6 +2299,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         };
         assert!(
             is_compact_boundary_message(&msg),
@@ -2312,6 +2329,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         };
         // is_compact_boundary_message checks prefix only, so this must be true.
         assert!(is_compact_boundary_message(&msg));
@@ -3091,6 +3109,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         };
         let refs: Vec<&ChatMessage> = vec![&msg];
         let summary = ContextCompactor::generate_summary(&refs, None);

@@ -24,6 +24,7 @@ fn user_text(content: &str) -> ChatMessage {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     }
 }
 
@@ -79,6 +80,7 @@ fn parts_with_only_image_url_adds_1600_image_cost() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     // Image 1600 + overhead 4 = 1604.
     assert_eq!(estimate_message_tokens(&msg), 1604);
@@ -96,6 +98,7 @@ fn parts_with_both_text_and_image_url_sums_them() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     // text "abcd" = 1 + image 1600 + overhead 4 = 1605.
     assert_eq!(estimate_message_tokens(&msg), 1605);
@@ -120,6 +123,7 @@ fn parts_with_2_images_charges_3200_image_tokens() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     // 2 * 1600 + 4 overhead = 3204.
     assert_eq!(estimate_message_tokens(&msg), 3204);
@@ -139,6 +143,7 @@ fn parts_with_neither_text_nor_image_url_contributes_zero() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     assert_eq!(estimate_message_tokens(&msg), 4);
 }
@@ -151,6 +156,7 @@ fn empty_parts_array_costs_only_overhead() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     assert_eq!(estimate_message_tokens(&msg), 4);
 }
@@ -332,6 +338,7 @@ fn adding_image_url_increases_message_estimate_by_at_least_1600() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     let delta = estimate_message_tokens(&with_image) - estimate_message_tokens(&bare);
     assert!(

@@ -316,6 +316,7 @@ fn message_token_estimate_includes_role_and_tool_call_overhead() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     let with_tools = ChatMessage {
         role: "assistant".to_string(),
@@ -327,6 +328,7 @@ fn message_token_estimate_includes_role_and_tool_call_overhead() {
             "function": {"name": "bash", "arguments": "{\"command\":\"ls\"}"}
         })]),
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     let plain_t = estimate_message_tokens(&plain);
     let with_tools_t = estimate_message_tokens(&with_tools);
@@ -378,6 +380,7 @@ fn non_boundary_messages_are_not_falsely_recognised() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     let normal_assistant = ChatMessage {
         role: "assistant".to_string(),
@@ -385,6 +388,7 @@ fn non_boundary_messages_are_not_falsely_recognised() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     let normal_system_no_marker = ChatMessage {
         role: "system".to_string(),
@@ -392,6 +396,7 @@ fn non_boundary_messages_are_not_falsely_recognised() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     assert!(!is_compact_boundary_message(&normal_user));
     assert!(!is_compact_boundary_message(&normal_assistant));

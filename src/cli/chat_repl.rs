@@ -135,17 +135,26 @@ struct GeminiLoopState {
     contents: Vec<serde_json::Value>,
 }
 
+/// Mutable state carried through the OpenAI-compatible tool loop.
+struct OpenAiLoopState {
+    current_content: String,
+    current_reasoning_content: String,
+    cancelled: bool,
+}
+
 /// Mutable borrows threaded through SSE frame routing during initial
 /// streaming. Bundled into one context so `route_sse_frame` and
 /// `drain_sse_buffer` stay under clippy's argument-count ceiling.
 struct SseFrameCtx<'a> {
     full_content: &'a mut String,
+    reasoning_content: &'a mut String,
     md_renderer: &'a mut tui::StreamingMarkdownRenderer,
     tool_accumulator: &'a mut tools::ToolCallAccumulator,
     anthropic_accumulator: &'a mut tools::AnthropicToolAccumulator,
     stream_usage: &'a mut openclaudia::session::TokenUsage,
     in_thinking_block: &'a mut bool,
     thinking_start_time: &'a mut Option<std::time::Instant>,
+    reasoning_started: &'a mut bool,
 }
 
 /// Spinner template — uses indicatif placeholder syntax, not `format!`.
@@ -1712,6 +1721,7 @@ impl ChatRepl {
             .await;
 
         let mut full_content = stream_result.full_content;
+        let reasoning_content = stream_result.reasoning_content;
         let cancelled = stream_result.cancelled;
         let pending_action = stream_result.pending_action;
         println!();
@@ -1738,8 +1748,11 @@ impl ChatRepl {
 
         self.run_openai_tool_loop(
             &mut tool_accumulator,
-            full_content,
-            cancelled,
+            OpenAiLoopState {
+                current_content: full_content,
+                current_reasoning_content: reasoning_content,
+                cancelled,
+            },
             transport,
             memory_db,
             auto_learner,
@@ -1857,6 +1870,7 @@ impl ChatRepl {
         use futures::StreamExt;
 
         let mut full_content = String::new();
+        let mut reasoning_content = String::new();
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
         let mut cancelled = false;
@@ -1864,6 +1878,7 @@ impl ChatRepl {
 
         let mut in_thinking_block = false;
         let mut thinking_start_time: Option<std::time::Instant> = None;
+        let mut reasoning_started = false;
         let mut md_state = tui::StreamingMarkdownRenderer::new().into_state();
         let mut last_data_time = std::time::Instant::now();
         let stream_timeout = std::time::Duration::from_secs(proxy::SSE_STREAM_TIMEOUT_SECS);
@@ -1885,12 +1900,14 @@ impl ChatRepl {
                     buffer.push_str(&String::from_utf8_lossy(&chunk));
                     let mut ctx = SseFrameCtx {
                         full_content: &mut full_content,
+                        reasoning_content: &mut reasoning_content,
                         md_renderer: &mut md_renderer,
                         tool_accumulator,
                         anthropic_accumulator,
                         stream_usage,
                         in_thinking_block: &mut in_thinking_block,
                         thinking_start_time: &mut thinking_start_time,
+                        reasoning_started: &mut reasoning_started,
                     };
                     Self::drain_sse_buffer(&mut buffer, &mut ctx);
                 }
@@ -1902,12 +1919,17 @@ impl ChatRepl {
             }
             md_state = md_renderer.into_state();
         }
+        if reasoning_started {
+            let elapsed = thinking_start_time.map_or(0.0, |t| t.elapsed().as_secs_f64());
+            tui::print_thinking_end(elapsed);
+        }
         {
             let mut md_renderer = tui::StreamingMarkdownRenderer::from_state(md_state);
             md_renderer.flush();
         }
         InitialStreamResult {
             full_content,
+            reasoning_content,
             cancelled,
             pending_action,
         }
@@ -1997,22 +2019,53 @@ impl ChatRepl {
         if let Some(usage) = proxy::extract_usage_from_sse_event(json) {
             ctx.stream_usage.accumulate(&usage);
         }
-        if process_thinking_event(json, ctx.in_thinking_block, ctx.thinking_start_time) {
-            return;
-        }
-        if let Some(text) = ctx.anthropic_accumulator.process_event(json) {
-            ctx.md_renderer.push(&text);
-            ctx.full_content.push_str(&text);
-        } else if let Some(delta) = json
-            .get("choices")
-            .and_then(|c| c.get(0))
-            .and_then(|c| c.get("delta"))
-        {
-            if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
-                ctx.md_renderer.push(content);
-                ctx.full_content.push_str(content);
+        match openclaudia::pipeline::process_sse_event(
+            json,
+            *ctx.in_thinking_block,
+            ctx.anthropic_accumulator,
+            ctx.tool_accumulator,
+        ) {
+            openclaudia::pipeline::SseAction::Text(text) => {
+                if *ctx.reasoning_started {
+                    let elapsed = ctx
+                        .thinking_start_time
+                        .map_or(0.0, |started| started.elapsed().as_secs_f64());
+                    tui::print_thinking_end(elapsed);
+                    *ctx.reasoning_started = false;
+                    *ctx.thinking_start_time = None;
+                }
+                ctx.md_renderer.push(&text);
+                ctx.full_content.push_str(&text);
             }
-            ctx.tool_accumulator.process_delta(delta);
+            openclaudia::pipeline::SseAction::Thinking(text) => {
+                tui::print_thinking_chunk(&text);
+            }
+            openclaudia::pipeline::SseAction::Reasoning(text) => {
+                let display_text =
+                    openclaudia::pipeline::merge_reasoning_delta(ctx.reasoning_content, &text);
+                if !display_text.is_empty() {
+                    if !*ctx.reasoning_started {
+                        *ctx.reasoning_started = true;
+                        *ctx.thinking_start_time = Some(std::time::Instant::now());
+                        tui::print_thinking_start();
+                    }
+                    tui::print_thinking_chunk(&display_text);
+                }
+            }
+            openclaudia::pipeline::SseAction::ThinkingStart => {
+                *ctx.in_thinking_block = true;
+                *ctx.thinking_start_time = Some(std::time::Instant::now());
+                tui::print_thinking_start();
+            }
+            openclaudia::pipeline::SseAction::ThinkingEnd => {
+                let elapsed = ctx
+                    .thinking_start_time
+                    .map_or(0.0, |started| started.elapsed().as_secs_f64());
+                tui::print_thinking_end(elapsed);
+                *ctx.in_thinking_block = false;
+                *ctx.thinking_start_time = None;
+            }
+            openclaudia::pipeline::SseAction::None => {}
         }
     }
 
@@ -2662,20 +2715,18 @@ impl ChatRepl {
     async fn run_openai_tool_loop(
         &mut self,
         tool_accumulator: &mut tools::ToolCallAccumulator,
-        full_content: String,
-        cancelled: bool,
+        mut state: OpenAiLoopState,
         transport: TurnTransport<'_>,
         memory_db: Option<&memory::MemoryDb>,
         auto_learner: &mut Option<openclaudia::auto_learn::AutoLearner<'_>>,
     ) {
         let max_iterations = self.config.session.max_turns;
         let mut iteration: u32 = 0;
-        let mut current_content = full_content;
         let mut executed_tool_sigs: std::collections::HashSet<String> =
             std::collections::HashSet::new();
 
         while tool_accumulator.has_tool_calls()
-            && !cancelled
+            && !state.cancelled
             && (max_iterations == 0 || iteration < max_iterations)
         {
             iteration += 1;
@@ -2695,7 +2746,11 @@ impl ChatRepl {
                 executed_tool_sigs.insert(tool_call_signature(tc));
             }
 
-            self.record_openai_assistant_turn(&tool_calls, &current_content);
+            self.record_openai_assistant_turn(
+                &tool_calls,
+                &state.current_content,
+                &state.current_reasoning_content,
+            );
             self.dispatch_openai_tool_batch(&tool_calls, tool_accumulator, memory_db, auto_learner);
 
             println!("\n\x1b[90mContinuing with tool results...\x1b[0m\n");
@@ -2707,12 +2762,14 @@ impl ChatRepl {
                     break;
                 }
             };
-            current_content = String::new();
+            state.current_content.clear();
+            state.current_reasoning_content.clear();
             self.stream_openai_followup(
                 request_body,
                 transport,
                 tool_accumulator,
-                &mut current_content,
+                &mut state.current_content,
+                &mut state.current_reasoning_content,
             )
             .await;
         }
@@ -2726,8 +2783,13 @@ impl ChatRepl {
             );
         }
 
-        self.persist_openai_loop_state(&current_content, tool_accumulator, iteration);
-        self.run_openai_vdd_review(&current_content, cancelled)
+        self.persist_openai_loop_state(
+            &state.current_content,
+            &state.current_reasoning_content,
+            tool_accumulator,
+            iteration,
+        );
+        self.run_openai_vdd_review(&state.current_content, state.cancelled)
             .await;
     }
 
@@ -2737,6 +2799,7 @@ impl ChatRepl {
         &mut self,
         tool_calls: &[tools::ToolCall],
         current_content: &str,
+        reasoning_content: &str,
     ) {
         let tool_calls_json: Vec<serde_json::Value> = tool_calls
             .iter()
@@ -2751,11 +2814,13 @@ impl ChatRepl {
                 })
             })
             .collect();
-        self.chat_session.messages.push(serde_json::json!({
+        let mut message = serde_json::json!({
             "role": "assistant",
             "content": serde_json::Value::String(current_content.to_string()),
             "tool_calls": tool_calls_json
-        }));
+        });
+        attach_reasoning_content(&mut message, reasoning_content);
+        self.chat_session.messages.push(message);
     }
 
     /// Execute every tool from one `OpenAI` iteration, run quality
@@ -2780,14 +2845,19 @@ impl ChatRepl {
     fn persist_openai_loop_state(
         &mut self,
         current_content: &str,
+        reasoning_content: &str,
         tool_accumulator: &tools::ToolCallAccumulator,
         iteration: u32,
     ) {
-        if !current_content.is_empty() && !tool_accumulator.has_tool_calls() {
-            self.chat_session.messages.push(serde_json::json!({
+        if (!current_content.is_empty() || !reasoning_content.is_empty())
+            && !tool_accumulator.has_tool_calls()
+        {
+            let mut message = serde_json::json!({
                 "role": "assistant",
                 "content": current_content
-            }));
+            });
+            attach_reasoning_content(&mut message, reasoning_content);
+            self.chat_session.messages.push(message);
             self.chat_session.touch();
             if let Err(e) = save_chat_session(&self.chat_session) {
                 tracing::warn!("Failed to save session: {}", e);
@@ -2797,7 +2867,10 @@ impl ChatRepl {
             if let Err(e) = save_chat_session(&self.chat_session) {
                 tracing::warn!("Failed to save session: {}", e);
             }
-        } else if current_content.is_empty() && !tool_accumulator.has_tool_calls() {
+        } else if current_content.is_empty()
+            && reasoning_content.is_empty()
+            && !tool_accumulator.has_tool_calls()
+        {
             let _ = save_chat_session(&self.chat_session);
             self.chat_session.messages.pop();
         }
@@ -2875,6 +2948,7 @@ impl ChatRepl {
         transport: TurnTransport<'_>,
         tool_accumulator: &mut tools::ToolCallAccumulator,
         current_content: &mut String,
+        current_reasoning_content: &mut String,
     ) {
         use futures::StreamExt;
         use std::io::Write;
@@ -2891,6 +2965,10 @@ impl ChatRepl {
         }
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
+        let mut anthropic_accumulator = tools::AnthropicToolAccumulator::new();
+        let mut in_thinking_block = false;
+        let mut thinking_start_time: Option<std::time::Instant> = None;
+        let mut reasoning_started = false;
         while let Some(chunk_result) = stream.next().await {
             if let Ok(chunk) = chunk_result {
                 buffer.push_str(&String::from_utf8_lossy(&chunk));
@@ -2905,35 +2983,64 @@ impl ChatRepl {
                             break;
                         }
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                            if json.get("type").and_then(|t| t.as_str())
-                                == Some("content_block_delta")
-                            {
-                                if let Some(text) = json
-                                    .get("delta")
-                                    .and_then(|d| d.get("text"))
-                                    .and_then(|t| t.as_str())
-                                {
+                            match openclaudia::pipeline::process_sse_event(
+                                &json,
+                                in_thinking_block,
+                                &mut anthropic_accumulator,
+                                tool_accumulator,
+                            ) {
+                                openclaudia::pipeline::SseAction::Text(text) => {
+                                    if reasoning_started {
+                                        let elapsed = thinking_start_time
+                                            .map_or(0.0, |started| started.elapsed().as_secs_f64());
+                                        tui::print_thinking_end(elapsed);
+                                        reasoning_started = false;
+                                        thinking_start_time = None;
+                                    }
                                     print!("{text}");
                                     std::io::stdout().flush().ok();
-                                    current_content.push_str(text);
+                                    current_content.push_str(&text);
                                 }
-                            } else if let Some(delta) = json
-                                .get("choices")
-                                .and_then(|c| c.get(0))
-                                .and_then(|c| c.get("delta"))
-                            {
-                                if let Some(content) = delta.get("content").and_then(|c| c.as_str())
-                                {
-                                    print!("{content}");
-                                    std::io::stdout().flush().ok();
-                                    current_content.push_str(content);
+                                openclaudia::pipeline::SseAction::Thinking(text) => {
+                                    tui::print_thinking_chunk(&text);
                                 }
-                                tool_accumulator.process_delta(delta);
+                                openclaudia::pipeline::SseAction::Reasoning(text) => {
+                                    let display_text = openclaudia::pipeline::merge_reasoning_delta(
+                                        current_reasoning_content,
+                                        &text,
+                                    );
+                                    if !display_text.is_empty() {
+                                        if !reasoning_started {
+                                            reasoning_started = true;
+                                            thinking_start_time = Some(std::time::Instant::now());
+                                            tui::print_thinking_start();
+                                        }
+                                        tui::print_thinking_chunk(&display_text);
+                                    }
+                                }
+                                openclaudia::pipeline::SseAction::ThinkingStart => {
+                                    in_thinking_block = true;
+                                    thinking_start_time = Some(std::time::Instant::now());
+                                    tui::print_thinking_start();
+                                }
+                                openclaudia::pipeline::SseAction::ThinkingEnd => {
+                                    let elapsed = thinking_start_time
+                                        .map_or(0.0, |started| started.elapsed().as_secs_f64());
+                                    tui::print_thinking_end(elapsed);
+                                    in_thinking_block = false;
+                                    thinking_start_time = None;
+                                }
+                                openclaudia::pipeline::SseAction::None => {}
                             }
                         }
                     }
                 }
             }
+        }
+        if reasoning_started {
+            let elapsed =
+                thinking_start_time.map_or(0.0, |started| started.elapsed().as_secs_f64());
+            tui::print_thinking_end(elapsed);
         }
         println!();
     }
@@ -3110,6 +3217,7 @@ impl ChatRepl {
 /// streaming path to act on (cancel flag, deferred keybinding, etc.).
 struct InitialStreamResult {
     full_content: String,
+    reasoning_content: String,
     cancelled: bool,
     pending_action: Option<SlashCommandResult>,
 }
@@ -3140,6 +3248,12 @@ fn gemini_tool_error_response(tool_call: &tools::ToolCall, message: &str) -> ser
             "response": {"error": message}
         }
     })
+}
+
+fn attach_reasoning_content(message: &mut serde_json::Value, reasoning_content: &str) {
+    if !reasoning_content.is_empty() {
+        message["reasoning_content"] = serde_json::Value::String(reasoning_content.to_string());
+    }
 }
 
 fn parse_tool_args(func: &tools::FunctionCall) -> Result<serde_json::Value, String> {
@@ -3205,54 +3319,6 @@ fn all_signatures_seen(
     tool_calls
         .iter()
         .all(|tc| executed.contains(&tool_call_signature(tc)))
-}
-
-fn process_thinking_event(
-    json: &serde_json::Value,
-    in_thinking_block: &mut bool,
-    thinking_start_time: &mut Option<std::time::Instant>,
-) -> bool {
-    let Some(event_type) = json.get("type").and_then(|t| t.as_str()) else {
-        return false;
-    };
-    if event_type == "content_block_start" {
-        if let Some(block_type) = json
-            .get("content_block")
-            .and_then(|b| b.get("type"))
-            .and_then(|t| t.as_str())
-        {
-            if block_type == "thinking" {
-                *in_thinking_block = true;
-                *thinking_start_time = Some(std::time::Instant::now());
-                tui::print_thinking_start();
-                return true;
-            }
-        }
-    }
-    if event_type == "content_block_stop" && *in_thinking_block {
-        let elapsed = thinking_start_time.map_or(0.0, |t| t.elapsed().as_secs_f64());
-        tui::print_thinking_end(elapsed);
-        *in_thinking_block = false;
-        *thinking_start_time = None;
-        return true;
-    }
-    if event_type == "content_block_delta" && *in_thinking_block {
-        if let Some(text) = json
-            .get("delta")
-            .and_then(|d| d.get("thinking"))
-            .and_then(|t| t.as_str())
-        {
-            tui::print_thinking_chunk(text);
-        } else if let Some(text) = json
-            .get("delta")
-            .and_then(|d| d.get("text"))
-            .and_then(|t| t.as_str())
-        {
-            tui::print_thinking_chunk(text);
-        }
-        return true;
-    }
-    false
 }
 
 fn gemini_response_parts(json: &serde_json::Value) -> Result<&[serde_json::Value], String> {

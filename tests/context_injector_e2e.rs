@@ -29,6 +29,7 @@ fn user_msg(content: &str) -> ChatMessage {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     }
 }
 
@@ -39,6 +40,7 @@ fn assistant_msg(content: &str) -> ChatMessage {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     }
 }
 

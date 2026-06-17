@@ -1094,6 +1094,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         }
     }
 
@@ -1120,6 +1121,7 @@ mod tests {
                     "function": {"name": "calc", "arguments": "{\"expr\":\"2+2\"}"}
                 })]),
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             },
             ChatMessage {
                 role: "tool".to_string(),
@@ -1127,6 +1129,7 @@ mod tests {
                 name: None,
                 tool_calls: None,
                 tool_call_id: Some("toolu_abc".to_string()),
+                extra: std::collections::HashMap::new(),
             },
         ];
 
@@ -1183,6 +1186,7 @@ mod tests {
                     name: None,
                     tool_calls: Some(vec![tool_call]),
                     tool_call_id: None,
+                    extra: std::collections::HashMap::new(),
                 },
             ],
             max_tokens: Some(64),
@@ -1417,6 +1421,7 @@ mod tests {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             }],
             max_tokens: Some(64),
             temperature: None,
@@ -1481,6 +1486,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         };
         let request = ChatCompletionRequest {
             model: "claude-opus-4-6".to_string(),
@@ -1518,6 +1524,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         };
         let request = ChatCompletionRequest {
             model: "claude-opus-4-6".to_string(),
@@ -1554,6 +1561,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         };
         let request = ChatCompletionRequest {
             model: "claude-opus-4-6".to_string(),

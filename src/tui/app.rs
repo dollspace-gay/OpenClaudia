@@ -3239,16 +3239,25 @@ async fn run_agentic_loop(ctx: &AgenticCtx<'_>, session_messages: &mut Vec<serde
                 if followup.needs_followup {
                     let asst = crate::pipeline::build_assistant_message_with_tools(
                         &followup.content,
+                        followup.reasoning_content.as_deref(),
                         &followup.tool_calls,
                         ctx.provider,
                     );
                     session_messages.push(asst);
                     session_messages.extend(followup.tool_results.iter().cloned());
                 } else {
-                    if !followup.content.is_empty() {
-                        session_messages.push(
-                            serde_json::json!({ "role": "assistant", "content": followup.content }),
-                        );
+                    let reasoning = followup
+                        .reasoning_content
+                        .as_deref()
+                        .filter(|text| !text.is_empty());
+                    if !followup.content.is_empty() || reasoning.is_some() {
+                        let mut message =
+                            serde_json::json!({ "role": "assistant", "content": followup.content });
+                        if let Some(reasoning) = reasoning {
+                            message["reasoning_content"] =
+                                serde_json::Value::String(reasoning.to_string());
+                        }
+                        session_messages.push(message);
                     }
                     break;
                 }
@@ -3387,6 +3396,7 @@ async fn handle_turn_result(
     if turn_result.needs_followup {
         let asst = crate::pipeline::build_assistant_message_with_tools(
             &turn_result.content,
+            turn_result.reasoning_content.as_deref(),
             &turn_result.tool_calls,
             ctx.provider,
         );
@@ -3425,8 +3435,16 @@ async fn handle_turn_result(
             ctx.session_id,
         );
     } else if !turn_result.content.is_empty() {
-        session_messages
-            .push(serde_json::json!({ "role": "assistant", "content": turn_result.content }));
+        let mut message =
+            serde_json::json!({ "role": "assistant", "content": turn_result.content });
+        if let Some(reasoning) = turn_result
+            .reasoning_content
+            .as_deref()
+            .filter(|text| !text.is_empty())
+        {
+            message["reasoning_content"] = serde_json::Value::String(reasoning.to_string());
+        }
+        session_messages.push(message);
         send_or_warn(
             ctx.tx,
             super::events::AppEvent::SyncMessages(session_messages),

@@ -472,6 +472,7 @@ async fn verify_findings(
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             },
             ChatMessage {
                 role: "user".to_string(),
@@ -479,6 +480,7 @@ async fn verify_findings(
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             },
         ],
         temperature: Some(0.0), // Maximally deterministic for verification

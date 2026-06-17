@@ -75,6 +75,7 @@ fn build_print_request(
             name: None,
             tool_call_id: None,
             tool_calls: None,
+            extra: std::collections::HashMap::new(),
         }],
         temperature: None,
         max_tokens: Some(openclaudia::DEFAULT_MAX_TOKENS),
@@ -141,9 +142,9 @@ fn extract_print_sse_text(json: &serde_json::Value, state: &mut PrintSseState) -
             state.in_thinking_block = false;
             None
         }
-        openclaudia::pipeline::SseAction::Thinking(_) | openclaudia::pipeline::SseAction::None => {
-            None
-        }
+        openclaudia::pipeline::SseAction::Thinking(_)
+        | openclaudia::pipeline::SseAction::Reasoning(_)
+        | openclaudia::pipeline::SseAction::None => None,
     }
 }
 
@@ -337,6 +338,13 @@ mod tests {
         assert_eq!(extract_print_sse_text(&delta, &mut state), None);
         assert_eq!(extract_print_sse_text(&stop, &mut state), None);
         assert!(!state.in_thinking_block);
+    }
+
+    #[test]
+    fn print_sse_suppresses_openai_reasoning_delta() {
+        let mut state = PrintSseState::new();
+        let json = json!({"choices": [{"delta": {"reasoning_content": "private"}}]});
+        assert_eq!(extract_print_sse_text(&json, &mut state), None);
     }
 
     #[test]

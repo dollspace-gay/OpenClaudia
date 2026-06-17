@@ -1000,6 +1000,7 @@ impl AcpServer {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    extra: std::collections::HashMap::new(),
                 }];
             let decoded_messages = match decode_acp_messages(&self.messages) {
                 Ok(messages) => messages,

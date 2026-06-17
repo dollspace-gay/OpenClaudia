@@ -2746,6 +2746,7 @@ mod token_tracking {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         }
     }
 

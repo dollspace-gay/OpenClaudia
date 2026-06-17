@@ -59,6 +59,7 @@ fn minimal_request(model: &str) -> ChatCompletionRequest {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         }],
         temperature: None,
         max_tokens: None,
@@ -219,6 +220,7 @@ fn anthropic_request_uses_system_array_with_cache_control() {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         },
     );
     let body = adapter.transform_request(&req).expect("transform");
@@ -1004,6 +1006,7 @@ proptest! {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    extra: std::collections::HashMap::new(),
                 })
                 .collect(),
             temperature: None,

@@ -247,6 +247,7 @@ fn chat_message_omits_optional_fields_when_none() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     let json = serde_json::to_string(&msg).expect("ser");
     assert!(!json.contains("\"name\""));
@@ -265,6 +266,7 @@ fn chat_message_includes_optional_fields_when_set() {
         name: Some("bash".to_string()),
         tool_calls: None,
         tool_call_id: Some("call-123".to_string()),
+        extra: std::collections::HashMap::new(),
     };
     let json = serde_json::to_string(&msg).expect("ser");
     assert!(json.contains("\"name\":\"bash\""));

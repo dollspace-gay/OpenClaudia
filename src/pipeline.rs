@@ -45,6 +45,9 @@ macro_rules! send_event_or_break {
 pub struct TurnResult {
     /// Full response text accumulated during streaming.
     pub content: String,
+    /// Provider reasoning content accumulated during streaming, when the
+    /// upstream exposes it separately from visible text.
+    pub reasoning_content: Option<String>,
     /// Structured tool calls returned by the model.
     pub tool_calls: Vec<ToolCall>,
     /// Tool result messages to append to the conversation history.
@@ -960,6 +963,7 @@ async fn handle_google_response(
 
     Ok(TurnResult {
         content: text,
+        reasoning_content: None,
         tool_calls,
         tool_results,
         usage: TokenUsage {
@@ -1094,6 +1098,7 @@ async fn stream_sse_response(p: SseStreamParams<'_>) -> Result<TurnResult, Strin
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
     let mut full_content = String::new();
+    let mut reasoning_content = String::new();
     let mut tool_accumulator = ToolCallAccumulator::new();
     let mut anthropic_accumulator = AnthropicToolAccumulator::new();
     let mut stream_usage = TokenUsage::default();
@@ -1136,31 +1141,21 @@ async fn stream_sse_response(p: SseStreamParams<'_>) -> Result<TurnResult, Strin
                                 stream_usage.accumulate(&usage);
                             }
 
-                            match process_sse_event(
+                            let action = process_sse_event(
                                 &json,
                                 in_thinking_block,
                                 &mut anthropic_accumulator,
                                 &mut tool_accumulator,
-                            ) {
-                                SseAction::Text(text) => {
-                                    send_event!(tx, AppEvent::StreamText(text.clone()));
-                                    full_content.push_str(&text);
-                                }
-                                SseAction::Thinking(text) => {
-                                    send_event!(tx, AppEvent::StreamThinking(text));
-                                }
-                                SseAction::ThinkingStart => {
-                                    in_thinking_block = true;
-                                    send_event!(
-                                        tx,
-                                        AppEvent::StreamThinking("[thinking...]\n".to_string(),)
-                                    );
-                                }
-                                SseAction::ThinkingEnd => {
-                                    in_thinking_block = false;
-                                }
-                                SseAction::None => {}
-                            }
+                            );
+                            dispatch_sse_action(
+                                action,
+                                SseActionDispatch {
+                                    full_content: &mut full_content,
+                                    reasoning_content: &mut reasoning_content,
+                                    in_thinking_block: &mut in_thinking_block,
+                                    tx,
+                                },
+                            )?;
                         }
                     }
                 }
@@ -1175,6 +1170,7 @@ async fn stream_sse_response(p: SseStreamParams<'_>) -> Result<TurnResult, Strin
     finalize_sse_stream(SseFinalize {
         provider,
         full_content,
+        reasoning_content,
         tool_accumulator,
         anthropic_accumulator,
         stream_usage,
@@ -1188,6 +1184,46 @@ async fn stream_sse_response(p: SseStreamParams<'_>) -> Result<TurnResult, Strin
     .await
 }
 
+struct SseActionDispatch<'a> {
+    full_content: &'a mut String,
+    reasoning_content: &'a mut String,
+    in_thinking_block: &'a mut bool,
+    tx: &'a mpsc::Sender<AppEvent>,
+}
+
+fn dispatch_sse_action(action: SseAction, ctx: SseActionDispatch<'_>) -> Result<(), String> {
+    let SseActionDispatch {
+        full_content,
+        reasoning_content,
+        in_thinking_block,
+        tx,
+    } = ctx;
+    match action {
+        SseAction::Text(text) => {
+            send_event!(tx, AppEvent::StreamText(text.clone()));
+            full_content.push_str(&text);
+        }
+        SseAction::Thinking(text) => {
+            send_event!(tx, AppEvent::StreamThinking(text));
+        }
+        SseAction::Reasoning(text) => {
+            let display_text = merge_reasoning_delta(reasoning_content, &text);
+            if !display_text.is_empty() {
+                send_event!(tx, AppEvent::StreamThinking(display_text));
+            }
+        }
+        SseAction::ThinkingStart => {
+            *in_thinking_block = true;
+            send_event!(tx, AppEvent::StreamThinking("[thinking...]\n".to_string(),));
+        }
+        SseAction::ThinkingEnd => {
+            *in_thinking_block = false;
+        }
+        SseAction::None => {}
+    }
+    Ok(())
+}
+
 /// Owned + borrowed state handed to [`finalize_sse_stream`].
 ///
 /// Extracted from `stream_sse_response` (which otherwise tipped over
@@ -1197,6 +1233,7 @@ async fn stream_sse_response(p: SseStreamParams<'_>) -> Result<TurnResult, Strin
 struct SseFinalize<'a> {
     provider: &'a str,
     full_content: String,
+    reasoning_content: String,
     tool_accumulator: ToolCallAccumulator,
     anthropic_accumulator: AnthropicToolAccumulator,
     stream_usage: TokenUsage,
@@ -1242,6 +1279,7 @@ async fn finalize_sse_stream(f: SseFinalize<'_>) -> Result<TurnResult, String> {
 
     Ok(TurnResult {
         content: f.full_content,
+        reasoning_content: (!f.reasoning_content.is_empty()).then_some(f.reasoning_content),
         tool_calls,
         tool_results,
         usage: f.stream_usage,
@@ -1261,6 +1299,8 @@ pub enum SseAction {
     Text(String),
     /// Emit thinking text
     Thinking(String),
+    /// Emit OpenAI-compatible reasoning text.
+    Reasoning(String),
     /// Start a thinking block
     ThinkingStart,
     /// End a thinking block
@@ -1326,6 +1366,9 @@ pub fn process_sse_event(
         .and_then(|c| c.get(0))
         .and_then(|c| c.get("delta"))
     {
+        if let Some(reasoning) = openai_reasoning_delta_text(delta) {
+            return SseAction::Reasoning(reasoning);
+        }
         if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
             return SseAction::Text(content.to_string());
         }
@@ -1333,6 +1376,42 @@ pub fn process_sse_event(
     }
 
     SseAction::None
+}
+
+fn openai_reasoning_delta_text(delta: &Value) -> Option<String> {
+    if let Some(reasoning) = delta.get("reasoning_content").and_then(Value::as_str) {
+        return (!reasoning.is_empty()).then(|| reasoning.to_string());
+    }
+    if let Some(reasoning) = delta.get("reasoning").and_then(Value::as_str) {
+        return (!reasoning.is_empty()).then(|| reasoning.to_string());
+    }
+
+    let details = delta.get("reasoning_details").and_then(Value::as_array)?;
+    let text = details
+        .iter()
+        .filter_map(|detail| detail.get("text").and_then(Value::as_str))
+        .collect::<String>();
+    (!text.is_empty()).then_some(text)
+}
+
+/// Append a reasoning delta to `buffer` and return only the newly-displayable text.
+///
+/// Some OpenAI-compatible providers send cumulative reasoning text instead of
+/// incremental chunks. This keeps persisted reasoning complete while avoiding
+/// duplicate display output.
+#[must_use]
+pub fn merge_reasoning_delta(buffer: &mut String, text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    if !buffer.is_empty() && text.starts_with(buffer.as_str()) {
+        let suffix = text[buffer.len()..].to_string();
+        buffer.push_str(&suffix);
+        suffix
+    } else {
+        buffer.push_str(text);
+        text.to_string()
+    }
 }
 
 /// Tools that are safe to execute without permission (read-only / informational).
@@ -1858,6 +1937,7 @@ async fn intercept_user_question(
 #[must_use]
 pub fn build_assistant_message_with_tools(
     content: &str,
+    reasoning_content: Option<&str>,
     tool_calls: &[ToolCall],
     _provider: &str,
 ) -> Value {
@@ -1875,11 +1955,15 @@ pub fn build_assistant_message_with_tools(
         })
         .collect();
 
-    serde_json::json!({
+    let mut message = serde_json::json!({
         "role": "assistant",
         "content": Value::String(content.to_string()),
         "tool_calls": tool_calls_json
-    })
+    });
+    if let Some(reasoning) = reasoning_content.filter(|text| !text.is_empty()) {
+        message["reasoning_content"] = Value::String(reasoning.to_string());
+    }
+    message
 }
 
 #[cfg(test)]
@@ -2399,11 +2483,28 @@ mod tests {
                 arguments: r#"{"command":"ls"}"#.to_string(),
             },
         }];
-        let msg = build_assistant_message_with_tools("hello", &tool_calls, "anthropic");
+        let msg = build_assistant_message_with_tools("hello", None, &tool_calls, "anthropic");
         assert_eq!(msg["role"], "assistant");
         assert_eq!(msg["content"], "hello");
         assert!(msg["tool_calls"].is_array());
         assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+    }
+
+    #[test]
+    fn build_assistant_message_with_tools_preserves_reasoning_content() {
+        let msg = build_assistant_message_with_tools("hello", Some("thought"), &[], "kimi");
+        assert_eq!(msg["reasoning_content"], "thought");
+    }
+
+    #[test]
+    fn merge_reasoning_delta_deduplicates_cumulative_chunks() {
+        let mut buffer = String::new();
+
+        assert_eq!(merge_reasoning_delta(&mut buffer, "abc"), "abc");
+        assert_eq!(merge_reasoning_delta(&mut buffer, "abcdef"), "def");
+        assert_eq!(buffer, "abcdef");
+        assert_eq!(merge_reasoning_delta(&mut buffer, " + next"), " + next");
+        assert_eq!(buffer, "abcdef + next");
     }
 
     #[test]

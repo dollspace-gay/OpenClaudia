@@ -230,6 +230,7 @@ impl ContextInjector {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             });
         }
     }
@@ -316,6 +317,7 @@ impl ContextInjector {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             },
         );
     }
@@ -335,6 +337,7 @@ impl ContextInjector {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             });
         }
     }
@@ -383,6 +386,7 @@ mod tests {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    extra: std::collections::HashMap::new(),
                 },
                 ChatMessage {
                     role: "user".to_string(),
@@ -390,6 +394,7 @@ mod tests {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    extra: std::collections::HashMap::new(),
                 },
             ],
             temperature: None,
@@ -523,6 +528,7 @@ mod tests {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             }],
             temperature: None,
             max_tokens: None,
@@ -549,6 +555,7 @@ mod tests {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             }],
             temperature: None,
             max_tokens: None,
@@ -610,6 +617,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         };
 
         ContextInjector::append_to_message(&mut message, "Appended content");
@@ -634,6 +642,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         };
 
         ContextInjector::append_to_message(&mut message, "Appended content");
@@ -692,6 +701,7 @@ mod tests {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    extra: std::collections::HashMap::new(),
                 },
                 ChatMessage {
                     role: "user".to_string(),
@@ -699,6 +709,7 @@ mod tests {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    extra: std::collections::HashMap::new(),
                 },
                 ChatMessage {
                     role: "assistant".to_string(),
@@ -706,6 +717,7 @@ mod tests {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    extra: std::collections::HashMap::new(),
                 },
                 ChatMessage {
                     role: "user".to_string(),
@@ -713,6 +725,7 @@ mod tests {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    extra: std::collections::HashMap::new(),
                 },
             ],
             temperature: None,
@@ -861,6 +874,7 @@ mod tests {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             }],
             temperature: None,
             max_tokens: None,
@@ -916,6 +930,7 @@ mod tests {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             }],
             temperature: None,
             max_tokens: None,
@@ -1281,6 +1296,7 @@ mod tests {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: std::collections::HashMap::new(),
             }],
             temperature: None,
             max_tokens: None,

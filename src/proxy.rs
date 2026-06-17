@@ -125,6 +125,12 @@ pub struct ChatMessage {
     pub tool_calls: Option<Vec<Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    #[serde(
+        default,
+        flatten,
+        skip_serializing_if = "std::collections::HashMap::is_empty"
+    )]
+    pub extra: std::collections::HashMap<String, Value>,
 }
 
 /// Message content can be string or array of content parts
@@ -2231,6 +2237,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         }]);
         extensions.sort();
 

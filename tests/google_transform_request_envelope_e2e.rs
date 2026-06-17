@@ -26,6 +26,7 @@ fn msg(role: &str, content: &str) -> ChatMessage {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     }
 }
 
@@ -223,6 +224,7 @@ fn google_transform_parts_with_image_url_becomes_inline_data() {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         }],
     );
     let body = adapter.transform_request(&request).expect("ok");
@@ -261,6 +263,7 @@ fn google_transform_parts_with_neither_text_nor_image_skipped_not_empty_text() {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         }],
     );
     let body = adapter.transform_request(&request).expect("ok");

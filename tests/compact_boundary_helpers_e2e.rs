@@ -135,6 +135,7 @@ fn is_compact_boundary_rejects_system_text_not_starting_with_marker() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     assert!(!is_compact_boundary_message(&msg));
 }
@@ -148,6 +149,7 @@ fn is_compact_boundary_rejects_marker_embedded_mid_text() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     assert!(
         !is_compact_boundary_message(&msg),
@@ -169,6 +171,7 @@ fn is_compact_boundary_recognises_parts_content_with_marker_text() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     assert!(is_compact_boundary_message(&msg));
 }
@@ -193,6 +196,7 @@ fn is_compact_boundary_recognises_parts_with_marker_in_any_text_part() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     assert!(is_compact_boundary_message(&msg));
 }
@@ -209,6 +213,7 @@ fn is_compact_boundary_rejects_parts_with_no_text_at_all() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     assert!(!is_compact_boundary_message(&msg));
 }
@@ -221,6 +226,7 @@ fn is_compact_boundary_rejects_empty_parts_array() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     assert!(!is_compact_boundary_message(&msg));
 }
@@ -237,6 +243,7 @@ fn extract_returns_none_for_non_boundary_message() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     assert!(extract_compact_boundary_metadata(&msg).is_none());
 }
@@ -251,6 +258,7 @@ fn extract_returns_none_when_marker_present_but_json_invalid() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     assert!(
         extract_compact_boundary_metadata(&msg).is_none(),
@@ -272,6 +280,7 @@ fn extract_returns_metadata_from_parts_content_branch() {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     };
     let m = extract_compact_boundary_metadata(&msg).expect("ok");
     assert_eq!(m.trigger, "manual");

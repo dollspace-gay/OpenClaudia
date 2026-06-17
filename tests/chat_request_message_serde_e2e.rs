@@ -24,6 +24,7 @@ fn minimal_message() -> ChatMessage {
         name: None,
         tool_calls: None,
         tool_call_id: None,
+        extra: std::collections::HashMap::new(),
     }
 }
 
@@ -178,6 +179,7 @@ fn full_request_round_trips_through_json() {
             name: Some("alice".to_string()),
             tool_calls: None,
             tool_call_id: None,
+            extra: std::collections::HashMap::new(),
         }],
         temperature: Some(0.8),
         max_tokens: Some(2048),
@@ -318,6 +320,29 @@ fn chat_message_none_tool_call_id_skipped() {
 }
 
 #[test]
+fn chat_message_extra_preserves_reasoning_fields() {
+    let json = json!({
+        "role": "assistant",
+        "content": "done",
+        "reasoning_content": "thought",
+        "reasoning_details": [{ "text": "detail" }]
+    });
+    let msg: ChatMessage = serde_json::from_value(json).expect("de");
+    assert_eq!(msg.extra["reasoning_content"], "thought");
+    assert_eq!(
+        msg.extra["reasoning_details"],
+        json!([{ "text": "detail" }])
+    );
+
+    let serialized: Value = serde_json::to_value(&msg).expect("ser");
+    assert_eq!(serialized["reasoning_content"], "thought");
+    assert_eq!(
+        serialized["reasoning_details"],
+        json!([{ "text": "detail" }])
+    );
+}
+
+#[test]
 fn chat_message_required_role_field_deserialize_errors_when_missing() {
     let json = json!({"content": "hi"});
     let outcome: Result<ChatMessage, _> = serde_json::from_value(json);
@@ -332,17 +357,22 @@ fn chat_message_required_content_field_deserialize_errors_when_missing() {
 }
 
 #[test]
-fn chat_message_clone_preserves_all_5_fields() {
+fn chat_message_clone_preserves_named_and_extra_fields() {
+    let mut extra = HashMap::new();
+    extra.insert("reasoning_content".to_string(), json!("thought"));
+
     let original = ChatMessage {
         role: "tool".to_string(),
         content: MessageContent::Text("result".to_string()),
         name: Some("name_marker".to_string()),
         tool_calls: Some(vec![json!({"id": "c1"})]),
         tool_call_id: Some("call-x".to_string()),
+        extra,
     };
     let cloned = original.clone();
     assert_eq!(cloned.role, original.role);
     assert_eq!(cloned.name, original.name);
     assert_eq!(cloned.tool_calls, original.tool_calls);
     assert_eq!(cloned.tool_call_id, original.tool_call_id);
+    assert_eq!(cloned.extra, original.extra);
 }
