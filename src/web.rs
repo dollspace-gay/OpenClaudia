@@ -1052,8 +1052,6 @@ fn launch_browser_for_scraping() -> Result<headless_chrome::Browser, String> {
 /// cap, or if the DOM does not contain the expected selectors.
 #[cfg(feature = "browser")]
 pub fn search_duckduckgo(query: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
-    use scraper::{Html, Selector};
-
     let browser = launch_browser_for_scraping()?;
 
     let tab = browser
@@ -1088,15 +1086,31 @@ pub fn search_duckduckgo(query: &str, limit: usize) -> Result<Vec<SearchResult>,
         ));
     }
 
-    // Detect DDG's bot-challenge / anomaly page BEFORE parsing for
-    // result selectors. When DDG flags the headless browser as a bot
-    // (which it does aggressively for known automation UAs), it
-    // serves a CAPTCHA modal — "Unfortunately, bots use DuckDuckGo
-    // too." — with NO `.result` elements. The legacy code path then
-    // misreported "no results found / HTML structure may have
-    // changed", which is wrong AND unactionable. The correct
-    // diagnosis is "DDG blocked us as a bot"; the caller can then
-    // fall through to a different backend.
+    parse_duckduckgo_results_from_html(&html, limit)
+}
+
+/// Parse rendered `DuckDuckGo` HTML results and drop unsafe result URLs.
+///
+/// This is separated from browser navigation so SSRF filtering can be tested
+/// without launching Chrome or making a live search request.
+///
+/// # Errors
+///
+/// Returns an error when `DuckDuckGo` serves its bot challenge, selector
+/// construction fails, or no valid search results remain after parsing and
+/// URL validation.
+#[doc(hidden)]
+#[cfg(feature = "browser")]
+pub fn parse_duckduckgo_results_from_html(
+    html: &str,
+    limit: usize,
+) -> Result<Vec<SearchResult>, String> {
+    use scraper::{Html, Selector};
+
+    // Detect DDG's bot-challenge / anomaly page BEFORE parsing for result
+    // selectors. When DDG flags the headless browser as a bot, it serves a
+    // CAPTCHA modal with no `.result` elements. Reporting this directly lets
+    // the caller fall through to a different backend.
     if html.contains("anomaly-modal") || html.contains("Unfortunately, bots use DuckDuckGo") {
         return Err("DuckDuckGo served its bot-challenge / anomaly page (no \
              results returned). Headless-Chrome scraping has been \
@@ -1105,7 +1119,7 @@ pub fn search_duckduckgo(query: &str, limit: usize) -> Result<Vec<SearchResult>,
     }
 
     // Parse HTML and extract results
-    let document = Html::parse_document(&html);
+    let document = Html::parse_document(html);
 
     // DDG HTML selectors
     let result_selector =

@@ -15,7 +15,10 @@
 //! - #603  Preapproved domain allowlist missing — `gap_603_no_preapproved_allowlist`
 //! - #605  Multi-backend / citation reminder missing — `gap_605_no_citation_reminder`
 //! - #608  No secondary model distillation — `gap_608_no_prompt_parameter`
-//! - #610  DDG SSRF: extracted result URLs not validated — `gap_610_ddg_ssrf_urls_not_validated`
+//!
+//! ### Fixed regressions pinned
+//!
+//! - #610  DDG result URLs pass SSRF validation — `duckduckgo_parser_drops_ssrf_urls_before_formatting`
 //!
 //! ### Browser tests (headless Chrome)
 //!
@@ -25,6 +28,8 @@
 //! ```
 //! Set `OPENCLAUDIA_TEST_BROWSER=1` to confirm opt-in intent (tests log a warning if absent).
 
+#[cfg(feature = "browser")]
+use openclaudia::web::parse_duckduckgo_results_from_html;
 use openclaudia::web::{fetch_url, fetch_with_browser, format_search_results, SearchResult};
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -651,51 +656,37 @@ fn gap_608_no_prompt_parameter() {
     // PIN: prompt parameter is silently ignored. Tracked as #608.
 }
 
-/// GAP #610 — `DuckDuckGo` scraper does NOT validate extracted URLs against SSRF guard.
-///
-/// SECURITY: `search_duckduckgo` (src/web.rs:475) extracts URLs from DDG HTML
-/// and returns them WITHOUT calling `validate_url` on each result URL.
-/// A malicious or compromised DDG response could surface SSRF-interesting URLs
-/// (private IPs, cloud metadata endpoints) into the agent's result list.
-///
-/// // SECURITY: #610 — missing `validate_url` call on extracted DDG result URLs.
-/// // DO NOT ADD the `validate_url` call here until #610 is resolved through the
-/// // proper issue workflow. This test pins the CURRENT (vulnerable) behavior.
-///
-/// Filed as HIGH priority at crosslink #610.
+/// Regression #610 — `DuckDuckGo` scraper validates extracted URLs against the
+/// SSRF guard before returning results to the agent.
+#[cfg(feature = "browser")]
 #[test]
-fn gap_610_ddg_ssrf_urls_not_validated() {
-    // The DDG search path requires the 'browser' feature and a live Chrome install.
-    // We document the gap here without exercising the live path.
-    //
-    // The structural gap is:
-    //   src/web.rs:566 — results.push(SearchResult { title, url, snippet })
-    //   NO validate_url(url) call before push.
-    //
-    // SECURITY: #610 — extracted result URLs bypass the SSRF guard. A compromised
-    // DDG HTML page could inject "http://169.254.169.254/..." into search results
-    // and the agent could subsequently call web_fetch on that URL. validate_url
-    // WOULD catch it at fetch time, but the URL surfaces in the result list first.
-    //
-    // When #610 lands: each extracted URL must pass validate_url before push;
-    // failing URLs are dropped with a debug log entry.
-    //
-    // This test is a documentation pin — it will need to be updated when #610 fixes the gap.
-    //
-    // Verify: format_search_results itself does not apply SSRF filtering.
-    // (It just formats whatever is passed in — the filter must happen in search_duckduckgo.)
-    let results_with_ssrf_url = vec![SearchResult {
-        title: "Metadata".to_string(),
-        // SECURITY: #610 — this URL would bypass SSRF guard in search_duckduckgo
-        url: "http://169.254.169.254/latest/meta-data/".to_string(),
-        snippet: "AWS metadata endpoint".to_string(),
-    }];
-    let output = format_search_results(&results_with_ssrf_url);
-    // PIN CURRENT BEHAVIOR: format_search_results does not filter by SSRF guard.
-    // The URL appears in the output. This is the vulnerability surface.
+fn duckduckgo_parser_drops_ssrf_urls_before_formatting() {
+    let html = r#"
+        <html>
+            <body>
+                <div class="result">
+                    <a class="result__a" href="http://169.254.169.254/latest/meta-data/">Metadata</a>
+                    <a class="result__snippet">AWS metadata endpoint</a>
+                </div>
+                <div class="result">
+                    <a class="result__a" href="//duckduckgo.com/l/?uddg=http%3A%2F%2F8.8.8.8%2Fpublic&rut=abc">Public Result</a>
+                    <a class="result__snippet">Public result snippet</a>
+                </div>
+            </body>
+        </html>
+    "#;
+
+    let results =
+        parse_duckduckgo_results_from_html(html, 10).expect("safe DDG result must remain");
+
+    assert_eq!(results.len(), 1, "unsafe DDG result must be dropped");
+    assert_eq!(results[0].title, "Public Result");
+    assert_eq!(results[0].url, "http://8.8.8.8/public");
+
+    let output = format_search_results(&results);
     assert!(
-        output.contains("169.254.169.254"),
-        "SECURITY GAP #610 CONFIRMED: SSRF URL appears in formatted results without validation"
+        !output.contains("169.254.169.254"),
+        "SSRF URL must not surface in formatted DDG results"
     );
 }
 
