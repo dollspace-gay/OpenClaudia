@@ -579,6 +579,7 @@ mod tests {
             .args(["clone", "--bare", "-q"])
             .arg(&work)
             .arg(&bare)
+            .current_dir(path)
             .output()
             .expect("spawn git clone --bare");
         assert!(
@@ -600,10 +601,12 @@ mod tests {
         recorded_url: &str,
     ) -> Result<(), PluginError> {
         let git = git_bin()?.to_path_buf();
+        let clone_cwd = dest.parent().unwrap_or_else(|| Path::new("."));
         let out = std::process::Command::new(&git)
             .args(["clone", "-q"])
             .arg(remote_url)
             .arg(dest)
+            .current_dir(clone_cwd)
             .output()
             .map_err(|e| PluginError::IoError(format!("clone spawn: {e}")))?;
         assert!(
