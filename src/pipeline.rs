@@ -3,6 +3,7 @@
 //! Extracted from the `cmd_chat` function in `main.rs` to enable reuse
 //! from both the rustyline REPL and the ratatui TUI.
 
+use crate::config::ThinkingConfig;
 use crate::memory::MemoryDb;
 use crate::permissions::PermissionManager;
 use crate::providers::{
@@ -167,6 +168,61 @@ pub fn build_openai_request(model: &str, messages: &[Value], effort_level: &str)
     req
 }
 
+fn build_chat_completion_request(
+    model: &str,
+    messages: &[Value],
+) -> Result<proxy::ChatCompletionRequest, String> {
+    let messages = messages
+        .iter()
+        .enumerate()
+        .map(|(index, msg)| {
+            serde_json::from_value::<proxy::ChatMessage>(msg.clone()).map_err(|e| {
+                format!("message at index {index} is not a valid chat message: {e}: {msg}")
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let tools = tools::get_all_tool_definitions(true)
+        .as_array()
+        .ok_or_else(|| "built-in tool definitions must be a JSON array".to_string())?
+        .clone();
+
+    Ok(proxy::ChatCompletionRequest {
+        model: model.to_string(),
+        messages,
+        temperature: None,
+        max_tokens: Some(crate::DEFAULT_MAX_TOKENS),
+        stream: Some(true),
+        tools: Some(tools),
+        tool_choice: None,
+        extra: std::collections::HashMap::new(),
+    })
+}
+
+fn thinking_config_for_pipeline_effort(effort_level: &str) -> Option<ThinkingConfig> {
+    matches!(effort_level, "high" | "max").then(|| ThinkingConfig {
+        enabled: true,
+        budget_tokens: None,
+        preserve_across_turns: false,
+        reasoning_effort: Some("high".to_string()),
+        adaptive: true,
+    })
+}
+
+fn build_adapter_request(
+    provider: &str,
+    model: &str,
+    messages: &[Value],
+    effort_level: &str,
+) -> Result<Value, String> {
+    let request = build_chat_completion_request(model, messages)?;
+    let adapter = get_adapter(provider).map_err(|e| e.to_string())?;
+    let body = thinking_config_for_pipeline_effort(effort_level).map_or_else(
+        || adapter.transform_request(&request),
+        |thinking| adapter.transform_request_with_thinking(&request, &thinking),
+    );
+    body.map_err(|e| e.to_string())
+}
+
 /// Build a Google Gemini-format request body.
 ///
 /// # Errors
@@ -257,12 +313,12 @@ pub fn build_request(
     // effort level, omitting provider effort hints.
     let resolved = crate::thinking::resolve_effort(effort_level, messages);
     let effective = resolved.as_deref().unwrap_or("medium");
-    match provider {
+    match provider.to_ascii_lowercase().as_str() {
         "anthropic" => {
             build_anthropic_request(model, messages, effective, claude_code_token, prompt_blocks)
         }
-        "google" => build_google_request(messages, effective),
-        _ => Ok(build_openai_request(model, messages, effective)),
+        "google" | "gemini" => build_google_request(messages, effective),
+        _ => build_adapter_request(provider, model, messages, effective),
     }
 }
 
@@ -2182,6 +2238,112 @@ mod tests {
         )
         .expect("anthropic request should build");
         assert_eq!(req["model"], "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn build_request_openai_high_effort_uses_reasoning_models_only() {
+        let messages = vec![serde_json::json!({"role": "user", "content": "hi"})];
+        let gpt5 = build_request("openai", "gpt-5.5", &messages, "high", None, None)
+            .expect("gpt-5 request should build");
+        assert_eq!(gpt5["reasoning_effort"], "high");
+
+        let gpt4 = build_request("openai", "gpt-4o", &messages, "high", None, None)
+            .expect("gpt-4o request should build");
+        assert!(
+            gpt4.get("reasoning_effort").is_none(),
+            "non-reasoning OpenAI models must not receive reasoning_effort: {gpt4}"
+        );
+    }
+
+    #[test]
+    fn build_request_provider_specific_thinking_fields_are_used() {
+        let messages = vec![serde_json::json!({"role": "user", "content": "hi"})];
+
+        let deepseek = build_request("deepseek", "deepseek-v4-pro", &messages, "high", None, None)
+            .expect("deepseek request should build");
+        assert_eq!(deepseek["enable_thinking"], true);
+        assert!(
+            deepseek.get("reasoning_effort").is_none(),
+            "DeepSeek must not receive OpenAI reasoning_effort: {deepseek}"
+        );
+
+        let qwen = build_request("qwen", "qwen3.7-plus", &messages, "high", None, None)
+            .expect("qwen request should build");
+        assert_eq!(qwen["enable_thinking"], true);
+        assert!(
+            qwen.get("reasoning_effort").is_none(),
+            "Qwen must not receive OpenAI reasoning_effort: {qwen}"
+        );
+
+        let zai = build_request("zai", "glm-5.2", &messages, "high", None, None)
+            .expect("zai request should build");
+        assert_eq!(zai["thinking"]["type"], "enabled");
+        assert!(
+            zai.get("reasoning_effort").is_none(),
+            "Z.AI must not receive OpenAI reasoning_effort: {zai}"
+        );
+    }
+
+    #[test]
+    fn build_request_omits_unsupported_generic_thinking_fields() {
+        let messages = vec![serde_json::json!({"role": "user", "content": "hi"})];
+        for (provider, model) in [
+            ("kimi", "kimi-k2.7-code"),
+            ("moonshot", "kimi-k2.7-code"),
+            ("minimax", "MiniMax-M3"),
+        ] {
+            let body = build_request(provider, model, &messages, "high", None, None)
+                .expect("request should build");
+            for field in [
+                "reasoning_effort",
+                "enable_thinking",
+                "thinking",
+                "clear_thinking",
+            ] {
+                assert!(
+                    body.get(field).is_none(),
+                    "{provider} must not receive unsupported field {field}: {body}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn build_request_routes_provider_aliases_to_native_shapes() {
+        let messages = vec![serde_json::json!({"role": "user", "content": "hi"})];
+
+        let gemini = build_request(
+            "gemini",
+            "gemini-3.5-flash",
+            &messages,
+            "medium",
+            None,
+            None,
+        )
+        .expect("gemini alias request should build");
+        assert!(gemini.get("contents").is_some());
+        assert!(
+            gemini.get("messages").is_none(),
+            "gemini alias must use native Gemini request shape: {gemini}"
+        );
+
+        let ollama = build_request("ollama", "llama3", &messages, "medium", None, None)
+            .expect("ollama request should build");
+        assert_eq!(ollama["stream"], true);
+        assert!(ollama["options"]["num_predict"].is_number());
+        assert!(
+            ollama.get("max_tokens").is_none(),
+            "Ollama must use native options.num_predict, not OpenAI max_tokens: {ollama}"
+        );
+    }
+
+    #[test]
+    fn build_request_errors_on_unknown_provider() {
+        let messages = vec![serde_json::json!({"role": "user", "content": "hi"})];
+        let err = build_request("anthrpic", "gpt-5.5", &messages, "medium", None, None)
+            .expect_err("unknown provider must not silently fall back to OpenAI");
+        assert!(err.contains("Unknown provider"), "{err}");
+        assert!(err.contains("anthrpic"), "{err}");
     }
 
     #[test]

@@ -13,12 +13,8 @@
 mod cli;
 
 use openclaudia::{
-    config, guardrails, memory,
-    permissions::PermissionManager,
-    plugins, prompt,
-    proxy::normalize_base_url,
-    tools::{self},
-    tui, vdd,
+    config, guardrails, memory, permissions::PermissionManager, plugins, prompt,
+    proxy::normalize_base_url, tui, vdd,
 };
 
 use clap::{builder::PossibleValuesParser, Parser, Subcommand};
@@ -1160,79 +1156,11 @@ async fn run_vdd_review(
     }
 }
 
-/// Build the Anthropic-direct request body. Crosslink #918: extracted so
-/// `build_chat_request_body` no longer carries the full cyclomatic load.
-fn build_chat_body_anthropic(
-    messages: &[serde_json::Value],
-    model: &str,
-    prompt_blocks: &openclaudia::prompt::SystemPromptBlocks,
-) -> Result<serde_json::Value, String> {
-    use openclaudia::providers::{
-        convert_messages_to_anthropic_checked, convert_tool_definitions_to_anthropic_checked,
-    };
-    let anthropic_messages =
-        convert_messages_to_anthropic_checked(messages).map_err(|e| e.to_string())?;
-    let openai_tools = tools::get_all_tool_definitions(true);
-    let anthropic_tools =
-        convert_tool_definitions_to_anthropic_checked(&openai_tools).map_err(|e| e.to_string())?;
-
-    let mut req = serde_json::json!({
-        "model": model,
-        "messages": anthropic_messages,
-        "max_tokens": openclaudia::DEFAULT_MAX_TOKENS,
-        "stream": true,
-        "tools": anthropic_tools
-    });
-    // Multi-block system prompt: stable prefix cached, dynamic suffix reprocessed.
-    req["system"] = openclaudia::providers::build_system_blocks(prompt_blocks);
-    Ok(req)
-}
-
-/// Build the Gemini request body.
-fn build_chat_body_google(
-    messages: &[serde_json::Value],
-    effort_level: &str,
-) -> Result<serde_json::Value, String> {
-    openclaudia::pipeline::build_google_request(messages, effort_level)
-}
-
-/// Build the generic OpenAI-compatible request body.
-fn build_chat_body_openai_like(
-    messages: &[serde_json::Value],
-    model: &str,
-    effort_level: &str,
-) -> serde_json::Value {
-    openclaudia::pipeline::build_openai_request(model, messages, effort_level)
-}
-
-/// Apply Anthropic-specific `effort_level` mapping in place.
-fn apply_anthropic_effort_level(request_body: &mut serde_json::Value, effort_level: &str) {
-    match effort_level {
-        "high" | "max" => {
-            if let Some(budget) =
-                openclaudia::thinking::anthropic_thinking_budget(Some(effort_level))
-            {
-                request_body["thinking"] =
-                    serde_json::json!({"type": "enabled", "budget_tokens": budget});
-                request_body["max_tokens"] = serde_json::json!(40_000);
-            }
-        }
-        "low" => {
-            request_body["max_tokens"] = serde_json::json!(2048);
-        }
-        _ => {} // medium/auto = default
-    }
-}
-
 /// Build a per-turn chat request body for the configured target provider.
 ///
-/// Crosslink #918: the original 100-line function had three deeply nested
-/// provider branches plus two cross-cutting mutations and a cyclomatic
-/// complexity > 15. It has been decomposed into per-provider helpers
-/// (`build_chat_body_{anthropic,google,openai_like}`) plus
-/// `apply_anthropic_effort_level` and the cross-cutting OAuth prefix
-/// injection. Each helper handles a single provider's shape; this
-/// function is now a thin orchestrator.
+/// Kept as a private wrapper for the legacy REPL module; the actual request
+/// construction lives in [`openclaudia::pipeline::build_request`] so REPL and
+/// TUI provider behavior cannot drift.
 fn build_chat_request_body(
     target: &str,
     messages: &[serde_json::Value],
@@ -1241,23 +1169,14 @@ fn build_chat_request_body(
     effort_level: &str,
     claude_code_token: Option<&str>,
 ) -> Result<serde_json::Value, String> {
-    let mut request_body = match target {
-        "anthropic" => build_chat_body_anthropic(messages, model, prompt_blocks)?,
-        "google" => build_chat_body_google(messages, effort_level)?,
-        _ => build_chat_body_openai_like(messages, model, effort_level),
-    };
-
-    // Inject Claude Code OAuth system prompt when using OAuth auth.
-    if claude_code_token.is_some() {
-        openclaudia::claude_credentials::inject_system_prompt(&mut request_body);
-    }
-
-    // Effort-level thinking parameters are Anthropic-only today.
-    if target == "anthropic" {
-        apply_anthropic_effort_level(&mut request_body, effort_level);
-    }
-
-    Ok(request_body)
+    openclaudia::pipeline::build_request(
+        target,
+        model,
+        messages,
+        effort_level,
+        claude_code_token,
+        Some(prompt_blocks),
+    )
 }
 
 /// Build the per-turn API endpoint URL and auth headers.
