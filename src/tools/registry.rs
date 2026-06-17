@@ -624,6 +624,10 @@ impl ToolHandler for WebFetchHandler {
                         "url": {
                             "type": "string",
                             "description": "The URL to fetch (must be a valid http:// or https:// URL)"
+                        },
+                        "prompt": {
+                            "type": "string",
+                            "description": "Optional question to answer from the fetched page. Requires web_fetch.distillation_enabled=true; otherwise raw markdown is returned only when prompt is absent."
                         }
                     },
                     "required": ["url"]
@@ -631,8 +635,8 @@ impl ToolHandler for WebFetchHandler {
             }
         })
     }
-    fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
-        web::execute_web_fetch(args)
+    fn execute(&self, args: &HashMap<String, Value>, ctx: &mut ToolContext<'_>) -> (String, bool) {
+        web::execute_web_fetch_with_config(args, ctx.app_config)
     }
 }
 

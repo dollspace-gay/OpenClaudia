@@ -106,7 +106,7 @@ fn build_shared_http_client() -> Result<Client, String> {
         .map_err(|e| format!("failed to build shared web HTTP client: {e}"))
 }
 
-fn shared_http_client() -> Result<&'static Client, String> {
+pub(crate) fn shared_http_client() -> Result<&'static Client, String> {
     SHARED_HTTP_CLIENT.as_ref().map_err(Clone::clone)
 }
 

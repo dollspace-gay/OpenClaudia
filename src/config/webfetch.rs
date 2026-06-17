@@ -4,9 +4,8 @@
 //! CC's `web_fetch` accepts a `prompt` field alongside `url`; the fetched
 //! markdown is fed to a small distillation model (Haiku by default) and
 //! the model's answer becomes the returned `result`. This module owns
-//! the schema half of that contract; the runtime hook lives in
-//! `tools/web.rs` and is wired in once the secondary-model dispatch
-//! lands (tracked in the issue body for #608).
+//! the schema half of that contract; `tools/web.rs` owns the runtime
+//! fetch + secondary-model dispatch.
 //!
 //! Schema fields:
 //! * `distillation_enabled` — opt-in; when `false` the tool returns raw

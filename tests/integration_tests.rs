@@ -1287,7 +1287,6 @@ mod web_tools {
             "web_fetch",
             &json!({
                 "url": "http://127.0.0.1:1/html",
-                "prompt": "Extract the main heading",
             }),
         );
 

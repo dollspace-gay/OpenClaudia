@@ -13,12 +13,12 @@
 //! ### Gap issues pinned (no fixes, only documentation)
 //!
 //! - #603  Preapproved domain allowlist missing — `gap_603_no_preapproved_allowlist`
-//! - #608  No secondary model distillation — `gap_608_no_prompt_parameter`
 //!
 //! ### Fixed regressions pinned
 //!
 //! - #610  DDG result URLs pass SSRF validation — `duckduckgo_parser_drops_ssrf_urls_before_formatting`
 //! - #605  Search output includes citation reminder — `web_search_results_include_citation_reminder`
+//! - #608  `web_fetch` schema exposes prompt distillation — `web_fetch_schema_exposes_prompt_parameter`
 //!
 //! ### Browser tests (headless Chrome)
 //!
@@ -31,6 +31,7 @@
 #[cfg(feature = "browser")]
 use openclaudia::web::parse_duckduckgo_results_from_html;
 use openclaudia::web::{fetch_url, fetch_with_browser, format_search_results, SearchResult};
+use serde_json::json;
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -624,30 +625,23 @@ fn web_search_results_include_citation_reminder() {
     );
 }
 
-/// GAP #608 — No secondary model distillation in `web_fetch`.
-///
-/// CC: `web_fetch(url, prompt)` — result is Haiku-distilled answer to `prompt`.
-/// OC: `web_fetch(url)` — returns raw Jina Reader markdown; no `prompt` param.
+/// Regression #608 — `web_fetch` schema exposes optional prompt distillation.
 #[test]
-fn gap_608_no_prompt_parameter() {
-    use openclaudia::tools::{FunctionCall, ToolCall};
+fn web_fetch_schema_exposes_prompt_parameter() {
+    use openclaudia::tools::registry::registry;
 
-    // Sending a `prompt` field — OC silently ignores it.
-    // CC would use it to distill the page content via a secondary model.
-    let call = ToolCall {
-        id: "gap608".to_string(),
-        call_type: "function".to_string(),
-        function: FunctionCall {
-            name: "web_fetch".to_string(),
-            arguments: r#"{"url": "https://example.com/", "prompt": "What is this about?"}"#
-                .to_string(),
-        },
-    };
-    // We do not make a live call — just confirm the tool does not panic on an
-    // unexpected extra field. OC silently ignores unknown fields (HashMap-based args).
-    // The gap is the absence of distillation, not a crash.
-    let _ = call;
-    // PIN: prompt parameter is silently ignored. Tracked as #608.
+    let handler = registry().get("web_fetch").expect("web_fetch registered");
+    let definition = handler.definition();
+
+    assert_eq!(
+        definition["function"]["parameters"]["properties"]["prompt"]["type"],
+        "string"
+    );
+    assert_eq!(
+        definition["function"]["parameters"]["required"],
+        json!(["url"]),
+        "prompt must remain optional so existing raw-fetch calls keep working"
+    );
 }
 
 /// Regression #610 — `DuckDuckGo` scraper validates extracted URLs against the

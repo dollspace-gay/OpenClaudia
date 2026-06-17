@@ -1,6 +1,12 @@
 use crate::tools::args::ToolArgs as _;
 use crate::tools::safe_truncate;
 use crate::web::{self, WebConfig};
+use crate::{
+    config::{is_local_provider_name, AppConfig, WebFetchConfig},
+    pipeline,
+    providers::{default_model_for_target, get_adapter, ProviderAdapter},
+    proxy::{ChatCompletionRequest, ChatMessage, MessageContent},
+};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -13,7 +19,7 @@ use tokio::runtime::Runtime;
 /// from sync caller contexts (crosslink #368).
 ///
 /// The previous implementation invoked `tokio::runtime::Runtime::new()`
-/// on every `execute_web_fetch` / `execute_web_search` call when no
+/// on every web fetch / `execute_web_search` call when no
 /// runtime was already current. Each construction spawned a fresh
 /// multi-thread worker pool (default = `num_cpus`) and tore it back
 /// down at end of block — tens of milliseconds per call on a hot path,
@@ -37,6 +43,9 @@ const WEB_TOOL_DISPATCH_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[cfg(feature = "browser")]
 const WEB_BROWSER_TOOL_TIMEOUT: Duration = Duration::from_secs(45);
+
+const WEB_FETCH_DISTILLATION_TIMEOUT: Duration = Duration::from_mins(1);
+const WEB_FETCH_DISTILLATION_MAX_TOKENS: u32 = 1024;
 
 fn build_shared_runtime() -> Result<Runtime, String> {
     tokio::runtime::Builder::new_multi_thread()
@@ -109,7 +118,7 @@ where
 
 /// Hard cap on the agent-facing fetched-page output string, in bytes.
 ///
-/// Both [`execute_web_fetch`] and [`execute_web_browser`] truncate to this
+/// Both web fetch and [`execute_web_browser`] truncate to this
 /// length and append a `(content truncated, N total chars)` marker.
 /// Centralised so the two fetch entry points can never drift (crosslink #807).
 pub const MAX_FETCH_OUTPUT_BYTES: usize = 50_000;
@@ -129,7 +138,7 @@ pub const MAX_FETCH_OUTPUT_BYTES: usize = 50_000;
 /// followed by a `...\n\n(content truncated, N total chars)` tail when the
 /// rendered output exceeds [`MAX_FETCH_OUTPUT_BYTES`].
 ///
-/// Extracted from `execute_web_fetch` and `execute_web_browser`, which
+/// Extracted from web fetch and `execute_web_browser`, which
 /// previously open-coded identical assembly + the `50000` magic constant
 /// (crosslink #807). Both call sites now route through this single function
 /// so a tweak to the format or the cap applies uniformly.
@@ -161,7 +170,14 @@ pub fn format_fetch_output(title: Option<&str>, url: &str, content: &str) -> Str
 /// at the WAF edge.
 /// HTML responses are converted to Markdown locally via `htmd`;
 /// non-HTML bodies (JSON, plain text, RSS, …) are returned verbatim.
-pub fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool) {
+///
+/// When `prompt` is supplied and `app_config.web_fetch.distillation_enabled`
+/// is true, the fetched markdown is sent to the configured secondary model and
+/// the model's answer is returned instead of raw markdown.
+pub fn execute_web_fetch_with_config(
+    args: &HashMap<String, Value>,
+    app_config: Option<&AppConfig>,
+) -> (String, bool) {
     // crosslink #675: typed accessor.
     let url = match args.arg_str("url") {
         Ok(u) => u,
@@ -176,6 +192,29 @@ pub fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool) {
         );
     }
 
+    let prompt = match optional_web_fetch_prompt(args) {
+        Ok(prompt) => prompt,
+        Err(e) => return (e, true),
+    };
+    if let Some(_prompt) = prompt {
+        let Some(config) = app_config else {
+            return (
+                "web_fetch prompt distillation requires application configuration; call without \
+                 `prompt` to fetch raw markdown."
+                    .to_string(),
+                true,
+            );
+        };
+        if !config.web_fetch.distillation_enabled {
+            return (
+                "web_fetch prompt distillation is disabled. Set \
+                 web_fetch.distillation_enabled=true or omit `prompt` to fetch raw markdown."
+                    .to_string(),
+                true,
+            );
+        }
+    }
+
     // Drive the async fetch on `SHARED_RUNTIME` via `run_blocking`.
     // The spawned future is `'static` — capture an owned `String` so
     // the future doesn't borrow `url` across thread boundaries.
@@ -186,15 +225,206 @@ pub fn execute_web_fetch(args: &HashMap<String, Value>) -> (String, bool) {
     };
 
     match result {
-        Ok(fetch_result) => (
-            format_fetch_output(
-                fetch_result.title.as_deref(),
-                &fetch_result.url,
-                &fetch_result.content,
-            ),
-            false,
-        ),
+        Ok(fetch_result) => {
+            let Some(prompt) = prompt else {
+                return (
+                    format_fetch_output(
+                        fetch_result.title.as_deref(),
+                        &fetch_result.url,
+                        &fetch_result.content,
+                    ),
+                    false,
+                );
+            };
+            let config = app_config.expect("prompt config validated before fetch");
+            match distill_fetch_result(prompt, &fetch_result.url, &fetch_result.content, config) {
+                Ok(answer) => (answer, false),
+                Err(e) => (format!("Failed to distill fetched page: {e}"), true),
+            }
+        }
         Err(e) => (format!("Failed to fetch URL: {e}"), true),
+    }
+}
+
+fn optional_web_fetch_prompt(args: &HashMap<String, Value>) -> Result<Option<&str>, String> {
+    match args.get("prompt") {
+        None => Ok(None),
+        Some(Value::String(prompt)) => {
+            let prompt = prompt.trim();
+            if prompt.is_empty() {
+                Err("web_fetch prompt must not be empty".to_string())
+            } else {
+                Ok(Some(prompt))
+            }
+        }
+        Some(_) => Err("Missing 'prompt' argument".to_string()),
+    }
+}
+
+struct DistillationCall {
+    provider: String,
+    endpoint: String,
+    headers: Vec<(String, String)>,
+    body: Value,
+    adapter: &'static dyn ProviderAdapter,
+}
+
+fn distill_fetch_result(
+    prompt: &str,
+    url: &str,
+    markdown: &str,
+    app_config: &AppConfig,
+) -> Result<String, String> {
+    let web_config = &app_config.web_fetch;
+    let markdown = web_config.truncate_for_distillation(markdown).to_string();
+    let call = build_distillation_call(app_config, web_config, prompt, url, &markdown)?;
+
+    run_blocking_with_timeout(
+        async move { execute_distillation_call(call).await },
+        WEB_FETCH_DISTILLATION_TIMEOUT,
+    )
+    .map_err(|e| format!("distillation dispatch failed: {e}"))?
+}
+
+fn build_distillation_call(
+    app_config: &AppConfig,
+    web_config: &WebFetchConfig,
+    prompt: &str,
+    url: &str,
+    markdown: &str,
+) -> Result<DistillationCall, String> {
+    let provider_name = web_config
+        .distillation_provider
+        .as_deref()
+        .unwrap_or(app_config.proxy.target.as_str());
+    let provider = app_config
+        .get_provider(provider_name)
+        .ok_or_else(|| format!("distillation provider '{provider_name}' is not configured"))?;
+    let model = web_config
+        .distillation_model
+        .as_deref()
+        .or(provider.model.as_deref())
+        .unwrap_or_else(|| default_distillation_model_for_provider(provider_name));
+    let adapter = get_adapter(provider_name).map_err(|e| e.to_string())?;
+    let endpoint = pipeline::resolve_endpoint(provider_name, model, &provider.base_url, None)
+        .map_err(|e| e.to_string())?;
+    let extra_headers: Vec<(String, String)> = provider
+        .headers
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let headers = pipeline::resolve_headers(
+        provider_name,
+        provider.api_key.as_ref(),
+        None,
+        &extra_headers,
+    )
+    .map_err(|e| e.to_string())?;
+    if provider.api_key.is_none()
+        && extra_headers.is_empty()
+        && !is_local_provider_name(provider_name)
+    {
+        return Err(format!(
+            "distillation provider '{provider_name}' has no API key or custom auth headers"
+        ));
+    }
+
+    let request = ChatCompletionRequest {
+        model: model.to_string(),
+        messages: vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: MessageContent::Text(
+                    "Answer the user's question using only the fetched page content. If the page \
+                     does not contain the answer, say so briefly. Do not browse or call tools."
+                        .to_string(),
+                ),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                extra: HashMap::new(),
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: MessageContent::Text(format!(
+                    "URL: {url}\n\nQuestion:\n{prompt}\n\nFetched markdown:\n<page>\n{markdown}\n</page>"
+                )),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                extra: HashMap::new(),
+            },
+        ],
+        temperature: Some(0.0),
+        max_tokens: Some(WEB_FETCH_DISTILLATION_MAX_TOKENS),
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        extra: HashMap::new(),
+    };
+    let body = adapter
+        .transform_request(&request)
+        .map_err(|e| format!("failed to build distillation request: {e}"))?;
+
+    Ok(DistillationCall {
+        provider: provider_name.to_string(),
+        endpoint,
+        headers,
+        body,
+        adapter,
+    })
+}
+
+async fn execute_distillation_call(call: DistillationCall) -> Result<String, String> {
+    let client = web::shared_http_client()?;
+    let mut request = client
+        .post(&call.endpoint)
+        .timeout(WEB_FETCH_DISTILLATION_TIMEOUT)
+        .json(&call.body);
+    for (name, value) in &call.headers {
+        request = request.header(name, value);
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("distillation request failed: {e}"))?;
+    let status = response.status();
+    let body = web::read_bounded_text(response, web::MAX_WEB_FETCH_BYTES, &call.endpoint).await?;
+    if !status.is_success() {
+        let body = safe_truncate(&body, 1_000);
+        return Err(format!(
+            "distillation provider '{}' returned HTTP {status}: {body}",
+            call.provider
+        ));
+    }
+
+    let json = serde_json::from_str::<Value>(&body)
+        .map_err(|e| format!("distillation provider returned invalid JSON: {e}"))?;
+    let normalized = call
+        .adapter
+        .transform_response(json.clone(), false)
+        .map_err(|e| format!("distillation provider returned invalid response: {e}"))?;
+    let text = call
+        .adapter
+        .extract_response_text(&json)
+        .or_else(|| call.adapter.extract_response_text(&normalized))
+        .unwrap_or_default();
+    if text.trim().is_empty() {
+        return Err("distillation provider returned an empty answer".to_string());
+    }
+    Ok(text)
+}
+
+fn default_distillation_model_for_provider(provider: &str) -> &'static str {
+    match provider.to_ascii_lowercase().as_str() {
+        "anthropic" => "claude-haiku-4-5",
+        "openai" | "local" | "lmstudio" | "localai" | "text-generation-webui" => "gpt-5.4-mini",
+        "google" | "gemini" => "gemini-3.5-flash",
+        "deepseek" => "deepseek-v4-flash",
+        "qwen" | "alibaba" => "qwen3.6-flash",
+        "zai" | "glm" | "zhipu" => "glm-4.7-flash",
+        other => default_model_for_target(other),
     }
 }
 
@@ -360,9 +590,59 @@ pub fn execute_web_browser(args: &HashMap<String, Value>) -> (String, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{
+        GuardrailsConfig, HooksConfig, KeybindingsConfig, MemoryConfig, PermissionsConfig,
+        ProviderConfig, ProxyConfig, SessionConfig, ThinkingConfig, VddConfig,
+    };
+    use crate::providers::ApiKey;
+    use crate::services::policy::EnterprisePolicy;
+    use serde_json::json;
     // `Handle` is only needed by the runtime-reuse test below; the
     // module-level `run_blocking` no longer touches it.
     use tokio::runtime::Handle;
+    use wiremock::matchers::{body_string_contains, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn distillation_test_config(base_url: &str) -> AppConfig {
+        let mut providers = HashMap::new();
+        providers.insert(
+            "openai".to_string(),
+            ProviderConfig {
+                api_key: Some(
+                    ApiKey::try_from_string("sk-test-distillation".to_string())
+                        .expect("valid test api key"),
+                ),
+                base_url: base_url.to_string(),
+                model: Some("gpt-provider-configured".to_string()),
+                headers: HashMap::new(),
+                thinking: ThinkingConfig::default(),
+            },
+        );
+
+        AppConfig {
+            proxy: ProxyConfig {
+                target: "openai".to_string(),
+                ..ProxyConfig::default()
+            },
+            providers,
+            hooks: HooksConfig::default(),
+            session: SessionConfig::default(),
+            keybindings: KeybindingsConfig::default(),
+            vdd: VddConfig::default(),
+            guardrails: GuardrailsConfig::default(),
+            permissions: PermissionsConfig::default(),
+            memory: MemoryConfig::default(),
+            web_fetch: WebFetchConfig {
+                distillation_enabled: true,
+                max_distillation_bytes: 64,
+                distillation_provider: Some("openai".to_string()),
+                distillation_model: Some("gpt-distill-test".to_string()),
+                ..WebFetchConfig::default()
+            },
+            policy: EnterprisePolicy::default(),
+            managed_settings_path: None,
+        }
+    }
 
     #[test]
     fn host_of_handles_common_shapes() {
@@ -497,7 +777,7 @@ mod tests {
 
     /// Forensic test for crosslink #368.
     ///
-    /// Validates `execute_web_fetch`'s synchronous wrapper still returns
+    /// Validates the web fetch synchronous wrapper still returns
     /// a well-formed error string when given an invalid URL — covering
     /// the argument-validation and runtime-dispatch path without
     /// requiring outbound network I/O. The point is to prove the
@@ -509,10 +789,121 @@ mod tests {
         // without making a network call.
         args.insert("url".to_string(), Value::String("not-a-url".into()));
         for _ in 0..10 {
-            let (msg, is_err) = execute_web_fetch(&args);
+            let (msg, is_err) = execute_web_fetch_with_config(&args, None);
             assert!(is_err);
             assert!(msg.contains("http://") && msg.contains("https://"));
         }
+    }
+
+    #[test]
+    fn web_fetch_prompt_without_config_errors_before_network() {
+        let mut args = HashMap::new();
+        args.insert(
+            "url".to_string(),
+            Value::String("https://example.invalid/".to_string()),
+        );
+        args.insert("prompt".to_string(), Value::String("Summarize".to_string()));
+
+        let (msg, is_err) = execute_web_fetch_with_config(&args, None);
+
+        assert!(is_err);
+        assert!(
+            msg.contains("application configuration"),
+            "prompt without app config must fail before network fetch; got {msg:?}"
+        );
+    }
+
+    #[test]
+    fn web_fetch_prompt_with_disabled_distillation_errors_before_network() {
+        let mut args = HashMap::new();
+        args.insert(
+            "url".to_string(),
+            Value::String("https://example.invalid/".to_string()),
+        );
+        args.insert("prompt".to_string(), Value::String("Summarize".to_string()));
+        let mut config = distillation_test_config("https://api.example.invalid");
+        config.web_fetch.distillation_enabled = false;
+
+        let (msg, is_err) = execute_web_fetch_with_config(&args, Some(&config));
+
+        assert!(is_err);
+        assert!(
+            msg.contains("distillation is disabled"),
+            "disabled distillation must fail before network fetch; got {msg:?}"
+        );
+    }
+
+    #[test]
+    fn web_fetch_prompt_rejects_empty_string() {
+        let mut args = HashMap::new();
+        args.insert(
+            "url".to_string(),
+            Value::String("https://example.invalid/".to_string()),
+        );
+        args.insert("prompt".to_string(), Value::String("   ".to_string()));
+
+        let (msg, is_err) = execute_web_fetch_with_config(&args, None);
+
+        assert!(is_err);
+        assert!(msg.contains("prompt must not be empty"));
+    }
+
+    #[test]
+    fn distillation_call_uses_provider_model_when_distillation_model_absent() {
+        let mut config = distillation_test_config("https://api.example.invalid");
+        config.web_fetch.distillation_model = None;
+
+        let call = build_distillation_call(
+            &config,
+            &config.web_fetch,
+            "What shipped?",
+            "https://docs.example/openclaudia",
+            "OpenClaudia ships web_fetch prompt distillation.",
+        )
+        .expect("distillation call should build");
+
+        assert_eq!(call.body["model"], "gpt-provider-configured");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn distill_fetch_result_posts_to_provider_and_returns_answer() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(body_string_contains("gpt-distill-test"))
+            .and(body_string_contains("Which capability shipped?"))
+            .and(body_string_contains("OpenClaudia ships web_fetch"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "chatcmpl-webfetch-distill",
+                "object": "chat.completion",
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "web_fetch prompt distillation shipped."
+                    },
+                    "finish_reason": "stop"
+                }],
+                "usage": {
+                    "prompt_tokens": 8,
+                    "completion_tokens": 6,
+                    "total_tokens": 14
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = distillation_test_config(&server.uri());
+        let answer = distill_fetch_result(
+            "Which capability shipped?",
+            "https://docs.example/openclaudia",
+            "OpenClaudia ships web_fetch prompt distillation.",
+            &config,
+        )
+        .expect("mock distillation provider should answer");
+
+        assert_eq!(answer, "web_fetch prompt distillation shipped.");
     }
 
     // ── crosslink #807: shared format_fetch_output for both fetch paths ──
