@@ -584,6 +584,10 @@ impl ChatRepl {
                 self.handle_history_action(false);
                 SlashOutcome::Continue
             }
+            SlashCommandResult::Rewind(turns) => {
+                self.handle_rewind(turns);
+                SlashOutcome::Continue
+            }
             SlashCommandResult::Rename(new_title) => {
                 self.handle_rename(&new_title);
                 SlashOutcome::Continue
@@ -697,6 +701,23 @@ impl ChatRepl {
             }
         } else {
             println!("\nNothing to {}.\n", if is_undo { "undo" } else { "redo" });
+        }
+    }
+
+    /// Rewind multiple conversation turns using the same undo stack as `/undo`.
+    fn handle_rewind(&mut self, turns: usize) {
+        let rewound = rewind_chat_session(&mut self.chat_session, turns);
+
+        if rewound > 0 {
+            println!(
+                "\nRewound {rewound} turn(s). {} messages remaining.\n",
+                self.chat_session.messages.len()
+            );
+            if let Err(e) = save_chat_session(&self.chat_session) {
+                tracing::warn!("Failed to save session: {}", e);
+            }
+        } else {
+            println!("\nNothing to rewind.\n");
         }
     }
 
@@ -3117,6 +3138,18 @@ fn parse_tool_args(func: &tools::FunctionCall) -> Result<serde_json::Value, Stri
     Ok(value)
 }
 
+fn rewind_chat_session(session: &mut ChatSession, turns: usize) -> usize {
+    let mut rewound = 0;
+    for _ in 0..turns {
+        if session.undo() {
+            rewound += 1;
+        } else {
+            break;
+        }
+    }
+    rewound
+}
+
 const fn json_value_type_name(value: &serde_json::Value) -> &'static str {
     match value {
         serde_json::Value::Null => "null",
@@ -3432,6 +3465,49 @@ providers: {}
         let parsed = parse_tool_args(&func).expect("object JSON should parse");
 
         assert_eq!(parsed["path"], "src/main.rs");
+    }
+
+    fn chat_session_with_turns(turns: usize) -> ChatSession {
+        let mut session = ChatSession::new(
+            "claude-sonnet",
+            "anthropic",
+            openclaudia::modes::BehaviorMode::default(),
+        );
+        for i in 0..turns {
+            session.messages.push(serde_json::json!({
+                "role": "user",
+                "content": format!("user {i}")
+            }));
+            session.messages.push(serde_json::json!({
+                "role": "assistant",
+                "content": format!("assistant {i}")
+            }));
+        }
+        session
+    }
+
+    #[test]
+    fn rewind_chat_session_rewinds_requested_turns() {
+        let mut session = chat_session_with_turns(3);
+
+        let rewound = rewind_chat_session(&mut session, 2);
+
+        assert_eq!(rewound, 2);
+        assert_eq!(session.messages.len(), 2);
+        assert_eq!(session.undo_stack.len(), 2);
+        assert_eq!(session.messages[0]["content"], "user 0");
+        assert_eq!(session.messages[1]["content"], "assistant 0");
+    }
+
+    #[test]
+    fn rewind_chat_session_stops_when_history_is_exhausted() {
+        let mut session = chat_session_with_turns(1);
+
+        let rewound = rewind_chat_session(&mut session, 5);
+
+        assert_eq!(rewound, 1);
+        assert!(session.messages.is_empty());
+        assert_eq!(session.undo_stack.len(), 1);
     }
 
     #[test]

@@ -142,15 +142,13 @@ const SKILLS: &[SlashCommand] = &[
     ),
 ];
 
-/// Time-travel and session-shape commands tracked as CC-parity stubs
-/// (crosslink #653, #657, #659, #662). Implementations may begin as
-/// surface-only "tracked but not implemented" responses while the
-/// underlying overlays / checkpoint storage land; see each issue.
+/// Time-travel and session-shape commands (crosslink #653, #657, #659,
+/// #662). `/rewind`/`/checkpoint` are implemented in the legacy REPL;
+/// the remaining entries may begin as surface-only "tracked but not
+/// implemented" responses while their storage/overlay support lands.
 const TIME_TRAVEL: &[SlashCommand] = &[
-    cmd(
-        "/rewind",
-        "Restore an earlier conversation/code state (interactive selector)",
-    ),
+    cmd("/rewind", "Show turns or rewind the last N turns"),
+    cmd("/checkpoint", "Alias for /rewind"),
     cmd(
         "/teleport",
         "Jump to a named checkpoint (stub; CC parity tracking)",

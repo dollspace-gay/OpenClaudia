@@ -90,7 +90,8 @@ use super::slash::{
     handle_mode_command, slash_add_dir, slash_agents, slash_branch, slash_btw, slash_commit,
     slash_commit_push_pr, slash_config, slash_context, slash_continue, slash_copy, slash_cost,
     slash_debug, slash_doctor, slash_effort, slash_find, slash_help, slash_history, slash_init,
-    slash_login, slash_model, slash_plugin, slash_sessions, slash_skill, slash_version,
+    slash_login, slash_model, slash_plugin, slash_rewind, slash_sessions, slash_skill,
+    slash_version,
 };
 use crate::cli::display::theme::handle_theme_command;
 
@@ -272,6 +273,21 @@ impl CommandHandler for RedoCommand {
     }
     fn handle(&self, _ctx: &mut SlashCtx<'_>, _args: &str) -> SlashCommandResult {
         SlashCommandResult::Redo
+    }
+}
+
+// ── /rewind, /checkpoint ────────────────────────────────────────────────────
+
+struct RewindCommand;
+impl CommandHandler for RewindCommand {
+    fn name(&self) -> &'static str {
+        "rewind"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["checkpoint"]
+    }
+    fn handle(&self, ctx: &mut SlashCtx<'_>, args: &str) -> SlashCommandResult {
+        slash_rewind(args, ctx.messages)
     }
 }
 
@@ -724,6 +740,7 @@ static HANDLERS: &[&dyn CommandHandler] = &[
     &EditorCommand,
     &UndoCommand,
     &RedoCommand,
+    &RewindCommand,
     &CopyCommand,
     &InitCommand,
     &ReviewCommand,

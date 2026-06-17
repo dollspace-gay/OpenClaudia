@@ -64,6 +64,8 @@ pub enum SlashCommandResult {
     Undo,
     /// Redo last undone message pair
     Redo,
+    /// Rewind the last N message pairs
+    Rewind(usize),
     /// Switch to a different model
     SwitchModel(String),
     /// Show status information
@@ -926,6 +928,47 @@ pub fn slash_history(messages: &[serde_json::Value]) -> SlashCommandResult {
         println!();
     }
     SlashCommandResult::Handled
+}
+
+pub fn slash_rewind(args: &str, messages: &[serde_json::Value]) -> SlashCommandResult {
+    let trimmed = args.trim();
+    if trimmed.is_empty() {
+        use std::fmt::Write as _;
+
+        let mut turn_list = String::new();
+        let mut turn_num = 0;
+        for msg in messages {
+            if msg.get("role").and_then(|r| r.as_str()) == Some("user") {
+                turn_num += 1;
+                let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                let preview = if content.len() > 60 {
+                    format!("{}...", safe_truncate(content, 57))
+                } else {
+                    content.to_string()
+                };
+                let _ = writeln!(turn_list, "  {turn_num}. {preview}");
+            }
+        }
+        if turn_list.is_empty() {
+            turn_list = "  (no conversation turns yet)\n".to_string();
+        }
+        println!(
+            "\nConversation has {turn_num} turn(s):\n{turn_list}\nUse /rewind N to undo the last N turns.\n"
+        );
+        return SlashCommandResult::Handled;
+    }
+
+    match trimmed.parse::<usize>() {
+        Ok(0) => {
+            println!("\nNothing to rewind (0 turns).\n");
+            SlashCommandResult::Handled
+        }
+        Ok(turns) => SlashCommandResult::Rewind(turns),
+        Err(_) => {
+            println!("\nUsage: /rewind [N]\n");
+            SlashCommandResult::Handled
+        }
+    }
 }
 
 pub fn slash_copy(messages: &[serde_json::Value]) -> SlashCommandResult {
@@ -2638,32 +2681,68 @@ mod tests {
         );
     }
 
-    // ── Gap A–F: Commands absent from OC (pin unknown-command path) ──────────
+    // ── Rewind/checkpoint command parity ─────────────────────────────────────
     //
-    // These tests document that the commands from CC gap issues #653, #657,
+    // `/rewind` and `/checkpoint` are implemented in the legacy REPL by
+    // listing user turns or returning a typed multi-undo request.
+
+    fn conversation_with_two_turns() -> Vec<serde_json::Value> {
+        vec![
+            serde_json::json!({"role": "user", "content": "first"}),
+            serde_json::json!({"role": "assistant", "content": "reply"}),
+            serde_json::json!({"role": "user", "content": "second"}),
+            serde_json::json!({"role": "assistant", "content": "reply"}),
+        ]
+    }
+
+    #[test]
+    fn rewind_without_count_lists_turns_and_returns_handled() {
+        let result = handle_slash_command(
+            "/rewind",
+            &mut conversation_with_two_turns(),
+            "anthropic",
+            "claude-sonnet",
+        );
+        assert!(
+            matches!(result, Some(SlashCommandResult::Handled)),
+            "/rewind without a count must list turns and be fully handled"
+        );
+    }
+
+    #[test]
+    fn rewind_with_count_returns_typed_rewind_request() {
+        let result = handle_slash_command(
+            "/rewind 2",
+            &mut conversation_with_two_turns(),
+            "anthropic",
+            "claude-sonnet",
+        );
+        assert!(
+            matches!(result, Some(SlashCommandResult::Rewind(2))),
+            "/rewind N must request an N-turn rewind"
+        );
+    }
+
+    #[test]
+    fn checkpoint_alias_returns_typed_rewind_request() {
+        let result = handle_slash_command(
+            "/checkpoint 1",
+            &mut conversation_with_two_turns(),
+            "anthropic",
+            "claude-sonnet",
+        );
+        assert!(
+            matches!(result, Some(SlashCommandResult::Rewind(1))),
+            "/checkpoint N must alias /rewind N"
+        );
+    }
+
+    // ── Gap B–F: Commands absent from OC (pin unknown-command path) ──────────
+    //
+    // These tests document that the commands from CC gap issues #657,
     // #659, #662, #663, #666 currently fall through to the unknown-command arm
     // and return Handled.  If any of these start returning something else, a
     // Phase 3 implementation landed and this pin must be updated.
-
-    /// Gap A (#653): `/rewind` does not exist in OC → unknown-command path.
-    #[test]
-    fn gap_missing_rewind_returns_handled() {
-        let result = handle_slash_command("/rewind", &mut ctx(), "anthropic", "claude-sonnet");
-        assert!(
-            matches!(result, Some(SlashCommandResult::Handled)),
-            "/rewind must return Handled — command not yet implemented (gap #653)"
-        );
-    }
-
-    /// Gap A (#653): `/checkpoint` (alias for /rewind in CC) also absent.
-    #[test]
-    fn gap_missing_checkpoint_returns_handled() {
-        let result = handle_slash_command("/checkpoint", &mut ctx(), "anthropic", "claude-sonnet");
-        assert!(
-            matches!(result, Some(SlashCommandResult::Handled)),
-            "/checkpoint must return Handled — command not yet implemented (gap #653)"
-        );
-    }
 
     /// Gap B (#657): `/teleport` does not exist in OC → unknown-command path.
     #[test]

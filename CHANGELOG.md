@@ -101,6 +101,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 - permissions: `PermissionManager::unrestricted()` now skips prompts/rules without bypassing hard safety checks for denylisted/dangerous Bash commands, `dangerously_disable_sandbox` tool args, `.git` writes, or `.claude/settings.json`.
 - permissions: auto-allow scoring now gives dangerous Bash constructs a zero score and treats zero as a veto, so safe-looking prefixes such as `echo ... | sh` cannot be auto-approved.
+- repl: `/rewind [N]` and `/checkpoint [N]` now work in the legacy line REPL, listing turns with no count and rewinding multiple turns through the existing undo stack when a count is supplied.
 - tui/messages: thinking deltas now render as a collapsed `∴ Thinking… (Xs)` indicator (live) replaced by `∴ Thought for X.Xs` once regular text streams in, matching Claude Code. Raw reasoning tokens are hidden (accumulated in `MessageList::thinking_buffer` for session persistence) rather than inlined into the assistant message
 - deps: bumped rustls-webpki 0.103.10 → 0.103.12 (GHSA-965h-392x-2mh5, GHSA on wildcard name constraints), rand 0.9.2 → 0.9.4 and rand 0.10.0 → 0.10.1 (GHSA on `rand::rng()` unsoundness). Closes 6 open dependabot alerts in both Cargo.lock and fuzz/Cargo.lock
 - anthropic default model changed from `claude-sonnet-4-6` to `claude-opus-4-6` in cmd_tui, cmd_chat `resolve_model_name`, and cmd_acp
