@@ -40,6 +40,12 @@ fn git_command() -> Result<Command, String> {
     Ok(Command::new(git_bin()?))
 }
 
+fn current_exe_command() -> Result<Command, String> {
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("failed to resolve current executable: {e}"))?;
+    Ok(Command::new(exe))
+}
+
 /// Process-wide shutdown flag for the TUI event loop.
 ///
 /// crosslink #910: the original `run()` loop relied entirely on the
@@ -2044,9 +2050,8 @@ impl App {
                 "Config already exists. Use /doctor to check it.",
             ));
         } else {
-            let content = match std::process::Command::new("openclaudia")
-                .arg("init")
-                .output()
+            let content = match current_exe_command()
+                .and_then(|mut cmd| cmd.arg("init").output().map_err(|e| e.to_string()))
             {
                 Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
                 Err(e) => format!("Init failed: {e}"),
@@ -3203,7 +3208,7 @@ async fn handle_turn_result(
 #[cfg(test)]
 mod tests {
     use super::expand_file_refs;
-    use super::{git_bin, ApiClient, App, AppEvent, SpawnTarget};
+    use super::{current_exe_command, git_bin, ApiClient, App, AppEvent, SpawnTarget};
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
@@ -3228,6 +3233,32 @@ mod tests {
                 !code.contains("Command::new(\"git\")")
                     && !code.contains("std::process::Command::new(\"git\")"),
                 "production TUI app code must not invoke bare git; line {n}: {raw_line}",
+                n = idx + 1,
+            );
+        }
+    }
+
+    #[test]
+    fn tui_init_uses_current_executable_path() {
+        let cmd = current_exe_command().expect("current executable must resolve in tests");
+        assert!(
+            std::path::Path::new(cmd.get_program()).is_absolute(),
+            "current executable command must use an absolute path, got {:?}",
+            cmd.get_program()
+        );
+
+        let src = include_str!("app.rs");
+        let cfg_test = src
+            .find("#[cfg(test)]")
+            .expect("test module marker must be present");
+        let production = &src[..cfg_test];
+
+        for (idx, raw_line) in production.lines().enumerate() {
+            let code = raw_line.split("//").next().unwrap_or("");
+            assert!(
+                !code.contains("Command::new(\"openclaudia\")")
+                    && !code.contains("std::process::Command::new(\"openclaudia\")"),
+                "production TUI app code must not invoke bare openclaudia; line {n}: {raw_line}",
                 n = idx + 1,
             );
         }
