@@ -216,16 +216,18 @@ impl DiagnosticInjector for DefaultDiagnosticInjector {
         if diagnostics.is_empty() {
             return None;
         }
+        // Deterministic ordering by URI so tests pin output stably.
+        let mut entries: Vec<(&String, &Vec<Diagnostic>)> = diagnostics.iter().collect();
+        entries.sort_by_key(|(uri, _)| *uri);
+
         let mut out = String::new();
         out.push_str("<lsp-diagnostics>\n");
-        // Deterministic ordering by URI so tests pin output stably.
-        let mut keys: Vec<&String> = diagnostics.keys().collect();
-        keys.sort();
-        for uri in keys {
-            let diags = diagnostics.get(uri).expect("just iterated");
+        let mut rendered_any = false;
+        for (uri, diags) in entries {
             if diags.is_empty() {
                 continue;
             }
+            rendered_any = true;
             out.push_str("  file: ");
             out.push_str(uri);
             out.push('\n');
@@ -243,6 +245,9 @@ impl DiagnosticInjector for DefaultDiagnosticInjector {
                     msg = d.message,
                 );
             }
+        }
+        if !rendered_any {
+            return None;
         }
         out.push_str("</lsp-diagnostics>");
         Some(out)
@@ -359,6 +364,13 @@ mod tests {
     #[test]
     fn default_injector_empty_input_returns_none() {
         let map = HashMap::new();
+        assert!(DefaultDiagnosticInjector.render(&map).is_none());
+    }
+
+    #[test]
+    fn default_injector_empty_diagnostic_entries_return_none() {
+        let mut map = HashMap::new();
+        map.insert("file:///empty.rs".to_string(), Vec::new());
         assert!(DefaultDiagnosticInjector.render(&map).is_none());
     }
 }
