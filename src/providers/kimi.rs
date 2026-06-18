@@ -1,8 +1,9 @@
 //! Kimi/Moonshot API adapter.
 //!
 //! Kimi's public API is `OpenAI` Chat Completions-compatible. The provider has
-//! its own thinking controls, so this adapter deliberately emits no generic
-//! `OpenAI` `reasoning_effort` field.
+//! its own thinking controls, so this adapter emits Kimi's documented
+//! `thinking` object for K2.6/K2.5 and never emits generic `OpenAI`
+//! `reasoning_effort`.
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -22,7 +23,7 @@ impl KimiAdapter {
         Self(OpenAiCompatibleAdapter::new(
             "kimi",
             "/v1/chat/completions",
-            ThinkingInjector::None,
+            ThinkingInjector::KimiThinking,
             true,
         ))
     }

@@ -129,9 +129,10 @@ fn google_chat_endpoint_embeds_model_name_in_path() {
 }
 
 #[test]
-fn deepseek_chat_endpoint_is_v1_chat_completions() {
+fn deepseek_chat_endpoint_uses_documented_root_chat_completions() {
     let a = get_adapter("deepseek").unwrap();
-    assert_eq!(a.chat_endpoint("anything"), "/v1/chat/completions");
+    assert_eq!(a.chat_endpoint("anything"), "/chat/completions");
+    assert_eq!(a.models_endpoint(), "/models");
 }
 
 #[test]
@@ -299,11 +300,10 @@ fn ollama_supports_model_listing() {
 }
 
 #[test]
-fn deepseek_does_not_advertise_model_listing() {
-    // Per sprint 32 discovery: deepseek/qwen/zai don't expose
-    // /v1/models.
+fn deepseek_advertises_documented_model_listing() {
     let a = get_adapter("deepseek").unwrap();
-    assert!(!a.supports_model_listing());
+    assert!(a.supports_model_listing());
+    assert_eq!(a.models_endpoint(), "/models");
 }
 
 #[test]

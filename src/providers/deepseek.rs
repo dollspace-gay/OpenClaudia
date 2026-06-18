@@ -1,8 +1,9 @@
 //! `DeepSeek` API adapter (OpenAI-compatible with `DeepSeek` thinking controls).
 //!
-//! Thin newtype around [`OpenAiCompatibleAdapter`]. The only
-//! `DeepSeek`-specific behaviour is injecting `thinking:
-//! {type:"enabled"|"disabled"}` and `reasoning_effort: "high"|"max"`.
+//! Thin newtype around [`OpenAiCompatibleAdapter`]. `DeepSeek`-specific
+//! behaviour is using root-level `/chat/completions` and `/models` paths plus
+//! injecting `thinking: {type:"enabled"|"disabled"}` and
+//! `reasoning_effort: "high"|"max"`.
 //!
 //! See crosslink #281.
 
@@ -23,9 +24,9 @@ impl DeepSeekAdapter {
     pub const fn new() -> Self {
         Self(OpenAiCompatibleAdapter::new(
             "deepseek",
-            "/v1/chat/completions",
+            "/chat/completions",
             ThinkingInjector::DeepSeekThinking,
-            false,
+            true,
         ))
     }
 }
@@ -68,5 +69,9 @@ impl ProviderAdapter for DeepSeekAdapter {
 
     fn supports_model_listing(&self) -> bool {
         self.0.supports_model_listing()
+    }
+
+    fn models_endpoint(&self) -> &'static str {
+        "/models"
     }
 }

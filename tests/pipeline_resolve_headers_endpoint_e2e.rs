@@ -47,6 +47,18 @@ fn resolve_endpoint_openai_appends_v1_chat_completions() {
 }
 
 #[test]
+fn resolve_endpoint_deepseek_uses_documented_root_chat_completions() {
+    let endpoint = resolve_endpoint(
+        "deepseek",
+        "deepseek-v4-pro",
+        "https://api.deepseek.com",
+        None,
+    )
+    .expect("ok");
+    assert_eq!(endpoint, "https://api.deepseek.com/chat/completions");
+}
+
+#[test]
 fn resolve_endpoint_google_embeds_model_in_path() {
     let endpoint = resolve_endpoint(
         "google",

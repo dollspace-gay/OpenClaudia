@@ -9,8 +9,8 @@
 //!
 //! - the provider `name`,
 //! - the chat-completions URL suffix (most use `/v1/chat/completions`;
-//!   Z.AI uses `/chat/completions` because its base URL already includes the
-//!   API version),
+//!   DeepSeek and Z.AI use `/chat/completions` because their public base URLs
+//!   do not want an extra `/v1` in the adapter path),
 //! - the thinking/reasoning toggle keyed into the request body
 //!   (different providers spell the toggle differently — `enable_thinking`,
 //!   `thinking: { type: enabled }`, `reasoning_effort`, etc.),
@@ -42,8 +42,6 @@ use super::{ApiKey, ProviderAdapter, ProviderError};
 /// constructors `const fn`, and avoids handing out raw function pointers.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum ThinkingInjector {
-    /// No provider-specific thinking parameter is emitted.
-    None,
     /// `OpenAI` reasoning-family models.
     ///
     /// Sets `reasoning_effort` to the configured value (default
@@ -75,6 +73,12 @@ pub(super) enum ThinkingInjector {
     /// Sets `thinking: {type:"adaptive"|"disabled"}` for `MiniMax-M3` and
     /// requests split reasoning output when thinking is enabled.
     MiniMaxThinking,
+    /// Kimi K2 thinking controls.
+    ///
+    /// Emits Kimi's documented `thinking` object only for models where the
+    /// server accepts it. K2.7 code models always think and reject disabled
+    /// thinking, so they intentionally receive no explicit thinking field.
+    KimiThinking,
 }
 
 impl ThinkingInjector {
@@ -86,7 +90,6 @@ impl ThinkingInjector {
     /// (currently only `OpenAiReasoningEffort`).
     fn inject(self, body: &mut Value, thinking: &ThinkingConfig, model: &str) {
         match self {
-            Self::None => {}
             Self::OpenAiReasoningEffort => {
                 if thinking.enabled {
                     let effort = openai_reasoning_effort(thinking.reasoning_effort.as_deref());
@@ -162,6 +165,44 @@ impl ThinkingInjector {
                     );
                 }
             }
+            Self::KimiThinking => {
+                if is_kimi_k27_code_model(model) {
+                    if !thinking.enabled {
+                        warn!(
+                            model = %model,
+                            "Kimi K2.7 Code always thinks and rejects thinking.type=disabled; \
+                             omitting unsupported thinking override",
+                        );
+                    }
+                } else if is_kimi_k26_model(model) {
+                    if thinking.enabled {
+                        body["thinking"] = json!({ "type": "enabled" });
+                        if thinking.preserve_across_turns {
+                            body["thinking"]["keep"] = json!("all");
+                        }
+                    } else {
+                        body["thinking"] = json!({ "type": "disabled" });
+                    }
+                } else if is_kimi_k25_model(model) {
+                    if thinking.enabled {
+                        body["thinking"] = json!({ "type": "enabled" });
+                        if thinking.preserve_across_turns {
+                            warn!(
+                                model = %model,
+                                "Kimi K2.5 does not support preserved thinking; omitting thinking.keep",
+                            );
+                        }
+                    } else {
+                        body["thinking"] = json!({ "type": "disabled" });
+                    }
+                } else if thinking.enabled && has_explicit_kimi_thinking_option(thinking) {
+                    warn!(
+                        model = %model,
+                        "Kimi/Moonshot thinking requested for a model without documented thinking controls; \
+                         omitting unsupported thinking field",
+                    );
+                }
+            }
         }
     }
 }
@@ -207,6 +248,25 @@ const fn is_minimax_m3_model(model: &str) -> bool {
     model.eq_ignore_ascii_case("MiniMax-M3")
 }
 
+fn is_kimi_k27_code_model(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model == "kimi-k2.7-code" || model == "kimi-k2.7-code-highspeed"
+}
+
+fn is_kimi_k26_model(model: &str) -> bool {
+    model.eq_ignore_ascii_case("kimi-k2.6")
+}
+
+fn is_kimi_k25_model(model: &str) -> bool {
+    model.eq_ignore_ascii_case("kimi-k2.5")
+}
+
+fn has_explicit_kimi_thinking_option(thinking: &ThinkingConfig) -> bool {
+    thinking.budget_tokens.is_some()
+        || thinking.reasoning_effort.is_some()
+        || thinking.preserve_across_turns
+}
+
 fn is_model_family(model: &str, family: &str) -> bool {
     if model == family {
         return true;
@@ -228,7 +288,7 @@ pub(super) struct OpenAiCompatibleAdapter {
     /// Path returned from [`ProviderAdapter::chat_endpoint`]. Stored as
     /// `&'static str` (rather than a closure) because every observed
     /// variation is a string constant — most providers use
-    /// `/v1/chat/completions`, Z.AI uses `/chat/completions`.
+    /// `/v1/chat/completions`; DeepSeek and Z.AI use `/chat/completions`.
     chat_path: &'static str,
     thinking: ThinkingInjector,
     supports_models: bool,
@@ -596,6 +656,62 @@ mod tests {
         ThinkingInjector::MiniMaxThinking.inject(&mut off, &thinking_off(), "MiniMax-M3");
         assert_eq!(off["thinking"]["type"], "disabled");
         assert!(off.get("reasoning_split").is_none());
+    }
+
+    #[test]
+    fn kimi_k27_omits_thinking_because_it_is_always_on() {
+        for model in ["kimi-k2.7-code", "kimi-k2.7-code-highspeed"] {
+            let mut on = serde_json::to_value(req(model)).unwrap();
+            ThinkingInjector::KimiThinking.inject(&mut on, &thinking_on(), model);
+            assert!(
+                on.get("thinking").is_none(),
+                "{model} should omit explicit thinking because K2.7 always thinks: {on}"
+            );
+
+            let mut off = serde_json::to_value(req(model)).unwrap();
+            ThinkingInjector::KimiThinking.inject(&mut off, &thinking_off(), model);
+            assert!(
+                off.get("thinking").is_none(),
+                "{model} rejects thinking.type=disabled, so the adapter must omit it: {off}"
+            );
+        }
+    }
+
+    #[test]
+    fn kimi_k26_supports_enabled_disabled_and_preserved_thinking() {
+        let mut on = serde_json::to_value(req("kimi-k2.6")).unwrap();
+        ThinkingInjector::KimiThinking.inject(&mut on, &thinking_on(), "kimi-k2.6");
+        assert_eq!(on["thinking"], json!({"type": "enabled"}));
+
+        let mut preserve = thinking_on();
+        preserve.preserve_across_turns = true;
+        let mut preserve_body = serde_json::to_value(req("kimi-k2.6")).unwrap();
+        ThinkingInjector::KimiThinking.inject(&mut preserve_body, &preserve, "kimi-k2.6");
+        assert_eq!(
+            preserve_body["thinking"],
+            json!({"type": "enabled", "keep": "all"})
+        );
+
+        let mut off = serde_json::to_value(req("kimi-k2.6")).unwrap();
+        ThinkingInjector::KimiThinking.inject(&mut off, &thinking_off(), "kimi-k2.6");
+        assert_eq!(off["thinking"], json!({"type": "disabled"}));
+    }
+
+    #[test]
+    fn kimi_k25_does_not_emit_preserved_thinking_keep() {
+        let mut preserve = thinking_on();
+        preserve.preserve_across_turns = true;
+        let mut body = serde_json::to_value(req("kimi-k2.5")).unwrap();
+        ThinkingInjector::KimiThinking.inject(&mut body, &preserve, "kimi-k2.5");
+        assert_eq!(body["thinking"], json!({"type": "enabled"}));
+        assert!(body["thinking"].get("keep").is_none());
+    }
+
+    #[test]
+    fn moonshot_v1_models_do_not_receive_kimi_thinking_fields() {
+        let mut body = serde_json::to_value(req("moonshot-v1-128k")).unwrap();
+        ThinkingInjector::KimiThinking.inject(&mut body, &thinking_on(), "moonshot-v1-128k");
+        assert!(body.get("thinking").is_none());
     }
 
     #[test]

@@ -218,14 +218,13 @@ fn anthropic_does_not_advertise_model_listing() {
 }
 
 #[test]
-fn openai_kimi_minimax_and_ollama_advertise_model_listing() {
+fn openai_deepseek_kimi_minimax_and_ollama_advertise_model_listing() {
     // Authoring discovery: the OpenAiCompatibleAdapter
     // constructor takes a `supports_models: bool`. Only
-    // `openai`, `kimi`, `minimax`, and `ollama` pass `true` — DeepSeek,
-    // Qwen, and Z.AI pass `false` because their /v1/models endpoints
-    // either don't exist or return non-standard shapes. Pinning the
-    // actual contract here.
-    for provider in &["openai", "kimi", "minimax", "ollama"] {
+    // providers with documented OpenAI-compatible model-listing endpoints pass
+    // `true`; Qwen and Z.AI stay false unless their public docs expose a
+    // parseable /models shape.
+    for provider in &["openai", "deepseek", "kimi", "minimax", "ollama"] {
         let adapter = get_adapter(provider)
             .unwrap_or_else(|e| panic!("{provider} adapter must resolve: {e}"));
         assert!(
@@ -236,14 +235,14 @@ fn openai_kimi_minimax_and_ollama_advertise_model_listing() {
 }
 
 #[test]
-fn deepseek_qwen_zai_do_not_advertise_model_listing() {
+fn qwen_zai_do_not_advertise_model_listing() {
     // Counter-test pinning the disable contract for
     // providers that don't expose a usable /v1/models.
     // A future change that flips one to `true` will fail
     // here and call out the migration: ensure the endpoint
     // actually exists AND that fetch_models can parse the
     // response shape.
-    for provider in &["deepseek", "qwen", "zai"] {
+    for provider in &["qwen", "zai"] {
         let adapter = get_adapter(provider)
             .unwrap_or_else(|e| panic!("{provider} adapter must resolve: {e}"));
         assert!(
@@ -259,7 +258,7 @@ fn models_endpoint_mentions_models_for_listing_capable_adapters() {
     // Only adapters that advertise model listing need a
     // sensible endpoint. We check both names that DO
     // support it — each endpoint must mention `models`.
-    for provider in &["openai", "kimi", "minimax", "ollama"] {
+    for provider in &["openai", "deepseek", "kimi", "minimax", "ollama"] {
         let adapter = get_adapter(provider).expect("adapter");
         let endpoint = adapter.models_endpoint();
         assert!(

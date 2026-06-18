@@ -198,13 +198,9 @@ fn ollama_ignores_api_key_value() {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn deepseek_chat_endpoint_matches_openai() {
-    let openai = get_adapter("openai").expect("openai");
+fn deepseek_chat_endpoint_uses_documented_root_path() {
     let deepseek = get_adapter("deepseek").expect("deepseek");
-    assert_eq!(
-        deepseek.chat_endpoint("deepseek-chat"),
-        openai.chat_endpoint("deepseek-chat")
-    );
+    assert_eq!(deepseek.chat_endpoint("deepseek-chat"), "/chat/completions");
 }
 
 #[test]
@@ -315,6 +311,16 @@ fn openai_supports_model_listing() {
         adapter.supports_model_listing(),
         "OpenAI MUST support /v1/models"
     );
+}
+
+#[test]
+fn deepseek_supports_model_listing() {
+    let adapter = get_adapter("deepseek").expect("deepseek");
+    assert!(
+        adapter.supports_model_listing(),
+        "DeepSeek MUST support OpenAI-style /models"
+    );
+    assert_eq!(adapter.models_endpoint(), "/models");
 }
 
 #[test]

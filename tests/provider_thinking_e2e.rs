@@ -15,7 +15,9 @@
 //!     plus `thinking.clear_thinking: false` when
 //!     `preserve_across_turns=true`, and `GLM-5.2`
 //!     `reasoning_effort`.
-//!   - **Kimi**: no generic thinking field emitted for `kimi-k2.7-code`.
+//!   - **Kimi**: `kimi-k2.6`/`kimi-k2.5` use Kimi's documented
+//!     `thinking` object; K2.7 code models omit it because thinking is
+//!     always on and disabled thinking is rejected upstream.
 //!   - **`MiniMax-M3`**: `thinking: {type: "adaptive"|"disabled"}`.
 //!
 //! This file pins each branch of the dispatch with positive +
@@ -431,25 +433,91 @@ fn each_provider_uses_a_distinct_thinking_field() {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn kimi_thinking_does_not_emit_openai_or_provider_specific_fields() {
+fn kimi_k27_thinking_omits_explicit_field_because_it_is_always_on() {
     let adapter = get_adapter("kimi").expect("kimi adapter");
-    let req = minimal_request("kimi-k2.7-code");
+    for model in ["kimi-k2.7-code", "kimi-k2.7-code-highspeed"] {
+        let req = minimal_request(model);
+        let body = adapter
+            .transform_request_with_thinking(&req, &enabled_thinking(Some("high")))
+            .expect("transform");
+        assert!(
+            body.get("thinking").is_none(),
+            "{model} MUST omit explicit thinking because it is always on; got {body}"
+        );
+
+        let disabled = adapter
+            .transform_request_with_thinking(&req, &disabled_thinking())
+            .expect("transform");
+        assert!(
+            disabled.get("thinking").is_none(),
+            "{model} rejects disabled thinking, so adapter must omit it; got {disabled}"
+        );
+    }
+}
+
+#[test]
+fn kimi_k26_thinking_supports_enabled_disabled_and_preserve() {
+    let adapter = get_adapter("kimi").expect("kimi adapter");
+    let req = minimal_request("kimi-k2.6");
+
+    let enabled = adapter
+        .transform_request_with_thinking(&req, &enabled_thinking(Some("high")))
+        .expect("transform");
+    assert_eq!(enabled["thinking"], json!({"type": "enabled"}));
+    assert!(enabled.get("reasoning_effort").is_none());
+
+    let preserved = adapter
+        .transform_request_with_thinking(
+            &req,
+            &ThinkingConfig {
+                enabled: true,
+                budget_tokens: None,
+                preserve_across_turns: true,
+                reasoning_effort: None,
+                adaptive: true,
+            },
+        )
+        .expect("transform");
+    assert_eq!(
+        preserved["thinking"],
+        json!({"type": "enabled", "keep": "all"})
+    );
+
+    let disabled = adapter
+        .transform_request_with_thinking(&req, &disabled_thinking())
+        .expect("transform");
+    assert_eq!(disabled["thinking"], json!({"type": "disabled"}));
+}
+
+#[test]
+fn kimi_k25_thinking_does_not_emit_unsupported_keep() {
+    let adapter = get_adapter("kimi").expect("kimi adapter");
+    let req = minimal_request("kimi-k2.5");
+    let body = adapter
+        .transform_request_with_thinking(
+            &req,
+            &ThinkingConfig {
+                enabled: true,
+                budget_tokens: None,
+                preserve_across_turns: true,
+                reasoning_effort: None,
+                adaptive: true,
+            },
+        )
+        .expect("transform");
+    assert_eq!(body["thinking"], json!({"type": "enabled"}));
+    assert!(body["thinking"].get("keep").is_none());
+}
+
+#[test]
+fn kimi_moonshot_v1_models_do_not_receive_thinking_fields() {
+    let adapter = get_adapter("kimi").expect("kimi adapter");
+    let req = minimal_request("moonshot-v1-128k");
     let body = adapter
         .transform_request_with_thinking(&req, &enabled_thinking(Some("high")))
         .expect("transform");
-
-    for field in [
-        "reasoning_effort",
-        "enable_thinking",
-        "thinking",
-        "clear_thinking",
-        "reasoning_split",
-    ] {
-        assert!(
-            body.get(field).is_none(),
-            "Kimi MUST NOT receive unsupported thinking field {field:?}; got {body}"
-        );
-    }
+    assert!(body.get("thinking").is_none());
+    assert!(body.get("reasoning_effort").is_none());
 }
 
 #[test]
