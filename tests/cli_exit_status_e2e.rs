@@ -754,6 +754,53 @@ fn start_target_flag_overrides_config_before_auth_preflight() {
 }
 
 #[test]
+fn start_proxy_allows_keyless_local_provider_request() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    let (server, base_url) = spawn_local_chat_server_rejecting_auth();
+    write_local_provider_config_with_base_url(&cwd, &base_url);
+    let proxy_port = unused_loopback_port();
+    let proxy_port_arg = proxy_port.to_string();
+
+    let mut child = isolated_command(&cwd, &home)
+        .args(["start", "--port", &proxy_port_arg])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("openclaudia start must spawn");
+
+    wait_for_loop_proxy(proxy_port, &mut child).expect("start proxy should listen");
+    let response =
+        post_chat_completion_to_proxy(proxy_port).expect("proxy request should complete");
+    let _ = child.kill();
+    let output = child
+        .wait_with_output()
+        .expect("collect killed start output");
+    let server_result = server.join().expect("local chat server thread should join");
+
+    assert!(
+        server_result.is_ok(),
+        "local chat server failed: {:?}",
+        server_result.err()
+    );
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK") && response.contains("local proxy ok"),
+        "start proxy should forward keyless local request and return upstream body; got {response:?}"
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !combined.contains("No API key configured for provider")
+            && !combined.contains("Set API_KEY"),
+        "start proxy should not reject keyless local provider; got {combined:?}"
+    );
+}
+
+#[test]
 fn loop_allows_keyless_local_provider_and_reports_bind_failure() {
     let cwd = tempfile::tempdir().expect("cwd tempdir");
     let home = tempfile::tempdir().expect("home tempdir");
