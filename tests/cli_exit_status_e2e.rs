@@ -690,7 +690,7 @@ fn start_target_flag_overrides_config_before_auth_preflight() {
     let port = port.to_string();
 
     let output = isolated_command(&cwd, &home)
-        .args(["start", "--target", "local", "--port", &port])
+        .args(["start", "--target", "Local", "--port", &port])
         .output()
         .expect("openclaudia start must run");
 
@@ -708,7 +708,7 @@ fn start_target_flag_overrides_config_before_auth_preflight() {
     assert!(
         !combined.contains("OPENAI_API_KEY")
             && !combined.contains("No API key configured for provider 'openai'"),
-        "start --target local must not auth-preflight the config's openai target; got {combined:?}"
+        "start --target Local must not auth-preflight the config's openai target; got {combined:?}"
     );
     assert!(
         combined.to_lowercase().contains("address already in use"),
@@ -762,7 +762,7 @@ fn loop_root_target_flag_overrides_config_before_auth_preflight() {
     let output = isolated_command(&cwd, &home)
         .args([
             "--target",
-            "local",
+            "Local",
             "loop",
             "--max-iterations",
             "1",
@@ -785,7 +785,7 @@ fn loop_root_target_flag_overrides_config_before_auth_preflight() {
     );
     assert!(
         !combined.contains("OPENAI_API_KEY") && !combined.contains("No API key configured"),
-        "openclaudia --target local loop must not auth-preflight the config's openai target; got {combined:?}"
+        "openclaudia --target Local loop must not auth-preflight the config's openai target; got {combined:?}"
     );
     assert!(
         combined.to_lowercase().contains("address already in use"),
@@ -1499,7 +1499,7 @@ fn doctor_rejects_root_target_flag_instead_of_ignoring_it() {
     let cwd = tempfile::tempdir().expect("cwd tempdir");
     let home = tempfile::tempdir().expect("home tempdir");
     let output = isolated_command(&cwd, &home)
-        .args(["--target", "openai", "doctor"])
+        .args(["--target", "OpenAI", "doctor"])
         .output()
         .expect("openclaudia doctor must run");
 

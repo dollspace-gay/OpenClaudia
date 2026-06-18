@@ -89,6 +89,7 @@ struct Cli {
     #[arg(
         short = 't',
         long,
+        ignore_case = true,
         value_parser = PossibleValuesParser::new(openclaudia::providers::SUPPORTED_PROVIDERS),
     )]
     target: Option<String>,
@@ -165,6 +166,7 @@ enum Commands {
         #[arg(
             short,
             long,
+            ignore_case = true,
             value_parser = PossibleValuesParser::new(openclaudia::providers::SUPPORTED_PROVIDERS),
         )]
         target: Option<String>,
@@ -182,6 +184,7 @@ enum Commands {
         #[arg(
             short,
             long,
+            ignore_case = true,
             value_parser = PossibleValuesParser::new(openclaudia::providers::SUPPORTED_PROVIDERS),
         )]
         target: Option<String>,
@@ -205,6 +208,7 @@ enum Commands {
         #[arg(
             short,
             long,
+            ignore_case = true,
             value_parser = PossibleValuesParser::new(openclaudia::providers::SUPPORTED_PROVIDERS),
         )]
         target: Option<String>,
