@@ -237,7 +237,7 @@ fn request_messages_with_cli_grounding(
     session_id: &str,
     task_obs: Option<openclaudia::ledger::ObsId>,
     session_messages: &[serde_json::Value],
-) -> Vec<serde_json::Value> {
+) -> Result<Vec<serde_json::Value>, String> {
     openclaudia::grounded_loop::request_messages_with_grounding(
         session_id,
         task_obs,
@@ -576,11 +576,19 @@ impl ChatRepl {
         self.inject_rules_from_extensions();
         let prompt_blocks = self.build_prompt_blocks_for_turn(memory_db);
         self.install_system_prompt(&prompt_blocks);
-        let request_messages = request_messages_with_cli_grounding(
+        let request_messages = match request_messages_with_cli_grounding(
             &self.chat_session.id,
             self.current_task_obs,
             &self.chat_session.messages,
-        );
+        ) {
+            Ok(messages) => messages,
+            Err(err) => {
+                self.clear_transient_prompt_options();
+                tracing::error!(error = %err, "Failed to build grounded chat request");
+                eprintln!("\n\x1b[31mGrounding error: {err}\x1b[0m");
+                return Ok(Some(false));
+            }
+        };
 
         let request_body = match build_chat_request_body(
             &self.config.proxy.target,
@@ -1168,7 +1176,7 @@ impl ChatRepl {
         true
     }
 
-    fn request_messages_with_grounding(&self) -> Vec<serde_json::Value> {
+    fn request_messages_with_grounding(&self) -> Result<Vec<serde_json::Value>, String> {
         request_messages_with_cli_grounding(
             &self.chat_session.id,
             self.current_task_obs,
@@ -2659,7 +2667,7 @@ impl ChatRepl {
         &self,
         prompt_blocks: &prompt::SystemPromptBlocks,
     ) -> Result<serde_json::Value, String> {
-        let request_messages = self.request_messages_with_grounding();
+        let request_messages = self.request_messages_with_grounding()?;
         let anthropic_messages =
             convert_messages_to_anthropic_checked(&request_messages).map_err(|e| e.to_string())?;
         let openai_tools = tools::get_all_tool_definitions(true);
@@ -2935,7 +2943,7 @@ impl ChatRepl {
         &self,
         prompt_blocks: &prompt::SystemPromptBlocks,
     ) -> Result<serde_json::Value, String> {
-        let request_messages = self.request_messages_with_grounding();
+        let request_messages = self.request_messages_with_grounding()?;
         let anthropic_messages =
             convert_messages_to_anthropic_checked(&request_messages).map_err(|e| e.to_string())?;
         let mut followup_req = serde_json::json!({
@@ -3224,7 +3232,7 @@ impl ChatRepl {
     /// Build the OpenAI-compatible follow-up request body (handles both
     /// the Anthropic direct branch and the generic `OpenAI` shape).
     fn build_openai_followup_request(&self) -> Result<serde_json::Value, String> {
-        let request_messages = self.request_messages_with_grounding();
+        let request_messages = self.request_messages_with_grounding()?;
         if self.config.proxy.target == "anthropic" {
             let system_msg = request_messages
                 .iter()

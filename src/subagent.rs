@@ -1421,8 +1421,23 @@ async fn run_subagent_inner(
         // Build the request. The grounding packet is request-scoped:
         // it helps the provider navigate the current ledger, but it is
         // not persisted into the resumable transcript.
-        let request_messages =
-            crate::grounded_loop::request_messages_with_grounding(&agent_id, task_obs, &messages);
+        let request_messages = match crate::grounded_loop::request_messages_with_grounding(
+            &agent_id, task_obs, &messages,
+        ) {
+            Ok(messages) => messages,
+            Err(e) => {
+                BACKGROUND_AGENTS.fail(&agent_id, e.clone());
+                store_transcript(&agent_id, messages, config.agent_type);
+                return SubagentResult {
+                    agent_id,
+                    success: false,
+                    output: format!("Grounding error: {e}"),
+                    turns_used: turns,
+                    is_background: config.run_in_background,
+                    worktree: worktree.clone(),
+                };
+            }
+        };
         let request_body = json!({
             "model": model,
             "messages": request_messages,

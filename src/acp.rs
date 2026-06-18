@@ -1079,11 +1079,21 @@ impl AcpServer {
                     tool_call_id: None,
                     extra: std::collections::HashMap::new(),
                 }];
-            let grounded_messages = crate::grounded_loop::request_messages_with_grounding(
+            let grounded_messages = match crate::grounded_loop::request_messages_with_grounding(
                 oc_session_id,
                 task_obs,
                 &self.messages,
-            );
+            ) {
+                Ok(messages) => messages,
+                Err(e) => {
+                    self.send_session_update(
+                        acp_session_id,
+                        "agent_message_chunk",
+                        &json!({"type": "text", "text": format!("Grounding error: {e}")}),
+                    );
+                    return "error".to_string();
+                }
+            };
             let decoded_messages = match decode_acp_messages(&grounded_messages) {
                 Ok(messages) => messages,
                 Err(e) => {

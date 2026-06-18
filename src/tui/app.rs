@@ -3127,7 +3127,7 @@ fn request_messages_with_grounding(
     session_id: &str,
     task_obs: Option<crate::ledger::ObsId>,
     session_messages: &[serde_json::Value],
-) -> Vec<serde_json::Value> {
+) -> Result<Vec<serde_json::Value>, String> {
     crate::grounded_loop::request_messages_with_grounding(session_id, task_obs, session_messages)
 }
 
@@ -3496,8 +3496,18 @@ async fn run_agentic_loop(ctx: &AgenticCtx<'_>, session_messages: &mut Vec<serde
             );
             break;
         }
-        let request_messages =
-            request_messages_with_grounding(ctx.session_id, ctx.task_obs, session_messages);
+        let request_messages = match request_messages_with_grounding(
+            ctx.session_id,
+            ctx.task_obs,
+            session_messages,
+        ) {
+            Ok(messages) => messages,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to build grounded agentic follow-up request");
+                send_or_warn(ctx.tx, super::events::AppEvent::ApiError(e), ctx.session_id);
+                break;
+            }
+        };
         let body = match crate::pipeline::build_request(
             ctx.provider,
             ctx.model,
@@ -3609,7 +3619,13 @@ async fn run_api_turn_async(p: ApiTurnParams) {
     }
     let task_obs = observe_turn_user_task(&session_id, &session_messages);
     let request_messages =
-        request_messages_with_grounding(&session_id, task_obs, &session_messages);
+        match request_messages_with_grounding(&session_id, task_obs, &session_messages) {
+            Ok(messages) => messages,
+            Err(e) => {
+                send_or_warn(&tx, super::events::AppEvent::ApiError(e), &session_id);
+                return;
+            }
+        };
     let request_body = match crate::pipeline::build_request(
         &provider,
         &model,

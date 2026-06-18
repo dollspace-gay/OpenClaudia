@@ -294,43 +294,45 @@ fn quality_gate_argv(command: &str) -> Vec<String> {
 }
 
 pub fn session_grounding_system_content(session_id: &str, task_obs: ObsId) -> Option<String> {
-    let ledger = match RealityLedger::open_project_session(session_id) {
-        Ok(ledger) => ledger,
-        Err(err) => {
+    session_grounding_system_content_checked(session_id, task_obs).ok()
+}
+
+pub fn session_grounding_system_content_checked(
+    session_id: &str,
+    task_obs: ObsId,
+) -> Result<String, String> {
+    let ledger = RealityLedger::open_project_session(session_id).map_err(|err| {
+        tracing::warn!(
+            session_id,
+            error = %err,
+            "failed to open session reality ledger for grounding packet"
+        );
+        format!("grounding requires reality ledger: {err}")
+    })?;
+    let packet = build_prompt_packet(&ledger, task_obs, DEFAULT_GROUNDING_INDEX_LIMIT, Vec::new())
+        .map_err(|err| {
             tracing::warn!(
                 session_id,
-                error = %err,
-                "failed to open session reality ledger for grounding packet"
+                reason = %err.reason(),
+                "failed to build grounding packet"
             );
-            return None;
-        }
-    };
-    let packet =
-        match build_prompt_packet(&ledger, task_obs, DEFAULT_GROUNDING_INDEX_LIMIT, Vec::new()) {
-            Ok(packet) => packet,
-            Err(err) => {
-                tracing::warn!(
-                    session_id,
-                    reason = %err.reason(),
-                    "failed to build grounding packet"
-                );
-                return None;
-            }
-        };
-    Some(render_grounding_system_message(&packet))
+            format!("failed to build grounding packet: {}", err.reason())
+        })?;
+    Ok(render_grounding_system_message(&packet))
 }
 
 pub fn request_messages_with_grounding(
     session_id: &str,
     task_obs: Option<ObsId>,
     session_messages: &[serde_json::Value],
-) -> Vec<serde_json::Value> {
+) -> Result<Vec<serde_json::Value>, String> {
     let mut request_messages = session_messages.to_vec();
-    let Some(task_obs) = task_obs else {
-        return request_messages;
-    };
-    let Some(content) = session_grounding_system_content(session_id, task_obs) else {
-        return request_messages;
+    let task_obs = task_obs.ok_or_else(|| {
+        "grounding requires user task observation before provider request".to_string()
+    })?;
+    let content = session_grounding_system_content_checked(session_id, task_obs)?;
+    if content.trim().is_empty() {
+        return Err("grounding packet is empty".to_string());
     };
     let insert_at = request_messages
         .iter()
@@ -343,7 +345,7 @@ pub fn request_messages_with_grounding(
             "content": content,
         }),
     );
-    request_messages
+    Ok(request_messages)
 }
 
 pub fn validate_agentic_final_response(session_id: &str, content: &str) -> Result<(), String> {
@@ -524,6 +526,29 @@ mod tests {
         assert!(rendered.contains(&format!("TaskSpec [{task}]")));
         assert!(rendered.contains("navigation aids"));
         assert!(rendered.contains("Cite observation IDs"));
+    }
+
+    #[test]
+    fn request_messages_with_grounding_fails_without_task_observation() {
+        let err = request_messages_with_grounding("missing-task-observation", None, &[])
+            .expect_err("provider request must not silently continue without a task observation");
+
+        assert_eq!(
+            err,
+            "grounding requires user task observation before provider request"
+        );
+    }
+
+    #[test]
+    fn request_messages_with_grounding_fails_when_ledger_cannot_open() {
+        let task = ObsId::new();
+        let err = request_messages_with_grounding("invalid/session", Some(task), &[])
+            .expect_err("provider request must not silently continue without the reality ledger");
+
+        assert!(
+            err.contains("grounding requires reality ledger"),
+            "unexpected denial: {err}"
+        );
     }
 
     #[test]
