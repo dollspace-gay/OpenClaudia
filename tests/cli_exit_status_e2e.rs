@@ -483,6 +483,63 @@ fn spawn_local_chat_server_rejecting_auth() -> (JoinHandle<Result<(), String>>, 
     (handle, base_url)
 }
 
+fn spawn_doctor_network_probe_detector() -> (
+    JoinHandle<Result<(), String>>,
+    String,
+    std::sync::mpsc::Sender<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind doctor network probe detector");
+    listener
+        .set_nonblocking(true)
+        .expect("set doctor network probe listener nonblocking");
+    let addr = listener.local_addr().expect("doctor network probe addr");
+    let proxy_url = format!("http://{addr}");
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+
+    let handle = thread::spawn(move || loop {
+        if stop_rx.try_recv().is_ok() {
+            return Ok(());
+        }
+
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .map_err(|err| {
+                        format!("set doctor network probe read timeout failed: {err}")
+                    })?;
+                let mut reader =
+                    BufReader::new(stream.try_clone().map_err(|err| {
+                        format!("clone doctor network probe stream failed: {err}")
+                    })?);
+                let mut request_head = String::new();
+                loop {
+                    let mut line = String::new();
+                    let bytes = reader.read_line(&mut line).map_err(|err| {
+                        format!("read doctor network probe request failed: {err}")
+                    })?;
+                    if bytes == 0 || line == "\r\n" {
+                        break;
+                    }
+                    request_head.push_str(&line);
+                }
+
+                let response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                let _ = stream.write_all(response.as_bytes());
+                return Err(format!(
+                    "doctor opened a network connection despite failed auth: {request_head:?}"
+                ));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(err) => return Err(format!("doctor network probe accept failed: {err}")),
+        }
+    });
+
+    (handle, proxy_url, stop_tx)
+}
+
 fn wait_for_loop_proxy(port: u16, child: &mut std::process::Child) -> Result<(), String> {
     let addr = format!("127.0.0.1:{port}");
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -1041,6 +1098,50 @@ fn doctor_does_not_create_session_state() {
     assert!(
         !config_dir.join("session").exists(),
         "doctor must not create session state while diagnosing failures"
+    );
+}
+
+#[test]
+fn doctor_skips_endpoint_probe_when_active_provider_auth_fails() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    let (probe, proxy_url, stop_probe) = spawn_doctor_network_probe_detector();
+    write_openai_provider_config(&cwd);
+
+    let output = isolated_command(&cwd, &home)
+        .arg("doctor")
+        .env("HTTPS_PROXY", &proxy_url)
+        .env("HTTP_PROXY", &proxy_url)
+        .env_remove("NO_PROXY")
+        .env_remove("no_proxy")
+        .output()
+        .expect("openclaudia doctor must run");
+    let _ = stop_probe.send(());
+    let probe_result = probe.join().expect("doctor probe thread should join");
+
+    assert!(
+        probe_result.is_ok(),
+        "doctor must not open network connections after auth failed: {:?}",
+        probe_result.err()
+    );
+    assert!(
+        !output.status.success(),
+        "doctor should fail when active provider auth is missing; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("Active provider auth... FAILED") && combined.contains("OPENAI_API_KEY"),
+        "doctor auth failure should identify the missing provider credential; got {combined:?}"
+    );
+    assert!(
+        combined.contains("Endpoint reachability for openai... SKIPPED (auth failed)"),
+        "doctor should explicitly skip reachability when auth failed; got {combined:?}"
     );
 }
 

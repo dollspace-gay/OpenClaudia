@@ -205,59 +205,63 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
             let auth = check_active_provider_auth(&config.proxy.target, provider).await;
             if !auth.auth_ok {
                 has_failures = true;
-            }
-
-            print!("\nEndpoint reachability for {}... ", config.proxy.target);
-            match resolve_doctor_endpoint(
-                &config.proxy.target,
-                provider,
-                auth.claude_code_token.as_deref(),
-            ) {
-                Ok(endpoint) => {
-                    let extra_headers: Vec<(String, String)> = provider
-                        .headers
-                        .iter()
-                        .map(|(key, value)| (key.clone(), value.clone()))
-                        .collect();
-                    match pipeline::resolve_headers(
-                        &config.proxy.target,
-                        provider.api_key.as_ref(),
-                        auth.claude_code_token.as_deref(),
-                        &extra_headers,
-                    ) {
-                        Ok(headers) => {
-                            let client = reqwest::Client::builder()
-                                .timeout(Duration::from_secs(5))
-                                .build()?;
-                            let mut request = client.get(&endpoint);
-                            for (key, value) in &headers {
-                                request = request.header(key, value);
-                            }
-                            match request.send().await {
-                                Ok(response) => {
-                                    let status = response.status();
-                                    if doctor_http_status_is_reachable(status) {
-                                        println!("OK (HTTP {status})");
-                                    } else {
-                                        println!("FAILED (HTTP {status})");
+                println!(
+                    "\nEndpoint reachability for {}... SKIPPED (auth failed)",
+                    config.proxy.target
+                );
+            } else {
+                print!("\nEndpoint reachability for {}... ", config.proxy.target);
+                match resolve_doctor_endpoint(
+                    &config.proxy.target,
+                    provider,
+                    auth.claude_code_token.as_deref(),
+                ) {
+                    Ok(endpoint) => {
+                        let extra_headers: Vec<(String, String)> = provider
+                            .headers
+                            .iter()
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .collect();
+                        match pipeline::resolve_headers(
+                            &config.proxy.target,
+                            provider.api_key.as_ref(),
+                            auth.claude_code_token.as_deref(),
+                            &extra_headers,
+                        ) {
+                            Ok(headers) => {
+                                let client = reqwest::Client::builder()
+                                    .timeout(Duration::from_secs(5))
+                                    .build()?;
+                                let mut request = client.get(&endpoint);
+                                for (key, value) in &headers {
+                                    request = request.header(key, value);
+                                }
+                                match request.send().await {
+                                    Ok(response) => {
+                                        let status = response.status();
+                                        if doctor_http_status_is_reachable(status) {
+                                            println!("OK (HTTP {status})");
+                                        } else {
+                                            println!("FAILED (HTTP {status})");
+                                            has_failures = true;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        println!("FAILED: {e}");
                                         has_failures = true;
                                     }
                                 }
-                                Err(e) => {
-                                    println!("FAILED: {e}");
-                                    has_failures = true;
-                                }
+                            }
+                            Err(err) => {
+                                println!("FAILED (header resolution: {err})");
+                                has_failures = true;
                             }
                         }
-                        Err(err) => {
-                            println!("FAILED (header resolution: {err})");
-                            has_failures = true;
-                        }
                     }
-                }
-                Err(err) => {
-                    println!("FAILED (endpoint resolution: {err})");
-                    has_failures = true;
+                    Err(err) => {
+                        println!("FAILED (endpoint resolution: {err})");
+                        has_failures = true;
+                    }
                 }
             }
         } else {
