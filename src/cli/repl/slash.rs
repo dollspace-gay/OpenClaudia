@@ -54,7 +54,17 @@ pub enum PluginActionOutcome {
     /// Management/listing action completed without producing a prompt.
     Handled,
     /// A plugin slash command resolved to a prompt that should be sent.
-    Prompt(String),
+    Prompt(PluginCommandInvocation),
+}
+
+/// Resolved prompt plus per-command metadata for a plugin slash command.
+pub struct PluginCommandInvocation {
+    /// Prompt content to send as the user message.
+    pub prompt: String,
+    /// Tools that should be pre-approved for this prompt.
+    pub allowed_tools: Option<Vec<String>>,
+    /// Optional model hint from command front matter.
+    pub model: Option<String>,
 }
 
 /// Slash command result
@@ -2648,7 +2658,11 @@ fn plugin_run_command(
         let commands = plugin.resolved_commands();
         if let Some(cmd) = commands.iter().find(|c| c.name == command_name) {
             println!("\nRunning plugin command /{plugin_name}:{command_name}\n");
-            return PluginActionOutcome::Prompt(render_plugin_command_prompt(cmd, arguments));
+            return PluginActionOutcome::Prompt(PluginCommandInvocation {
+                prompt: render_plugin_command_prompt(cmd, arguments),
+                allowed_tools: cmd.allowed_tools.clone(),
+                model: cmd.model.clone(),
+            });
         } else {
             let available: Vec<_> = commands.iter().map(|c| c.name.clone()).collect();
             eprintln!("\nCommand '{command_name}' not found in plugin '{plugin_name}'.");

@@ -14,7 +14,7 @@ mod cli;
 
 use openclaudia::{
     config, guardrails, memory,
-    permissions::{CheckResult, PermissionManager},
+    permissions::{CheckResult, PermissionManager, PermissionRule},
     plugins, prompt,
     proxy::normalize_base_url,
     tui, vdd,
@@ -682,6 +682,7 @@ fn check_tool_permission_interactive(
     tool_args: &serde_json::Value,
     always_allowed: &mut std::collections::HashSet<String>,
     permission_mgr: Option<&PermissionManager>,
+    transient_allow_rules: &[PermissionRule],
 ) -> ToolPermissionResult {
     use std::io::Write as _;
 
@@ -690,7 +691,7 @@ fn check_tool_permission_interactive(
     }
 
     if let Some(mgr) = permission_mgr {
-        match mgr.check(tool_name, tool_args) {
+        match mgr.check_with_transient_allow_rules(tool_name, tool_args, transient_allow_rules) {
             CheckResult::Allowed => return ToolPermissionResult::Allowed { checked: true },
             CheckResult::Denied(reason) => {
                 return ToolPermissionResult::Denied(format!("Permission denied: {reason}"));

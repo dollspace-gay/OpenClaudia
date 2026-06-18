@@ -31,7 +31,7 @@ use crate::cli::repl::session_io::{
 };
 use crate::cli::repl::slash::{
     handle_activity_command, handle_memory_command, handle_slash_command, PluginActionOutcome,
-    PluginActionRunner, SlashCommandResult,
+    PluginActionRunner, PluginCommandInvocation, SlashCommandResult,
 };
 use crate::cli::repl::vim::{self, VimState};
 use crate::cli::repl::{load_chat_session, save_chat_session, ChatSession};
@@ -51,8 +51,9 @@ use openclaudia::providers::{
 };
 use openclaudia::tools::safe_truncate;
 use openclaudia::{
-    config, guardrails, memory, permissions::PermissionManager, plugins, prompt, proxy, session,
-    tool_intercept, tools, tui, vdd,
+    config, guardrails, memory,
+    permissions::{PermissionDecision, PermissionManager, PermissionRule},
+    plugins, prompt, proxy, session, tool_intercept, tools, tui, vdd,
 };
 use rustyline::error::ReadlineError;
 
@@ -117,6 +118,7 @@ pub struct ChatRepl {
     // threaded into any method that needs it via `&mut Option<_>`.
     permissions: std::collections::HashSet<String>,
     always_allowed_tools: std::collections::HashSet<String>,
+    transient_allowed_tool_rules: Vec<PermissionRule>,
     plugin_manager: plugins::PluginManager,
 }
 
@@ -128,6 +130,7 @@ enum SlashOutcome {
     Break,
     EditorMessageAdded,
     FallThrough,
+    RewrittenPrompt,
 }
 
 /// Per-turn transport bundle — the URL + headers needed to POST to
@@ -333,6 +336,7 @@ impl ChatRepl {
             memory_db,
             permissions: std::collections::HashSet::new(),
             always_allowed_tools: std::collections::HashSet::new(),
+            transient_allowed_tool_rules: Vec::new(),
             plugin_manager,
         })
     }
@@ -427,6 +431,7 @@ impl ChatRepl {
     ) -> anyhow::Result<Option<bool>> {
         let mut input = line.trim().to_string();
         let mut editor_message_added = false;
+        let mut skip_local_input_shortcuts = false;
 
         if self.vim_enabled {
             let _ = self.vim_state.process_key("Escape");
@@ -444,22 +449,31 @@ impl ChatRepl {
             SlashOutcome::Break => return Ok(Some(true)),
             SlashOutcome::EditorMessageAdded => editor_message_added = true,
             SlashOutcome::FallThrough => {}
+            SlashOutcome::RewrittenPrompt => {
+                skip_local_input_shortcuts = true;
+            }
         }
 
-        if let Some(cmd) = input.strip_prefix('!') {
-            if cmd.is_empty() {
-                println!("Usage: !<command> (e.g., !ls -la)\n");
+        if !skip_local_input_shortcuts {
+            if let Some(cmd) = input.strip_prefix('!') {
+                if cmd.is_empty() {
+                    println!("Usage: !<command> (e.g., !ls -la)\n");
+                    self.clear_transient_prompt_options();
+                    return Ok(Some(false));
+                }
+                execute_shell_command_with_permission(cmd, &mut self.permissions);
+                self.clear_transient_prompt_options();
                 return Ok(Some(false));
             }
-            execute_shell_command_with_permission(cmd, &mut self.permissions);
-            return Ok(Some(false));
-        }
-        if input.starts_with('#') {
-            self.save_note_message(&input);
-            return Ok(Some(false));
+            if input.starts_with('#') {
+                self.save_note_message(&input);
+                self.clear_transient_prompt_options();
+                return Ok(Some(false));
+            }
         }
 
         if !editor_message_added && !self.prepare_user_message(&input, auto_learner).await {
+            self.clear_transient_prompt_options();
             return Ok(Some(false));
         }
 
@@ -477,6 +491,7 @@ impl ChatRepl {
         ) {
             Ok(request_body) => request_body,
             Err(err) => {
+                self.clear_transient_prompt_options();
                 tracing::error!(error = %err, "Failed to build chat request");
                 eprintln!("\n\x1b[31mRequest build error: {err}\x1b[0m");
                 return Ok(Some(false));
@@ -485,6 +500,7 @@ impl ChatRepl {
         let provider = match active_provider_for_turn(&self.config) {
             Ok(provider) => provider,
             Err(err) => {
+                self.clear_transient_prompt_options();
                 tracing::error!(error = %err, "Missing active provider during chat turn");
                 eprintln!("\n\x1b[31mRequest configuration error: {err}\x1b[0m");
                 return Ok(Some(false));
@@ -513,6 +529,7 @@ impl ChatRepl {
             )
             .await;
 
+        self.clear_transient_prompt_options();
         save_session_to_short_term_memory(&self.chat_session, memory_db);
         maybe_auto_compact(&mut self.chat_session, &self.model);
         Ok(if exit { Some(true) } else { None })
@@ -647,18 +664,38 @@ impl ChatRepl {
             SlashCommandResult::Skill(skill_prompt) => {
                 eprintln!("\x1b[36m⚡ Running skill...\x1b[0m");
                 *input = skill_prompt;
-                SlashOutcome::FallThrough
+                SlashOutcome::RewrittenPrompt
             }
             SlashCommandResult::Plugin(action) => match action.apply(&mut self.plugin_manager) {
                 PluginActionOutcome::Handled => SlashOutcome::Continue,
-                PluginActionOutcome::Prompt(plugin_prompt) => {
+                PluginActionOutcome::Prompt(invocation) => {
                     eprintln!("\x1b[36m⚡ Running plugin command...\x1b[0m");
-                    *input = plugin_prompt;
-                    SlashOutcome::FallThrough
+                    self.apply_plugin_command_invocation(input, invocation);
+                    SlashOutcome::RewrittenPrompt
                 }
             },
             other => self.dispatch_slash_simple(other, memory_db),
         }
+    }
+
+    fn apply_plugin_command_invocation(
+        &mut self,
+        input: &mut String,
+        invocation: PluginCommandInvocation,
+    ) {
+        self.transient_allowed_tool_rules =
+            allowed_tool_specs_to_permission_rules(invocation.allowed_tools.as_deref());
+        if let Some(model) = invocation.model.as_deref() {
+            tracing::debug!(
+                model = %model,
+                "plugin command model hint is parsed; legacy REPL keeps the current provider model"
+            );
+        }
+        *input = invocation.prompt;
+    }
+
+    fn clear_transient_prompt_options(&mut self) {
+        self.transient_allowed_tool_rules.clear();
     }
 
     /// Handle the simple state-mutation slash results that share a
@@ -1576,6 +1613,7 @@ impl ChatRepl {
                 &tool_args_val,
                 &mut self.always_allowed_tools,
                 Some(&self.permission_mgr),
+                &self.transient_allowed_tool_rules,
             )
         };
         match result {
@@ -2337,6 +2375,7 @@ impl ChatRepl {
                 &tool_args_val,
                 &mut self.always_allowed_tools,
                 Some(&self.permission_mgr),
+                &self.transient_allowed_tool_rules,
             )
         };
         match result {
@@ -3340,6 +3379,81 @@ fn parse_tool_args(func: &tools::FunctionCall) -> Result<serde_json::Value, Stri
     Ok(value)
 }
 
+fn allowed_tool_specs_to_permission_rules(specs: Option<&[String]>) -> Vec<PermissionRule> {
+    specs
+        .into_iter()
+        .flatten()
+        .filter_map(|spec| allowed_tool_spec_to_permission_rule(spec))
+        .collect()
+}
+
+fn allowed_tool_spec_to_permission_rule(spec: &str) -> Option<PermissionRule> {
+    let spec = spec.trim();
+    if spec.is_empty() {
+        return None;
+    }
+
+    let (tool, pattern) = parse_allowed_tool_spec(spec);
+    let canonical = canonical_permission_tool(tool)?;
+    let pattern = pattern
+        .map(|p| {
+            if canonical == "Bash" {
+                normalize_bash_allowed_tool_pattern(p)
+            } else {
+                p.trim().to_string()
+            }
+        })
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| "**".to_string());
+
+    Some(PermissionRule {
+        tool: canonical.to_string(),
+        pattern,
+        decision: PermissionDecision::Allow,
+    })
+}
+
+fn parse_allowed_tool_spec(spec: &str) -> (&str, Option<&str>) {
+    let Some(open) = spec.find('(') else {
+        return (spec.trim(), None);
+    };
+    if !spec.ends_with(')') || open == 0 {
+        return (spec.trim(), None);
+    }
+
+    let tool = spec[..open].trim();
+    let pattern = spec[open + 1..spec.len() - 1].trim();
+    (tool, Some(pattern))
+}
+
+fn canonical_permission_tool(tool: &str) -> Option<&'static str> {
+    let normalized: String = tool
+        .chars()
+        .filter(|c| *c != '_' && *c != '-')
+        .flat_map(char::to_lowercase)
+        .collect();
+
+    match normalized.as_str() {
+        "bash" | "shell" => Some("Bash"),
+        "write" | "writefile" => Some("Write"),
+        "edit" | "editfile" | "multiedit" | "notebookedit" => Some("Edit"),
+        "webfetch" => Some("WebFetch"),
+        _ => None,
+    }
+}
+
+fn normalize_bash_allowed_tool_pattern(pattern: &str) -> String {
+    let pattern = pattern.trim();
+    if !pattern.contains("://") {
+        if let Some((command, args)) = pattern.split_once(':') {
+            if !command.trim().is_empty() && !args.trim().is_empty() {
+                return format!("{} {}", command.trim_end(), args.trim_start());
+            }
+        }
+    }
+    pattern.to_string()
+}
+
 fn rewind_chat_session(session: &mut ChatSession, turns: usize) -> usize {
     let mut rewound = 0;
     for _ in 0..turns {
@@ -3715,6 +3829,39 @@ providers: {}
         assert_eq!(effort, "low");
         assert_eq!(model, "custom-local");
         assert_eq!(session.model, "custom-local");
+    }
+
+    #[test]
+    fn allowed_tool_spec_parses_bash_scoped_rule() {
+        let rule = allowed_tool_spec_to_permission_rule("Bash(git status *)").expect("bash rule");
+
+        assert_eq!(rule.tool, "Bash");
+        assert_eq!(rule.pattern, "git status *");
+        assert_eq!(rule.decision, PermissionDecision::Allow);
+    }
+
+    #[test]
+    fn allowed_tool_spec_normalizes_legacy_colon_bash_scope() {
+        let rule = allowed_tool_spec_to_permission_rule("Bash(git status:*)").expect("bash rule");
+
+        assert_eq!(rule.tool, "Bash");
+        assert_eq!(rule.pattern, "git status *");
+    }
+
+    #[test]
+    fn allowed_tool_specs_skip_read_only_and_unknown_tools() {
+        let specs = vec![
+            "Read".to_string(),
+            "Glob".to_string(),
+            "mcp__example__read".to_string(),
+            "Write(src/**)".to_string(),
+        ];
+
+        let rules = allowed_tool_specs_to_permission_rules(Some(&specs));
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].tool, "Write");
+        assert_eq!(rules[0].pattern, "src/**");
     }
 
     #[test]

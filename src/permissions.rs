@@ -589,6 +589,43 @@ impl PermissionManager {
         }
     }
 
+    /// Check a tool invocation with additional turn-scoped allow rules.
+    ///
+    /// This is used by slash-command / skill metadata such as
+    /// `allowed-tools`: the extra rules can pre-approve matching calls for
+    /// the current prompt, but they never override hard safety checks or
+    /// explicit deny rules already present in the manager.
+    pub fn check_with_transient_allow_rules(
+        &self,
+        tool_name: &str,
+        tool_args: &serde_json::Value,
+        transient_allow_rules: &[PermissionRule],
+    ) -> CheckResult {
+        match self.check(tool_name, tool_args) {
+            CheckResult::NeedsPrompt { tool, target } => {
+                for rule in transient_allow_rules {
+                    if matches!(
+                        rule.decision,
+                        PermissionDecision::Allow | PermissionDecision::AlwaysAllow
+                    ) && Self::rule_matches(rule, &tool, &target)
+                    {
+                        Self::log_permission_decision(
+                            "allowed",
+                            "transient_allow_rule",
+                            &tool,
+                            &target,
+                            &rule.pattern,
+                        );
+                        return CheckResult::Allowed;
+                    }
+                }
+
+                CheckResult::NeedsPrompt { tool, target }
+            }
+            other => other,
+        }
+    }
+
     fn web_fetch_preapproved_allowed(&self, canonical_tool: &str, target: &str) -> bool {
         if canonical_tool != "WebFetch"
             || !crate::config::is_preapproved(target, &self.web_fetch_preapproved_domains)
@@ -1333,6 +1370,54 @@ mod tests {
         let (mgr, _dir) = make_manager(true, vec![]);
         let result = mgr.check("bash", &json!({"command": "ls -la"}));
         assert!(matches!(result, CheckResult::NeedsPrompt { .. }));
+    }
+
+    #[test]
+    fn transient_allow_rules_preapprove_matching_prompt_only_calls() {
+        let (mgr, _dir) = make_manager(true, vec![]);
+        let rules = [PermissionRule {
+            tool: "Bash".to_string(),
+            pattern: "git status*".to_string(),
+            decision: PermissionDecision::Allow,
+        }];
+
+        let result = mgr.check_with_transient_allow_rules(
+            "bash",
+            &json!({"command": "git status --short"}),
+            &rules,
+        );
+
+        assert_eq!(
+            result,
+            CheckResult::Allowed,
+            "plugin/skill allowed-tools should preapprove matching commands for one turn"
+        );
+    }
+
+    #[test]
+    fn transient_allow_rules_do_not_override_session_denies() {
+        let (mut mgr, _dir) = make_manager(true, vec![]);
+        mgr.add_session_rule(PermissionRule {
+            tool: "Bash".to_string(),
+            pattern: "git status*".to_string(),
+            decision: PermissionDecision::Deny,
+        });
+        let rules = [PermissionRule {
+            tool: "Bash".to_string(),
+            pattern: "git status*".to_string(),
+            decision: PermissionDecision::Allow,
+        }];
+
+        let result = mgr.check_with_transient_allow_rules(
+            "bash",
+            &json!({"command": "git status --short"}),
+            &rules,
+        );
+
+        assert!(
+            matches!(result, CheckResult::Denied(_)),
+            "transient allows must not outrank explicit denies: {result:?}"
+        );
     }
 
     #[test]
