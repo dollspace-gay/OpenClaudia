@@ -1210,8 +1210,28 @@ fn readme_cli_examples_do_not_advertise_stale_tui_or_coordinator_modes() {
         "README config sample must not pin Google thinking to an older Gemini family"
     );
     assert!(
+        readme.contains(
+            "**Cron Scheduling** — Create, list, and delete cron schedule metadata for external schedulers"
+        ),
+        "README feature list must describe cron records as metadata for external schedulers"
+    );
+    assert!(
+        readme.contains(
+            "| `cron_create` | Create recurring cron metadata for an external scheduler |"
+        ),
+        "README tool table must describe cron_create without implying OpenClaudia runs schedules"
+    );
+    assert!(
         !readme.contains("openclaudia --coordinator      # Multi-agent coordinator mode"),
         "README must not advertise the Phase 1 coordinator as a working binary mode"
+    );
+    assert!(
+        !readme.contains("**Cron Scheduling** — Create, list, and delete recurring scheduled jobs"),
+        "README must not imply OpenClaudia executes stored cron records"
+    );
+    assert!(
+        !readme.contains("| `cron_create` | Create a recurring scheduled job |"),
+        "README tool table must not advertise cron_create as an internal job runner"
     );
     assert!(
         !readme.contains("OpenAI o1/o3, Gemini 2.5, DeepSeek R1"),

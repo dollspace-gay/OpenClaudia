@@ -28,7 +28,7 @@ OpenClaudia is a Rust-based CLI that transforms any LLM into an agentic coding a
 - **Subagent System** — Spawn autonomous agents from the agent loop; coordinator infrastructure is experimental and not wired into the default TUI yet
 - **ACP Server** — Agent Control Protocol server for agent interoperability via stdin/stdout
 - **Git Worktrees** — Create, list, and safely remove isolated git worktrees without mutating the process CWD
-- **Cron Scheduling** — Create, list, and delete recurring scheduled jobs
+- **Cron Scheduling** — Create, list, and delete cron schedule metadata for external schedulers
 - **Skills System** — Load and invoke reusable prompt skills from markdown files
 - **Cross-Platform** — Windows, macOS, Linux with Git Bash for consistent shell behavior
 - **Interactive TUI** — Rich terminal interface with keybindings, themes, and session management
@@ -344,9 +344,9 @@ The `keybindings:` config map customizes the legacy line-oriented REPL (`opencla
 
 | Tool | Description |
 |------|-------------|
-| `cron_create` | Create a recurring scheduled job |
-| `cron_delete` | Delete a scheduled job |
-| `cron_list` | List all scheduled jobs |
+| `cron_create` | Create recurring cron metadata for an external scheduler |
+| `cron_delete` | Delete stored cron schedule metadata |
+| `cron_list` | List stored cron schedule metadata |
 
 ### MCP Tools
 
