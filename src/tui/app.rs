@@ -3622,6 +3622,7 @@ mod tests {
         current_exe_command, git_bin, resolve_provider_switch_auth, save_session, ApiClient, App,
         AppEvent, ProviderSwitch, SpawnTarget, TuiSession,
     };
+    use std::io::Write as _;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
@@ -4205,6 +4206,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn handle_input_routes_bang_prefix_to_shell_command() {
+        let mut app = App::new("test-model", "test-provider");
+        let (tx, rx) = mpsc::channel::<AppEvent>();
+        app.api_event_tx = Some(tx);
+
+        app.handle_input("!echo routed-from-input".to_string());
+
+        let (target, stdout, stderr, exit_code) = recv_shell_done(&rx, Duration::from_millis(100))
+            .expect("expected ShellDone event from ! input");
+        assert!(
+            matches!(target, SpawnTarget::ShellCommand { ref displayed } if displayed == "echo routed-from-input"),
+            "expected shell-command target, got {target:?}"
+        );
+        assert!(stdout.is_empty());
+        assert!(
+            stderr.contains("no async runtime bound"),
+            "missing-runtime shell path should explain the failure, got {stderr:?}"
+        );
+        assert_eq!(exit_code, None);
+        assert!(
+            app.session_messages.is_empty(),
+            "! shell escapes must not be submitted as chat messages"
+        );
+    }
+
     // =========================================================================
     // Behavior: expand_file_refs — panic-free regex handling (#292)
     // =========================================================================
@@ -4215,6 +4242,33 @@ mod tests {
         // touching the regex.  Output must equal the input exactly.
         let input = "hello world, no references here";
         assert_eq!(expand_file_refs(input), input);
+    }
+
+    #[test]
+    fn handle_input_expands_at_file_reference_before_api_turn() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let mut file = tempfile::NamedTempFile::new_in(&cwd).expect("temp file in cwd");
+        writeln!(file, "included context from tui").expect("write temp file");
+        let file_name = file
+            .path()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("utf-8 temp filename")
+            .to_string();
+
+        let mut app = App::new("test-model", "test-provider");
+        app.handle_input(format!("please read @{file_name}"));
+
+        let content = app
+            .session_messages
+            .last()
+            .and_then(|message| message.get("content"))
+            .and_then(serde_json::Value::as_str)
+            .expect("user message content");
+        assert!(content.contains("please read "));
+        assert!(content.contains("<file path=\""));
+        assert!(content.contains("included context from tui"));
+        assert!(content.contains("</file>"));
     }
 
     #[test]
