@@ -891,6 +891,18 @@ async fn apply_vdd_review(
         return Ok(Response::from_parts(parts, Body::from(response_bytes)));
     };
 
+    fire_vdd_hook_event(
+        &state.hook_engine,
+        HookEvent::PreAdversaryReview,
+        provider_name,
+        &request.model,
+        serde_json::json!({
+            "mode": state.config.vdd.mode.to_string(),
+            "response_bytes": response_bytes.len(),
+        }),
+    )
+    .await;
+
     let vdd_result = {
         let engine = vdd_engine.lock().await;
         let builder = crate::vdd::BuilderProvider::new(provider_name, api_key);
@@ -898,6 +910,25 @@ async fn apply_vdd_review(
             .process_response(&response_json, request, builder)
             .await
     };
+
+    match &vdd_result {
+        Ok(result) => {
+            fire_vdd_result_hooks(&state.hook_engine, provider_name, &request.model, result).await;
+        }
+        Err(error) => {
+            fire_vdd_hook_event(
+                &state.hook_engine,
+                HookEvent::PostAdversaryReview,
+                provider_name,
+                &request.model,
+                serde_json::json!({
+                    "ok": false,
+                    "error": error.to_string(),
+                }),
+            )
+            .await;
+        }
+    }
 
     // Decide which bytes to ship back. Only `Blocking` produces new bytes;
     // every other path reuses the original response body.
@@ -940,6 +971,125 @@ async fn apply_vdd_review(
     };
 
     Ok(Response::from_parts(parts, Body::from(body_bytes)))
+}
+
+async fn fire_vdd_result_hooks(
+    hook_engine: &HookEngine,
+    provider_name: &str,
+    model: &str,
+    result: &VddResult,
+) {
+    for (event, payload) in vdd_result_hook_plan(result) {
+        fire_vdd_hook_event(hook_engine, event, provider_name, model, payload).await;
+    }
+}
+
+fn vdd_result_hook_plan(result: &VddResult) -> Vec<(HookEvent, Value)> {
+    match result {
+        VddResult::Advisory(advisory) => {
+            let genuine = advisory
+                .findings
+                .iter()
+                .filter(|finding| finding.status == crate::vdd::FindingStatus::Genuine)
+                .count();
+            let mut events = vec![(
+                HookEvent::PostAdversaryReview,
+                serde_json::json!({
+                    "ok": true,
+                    "result": "advisory",
+                    "total_findings": advisory.findings.len(),
+                    "genuine_findings": genuine,
+                    "static_analysis_results": advisory.static_analysis.len(),
+                    "context_injection_bytes": advisory.context_injection.len(),
+                }),
+            )];
+            if genuine > 0 {
+                events.push((
+                    HookEvent::VddConflict,
+                    serde_json::json!({
+                        "result": "advisory",
+                        "genuine_findings": genuine,
+                    }),
+                ));
+            }
+            events
+        }
+        VddResult::Blocking(blocking) => {
+            let mut events = vec![(
+                HookEvent::PostAdversaryReview,
+                serde_json::json!({
+                    "ok": true,
+                    "result": "blocking",
+                    "iterations": blocking.session.iterations.len(),
+                    "total_findings": blocking.session.total_findings,
+                    "genuine_findings": blocking.session.total_genuine,
+                    "false_positives": blocking.session.total_false_positives,
+                    "converged": blocking.session.converged,
+                    "crosslink_issues": blocking.crosslink_issues.len(),
+                }),
+            )];
+            if blocking.session.total_genuine > 0 {
+                events.push((
+                    HookEvent::VddConflict,
+                    serde_json::json!({
+                        "result": "blocking",
+                        "genuine_findings": blocking.session.total_genuine,
+                    }),
+                ));
+            }
+            if blocking.session.converged {
+                events.push((
+                    HookEvent::VddConverged,
+                    serde_json::json!({
+                        "result": "blocking",
+                        "iterations": blocking.session.iterations.len(),
+                        "termination_reason": blocking.session.termination_reason,
+                    }),
+                ));
+            }
+            events
+        }
+        VddResult::Skipped(reason) => vec![(
+            HookEvent::PostAdversaryReview,
+            serde_json::json!({
+                "ok": true,
+                "result": "skipped",
+                "reason": reason,
+            }),
+        )],
+    }
+}
+
+async fn fire_vdd_hook_event(
+    hook_engine: &HookEngine,
+    event: HookEvent,
+    provider_name: &str,
+    model: &str,
+    payload: Value,
+) {
+    let input = HookInput::new(event)
+        .with_extra("provider", serde_json::json!(provider_name))
+        .with_extra("model", serde_json::json!(model))
+        .with_extra("payload", payload);
+    let result = hook_engine.run(event, &input).await;
+    if !result.allowed {
+        warn!(
+            event = ?event,
+            provider = %provider_name,
+            model = %model,
+            "VDD hook returned a deny decision; VDD lifecycle hooks are observational"
+        );
+    }
+    for (hook_error_index, hook_error) in result.errors.iter().enumerate() {
+        warn!(
+            event = ?event,
+            provider = %provider_name,
+            model = %model,
+            hook_error_index,
+            error = %hook_error,
+            "VDD hook execution failed"
+        );
+    }
 }
 
 /// Build a model-specific compactor, apply session hints, and compact the
@@ -2788,6 +2938,74 @@ mod tests {
         let err = ProxyError::HookBlocked("dangerous tool".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    fn test_vdd_finding(status: crate::vdd::FindingStatus) -> crate::vdd::Finding {
+        crate::vdd::Finding {
+            id: "finding-1".to_string(),
+            severity: crate::vdd::Severity::High,
+            cwe: Some("CWE-79".to_string()),
+            description: "test finding".to_string(),
+            file_path: Some("src/lib.rs".to_string()),
+            line_range: Some((1, 1)),
+            status,
+            adversary_reasoning: "reason".to_string(),
+            iteration: 1,
+        }
+    }
+
+    #[test]
+    fn vdd_advisory_hook_plan_reports_conflict_for_genuine_findings() {
+        let result = VddResult::Advisory(crate::vdd::VddAdvisoryResult {
+            findings: vec![
+                test_vdd_finding(crate::vdd::FindingStatus::Genuine),
+                test_vdd_finding(crate::vdd::FindingStatus::FalsePositive),
+            ],
+            context_injection: "review context".to_string(),
+            static_analysis: vec![],
+            tokens_used: crate::session::TokenUsage::default(),
+        });
+
+        let plan = vdd_result_hook_plan(&result);
+        let events: Vec<HookEvent> = plan.iter().map(|(event, _)| *event).collect();
+
+        assert_eq!(events[0], HookEvent::PostAdversaryReview);
+        assert!(events.contains(&HookEvent::VddConflict));
+        assert!(!events.contains(&HookEvent::VddConverged));
+        assert_eq!(plan[0].1["genuine_findings"], 1);
+    }
+
+    #[test]
+    fn vdd_blocking_hook_plan_reports_conflict_and_convergence() {
+        let mut session = crate::vdd::review::VddSession::new(crate::config::VddMode::Blocking);
+        session.total_findings = 3;
+        session.total_genuine = 1;
+        session.total_false_positives = 2;
+        session.finalize(true, "clean pass");
+
+        let result = VddResult::Blocking(crate::vdd::VddBlockingResult {
+            final_response: serde_json::json!({"ok": true}),
+            session,
+            crosslink_issues: vec!["issue-1".to_string()],
+        });
+
+        let plan = vdd_result_hook_plan(&result);
+        let events: Vec<HookEvent> = plan.iter().map(|(event, _)| *event).collect();
+
+        assert_eq!(events[0], HookEvent::PostAdversaryReview);
+        assert!(events.contains(&HookEvent::VddConflict));
+        assert!(events.contains(&HookEvent::VddConverged));
+    }
+
+    #[test]
+    fn vdd_skipped_hook_plan_reports_post_review_only() {
+        let result = VddResult::Skipped("Response too short".to_string());
+        let plan = vdd_result_hook_plan(&result);
+
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].0, HookEvent::PostAdversaryReview);
+        assert_eq!(plan[0].1["result"], "skipped");
+        assert_eq!(plan[0].1["reason"], "Response too short");
     }
 
     /// Spec — `ProxyError::NoApiKey` maps to 401 Unauthorized.
