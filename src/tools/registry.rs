@@ -703,7 +703,9 @@ impl ToolHandler for WebSearchHandler {
                         },
                         "limit": {
                             "type": "integer",
-                            "description": "Maximum number of results to return (default: 5)"
+                            "minimum": 1,
+                            "maximum": 10,
+                            "description": "Maximum number of results to return (1-10, default: 5)"
                         },
                         "allowed_domains": {
                             "type": "array",

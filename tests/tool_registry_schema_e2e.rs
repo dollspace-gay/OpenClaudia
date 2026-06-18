@@ -409,6 +409,9 @@ fn web_search_description_pins_free_browser_backends() {
         .pointer("/function/description")
         .and_then(Value::as_str)
         .expect("web_search description");
+    let limit_schema = def
+        .pointer("/function/parameters/properties/limit")
+        .expect("web_search limit schema");
 
     assert!(
         desc.contains("free DuckDuckGo/Bing browser scraping"),
@@ -431,6 +434,16 @@ fn web_search_description_pins_free_browser_backends() {
             "web_search description must not mention retired paid backend {forbidden}; got {desc:?}"
         );
     }
+    assert_eq!(
+        limit_schema.get("minimum").and_then(Value::as_u64),
+        Some(1),
+        "web_search schema must advertise the enforced minimum limit"
+    );
+    assert_eq!(
+        limit_schema.get("maximum").and_then(Value::as_u64),
+        Some(10),
+        "web_search schema must advertise the enforced maximum limit"
+    );
 }
 
 #[test]

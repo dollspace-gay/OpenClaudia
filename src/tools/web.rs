@@ -44,6 +44,9 @@ const WEB_TOOL_DISPATCH_TIMEOUT: Duration = Duration::from_secs(90);
 #[cfg(feature = "browser")]
 const WEB_BROWSER_TOOL_TIMEOUT: Duration = Duration::from_secs(45);
 
+const WEB_SEARCH_DEFAULT_LIMIT: usize = 5;
+const WEB_SEARCH_MAX_LIMIT: usize = 10;
+
 const WEB_FETCH_DISTILLATION_TIMEOUT: Duration = Duration::from_mins(1);
 const WEB_FETCH_DISTILLATION_MAX_TOKENS: u32 = 1024;
 
@@ -509,7 +512,10 @@ pub fn execute_web_search(args: &HashMap<String, Value>) -> (String, bool) {
         return ("Query must be at least 2 characters.".to_string(), true);
     }
 
-    let limit = usize::try_from(args.arg_u64_or("limit", 5)).unwrap_or(usize::MAX);
+    let limit = match parse_web_search_limit(args.get("limit")) {
+        Ok(limit) => limit,
+        Err(e) => return (e, true),
+    };
 
     let allowed = domain_list(args, "allowed_domains");
     let blocked = domain_list(args, "blocked_domains");
@@ -539,6 +545,23 @@ pub fn execute_web_search(args: &HashMap<String, Value>) -> (String, bool) {
         }
         Err(e) => (format!("Search failed: {e}"), true),
     }
+}
+
+fn parse_web_search_limit(value: Option<&Value>) -> Result<usize, String> {
+    let Some(value) = value else {
+        return Ok(WEB_SEARCH_DEFAULT_LIMIT);
+    };
+    let Some(limit) = value.as_u64().and_then(|raw| usize::try_from(raw).ok()) else {
+        return Err(format!(
+            "web_search limit must be an integer between 1 and {WEB_SEARCH_MAX_LIMIT}."
+        ));
+    };
+    if !(1..=WEB_SEARCH_MAX_LIMIT).contains(&limit) {
+        return Err(format!(
+            "web_search limit must be an integer between 1 and {WEB_SEARCH_MAX_LIMIT}."
+        ));
+    }
+    Ok(limit)
 }
 
 /// Fetch a URL using a headless Chromium browser and return the

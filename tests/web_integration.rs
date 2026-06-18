@@ -432,6 +432,41 @@ fn execute_web_search_missing_query_returns_error() {
     );
 }
 
+#[cfg(feature = "browser")]
+#[test]
+fn execute_web_search_rejects_invalid_limit_before_browser_launch() {
+    use openclaudia::tools::{execute_tool, FunctionCall, ToolCall};
+
+    for (name, value) in [
+        ("zero", json!(0)),
+        ("too_large", json!(11)),
+        ("string", json!("10")),
+        ("negative", json!(-1)),
+    ] {
+        let call = ToolCall {
+            id: format!("badlimit-{name}"),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "web_search".to_string(),
+                arguments: json!({
+                    "query": "rust release",
+                    "limit": value,
+                })
+                .to_string(),
+            },
+        };
+        let result = execute_tool(&call);
+        assert!(result.is_error, "limit case {name} should fail");
+        assert!(
+            result
+                .content
+                .contains("web_search limit must be an integer between 1 and 10"),
+            "invalid limit should fail before search backend launch; got: {}",
+            result.content
+        );
+    }
+}
+
 // ===========================================================================
 // Spec §2 — `web_search` domain filtering (post-hoc, not server-side)
 //
