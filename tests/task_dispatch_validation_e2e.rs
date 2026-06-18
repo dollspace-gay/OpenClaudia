@@ -270,6 +270,44 @@ fn task_update_existing_task_status_succeeds() {
     assert!(!is_err, "valid update MUST succeed; got {msg:?}");
 }
 
+#[test]
+fn task_update_invalid_status_string_errors() {
+    let mut tm = TaskManager::new();
+    let create_args = args_with(&[
+        ("subject", json!("invalid status test")),
+        ("description", json!("desc")),
+    ]);
+    let (_, create_err) = dispatch_with_session("task_create", &create_args, &mut tm);
+    assert!(!create_err);
+
+    let update_args = args_with(&[("task_id", json!("task-1")), ("status", json!("doing"))]);
+    let (msg, is_err) = dispatch_with_session("task_update", &update_args, &mut tm);
+    assert!(is_err);
+    assert!(
+        msg.contains("Invalid task status") && msg.contains("in_progress"),
+        "invalid status must fail with allowed statuses; got {msg:?}"
+    );
+}
+
+#[test]
+fn task_update_non_string_status_errors() {
+    let mut tm = TaskManager::new();
+    let create_args = args_with(&[
+        ("subject", json!("non-string status test")),
+        ("description", json!("desc")),
+    ]);
+    let (_, create_err) = dispatch_with_session("task_create", &create_args, &mut tm);
+    assert!(!create_err);
+
+    let update_args = args_with(&[("task_id", json!("task-1")), ("status", json!(42))]);
+    let (msg, is_err) = dispatch_with_session("task_update", &update_args, &mut tm);
+    assert!(is_err);
+    assert!(
+        msg.contains("Invalid task status") && msg.contains("non-string"),
+        "non-string status must fail clearly; got {msg:?}"
+    );
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Section F — Cross-tool: TaskManager state persists across dispatches
 // ───────────────────────────────────────────────────────────────────────────

@@ -43,7 +43,10 @@ pub fn execute_task_update<S: BuildHasher>(
         return ("Missing 'task_id' argument".to_string(), true);
     };
 
-    let status = args.get("status").and_then(|v| v.as_str());
+    let status = match parse_task_update_status(args.get("status")) {
+        Ok(status) => status,
+        Err(msg) => return (msg, true),
+    };
     let subject = args
         .get("subject")
         .and_then(|v| v.as_str())
@@ -78,7 +81,7 @@ pub fn execute_task_update<S: BuildHasher>(
     match task_mgr.update_task(
         task_id,
         crate::session::TaskUpdateParams {
-            status: status.and_then(crate::session::TaskUpdateStatus::parse),
+            status,
             subject,
             description,
             active_form,
@@ -100,6 +103,27 @@ pub fn execute_task_update<S: BuildHasher>(
         }
         Err(msg) => (msg, true),
     }
+}
+
+fn parse_task_update_status(
+    value: Option<&Value>,
+) -> Result<Option<crate::session::TaskUpdateStatus>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let Some(status) = value.as_str() else {
+        return Err(
+            "Invalid task status '<non-string>'. Must be: pending, in_progress, completed, deleted"
+                .to_string(),
+        );
+    };
+    crate::session::TaskUpdateStatus::parse(status)
+        .map(Some)
+        .ok_or_else(|| {
+            format!(
+                "Invalid task status '{status}'. Must be: pending, in_progress, completed, deleted"
+            )
+        })
 }
 
 /// Execute the `task_get` tool.
