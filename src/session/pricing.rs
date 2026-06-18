@@ -77,6 +77,12 @@ pub const OPUS_4_8_FAST_MODE_OUTPUT_PER_MILLION: f64 = 50.0;
 /// when prompt input exceeds 272K tokens.
 pub const OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS: u64 = 272_000;
 
+/// Google Gemini Pro-family long-context pricing threshold.
+///
+/// Google applies the higher long-context rate to the whole request when
+/// prompt input exceeds 200K tokens.
+pub const GOOGLE_LONG_CONTEXT_THRESHOLD_TOKENS: u64 = 200_000;
+
 /// Errors returned by [`calculate_cost`] / [`calculate_cost_with_ttl`].
 #[derive(Debug, Error, PartialEq, Eq, Clone)]
 pub enum PricingError {
@@ -251,6 +257,30 @@ impl ModelPricing {
             fast_mode_input_per_million: None,
             fast_mode_output_per_million: None,
             long_context_threshold_tokens: Some(OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS),
+            long_context_input_per_million: Some(long_context_input_per_million),
+            long_context_output_per_million: Some(long_context_output_per_million),
+        }
+    }
+
+    /// Non-Anthropic pricing with explicit cache and long-context tiers.
+    const fn other_with_cache_and_long_context(
+        input_per_million: f64,
+        output_per_million: f64,
+        cache_read_multiplier: f64,
+        cache_write_multiplier: f64,
+        long_context_threshold_tokens: u64,
+        long_context_input_per_million: f64,
+        long_context_output_per_million: f64,
+    ) -> Self {
+        Self {
+            input_per_million,
+            output_per_million,
+            cache_read_multiplier,
+            cache_write_5m_multiplier: cache_write_multiplier,
+            cache_write_1hr_multiplier: cache_write_multiplier,
+            fast_mode_input_per_million: None,
+            fast_mode_output_per_million: None,
+            long_context_threshold_tokens: Some(long_context_threshold_tokens),
             long_context_input_per_million: Some(long_context_input_per_million),
             long_context_output_per_million: Some(long_context_output_per_million),
         }
@@ -469,16 +499,73 @@ pub static PRICING_TABLE: &[(&str, ModelPricing)] = &[
     // ---------------------------------------------------------------------
     // Google Gemini
     //
-    // `gemini-2.5-flash`/`-pro` and `gemini-2.0-flash` must precede a
-    // bare `gemini-2` to avoid the shadowing the original cascade
-    // suffered from; this is the second canonical ordering case called
-    // out in the issue.
+    // More-specific Gemini prefixes must precede shorter siblings to
+    // avoid ordered-prefix shadowing. Google exposes no cache-write
+    // usage counter; cache-write multipliers here are compatibility
+    // fallbacks if a caller manually supplies that bucket.
     // ---------------------------------------------------------------------
+    (
+        "gemini-3.5-flash",
+        ModelPricing::other_with_cache(1.50, 9.0, 0.1, 1.0),
+    ),
+    (
+        "gemini-3.1-pro-preview-customtools",
+        ModelPricing::other_with_cache_and_long_context(
+            2.0,
+            12.0,
+            0.1,
+            1.0,
+            GOOGLE_LONG_CONTEXT_THRESHOLD_TOKENS,
+            4.0,
+            18.0,
+        ),
+    ),
+    (
+        "gemini-3.1-pro-preview",
+        ModelPricing::other_with_cache_and_long_context(
+            2.0,
+            12.0,
+            0.1,
+            1.0,
+            GOOGLE_LONG_CONTEXT_THRESHOLD_TOKENS,
+            4.0,
+            18.0,
+        ),
+    ),
+    (
+        "gemini-3.1-flash-lite",
+        ModelPricing::other_with_cache(0.25, 1.50, 0.1, 1.0),
+    ),
+    (
+        "gemini-3-flash-preview",
+        ModelPricing::other_with_cache(0.50, 3.0, 0.1, 1.0),
+    ),
+    (
+        "gemini-2.5-flash-lite",
+        ModelPricing::other_with_cache(0.10, 0.40, 0.1, 1.0),
+    ),
+    (
+        "gemini-2.5-flash",
+        ModelPricing::other_with_cache(0.30, 2.50, 0.1, 1.0),
+    ),
+    (
+        "gemini-2.5-pro",
+        ModelPricing::other_with_cache_and_long_context(
+            1.25,
+            10.0,
+            0.1,
+            1.0,
+            GOOGLE_LONG_CONTEXT_THRESHOLD_TOKENS,
+            2.50,
+            15.0,
+        ),
+    ),
+    // Legacy Gemini IDs retained for historical sessions and explicit
+    // caller-provided model IDs. They are not advertised in the static
+    // Google model catalog.
+    ("gemini-2.0-flash", ModelPricing::other(0.075, 0.30)),
     ("gemini-1.5-flash", ModelPricing::other(0.075, 0.30)),
     ("gemini-1.5-pro", ModelPricing::other(1.25, 5.0)),
-    ("gemini-2.0-flash", ModelPricing::other(0.075, 0.30)),
-    ("gemini-2.5-flash", ModelPricing::other(0.075, 0.30)),
-    ("gemini-2.5-pro", ModelPricing::other(1.25, 10.0)),
     // ---------------------------------------------------------------------
     // DeepSeek
     // ---------------------------------------------------------------------
@@ -1035,16 +1122,39 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Mandate test 2 — gemini-2.0-flash resolves before any shorter
-    // gemini-2 prefix (none exists today, but if one is ever added it
-    // MUST go after the specific flash/pro entries).
+    // Mandate test 2 — Gemini specific model families resolve before
+    // any shorter future `gemini-2`/`gemini-3` prefix.
     // -----------------------------------------------------------------------
     #[test]
-    fn ordering_gemini_2_0_flash_resolves_specifically() {
+    fn ordering_gemini_specific_families_resolve_before_generic_prefixes() {
         let idx_flash = PRICING_TABLE
             .iter()
             .position(|(p, _)| *p == "gemini-2.0-flash")
             .expect("table must contain gemini-2.0-flash");
+        let idx_flash_lite = PRICING_TABLE
+            .iter()
+            .position(|(p, _)| *p == "gemini-2.5-flash-lite")
+            .expect("table must contain gemini-2.5-flash-lite");
+        let idx_flash_25 = PRICING_TABLE
+            .iter()
+            .position(|(p, _)| *p == "gemini-2.5-flash")
+            .expect("table must contain gemini-2.5-flash");
+        let idx_pro_customtools = PRICING_TABLE
+            .iter()
+            .position(|(p, _)| *p == "gemini-3.1-pro-preview-customtools")
+            .expect("table must contain gemini-3.1-pro-preview-customtools");
+        let idx_pro_preview = PRICING_TABLE
+            .iter()
+            .position(|(p, _)| *p == "gemini-3.1-pro-preview")
+            .expect("table must contain gemini-3.1-pro-preview");
+        assert!(
+            idx_flash_lite < idx_flash_25,
+            "gemini-2.5-flash-lite must precede gemini-2.5-flash"
+        );
+        assert!(
+            idx_pro_customtools < idx_pro_preview,
+            "gemini-3.1-pro-preview-customtools must precede gemini-3.1-pro-preview"
+        );
         // Any future bare `gemini-2` prefix must appear strictly after.
         for (i, (prefix, _)) in PRICING_TABLE.iter().enumerate() {
             if *prefix == "gemini-2" {
@@ -1053,10 +1163,18 @@ mod tests {
                     "a bare `gemini-2` prefix at {i} would shadow `gemini-2.0-flash` at {idx_flash}"
                 );
             }
+            if *prefix == "gemini-3" {
+                assert!(
+                    i > idx_pro_preview,
+                    "a bare `gemini-3` prefix at {i} would shadow `gemini-3.1-pro-preview` at {idx_pro_preview}"
+                );
+            }
         }
         // And the specific flash entry resolves.
         let p = get_pricing("gemini-2.0-flash").expect("must resolve");
         assert!((p.input_per_million - 0.075).abs() < f64::EPSILON);
+        let p = get_pricing("gemini-3.1-pro-preview-customtools").expect("must resolve");
+        assert!((p.input_per_million - 2.0).abs() < f64::EPSILON);
     }
 
     // -----------------------------------------------------------------------
@@ -1213,7 +1331,14 @@ mod tests {
             "o4",
             "o4-pro",
             // Google provider
+            "gemini-3.5-flash",
+            "gemini-3.1-pro-preview",
+            "gemini-3.1-pro-preview-customtools",
+            "gemini-3.1-flash-lite",
+            "gemini-3-flash-preview",
             "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
             // DeepSeek
             "deepseek-v4-pro",
             "deepseek-v4-flash",
@@ -1260,6 +1385,19 @@ mod tests {
         assert!(
             missing.is_empty(),
             "PRICING_TABLE is missing OpenAI catalog model(s): {missing:?}"
+        );
+    }
+
+    #[test]
+    fn google_static_catalog_models_resolve_pricing() {
+        let missing = crate::providers::GOOGLE_MODELS
+            .iter()
+            .copied()
+            .filter(|model| get_pricing(model).is_none())
+            .collect::<Vec<_>>();
+        assert!(
+            missing.is_empty(),
+            "PRICING_TABLE is missing Google catalog model(s): {missing:?}"
         );
     }
 
@@ -1362,6 +1500,14 @@ mod tests {
         let p = get_pricing("claude-opus-4-8").expect("opus-4-8 must be known");
         assert!((p.input_per_million - 5.0).abs() < f64::EPSILON);
         assert!((p.output_per_million - 25.0).abs() < f64::EPSILON);
+
+        let p = get_pricing("gemini-3.5-flash").expect("gemini-3.5-flash must be known");
+        assert!((p.input_per_million - 1.50).abs() < f64::EPSILON);
+        assert!((p.output_per_million - 9.0).abs() < f64::EPSILON);
+
+        let p = get_pricing("gemini-2.5-flash-lite").expect("gemini-2.5-flash-lite must be known");
+        assert!((p.input_per_million - 0.10).abs() < f64::EPSILON);
+        assert!((p.output_per_million - 0.40).abs() < f64::EPSILON);
 
         let p = get_pricing("claude-fable-5").expect("fable must be known");
         assert!((p.input_per_million - 10.0).abs() < f64::EPSILON);

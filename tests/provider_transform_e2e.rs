@@ -375,9 +375,9 @@ fn anthropic_chat_endpoint_is_messages() {
 #[test]
 fn google_chat_endpoint_embeds_model_name() {
     let adapter = get_adapter("google").expect("google adapter");
-    let endpoint = adapter.chat_endpoint("gemini-1.5-pro");
+    let endpoint = adapter.chat_endpoint("gemini-3.5-flash");
     assert!(
-        endpoint.contains("gemini-1.5-pro"),
+        endpoint.contains("gemini-3.5-flash"),
         "google endpoint must embed model name; got {endpoint:?}"
     );
     assert!(

@@ -101,14 +101,14 @@ fn determine_provider_dispatches_by_model_prefix() {
     let config = cfg_with_target("anthropic");
     for (model, expected) in &[
         ("claude-3-5-sonnet-20241022", "anthropic"),
-        ("claude-opus-4-20250514", "anthropic"),
+        ("claude-opus-4-8", "anthropic"),
         ("anthropic-internal", "anthropic"),
-        ("gpt-4o-2024-05-13", "openai"),
+        ("gpt-5.5", "openai"),
         ("gpt-4-turbo", "openai"),
         ("o1-preview", "openai"),
         ("o3-mini", "openai"),
-        ("gemini-1.5-pro", "google"),
-        ("gemini-2.0-flash-exp", "google"),
+        ("gemini-3.5-flash", "google"),
+        ("gemini-3.1-pro-preview-customtools", "google"),
         ("deepseek-chat", "deepseek"),
         ("deepseek-reasoner", "deepseek"),
         ("qwen-max", "qwen"),

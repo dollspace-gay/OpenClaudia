@@ -129,6 +129,10 @@ fn classify_o2_o5_do_not_match_unlisted_o_versions() {
 #[test]
 fn classify_gemini_prefix_as_google() {
     assert_eq!(
+        ProviderKind::from_model("gemini-3.5-flash"),
+        ProviderKind::Google
+    );
+    assert_eq!(
         ProviderKind::from_model("gemini-2.5-pro"),
         ProviderKind::Google
     );
@@ -137,7 +141,7 @@ fn classify_gemini_prefix_as_google() {
         ProviderKind::Google
     );
     assert_eq!(
-        ProviderKind::from_model("gemini-1.5-pro-002"),
+        ProviderKind::from_model("gemini-3.1-pro-preview"),
         ProviderKind::Google
     );
 }

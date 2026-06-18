@@ -2187,7 +2187,7 @@ mod tests {
         let config = CompactionConfig::for_model("gpt-4o-mini");
         assert_eq!(config.max_context_tokens, GPT4O_CONTEXT);
 
-        let config = CompactionConfig::for_model("gemini-1.5-pro");
+        let config = CompactionConfig::for_model("gemini-3.5-flash");
         assert_eq!(config.max_context_tokens, GEMINI_PRO_CONTEXT);
     }
 

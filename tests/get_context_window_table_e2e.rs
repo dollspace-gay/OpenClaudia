@@ -131,7 +131,7 @@ fn gpt_4_1_wins_over_generic_gpt_4_due_to_table_order() {
 #[test]
 fn gemini_pro_returns_1m_tokens() {
     // PINS WIRE: Gemini Pro has 1M context.
-    assert_eq!(get_context_window("gemini-1.5-pro"), 1_000_000);
+    assert_eq!(get_context_window("gemini-3.5-flash"), 1_000_000);
     assert_eq!(get_context_window("gemini-2.5-pro"), 1_000_000);
 }
 

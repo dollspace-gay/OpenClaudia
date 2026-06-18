@@ -19,8 +19,9 @@
 use openclaudia::session::{
     calculate_cost, calculate_cost_fast_mode, calculate_cost_with_ttl, get_pricing, CacheWriteTtl,
     ModelPricing, PricingError, TokenUsage, FAST_MODE_INPUT_PER_MILLION,
-    FAST_MODE_OUTPUT_PER_MILLION, OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS,
-    OPUS_4_8_FAST_MODE_INPUT_PER_MILLION, OPUS_4_8_FAST_MODE_OUTPUT_PER_MILLION,
+    FAST_MODE_OUTPUT_PER_MILLION, GOOGLE_LONG_CONTEXT_THRESHOLD_TOKENS,
+    OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS, OPUS_4_8_FAST_MODE_INPUT_PER_MILLION,
+    OPUS_4_8_FAST_MODE_OUTPUT_PER_MILLION,
 };
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -151,6 +152,41 @@ fn get_pricing_for_current_openai_o_series_returns_documented_rates() {
     let o1_mini = get_pricing("o1-mini").expect("o1-mini");
     assert_eq!(o1_mini.input_per_million, 1.10);
     assert_eq!(o1_mini.output_per_million, 4.40);
+}
+
+#[test]
+fn get_pricing_for_current_google_models_returns_documented_rates() {
+    let gemini35 = get_pricing("gemini-3.5-flash").expect("gemini-3.5-flash");
+    assert_eq!(gemini35.input_per_million, 1.50);
+    assert_eq!(gemini35.output_per_million, 9.0);
+    assert_eq!(gemini35.cache_read_multiplier, 0.1);
+
+    let pro = get_pricing("gemini-3.1-pro-preview-customtools")
+        .expect("gemini-3.1-pro-preview-customtools");
+    assert_eq!(pro.input_per_million, 2.0);
+    assert_eq!(pro.output_per_million, 12.0);
+    assert_eq!(
+        pro.long_context_threshold_tokens,
+        Some(GOOGLE_LONG_CONTEXT_THRESHOLD_TOKENS)
+    );
+    assert_eq!(pro.long_context_input_per_million, Some(4.0));
+    assert_eq!(pro.long_context_output_per_million, Some(18.0));
+
+    let flash_lite = get_pricing("gemini-3.1-flash-lite").expect("gemini-3.1-flash-lite");
+    assert_eq!(flash_lite.input_per_million, 0.25);
+    assert_eq!(flash_lite.output_per_million, 1.50);
+
+    let flash_preview = get_pricing("gemini-3-flash-preview").expect("gemini-3-flash-preview");
+    assert_eq!(flash_preview.input_per_million, 0.50);
+    assert_eq!(flash_preview.output_per_million, 3.0);
+
+    let flash25 = get_pricing("gemini-2.5-flash").expect("gemini-2.5-flash");
+    assert_eq!(flash25.input_per_million, 0.30);
+    assert_eq!(flash25.output_per_million, 2.50);
+
+    let lite25 = get_pricing("gemini-2.5-flash-lite").expect("gemini-2.5-flash-lite");
+    assert_eq!(lite25.input_per_million, 0.10);
+    assert_eq!(lite25.output_per_million, 0.40);
 }
 
 #[test]
@@ -498,6 +534,36 @@ fn calculate_cost_counts_openai_cached_input_toward_long_context_threshold() {
     assert!(
         (cost - expected).abs() < 1e-9,
         "cached input is part of the OpenAI prompt length that selects the long-context tier; got {cost}"
+    );
+}
+
+#[test]
+fn calculate_cost_uses_gemini_long_context_rates_above_threshold() {
+    let at_threshold = TokenUsage {
+        input_tokens: GOOGLE_LONG_CONTEXT_THRESHOLD_TOKENS,
+        output_tokens: 100_000,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+    };
+    let standard = calculate_cost("gemini-3.1-pro-preview", &at_threshold).expect("gemini pricing");
+    let expected_standard = (200_000.0 * 2.0 / 1_000_000.0) + (100_000.0 * 12.0 / 1_000_000.0);
+    assert!(
+        (standard - expected_standard).abs() < 1e-9,
+        "200K input tokens stays on standard Gemini 3.1 Pro rates; got {standard}"
+    );
+
+    let above_threshold = TokenUsage {
+        input_tokens: GOOGLE_LONG_CONTEXT_THRESHOLD_TOKENS + 1,
+        output_tokens: 100_000,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+    };
+    let long_context =
+        calculate_cost("gemini-3.1-pro-preview", &above_threshold).expect("gemini pricing");
+    let expected_long = (200_001.0 * 4.0 / 1_000_000.0) + (100_000.0 * 18.0 / 1_000_000.0);
+    assert!(
+        (long_context - expected_long).abs() < 1e-9,
+        ">200K input tokens must use Gemini 3.1 Pro long-context rates for the full request; got {long_context}"
     );
 }
 

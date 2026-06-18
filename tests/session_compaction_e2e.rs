@@ -420,8 +420,8 @@ fn context_window_table_dispatches_by_substring() {
         "claude-3-5-sonnet-20241022",
         "claude-3-opus-20240229",
         "gpt-4-turbo",
-        "gpt-4o-2024-05-13",
-        "gemini-1.5-pro",
+        "gpt-5.5",
+        "gemini-3.5-flash",
     ];
     let default_window = get_context_window("totally-unknown-model-name-2099");
     for model in known {

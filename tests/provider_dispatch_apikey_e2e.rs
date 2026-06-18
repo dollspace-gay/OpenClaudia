@@ -209,7 +209,7 @@ fn from_model_o1_does_not_match_o100_anti_prefix_bug() {
 #[test]
 fn from_model_google_prefixes() {
     assert_eq!(
-        ProviderKind::from_model("gemini-1.5-pro"),
+        ProviderKind::from_model("gemini-3.5-flash"),
         ProviderKind::Google
     );
 }

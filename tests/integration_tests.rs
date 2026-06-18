@@ -2955,7 +2955,7 @@ mod token_tracking {
         assert_eq!(get_context_window("claude-3-opus-20240229"), 200_000);
         assert_eq!(get_context_window("claude-3-5-sonnet-20241022"), 200_000);
         assert_eq!(get_context_window("gpt-4o"), 128_000);
-        assert_eq!(get_context_window("gemini-1.5-pro"), 1_000_000);
+        assert_eq!(get_context_window("gemini-3.5-flash"), 1_000_000);
         assert_eq!(get_context_window("unknown-model"), 128_000);
     }
 
