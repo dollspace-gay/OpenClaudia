@@ -2,9 +2,9 @@
 //! exact per-model constants pinned (current Claude long-context
 //! models at 1M, older Claude family at 200k, GPT-5.5/5.4 at
 //! 1.05M, GPT-4o at 128k, GPT-4.1 at 1M, GPT-5 at 400k,
-//! Gemini Pro at 1M, DeepSeek V4 at 1M, Qwen current
+//! `Gemini Pro` at 1M, `DeepSeek V4` at 1M, `Qwen` current
 //! families at 1M or 256k, Kimi/Moonshot at their documented
-//! family windows, MiniMax M3 at 1M / M2.x at 204.8k),
+//! family windows, `MiniMax M3` at 1M / `M2.x` at 204.8k),
 //! the substring-precedence rule (gpt-4o matches
 //! BEFORE generic gpt-4), the unknown-model fallback, and
 //! case-insensitivity.

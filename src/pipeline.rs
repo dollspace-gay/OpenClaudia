@@ -159,10 +159,10 @@ pub fn build_anthropic_request(
     Ok(req)
 }
 
-/// Build an OpenAI-compatible request body (used by `OpenAI`, `DeepSeek`, Qwen, Z.AI).
+/// Build an `OpenAI`-compatible request body (used by `OpenAI`, `DeepSeek`, `Qwen`, `Z.AI`).
 ///
-/// `effort_level` propagates as `reasoning_effort` for supported OpenAI
-/// reasoning levels. `max` is kept as a user-facing alias for OpenAI's
+/// `effort_level` propagates as `reasoning_effort` for supported `OpenAI`
+/// reasoning levels. `max` is kept as a user-facing alias for `OpenAI`'s
 /// `xhigh` tier.
 #[must_use]
 pub fn build_openai_request(model: &str, messages: &[Value], effort_level: &str) -> Value {
@@ -961,6 +961,7 @@ fn extract_google_usage(gemini_json: &Value) -> (u64, u64) {
 }
 
 /// Handle a non-streaming Google Gemini response.
+#[allow(clippy::too_many_arguments)]
 async fn handle_google_response(
     response: reqwest::Response,
     memory_db: Option<Arc<MemoryDb>>,
@@ -1673,6 +1674,7 @@ async fn permission_request_hook_outcome(
 /// `flavor = "current_thread"` a synchronous `mpsc::recv` here would
 /// pin the only thread and deadlock the main TUI loop (which is the
 /// one that has to deliver the user's response).
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn check_tool_permission(
     tool_name: &str,
     tool_call_id: &str,
@@ -2048,6 +2050,7 @@ fn record_quality_gate_verification(
 ///
 /// Returns the tool result messages (for appending to conversation history)
 /// and a boolean indicating whether there were any tool calls.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn execute_tool_calls_for_tui(
     tool_calls: &[ToolCall],
     memory_db: Option<Arc<MemoryDb>>,
@@ -2593,12 +2596,15 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0]["is_error"], false);
 
-        let ledger = ledger.lock().expect("ledger lock");
-        let observation = ledger
-            .observations_chronological()
-            .into_iter()
-            .find(|obs| matches!(obs.kind, crate::ledger::ObservationKind::ToolResult { .. }))
-            .expect("tool result observation");
+        let observation = {
+            let ledger = ledger.lock().expect("ledger lock");
+            ledger
+                .observations_chronological()
+                .into_iter()
+                .find(|obs| matches!(obs.kind, crate::ledger::ObservationKind::ToolResult { .. }))
+                .cloned()
+        }
+        .expect("tool result observation");
         assert_eq!(observation.authority, crate::ledger::Authority::Tool);
         let crate::ledger::ObservationKind::ToolResult { tool, result } = &observation.kind else {
             panic!("expected tool result observation");
@@ -2624,12 +2630,15 @@ mod tests {
 
         observe_tool_result_json(Some(session_id), "ask_user_question", &result_json);
 
-        let ledger = ledger.lock().expect("ledger lock");
-        let observation = ledger
-            .observations_chronological()
-            .into_iter()
-            .find(|obs| matches!(obs.kind, crate::ledger::ObservationKind::ToolResult { .. }))
-            .expect("tool result observation");
+        let observation = {
+            let ledger = ledger.lock().expect("ledger lock");
+            ledger
+                .observations_chronological()
+                .into_iter()
+                .find(|obs| matches!(obs.kind, crate::ledger::ObservationKind::ToolResult { .. }))
+                .cloned()
+        }
+        .expect("tool result observation");
         let crate::ledger::ObservationKind::ToolResult { tool, result } = &observation.kind else {
             panic!("expected tool result observation");
         };

@@ -44,7 +44,7 @@ const PREFIX_CAPACITY_BYTES: usize = 12 * 1024;
 const SUFFIX_CAPACITY_BYTES: usize = 4 * 1024;
 
 #[cfg(feature = "browser")]
-fn base_tools_prompt() -> &'static str {
+const fn base_tools_prompt() -> &'static str {
     BASE_TOOLS
 }
 

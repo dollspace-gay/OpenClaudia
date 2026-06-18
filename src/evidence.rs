@@ -28,6 +28,11 @@ impl Denial {
 ///
 /// Model summaries and stale file reads may be useful for navigation, but they
 /// are not authoritative evidence.
+///
+/// # Errors
+///
+/// Returns [`Denial`] when no evidence is supplied, an id is unknown, a cited
+/// observation is stale, or a cited observation has only summary authority.
 pub fn authoritative_evidence<'a>(
     evidence: &[ObsId],
     ledger: &'a RealityLedger,
@@ -57,6 +62,11 @@ pub fn authoritative_evidence<'a>(
 }
 
 /// Like [`authoritative_evidence`], but also accepts an empty evidence set.
+///
+/// # Errors
+///
+/// Returns [`Denial`] for the same invalid non-empty evidence cases as
+/// [`authoritative_evidence`].
 pub fn optional_authoritative_evidence<'a>(
     evidence: &[ObsId],
     ledger: &'a RealityLedger,

@@ -499,14 +499,7 @@ pub fn execute_web_search(args: &HashMap<String, Value>) -> (String, bool) {
     let allowed = domain_list(args, "allowed_domains");
     let blocked = domain_list(args, "blocked_domains");
 
-    // Shared runtime; never construct a fresh one per call (crosslink #368).
-    // The spawned future is `'static` — own all captured inputs so the
-    // future doesn't borrow `query` across thread boundaries.
-    let query_owned = query.to_string();
-    let result = match run_blocking(async move { web::search_web(&query_owned, limit).await }) {
-        Ok(result) => result,
-        Err(e) => return (format!("Search failed: {e}"), true),
-    };
+    let result = web::search_web(query, limit);
 
     match result {
         Ok(mut results) => {

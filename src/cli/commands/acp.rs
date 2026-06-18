@@ -37,8 +37,8 @@ pub async fn cmd_acp(
 
     let target = config.proxy.target.clone();
     let Some(provider) = config.active_provider() else {
-        eprintln!("No provider configured for target '{}'", target);
-        anyhow::bail!("no provider configured for target '{}'", target);
+        eprintln!("No provider configured for target '{target}'");
+        anyhow::bail!("no provider configured for target '{target}'");
     };
     let provider_api_key = provider.api_key.clone();
     let provider_model = provider.model.clone();
@@ -58,15 +58,8 @@ pub async fn cmd_acp(
         (None, None)
     } else {
         let env_var = super::provider_api_key_env_var(&target);
-        eprintln!(
-            "No API key configured for '{}'. Set {} or add to config.",
-            target, env_var
-        );
-        anyhow::bail!(
-            "no API key configured for '{}'; set {} or add to config",
-            target,
-            env_var
-        );
+        eprintln!("No API key configured for '{target}'. Set {env_var} or add to config.");
+        anyhow::bail!("no API key configured for '{target}'; set {env_var} or add to config");
     };
 
     let model = model_override

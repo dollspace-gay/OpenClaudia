@@ -153,10 +153,12 @@ fn read_file_records_observation_when_session_ledger_is_active() {
     let (msg, is_err) = dispatch_read(&args);
     assert!(!is_err, "read should succeed: {msg}");
 
-    let ledger = ledger.lock().expect("ledger lock");
-    assert_eq!(ledger.len(), 1);
-    let index = ledger.observation_index(8);
-    let observation = ledger.get(index[0].id).expect("observation");
+    let observation = {
+        let ledger = ledger.lock().expect("ledger lock");
+        assert_eq!(ledger.len(), 1);
+        let index = ledger.observation_index(8);
+        ledger.get(index[0].id).expect("observation").clone()
+    };
     let openclaudia::ledger::ObservationKind::FileRead {
         path: observed_path,
         sha256,

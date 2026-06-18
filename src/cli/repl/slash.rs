@@ -2340,36 +2340,61 @@ pub trait PluginActionRunner {
 impl PluginActionRunner for PluginAction {
     fn apply(self, plugin_manager: &mut plugins::PluginManager) -> PluginActionOutcome {
         match self {
-            Self::Menu => plugin_action_menu(plugin_manager),
-            Self::Help => plugin_action_help(),
+            Self::Menu => {
+                plugin_action_menu(plugin_manager);
+                PluginActionOutcome::Handled
+            }
+            Self::Help => {
+                plugin_action_help();
+                PluginActionOutcome::Handled
+            }
             Self::Install {
                 plugin,
                 marketplace,
-            } => plugin_install(plugin.as_deref(), marketplace.as_deref(), plugin_manager),
-            Self::Manage => plugin_action_manage(plugin_manager),
-            Self::Uninstall { plugin } => plugin_action_uninstall(&plugin, plugin_manager),
-            Self::Enable { plugin } => match plugin_manager.enable(&plugin) {
-                Ok(()) => println!("\nEnabled plugin '{plugin}'. Restart to apply changes.\n"),
-                Err(e) => eprintln!("\nFailed to enable plugin: {e}\n"),
-            },
-            Self::Disable { plugin } => match plugin_manager.disable(&plugin) {
-                Ok(()) => println!("\nDisabled plugin '{plugin}'. Restart to apply changes.\n"),
-                Err(e) => eprintln!("\nFailed to disable plugin: {e}\n"),
-            },
-            Self::Validate { path } => plugin_validate(path),
+            } => {
+                plugin_install(plugin.as_deref(), marketplace.as_deref(), plugin_manager);
+                PluginActionOutcome::Handled
+            }
+            Self::Manage => {
+                plugin_action_manage(plugin_manager);
+                PluginActionOutcome::Handled
+            }
+            Self::Uninstall { plugin } => {
+                plugin_action_uninstall(&plugin, plugin_manager);
+                PluginActionOutcome::Handled
+            }
+            Self::Enable { plugin } => {
+                match plugin_manager.enable(&plugin) {
+                    Ok(()) => println!("\nEnabled plugin '{plugin}'. Restart to apply changes.\n"),
+                    Err(e) => eprintln!("\nFailed to enable plugin: {e}\n"),
+                }
+                PluginActionOutcome::Handled
+            }
+            Self::Disable { plugin } => {
+                match plugin_manager.disable(&plugin) {
+                    Ok(()) => println!("\nDisabled plugin '{plugin}'. Restart to apply changes.\n"),
+                    Err(e) => eprintln!("\nFailed to disable plugin: {e}\n"),
+                }
+                PluginActionOutcome::Handled
+            }
+            Self::Validate { path } => {
+                plugin_validate(path);
+                PluginActionOutcome::Handled
+            }
             Self::Marketplace { action, target } => {
                 plugin_marketplace(action.as_deref(), target.as_deref(), plugin_manager);
+                PluginActionOutcome::Handled
             }
-            Self::Reload => plugin_action_reload(plugin_manager),
+            Self::Reload => {
+                plugin_action_reload(plugin_manager);
+                PluginActionOutcome::Handled
+            }
             Self::RunCommand {
                 plugin_name,
                 command_name,
                 arguments,
-            } => {
-                return plugin_run_command(&plugin_name, &command_name, &arguments, plugin_manager)
-            }
-        };
-        PluginActionOutcome::Handled
+            } => plugin_run_command(&plugin_name, &command_name, &arguments, plugin_manager),
+        }
     }
 }
 
@@ -2722,14 +2747,13 @@ fn plugin_run_command(
                 allowed_tools: cmd.allowed_tools.clone(),
                 model: cmd.model.clone(),
             });
+        }
+        let available: Vec<_> = commands.iter().map(|c| c.name.clone()).collect();
+        eprintln!("\nCommand '{command_name}' not found in plugin '{plugin_name}'.");
+        if available.is_empty() {
+            eprintln!("This plugin has no commands.\n");
         } else {
-            let available: Vec<_> = commands.iter().map(|c| c.name.clone()).collect();
-            eprintln!("\nCommand '{command_name}' not found in plugin '{plugin_name}'.");
-            if available.is_empty() {
-                eprintln!("This plugin has no commands.\n");
-            } else {
-                eprintln!("Available: {}\n", available.join(", "));
-            }
+            eprintln!("Available: {}\n", available.join(", "));
         }
     } else {
         eprintln!("\nPlugin '{plugin_name}' not found. Use /plugin to see installed plugins.\n");

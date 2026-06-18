@@ -23,9 +23,12 @@ pub fn execute_grounding_context(args: &HashMap<String, Value>) -> (String, bool
         });
         hydrate_from_ledger(&session_key, &ledger, &ids, include_stale)
     } else {
-        match RealityLedger::open_project_session(&session_key) {
+        match RealityLedger::open_existing_project_session(&session_key) {
             Ok(ledger) => hydrate_from_ledger(&session_key, &ledger, &ids, include_stale),
-            Err(crate::ledger::LedgerError::InvalidSessionKey { .. }) => {
+            Err(
+                crate::ledger::LedgerError::InvalidSessionKey { .. }
+                | crate::ledger::LedgerError::MissingSessionLedger { .. },
+            ) => {
                 return (
                     "No active session reality ledger is available for grounding_context"
                         .to_string(),
@@ -229,8 +232,7 @@ mod tests {
             .observe_file_read("src/lib.rs", "pub fn f() {}\n", 1, 1, "1| pub fn f() {}")
             .expect("file read");
         let shared = Arc::new(Mutex::new(ledger));
-        let _ledger_guard =
-            crate::ledger::install_active_ledger_for_session(session_id, shared.clone());
+        let _ledger_guard = crate::ledger::install_active_ledger_for_session(session_id, shared);
         let _session_guard = crate::tools::SessionIdGuard::set(session_id);
 
         let args = HashMap::from([("ids".to_string(), json!([read.to_string()]))]);
@@ -257,8 +259,7 @@ mod tests {
             )
             .expect("diff");
         let shared = Arc::new(Mutex::new(ledger));
-        let _ledger_guard =
-            crate::ledger::install_active_ledger_for_session(session_id, shared.clone());
+        let _ledger_guard = crate::ledger::install_active_ledger_for_session(session_id, shared);
         let _session_guard = crate::tools::SessionIdGuard::set(session_id);
 
         let args = HashMap::from([("ids".to_string(), json!([read.to_string()]))]);
@@ -296,8 +297,7 @@ mod tests {
             )
             .expect("summary");
         let shared = Arc::new(Mutex::new(ledger));
-        let _ledger_guard =
-            crate::ledger::install_active_ledger_for_session(session_id, shared.clone());
+        let _ledger_guard = crate::ledger::install_active_ledger_for_session(session_id, shared);
         let _session_guard = crate::tools::SessionIdGuard::set(session_id);
 
         let args = HashMap::from([("ids".to_string(), json!([summary.to_string()]))]);
@@ -309,6 +309,28 @@ mod tests {
         assert_eq!(
             response["observations"][0]["kind"]["non_authoritative"],
             true
+        );
+    }
+
+    #[test]
+    fn grounding_context_without_active_ledger_does_not_create_session_db() {
+        let session_id = format!("grounding-context-missing-{}", uuid::Uuid::new_v4());
+        let ledger_path =
+            crate::ledger::project_session_ledger_path(&session_id).expect("ledger path");
+        assert!(!ledger_path.exists(), "test session ledger must be absent");
+
+        let _session_guard = crate::tools::SessionIdGuard::set(&session_id);
+        let args = HashMap::from([("ids".to_string(), json!([ObsId::new().to_string()]))]);
+        let (content, is_error) = execute_grounding_context(&args);
+
+        assert!(is_error, "{content}");
+        assert!(
+            content.contains("No active session reality ledger"),
+            "unexpected error: {content}"
+        );
+        assert!(
+            !ledger_path.exists(),
+            "grounding_context must not create a ledger while hydrating evidence"
         );
     }
 }

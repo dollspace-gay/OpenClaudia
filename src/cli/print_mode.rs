@@ -367,8 +367,10 @@ mod tests {
     #[test]
     fn print_request_applies_openai_reasoning_effort() {
         let adapter = openclaudia::providers::get_adapter("openai").unwrap();
-        let mut thinking = openclaudia::config::ThinkingConfig::default();
-        thinking.reasoning_effort = Some("xhigh".to_string());
+        let thinking = openclaudia::config::ThinkingConfig {
+            reasoning_effort: Some("xhigh".to_string()),
+            ..Default::default()
+        };
 
         let body =
             build_print_request(adapter, "gpt-5.5", "hi".to_string(), &thinking, None).unwrap();

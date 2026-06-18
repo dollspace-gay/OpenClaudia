@@ -165,11 +165,14 @@ fn write_file_records_diff_observation_when_session_ledger_is_active() {
     let (msg, is_err) = dispatch_write(&args);
     assert!(!is_err, "write should succeed: {msg}");
 
-    let ledger = ledger.lock().expect("ledger lock");
-    assert_eq!(ledger.len(), 1);
-    let observation = ledger
-        .get(ledger.observation_index(8)[0].id)
-        .expect("observation");
+    let observation = {
+        let ledger = ledger.lock().expect("ledger lock");
+        assert_eq!(ledger.len(), 1);
+        ledger
+            .get(ledger.observation_index(8)[0].id)
+            .expect("observation")
+            .clone()
+    };
     let openclaudia::ledger::ObservationKind::DiffObserved { files, patch } = &observation.kind
     else {
         panic!("expected diff observation");

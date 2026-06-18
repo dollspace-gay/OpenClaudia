@@ -37,6 +37,29 @@ use uuid::Uuid;
 /// Maximum number of background shells allowed before refusing new ones
 const MAX_BACKGROUND_SHELLS: usize = 50;
 const LEDGER_COMMAND_OUTPUT_MAX_BYTES: usize = 100_000;
+const VERIFICATION_COMMAND_NEEDLES: &[&str] = &[
+    "cargo test",
+    "cargo check",
+    "cargo clippy",
+    "cargo fmt",
+    "cargo nextest",
+    "npm test",
+    "npm run test",
+    "pnpm test",
+    "pnpm run test",
+    "yarn test",
+    "yarn run test",
+    "bun test",
+    "pytest",
+    "python -m pytest",
+    "go test",
+    "zig test",
+    "swift test",
+    "mvn test",
+    "gradle test",
+    "make test",
+    "ctest",
+];
 
 static BASH_BIN: LazyLock<Result<PathBuf, String>> = LazyLock::new(|| {
     which::which("bash").map_err(|e| format!("bash binary not found on PATH: {e}"))
@@ -325,7 +348,7 @@ impl BackgroundShellManager {
         let stdout_ledger_for_wait = Arc::clone(&stdout_ledger_buffer);
         let stderr_ledger_for_wait = Arc::clone(&stderr_ledger_buffer);
         let owner_for_ledger = owner.clone();
-        let cwd_for_ledger = cwd.clone();
+        let cwd_for_ledger = cwd;
         let command_for_ledger = command.to_string();
         let mut child_for_wait = child;
         let wait_shell_id = shell_id.clone();
@@ -771,7 +794,7 @@ fn record_active_command_observation(cwd: &Path, command: &str, output: &std::pr
     record_command_observation_for_session(&session_key, cwd, command, exit_code, &stdout, &stderr);
 }
 
-pub(crate) fn record_command_observation_for_session(
+pub fn record_command_observation_for_session(
     session_key: &str,
     cwd: &Path,
     command: &str,
@@ -878,30 +901,9 @@ fn is_likely_verification_command(command: &str) -> bool {
         .collect::<Vec<_>>()
         .join(" ")
         .to_ascii_lowercase();
-    const NEEDLES: &[&str] = &[
-        "cargo test",
-        "cargo check",
-        "cargo clippy",
-        "cargo fmt",
-        "cargo nextest",
-        "npm test",
-        "npm run test",
-        "pnpm test",
-        "pnpm run test",
-        "yarn test",
-        "yarn run test",
-        "bun test",
-        "pytest",
-        "python -m pytest",
-        "go test",
-        "zig test",
-        "swift test",
-        "mvn test",
-        "gradle test",
-        "make test",
-        "ctest",
-    ];
-    NEEDLES.iter().any(|needle| normalized.contains(needle))
+    VERIFICATION_COMMAND_NEEDLES
+        .iter()
+        .any(|needle| normalized.contains(needle))
 }
 
 /// Execute a bash command, returning the legacy `(content, is_error)` tuple.

@@ -193,13 +193,7 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
     if let Some(config) = &loaded_config {
         if let Some(provider) = config.active_provider() {
             let auth = check_active_provider_auth(&config.proxy.target, provider).await;
-            if !auth.auth_ok {
-                has_failures = true;
-                println!(
-                    "\nEndpoint reachability for {}... SKIPPED (auth failed)",
-                    config.proxy.target
-                );
-            } else {
+            if auth.auth_ok {
                 print!("\nEndpoint reachability for {}... ", config.proxy.target);
                 match resolve_doctor_endpoint(
                     &config.proxy.target,
@@ -253,6 +247,12 @@ pub async fn cmd_doctor() -> anyhow::Result<()> {
                         has_failures = true;
                     }
                 }
+            } else {
+                has_failures = true;
+                println!(
+                    "\nEndpoint reachability for {}... SKIPPED (auth failed)",
+                    config.proxy.target
+                );
             }
         } else {
             println!("FAILED (no provider configured)");

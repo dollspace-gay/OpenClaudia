@@ -335,7 +335,7 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn editor_command_tokens_preserve_editor_arguments() {
-        let tokens = editor_command_tokens(r#"code --wait --reuse-window"#).expect("tokens");
+        let tokens = editor_command_tokens(r"code --wait --reuse-window").expect("tokens");
         assert_eq!(tokens, vec!["code", "--wait", "--reuse-window"]);
     }
 

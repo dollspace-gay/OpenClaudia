@@ -13,6 +13,12 @@ pub struct TaskSpec {
 }
 
 impl TaskSpec {
+    /// Build a task specification from a user-authored observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Denial`] when the observation is missing, is not from user
+    /// authority, or is not a user-task observation.
     pub fn from_user_observation(
         ledger: &RealityLedger,
         source_obs: ObsId,

@@ -1150,6 +1150,7 @@ impl App {
     }
 
     /// Process one async event from the event loop. Returns `false` when the loop should stop.
+    #[allow(clippy::too_many_lines)]
     fn handle_app_event(&mut self, event: Result<AppEvent, std::sync::mpsc::RecvError>) -> bool {
         match event {
             Ok(AppEvent::Key(key)) => self.handle_key(key),
@@ -3327,7 +3328,7 @@ fn build_user_question_lines<'a>(
 }
 
 fn format_api_retry_delay(delay_ms: u64) -> String {
-    if delay_ms % 1_000 == 0 {
+    if delay_ms.is_multiple_of(1_000) {
         format!("{}s", delay_ms / 1_000)
     } else {
         let seconds = delay_ms / 1_000;
@@ -3471,6 +3472,7 @@ fn persist_orphan_messages(session_id: &str, msgs: &[serde_json::Value]) {
 
 /// Drive the agentic follow-up loop until the model stops requesting tools
 /// or `MAX_ITER` iterations are exhausted.
+#[allow(clippy::too_many_lines)]
 async fn run_agentic_loop(ctx: &AgenticCtx<'_>, session_messages: &mut Vec<serde_json::Value>) {
     const MAX_ITER: u32 = 25;
     let mut iteration = 0u32;
@@ -4691,8 +4693,14 @@ mod tests {
         assert!(stderr.is_empty());
         assert_eq!(exit_code, Some(0));
 
-        let ledger = ledger.lock().expect("ledger lock");
-        let observations = ledger.observations_chronological();
+        let observations = {
+            let ledger = ledger.lock().expect("ledger lock");
+            ledger
+                .observations_chronological()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>()
+        };
         assert_eq!(observations.len(), 1);
         assert!(observations.iter().any(|obs| {
             matches!(

@@ -154,10 +154,12 @@ fn bash_records_command_observation_when_session_ledger_is_active() {
     assert!(!is_err, "bash should succeed: {msg}");
     assert_eq!(msg, "ledger-bash");
 
-    let ledger = ledger.lock().expect("ledger lock");
-    assert_eq!(ledger.len(), 1);
-    let index = ledger.observation_index(8);
-    let observation = ledger.get(index[0].id).expect("observation");
+    let observation = {
+        let ledger = ledger.lock().expect("ledger lock");
+        assert_eq!(ledger.len(), 1);
+        let index = ledger.observation_index(8);
+        ledger.get(index[0].id).expect("observation").clone()
+    };
     let openclaudia::ledger::ObservationKind::CommandRun {
         cwd,
         argv,
@@ -217,10 +219,12 @@ fn background_bash_records_command_observation_after_finish() {
         "bash_output should retrieve finished shell: {output_msg}"
     );
 
-    let ledger = ledger.lock().expect("ledger lock");
-    assert_eq!(ledger.len(), 1, "background command should be ledgered");
-    let index = ledger.observation_index(8);
-    let observation = ledger.get(index[0].id).expect("observation");
+    let observation = {
+        let ledger = ledger.lock().expect("ledger lock");
+        assert_eq!(ledger.len(), 1, "background command should be ledgered");
+        let index = ledger.observation_index(8);
+        ledger.get(index[0].id).expect("observation").clone()
+    };
     let openclaudia::ledger::ObservationKind::CommandRun {
         argv,
         exit_code,

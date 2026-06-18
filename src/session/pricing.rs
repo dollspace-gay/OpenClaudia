@@ -71,7 +71,7 @@ pub const OPUS_4_8_FAST_MODE_INPUT_PER_MILLION: f64 = 10.0;
 /// Fast-mode output rate for Claude Opus 4.8 per million tokens.
 pub const OPUS_4_8_FAST_MODE_OUTPUT_PER_MILLION: f64 = 50.0;
 
-/// OpenAI GPT-5.5 / GPT-5.4 long-context pricing threshold.
+/// `OpenAI` `GPT-5.5` / `GPT-5.4` long-context pricing threshold.
 ///
 /// Official pricing applies the long-context rate to the whole request
 /// when prompt input exceeds 272K tokens.
@@ -238,9 +238,9 @@ impl ModelPricing {
         }
     }
 
-    /// OpenAI text pricing with optional cached-input and long-context
-    /// rates. OpenAI cached input is cheaper, but prompt-cache writes do
-    /// not have Anthropic's separate write premium.
+    /// `OpenAI` text pricing with optional cached-input and long-context
+    /// rates. `OpenAI` cached input is cheaper, but prompt-cache writes do
+    /// not have `Anthropic`'s separate write premium.
     const fn openai_long_context(
         input_per_million: f64,
         output_per_million: f64,
@@ -321,7 +321,7 @@ impl ModelPricing {
         self.output_per_million
     }
 
-    fn uses_long_context_rates(&self, usage: &TokenUsage, fast: bool) -> bool {
+    const fn uses_long_context_rates(&self, usage: &TokenUsage, fast: bool) -> bool {
         if fast {
             return false;
         }
@@ -336,7 +336,7 @@ impl ModelPricing {
             > threshold
     }
 
-    fn effective_input_per_million_for_usage(&self, usage: &TokenUsage, fast: bool) -> f64 {
+    const fn effective_input_per_million_for_usage(&self, usage: &TokenUsage, fast: bool) -> f64 {
         if self.uses_long_context_rates(usage, fast) {
             if let Some(rate) = self.long_context_input_per_million {
                 return rate;
@@ -345,7 +345,7 @@ impl ModelPricing {
         self.effective_input_per_million(fast)
     }
 
-    fn effective_output_per_million_for_usage(&self, usage: &TokenUsage, fast: bool) -> f64 {
+    const fn effective_output_per_million_for_usage(&self, usage: &TokenUsage, fast: bool) -> f64 {
         if self.uses_long_context_rates(usage, fast) {
             if let Some(rate) = self.long_context_output_per_million {
                 return rate;

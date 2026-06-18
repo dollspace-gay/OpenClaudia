@@ -47,6 +47,13 @@ pub enum DecisionValidation {
     Final(FinalGateReport),
 }
 
+/// Validate a model decision against authoritative ledger evidence.
+///
+/// # Errors
+///
+/// Returns [`Denial`] when the decision lacks required evidence, cites stale
+/// or non-authoritative observations, has an empty reason/patch, or makes a
+/// final-answer claim that is not backed by ledger verification.
 pub fn validate_decision(
     decision: &AgentDecision,
     ledger: &RealityLedger,

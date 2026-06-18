@@ -4,6 +4,21 @@ use crate::evidence::{authoritative_evidence, Denial};
 use crate::ledger::{Authority, ObsId, ObservationKind, RealityLedger};
 use std::collections::HashSet;
 
+const UUID_LEN: usize = 36;
+const KNOWN_FILE_NAMES: &[&str] = &[
+    "cargo.toml",
+    "cargo.lock",
+    "readme.md",
+    "license",
+    "makefile",
+    "dockerfile",
+];
+const FILE_EXTENSIONS: &[&str] = &[
+    ".rs", ".toml", ".lock", ".md", ".json", ".yaml", ".yml", ".ts", ".tsx", ".js", ".jsx", ".mjs",
+    ".cjs", ".py", ".go", ".java", ".kt", ".swift", ".zig", ".c", ".h", ".cpp", ".hpp", ".sh",
+    ".sql", ".html", ".css", ".scss", ".xml",
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FinalGateReport {
     pub evidence: Vec<ObsId>,
@@ -14,6 +29,12 @@ pub struct FinalGateReport {
 ///
 /// A final can report failed verification, but it cannot omit verification.
 /// If it mentions tests, it must also cite a concrete command observation.
+///
+/// # Errors
+///
+/// Returns [`Denial`] when the final answer is empty, lacks authoritative
+/// evidence, lacks verifier observations, cites the wrong observation type, or
+/// makes test/file/verification claims not backed by cited observations.
 pub fn validate_final_answer(
     summary: &str,
     evidence: &[ObsId],
@@ -122,6 +143,12 @@ pub fn validate_final_answer(
     })
 }
 
+/// Validate a final answer by extracting cited observation ids from text.
+///
+/// # Errors
+///
+/// Returns [`Denial`] when extracted citations do not satisfy
+/// [`validate_final_answer`].
 pub fn validate_cited_final_answer(
     summary: &str,
     ledger: &RealityLedger,
@@ -144,7 +171,6 @@ pub fn validate_cited_final_answer(
 pub fn extract_cited_obs_ids(text: &str) -> Vec<ObsId> {
     let mut seen = HashSet::new();
     let mut ids = Vec::new();
-    const UUID_LEN: usize = 36;
     for (start, _) in text.char_indices() {
         let end = start + UUID_LEN;
         if end > text.len() || !text.is_char_boundary(end) {
@@ -203,16 +229,16 @@ fn summary_claims_test_success(summary: &str) -> bool {
     lower.contains("test") && summary_claims_verification_success(summary)
 }
 
-fn command_observation_exit_code(observation: &crate::ledger::Observation) -> Option<i32> {
+const fn command_observation_exit_code(observation: &crate::ledger::Observation) -> Option<i32> {
     let ObservationKind::CommandRun { exit_code, .. } = &observation.kind else {
         return None;
     };
     Some(*exit_code)
 }
 
-fn is_final_evidence_observation(observation: &crate::ledger::Observation) -> bool {
+const fn is_final_evidence_observation(observation: &crate::ledger::Observation) -> bool {
     matches!(
-        observation.kind,
+        &observation.kind,
         ObservationKind::UserTask { .. }
             | ObservationKind::FileRead { .. }
             | ObservationKind::CommandRun { .. }
@@ -314,10 +340,7 @@ fn normalize_claim_token(raw: &str) -> Option<String> {
         return None;
     }
 
-    loop {
-        let Some((prefix, suffix)) = token.rsplit_once(':') else {
-            break;
-        };
+    while let Some((prefix, suffix)) = token.rsplit_once(':') {
         if !suffix.chars().all(|c| c.is_ascii_digit()) {
             break;
         }
@@ -331,24 +354,11 @@ fn normalize_claim_token(raw: &str) -> Option<String> {
 
 fn looks_like_file_path(token: &str) -> bool {
     let lower = token.to_ascii_lowercase();
-    const KNOWN_NAMES: &[&str] = &[
-        "cargo.toml",
-        "cargo.lock",
-        "readme.md",
-        "license",
-        "makefile",
-        "dockerfile",
-    ];
-    if KNOWN_NAMES.contains(&lower.as_str()) {
+    if KNOWN_FILE_NAMES.contains(&lower.as_str()) {
         return true;
     }
 
-    const EXTENSIONS: &[&str] = &[
-        ".rs", ".toml", ".lock", ".md", ".json", ".yaml", ".yml", ".ts", ".tsx", ".js", ".jsx",
-        ".mjs", ".cjs", ".py", ".go", ".java", ".kt", ".swift", ".zig", ".c", ".h", ".cpp", ".hpp",
-        ".sh", ".sql", ".html", ".css", ".scss", ".xml",
-    ];
-    if EXTENSIONS.iter().any(|ext| lower.ends_with(ext)) {
+    if FILE_EXTENSIONS.iter().any(|ext| lower.ends_with(ext)) {
         return true;
     }
 
@@ -356,7 +366,7 @@ fn looks_like_file_path(token: &str) -> bool {
         && lower
             .rsplit('/')
             .next()
-            .is_some_and(|last| last.contains('.') || KNOWN_NAMES.contains(&last))
+            .is_some_and(|last| last.contains('.') || KNOWN_FILE_NAMES.contains(&last))
 }
 
 fn observed_path_matches_claim(observed: &str, claim: &str) -> bool {

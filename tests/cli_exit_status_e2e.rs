@@ -1614,6 +1614,7 @@ fn help_describes_tui_mode_as_legacy_repl_escape_hatch() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn readme_cli_examples_do_not_advertise_stale_tui_or_coordinator_modes() {
     let readme = include_str!("../README.md");
 

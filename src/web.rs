@@ -653,7 +653,7 @@ fn extract_html_title(html: &str) -> Option<String> {
 /// # Errors
 ///
 /// Returns an error string if all search backends fail.
-pub async fn search_web(query: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
+pub fn search_web(query: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
     let mut backend_errors = Vec::new();
 
     // Tier 1 — DuckDuckGo via headless Chromium in browser builds
@@ -664,20 +664,20 @@ pub async fn search_web(query: &str, limit: usize) -> Result<Vec<SearchResult>, 
             tracing::warn!("DuckDuckGo search failed: {e}");
             backend_errors.push(format!("DuckDuckGo: {e}"));
         }
-    };
+    }
 
     // Tier 2 — Bing HTML scrape via headless Chromium in browser
     // builds.
     match search_bing(query, limit) {
         Ok(results) if !results.is_empty() => return Ok(results),
         Ok(_) => {
-            backend_errors.push("Bing: returned zero results (likely bot-challenged)".to_string())
+            backend_errors.push("Bing: returned zero results (likely bot-challenged)".to_string());
         }
         Err(e) => {
             tracing::warn!("Bing search failed: {e}");
             backend_errors.push(format!("Bing: {e}"));
         }
-    };
+    }
 
     Err(format!(
         "Web search failed: no free browser-backed backend returned usable results.\n  {}\n\

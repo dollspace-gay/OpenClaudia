@@ -220,20 +220,24 @@ fn edit_records_diff_and_stales_prior_read_observation() {
     let (msg, is_err) = dispatch_edit(&edit_args);
     assert!(!is_err, "edit after read MUST succeed; got error {msg:?}");
 
-    let ledger = ledger.lock().expect("ledger lock");
-    assert_eq!(ledger.len(), 2);
-    assert!(ledger.is_stale(read_id), "prior file read must be stale");
-    let diff = ledger
-        .observation_index(8)
-        .into_iter()
-        .filter_map(|entry| ledger.get(entry.id))
-        .find(|obs| {
-            matches!(
-                obs.kind,
-                openclaudia::ledger::ObservationKind::DiffObserved { .. }
-            )
-        })
-        .expect("diff observation");
+    let (read_is_stale, diff) = {
+        let ledger = ledger.lock().expect("ledger lock");
+        assert_eq!(ledger.len(), 2);
+        let diff = ledger
+            .observation_index(8)
+            .into_iter()
+            .filter_map(|entry| ledger.get(entry.id))
+            .find(|obs| {
+                matches!(
+                    obs.kind,
+                    openclaudia::ledger::ObservationKind::DiffObserved { .. }
+                )
+            })
+            .expect("diff observation")
+            .clone();
+        (ledger.is_stale(read_id), diff)
+    };
+    assert!(read_is_stale, "prior file read must be stale");
     let openclaudia::ledger::ObservationKind::DiffObserved { files, patch } = &diff.kind else {
         panic!("expected diff observation");
     };

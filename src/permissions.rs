@@ -48,7 +48,7 @@ pub struct PermissionRule {
 /// Convert Claude-compatible `allowed-tools` entries into permission allow rules.
 ///
 /// Entries that name read-only tools, unknown tools, or malformed scopes are
-/// ignored because they do not correspond to an OpenClaudia permission target.
+/// ignored because they do not correspond to an `OpenClaudia` permission target.
 /// The returned rules are intended for turn-scoped pre-approval, not for
 /// broadening persisted user configuration.
 #[must_use]
@@ -2759,6 +2759,7 @@ mod phase2_spec_pins {
             "kill_shell",            // operates on internal shell handles
             "kill_shells_for_agent", // operates on internal shell handles
             "read_file",             // pure read
+            "grounding_context",     // hydrates existing ledger observations
             "list_files",            // pure read
             "glob",                  // pure read (#567)
             "grep",                  // pure read (#568)

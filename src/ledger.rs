@@ -7,7 +7,7 @@
 //! IDs instead of relying on provider chat history.
 
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
@@ -159,7 +159,7 @@ impl ObservationKind {
             Self::CommandRun {
                 argv, exit_code, ..
             } => {
-                format!("command {:?} exit={exit_code}", argv)
+                format!("command {argv:?} exit={exit_code}")
             }
             Self::DiffObserved { files, patch } => {
                 format!("diff {} files {} bytes", files.len(), patch.len())
@@ -223,6 +223,8 @@ pub enum LedgerError {
         session_key: String,
         reason: &'static str,
     },
+    #[error("session ledger not found at {path}")]
+    MissingSessionLedger { path: PathBuf },
     #[error("failed to create ledger directory {path}: {source}")]
     CreateDir {
         path: PathBuf,
@@ -268,40 +270,20 @@ impl RealityLedger {
         }
     }
 
-    /// Open a SQLite-backed ledger and load existing observations into memory.
+    /// Open a `SQLite`-backed ledger and load existing observations into memory.
     ///
-    /// The full observation JSON is retained in SQLite. Compact prompt packets
+    /// The full observation JSON is retained in `SQLite`. Compact prompt packets
     /// should pass indexes or selected hydrated observations to the model, but
     /// compaction must not delete rows from this table.
     ///
     /// # Errors
     ///
-    /// Returns an error when SQLite cannot be opened, schema initialization
+    /// Returns an error when `SQLite` cannot be opened, schema initialization
     /// fails, or any existing observation row cannot be deserialized.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, LedgerError> {
         let conn = Connection::open(path)?;
         initialize_schema(&conn)?;
-
-        let records = {
-            let mut stmt = conn.prepare(
-                "SELECT observation_json, stale FROM reality_observations ORDER BY ts ASC",
-            )?;
-            let mut rows = stmt.query([])?;
-            let mut records = HashMap::new();
-            while let Some(row) = rows.next()? {
-                let json: String = row.get(0)?;
-                let stale: i64 = row.get(1)?;
-                let observation: Observation = serde_json::from_str(&json)?;
-                records.insert(
-                    observation.id,
-                    ObservationRecord {
-                        observation,
-                        stale: stale != 0,
-                    },
-                );
-            }
-            records
-        };
+        let records = load_records(&conn)?;
 
         Ok(Self {
             records,
@@ -309,7 +291,22 @@ impl RealityLedger {
         })
     }
 
-    /// Open the project-local SQLite ledger for a session.
+    /// Open an existing `SQLite` ledger without creating or migrating it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be opened read-only, the expected
+    /// schema is absent, or any observation row cannot be deserialized.
+    pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self, LedgerError> {
+        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let records = load_records(&conn)?;
+        Ok(Self {
+            records,
+            conn: Some(conn),
+        })
+    }
+
+    /// Open the project-local `SQLite` ledger for a session.
     ///
     /// Session keys are constrained to ASCII alphanumeric plus `-`, matching
     /// session/audit filename rules, so the key can safely become a filename.
@@ -317,7 +314,7 @@ impl RealityLedger {
     /// # Errors
     ///
     /// Returns an error when the session key is not filename-safe, the ledger
-    /// directory cannot be created, or SQLite cannot be opened.
+    /// directory cannot be created, or `SQLite` cannot be opened.
     pub fn open_project_session(session_key: &str) -> Result<Self, LedgerError> {
         let path = project_session_ledger_path(session_key)?;
         if let Some(parent) = path.parent() {
@@ -327,6 +324,20 @@ impl RealityLedger {
             })?;
         }
         Self::open(path)
+    }
+
+    /// Open an existing project-local session ledger in read-only mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session key is invalid, the ledger file is
+    /// absent, or the existing database cannot be opened/read.
+    pub fn open_existing_project_session(session_key: &str) -> Result<Self, LedgerError> {
+        let path = project_session_ledger_path(session_key)?;
+        if !path.is_file() {
+            return Err(LedgerError::MissingSessionLedger { path });
+        }
+        Self::open_read_only(path)
     }
 
     #[must_use]
@@ -358,7 +369,7 @@ impl RealityLedger {
 
     /// Return all observations in chronological order.
     ///
-    /// This hydrates the in-memory cache, not the SQLite connection directly.
+    /// This hydrates the in-memory cache, not the `SQLite` connection directly.
     /// Callers that need compact prompt context should prefer
     /// [`Self::observation_index`]; this method is for policy/packet builders
     /// that need to inspect typed observation variants.
@@ -600,7 +611,7 @@ impl RealityLedger {
     ///
     /// # Errors
     ///
-    /// Returns an error if SQLite persistence fails.
+    /// Returns an error if `SQLite` persistence fails.
     pub fn mark_file_observations_stale(&mut self, path: &str) -> Result<Vec<ObsId>, LedgerError> {
         let stale_ids = self
             .records
@@ -653,7 +664,7 @@ impl RealityLedger {
             .collect()
     }
 
-    fn persist_record(&mut self, record: &ObservationRecord) -> Result<(), LedgerError> {
+    fn persist_record(&self, record: &ObservationRecord) -> Result<(), LedgerError> {
         if let Some(conn) = self.conn.as_ref() {
             insert_record(conn, record)?;
         }
@@ -681,6 +692,12 @@ pub fn active_ledger_for_session(session_key: &str) -> Option<SharedRealityLedge
         .cloned()
 }
 
+/// Return the project-local ledger path for a session key.
+///
+/// # Errors
+///
+/// Returns [`LedgerError::InvalidSessionKey`] when the key is not safe for use
+/// as a ledger filename.
 pub fn project_session_ledger_path(session_key: &str) -> Result<PathBuf, LedgerError> {
     validate_session_key(session_key).map_err(|reason| LedgerError::InvalidSessionKey {
         session_key: session_key.to_string(),
@@ -705,6 +722,26 @@ fn initialize_schema(conn: &Connection) -> Result<(), LedgerError> {
             ON reality_observations(authority);",
     )?;
     Ok(())
+}
+
+fn load_records(conn: &Connection) -> Result<HashMap<ObsId, ObservationRecord>, LedgerError> {
+    let mut stmt =
+        conn.prepare("SELECT observation_json, stale FROM reality_observations ORDER BY ts ASC")?;
+    let mut rows = stmt.query([])?;
+    let mut records = HashMap::new();
+    while let Some(row) = rows.next()? {
+        let json: String = row.get(0)?;
+        let stale: i64 = row.get(1)?;
+        let observation: Observation = serde_json::from_str(&json)?;
+        records.insert(
+            observation.id,
+            ObservationRecord {
+                observation,
+                stale: stale != 0,
+            },
+        );
+    }
+    Ok(records)
 }
 
 fn insert_record(conn: &Connection, record: &ObservationRecord) -> Result<(), LedgerError> {

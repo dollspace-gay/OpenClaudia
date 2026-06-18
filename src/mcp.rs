@@ -410,25 +410,28 @@ impl StdioTransport {
         Arc::clone(&self.stderr_buf)
     }
 
+    #[allow(clippy::significant_drop_tightening)] // lock must cover the complete JSON-line write
     async fn write_json_line(&self, value: &Value) -> Result<(), McpError> {
         let line = serde_json::to_string(value)
             .map_err(|e| McpError::Protocol(format!("Failed to serialize MCP message: {e}")))?;
-        let mut child = self.child.lock().await;
-        let Some(stdin) = child.stdin.as_mut() else {
-            return Err(McpError::Transport("Stdin not available".to_string()));
-        };
-        stdin
-            .write_all(line.as_bytes())
-            .await
-            .map_err(|e| McpError::Transport(format!("Failed to write to stdin: {e}")))?;
-        stdin
-            .write_all(b"\n")
-            .await
-            .map_err(|e| McpError::Transport(format!("Failed to write newline: {e}")))?;
-        stdin
-            .flush()
-            .await
-            .map_err(|e| McpError::Transport(format!("Failed to flush stdin: {e}")))?;
+        {
+            let mut child = self.child.lock().await;
+            let Some(stdin) = child.stdin.as_mut() else {
+                return Err(McpError::Transport("Stdin not available".to_string()));
+            };
+            stdin
+                .write_all(line.as_bytes())
+                .await
+                .map_err(|e| McpError::Transport(format!("Failed to write to stdin: {e}")))?;
+            stdin
+                .write_all(b"\n")
+                .await
+                .map_err(|e| McpError::Transport(format!("Failed to write newline: {e}")))?;
+            stdin
+                .flush()
+                .await
+                .map_err(|e| McpError::Transport(format!("Failed to flush stdin: {e}")))?;
+        }
         Ok(())
     }
 
@@ -509,9 +512,10 @@ fn build_client_feature_response(id: u64, method: &str) -> Value {
 fn current_roots_result() -> Value {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let root = cwd.canonicalize().unwrap_or(cwd);
-    let uri = url::Url::from_directory_path(&root)
-        .map(|url| url.to_string())
-        .unwrap_or_else(|()| format!("file://{}", root.display()));
+    let uri = url::Url::from_directory_path(&root).map_or_else(
+        |()| format!("file://{}", root.display()),
+        |url| url.to_string(),
+    );
     let name = root
         .file_name()
         .and_then(|name| name.to_str())

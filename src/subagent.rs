@@ -526,6 +526,11 @@ impl BackgroundAgentManager {
     }
 
     /// Attach the abort handle for a background agent task.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent id is unknown or the agent's abort-handle
+    /// lock is poisoned.
     pub fn attach_abort_handle(
         &self,
         id: &str,
@@ -551,6 +556,11 @@ impl BackgroundAgentManager {
     }
 
     /// Stop a running background agent and abort its spawned task if possible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent id is unknown or required agent metadata
+    /// locks are poisoned.
     pub fn stop(&self, id: &str, reason: &str) -> Result<String, String> {
         let agent = self
             .get(id)
@@ -1928,6 +1938,7 @@ fn observe_subagent_tool_result(
 // === Tool Execution ===
 
 /// Execute the Task tool
+#[allow(clippy::too_many_lines)]
 pub fn execute_task_tool<S: BuildHasher>(
     args: &HashMap<String, Value, S>,
     app_config: &AppConfig,
@@ -2018,18 +2029,15 @@ pub fn execute_task_tool<S: BuildHasher>(
             .then(|| agent_id_bg.clone());
 
         // Use tokio runtime to spawn the background task
-        let handle = match Handle::try_current() {
-            Ok(handle) => handle,
-            Err(_) => {
-                BACKGROUND_AGENTS.fail(
-                    &agent_id,
-                    "Background task requires an active tokio runtime".to_string(),
-                );
-                return (
-                    "Background task requires an active tokio runtime".to_string(),
-                    true,
-                );
-            }
+        let Ok(handle) = Handle::try_current() else {
+            BACKGROUND_AGENTS.fail(
+                &agent_id,
+                "Background task requires an active tokio runtime".to_string(),
+            );
+            return (
+                "Background task requires an active tokio runtime".to_string(),
+                true,
+            );
         };
         let join_handle = handle.spawn(async move {
             let result = run_subagent_inner(
@@ -2317,8 +2325,14 @@ mod tests {
 
         observe_subagent_tool_result(agent_id, "list_files", &result);
 
-        let ledger = ledger.lock().expect("ledger lock");
-        let observations = ledger.observations_chronological();
+        let observations = {
+            let ledger = ledger.lock().expect("ledger lock");
+            ledger
+                .observations_chronological()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>()
+        };
         assert!(observations.iter().any(|obs| {
             matches!(
                 &obs.kind,
@@ -3184,7 +3198,7 @@ mod tests {
             let mgr = BackgroundAgentManager::new();
             let id = mgr.register(AgentType::GeneralPurpose, "long running task");
             let join = tokio::spawn(async {
-                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                tokio::time::sleep(std::time::Duration::from_mins(1)).await;
             });
             mgr.attach_abort_handle(&id, join.abort_handle())
                 .expect("abort handle attaches");

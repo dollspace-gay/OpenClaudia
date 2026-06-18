@@ -333,7 +333,7 @@ impl Read for LspDeadlineReader {
             let timeout = self.current_timeout();
             match self.rx.recv_timeout(timeout) {
                 Ok(LspReadEvent::Chunk(bytes)) => self.pending.extend(bytes),
-                Ok(LspReadEvent::Eof) => {
+                Ok(LspReadEvent::Eof) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                     self.ended = true;
                     return Ok(0);
                 }
@@ -346,10 +346,6 @@ impl Read for LspDeadlineReader {
                         ErrorKind::TimedOut,
                         format!("timed out waiting for LSP stdout after {timeout:?}"),
                     ));
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    self.ended = true;
-                    return Ok(0);
                 }
             }
         }

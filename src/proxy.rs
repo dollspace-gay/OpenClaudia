@@ -430,10 +430,10 @@ async fn auth_status(State(state): State<ProxyState>, headers: HeaderMap) -> imp
 }
 
 fn model_list_json(data: Vec<Value>) -> Value {
-    serde_json::json!({
-        "object": "list",
-        "data": data
-    })
+    let mut body = serde_json::Map::new();
+    body.insert("object".to_string(), Value::String("list".to_string()));
+    body.insert("data".to_string(), Value::Array(data));
+    Value::Object(body)
 }
 
 fn static_model_list_json_for_provider(provider: &str) -> Value {

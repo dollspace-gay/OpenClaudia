@@ -45,7 +45,7 @@ pub struct GroundedPromptPacket {
 
 impl GroundedPromptPacket {
     #[must_use]
-    pub fn new(task: TaskSpec, ledger_index: Vec<ObservationIndexEntry>) -> Self {
+    pub const fn new(task: TaskSpec, ledger_index: Vec<ObservationIndexEntry>) -> Self {
         Self {
             task,
             ledger_index,
@@ -58,6 +58,12 @@ impl GroundedPromptPacket {
     }
 }
 
+/// Build the grounded prompt packet for a provider turn.
+///
+/// # Errors
+///
+/// Returns [`Denial`] when `task_obs` does not identify a user task
+/// observation in the ledger.
 pub fn build_prompt_packet(
     ledger: &RealityLedger,
     task_obs: ObsId,
@@ -212,6 +218,11 @@ pub fn observe_shell_command_for_session(
     );
 }
 
+/// Append a bounded model-visible tool result observation.
+///
+/// # Errors
+///
+/// Returns [`LedgerError`] when ledger persistence fails.
 pub fn append_tool_result_observation(
     ledger: &mut RealityLedger,
     tool_name: &str,
@@ -237,6 +248,11 @@ pub struct QualityGateObservationIds {
     pub verification: ObsId,
 }
 
+/// Append command and verifier observations for a quality gate result.
+///
+/// # Errors
+///
+/// Returns [`LedgerError`] when either observation cannot be persisted.
 pub fn append_quality_gate_observations(
     ledger: &mut RealityLedger,
     gate: &crate::guardrails::QualityCheckResult,
@@ -293,10 +309,17 @@ fn quality_gate_argv(command: &str) -> Vec<String> {
         .unwrap_or_else(|| vec![command.to_string()])
 }
 
+#[must_use]
 pub fn session_grounding_system_content(session_id: &str, task_obs: ObsId) -> Option<String> {
     session_grounding_system_content_checked(session_id, task_obs).ok()
 }
 
+/// Render a grounding system message for an existing session ledger.
+///
+/// # Errors
+///
+/// Returns a string error when the session ledger cannot be opened or the
+/// grounding packet cannot be built from the task observation.
 pub fn session_grounding_system_content_checked(
     session_id: &str,
     task_obs: ObsId,
@@ -321,6 +344,12 @@ pub fn session_grounding_system_content_checked(
     Ok(render_grounding_system_message(&packet))
 }
 
+/// Insert a grounding system message into provider request messages.
+///
+/// # Errors
+///
+/// Returns a string error when no task observation is available, the ledger
+/// cannot be opened, or the rendered grounding packet is empty.
 pub fn request_messages_with_grounding(
     session_id: &str,
     task_obs: Option<ObsId>,
@@ -333,7 +362,7 @@ pub fn request_messages_with_grounding(
     let content = session_grounding_system_content_checked(session_id, task_obs)?;
     if content.trim().is_empty() {
         return Err("grounding packet is empty".to_string());
-    };
+    }
     let insert_at = request_messages
         .iter()
         .position(|message| message.get("role").and_then(|role| role.as_str()) != Some("system"))
@@ -348,6 +377,12 @@ pub fn request_messages_with_grounding(
     Ok(request_messages)
 }
 
+/// Validate a final model response against the persisted session ledger.
+///
+/// # Errors
+///
+/// Returns a string error when the ledger cannot be opened or the response is
+/// denied by the final-answer gate.
 pub fn validate_agentic_final_response(session_id: &str, content: &str) -> Result<(), String> {
     if content.trim().is_empty() {
         return Ok(());
@@ -367,6 +402,11 @@ pub fn validate_agentic_final_response(session_id: &str, content: &str) -> Resul
     validate_final_against_ledger(&mut ledger, content)
 }
 
+/// Validate final text against an already-open ledger and record the decision.
+///
+/// # Errors
+///
+/// Returns a string error when the final-answer gate denies the response.
 pub fn validate_final_against_ledger(
     ledger: &mut RealityLedger,
     content: &str,
@@ -566,8 +606,14 @@ mod tests {
             "",
         );
 
-        let ledger = ledger.lock().expect("ledger lock");
-        let observations = ledger.observations_chronological();
+        let observations = {
+            let ledger = ledger.lock().expect("ledger lock");
+            ledger
+                .observations_chronological()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>()
+        };
         assert_eq!(observations.len(), 2);
         assert!(observations.iter().any(|obs| {
             matches!(

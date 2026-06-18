@@ -532,19 +532,21 @@ pub(super) fn require_fresh_file_observation_if_ledger_active(
         return Ok(());
     };
     let path = path.to_string_lossy().to_string();
-    let ledger = ledger.lock().unwrap_or_else(|err| {
-        tracing::error!("active reality ledger lock poisoned; recovering inner state");
-        err.into_inner()
-    });
-    let has_fresh_read = ledger.observations_chronological().into_iter().any(|obs| {
-        obs.authority == crate::ledger::Authority::Filesystem
-            && !ledger.is_stale(obs.id)
-            && matches!(
-                &obs.kind,
-                crate::ledger::ObservationKind::FileRead { path: observed, .. }
-                    if observed == &path
-            )
-    });
+    let has_fresh_read = {
+        let ledger = ledger.lock().unwrap_or_else(|err| {
+            tracing::error!("active reality ledger lock poisoned; recovering inner state");
+            err.into_inner()
+        });
+        ledger.observations_chronological().into_iter().any(|obs| {
+            obs.authority == crate::ledger::Authority::Filesystem
+                && !ledger.is_stale(obs.id)
+                && matches!(
+                    &obs.kind,
+                    crate::ledger::ObservationKind::FileRead { path: observed, .. }
+                        if observed == &path
+                )
+        })
+    };
     if has_fresh_read {
         return Ok(());
     }
@@ -574,8 +576,7 @@ fn ledger_line_range(
         .unwrap_or(1);
 
     let total_lines = std::str::from_utf8(bytes)
-        .map(count_display_lines)
-        .unwrap_or_else(|_| output.lines().count().max(1));
+        .map_or_else(|_| output.lines().count().max(1), count_display_lines);
     let requested = args
         .get("limit")
         .and_then(serde_json::Value::as_u64)
@@ -603,7 +604,7 @@ pub(super) fn record_active_diff_observation(path: &str, before: &str, after: &s
     let Some(ledger) = crate::ledger::active_ledger_for_session(&session_key) else {
         return;
     };
-    let patch = TextDiff::from_lines(before, after)
+    let diff_patch = TextDiff::from_lines(before, after)
         .unified_diff()
         .header(&format!("a/{path}"), &format!("b/{path}"))
         .to_string();
@@ -611,7 +612,7 @@ pub(super) fn record_active_diff_observation(path: &str, before: &str, after: &s
         tracing::error!("active reality ledger lock poisoned; recovering inner state");
         err.into_inner()
     });
-    if let Err(err) = ledger.observe_diff(vec![path.to_string()], patch) {
+    if let Err(err) = ledger.observe_diff(vec![path.to_string()], diff_patch) {
         tracing::warn!(
             path,
             error = %err,

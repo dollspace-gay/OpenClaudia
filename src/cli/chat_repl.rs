@@ -507,6 +507,7 @@ impl ChatRepl {
     /// Process one line of user input. Returns `Some(true)` to break,
     /// `Some(false)` to continue without sending a turn, `None` after a
     /// full turn (autosave + auto-compact already handled).
+    #[allow(clippy::too_many_lines)]
     async fn process_line(
         &mut self,
         line: String,
@@ -3225,19 +3226,17 @@ impl ChatRepl {
                 message,
                 "openai final assistant response",
             );
-            true
-        } else if iteration > 0 {
+            return true;
+        }
+        if iteration > 0 {
             persist_chat_session_update(&mut self.chat_session, "openai tool loop");
-            true
         } else if current_content.is_empty()
             && reasoning_content.is_empty()
             && !tool_accumulator.has_tool_calls()
         {
             self.record_failed_turn("provider returned no assistant content or tool calls");
-            true
-        } else {
-            true
         }
+        true
     }
 
     /// Run VDD review on the final `OpenAI` loop content when applicable.

@@ -1230,12 +1230,15 @@ mod tests {
             "unexpected tool error: {}",
             results[0].content
         );
-        let ledger = ledger.lock().expect("ledger lock");
-        let observation = ledger
-            .observations_chronological()
-            .into_iter()
-            .find(|obs| matches!(obs.kind, crate::ledger::ObservationKind::ToolResult { .. }))
-            .expect("tool result observation");
+        let observation = {
+            let ledger = ledger.lock().expect("ledger lock");
+            ledger
+                .observations_chronological()
+                .into_iter()
+                .find(|obs| matches!(obs.kind, crate::ledger::ObservationKind::ToolResult { .. }))
+                .cloned()
+        }
+        .expect("tool result observation");
         assert_eq!(observation.authority, crate::ledger::Authority::Tool);
         let crate::ledger::ObservationKind::ToolResult { tool, result } = &observation.kind else {
             panic!("expected tool result observation");

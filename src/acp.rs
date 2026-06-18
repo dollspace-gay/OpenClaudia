@@ -945,13 +945,13 @@ impl AcpServer {
         crate::session::append_failed_turn_message(&mut self.messages, reason);
     }
 
-    fn fail_prompt_with_update(&mut self, acp_session_id: &str, text: String) -> String {
+    fn fail_prompt_with_update(&mut self, acp_session_id: &str, text: &str) -> String {
+        self.record_failed_prompt_turn(text);
         self.send_session_update(
             acp_session_id,
             "agent_message_chunk",
-            &json!({"type": "text", "text": text.clone()}),
+            &json!({"type": "text", "text": text}),
         );
-        self.record_failed_prompt_turn(&text);
         "error".to_string()
     }
 
@@ -1021,7 +1021,7 @@ impl AcpServer {
             Err(e) => {
                 tracing::error!(error = %e, "ACP: unknown provider in config.proxy.target");
                 return self
-                    .fail_prompt_with_update(acp_session_id, format!("Provider error: {e}"));
+                    .fail_prompt_with_update(acp_session_id, &format!("Provider error: {e}"));
             }
         };
         let client = reqwest::Client::new();
@@ -1036,7 +1036,7 @@ impl AcpServer {
             Err(e) => {
                 return self.fail_prompt_with_update(
                     acp_session_id,
-                    format!("Invalid ACP configuration: {e}"),
+                    &format!("Invalid ACP configuration: {e}"),
                 );
             }
         };
@@ -1052,7 +1052,7 @@ impl AcpServer {
                     Ok(tools) => tools,
                     Err(e) => {
                         let text = format!("Internal ACP tool registry error: {e}");
-                        return self.fail_prompt_with_update(acp_session_id, text);
+                        return self.fail_prompt_with_update(acp_session_id, &text);
                     }
                 };
             // Crosslink #694: inject `.openclaudia/rules` content into the
@@ -1102,7 +1102,7 @@ impl AcpServer {
                 Ok(messages) => messages,
                 Err(e) => {
                     return self
-                        .fail_prompt_with_update(acp_session_id, format!("Grounding error: {e}"));
+                        .fail_prompt_with_update(acp_session_id, &format!("Grounding error: {e}"));
                 }
             };
             let decoded_messages = match decode_acp_messages(&grounded_messages) {
@@ -1110,7 +1110,7 @@ impl AcpServer {
                 Err(e) => {
                     return self.fail_prompt_with_update(
                         acp_session_id,
-                        format!("Invalid ACP message history: {e}"),
+                        &format!("Invalid ACP message history: {e}"),
                     );
                 }
             };
@@ -1140,16 +1140,14 @@ impl AcpServer {
                 Ok(t) => t,
                 Err(e) => {
                     return self
-                        .fail_prompt_with_update(acp_session_id, format!("Provider error: {e}"));
+                        .fail_prompt_with_update(acp_session_id, &format!("Provider error: {e}"));
                 }
             };
 
             // Determine endpoint
             let Some(provider) = self.config.active_provider() else {
-                return self.fail_prompt_with_update(
-                    acp_session_id,
-                    "No active provider configured".to_string(),
-                );
+                return self
+                    .fail_prompt_with_update(acp_session_id, "No active provider configured");
             };
             let claude_code_token = self.claude_code_token.as_deref();
             if claude_code_token.is_some()
@@ -1166,7 +1164,7 @@ impl AcpServer {
                 Ok(endpoint) => endpoint,
                 Err(e) => {
                     return self
-                        .fail_prompt_with_update(acp_session_id, format!("Provider error: {e}"));
+                        .fail_prompt_with_update(acp_session_id, &format!("Provider error: {e}"));
                 }
             };
 
@@ -1185,7 +1183,7 @@ impl AcpServer {
                 Ok(headers) => headers,
                 Err(e) => {
                     return self
-                        .fail_prompt_with_update(acp_session_id, format!("Provider error: {e}"));
+                        .fail_prompt_with_update(acp_session_id, &format!("Provider error: {e}"));
                 }
             };
 
@@ -1200,7 +1198,7 @@ impl AcpServer {
                 Ok(r) => r,
                 Err(e) => {
                     return self
-                        .fail_prompt_with_update(acp_session_id, format!("Request failed: {e}"));
+                        .fail_prompt_with_update(acp_session_id, &format!("Request failed: {e}"));
                 }
             };
 
@@ -2276,11 +2274,11 @@ fn record_acp_diff_observation(session_id: &str, path: &str, before: &str, after
             return;
         }
     };
-    let patch = similar::TextDiff::from_lines(before, after)
+    let diff_patch = similar::TextDiff::from_lines(before, after)
         .unified_diff()
         .header(&format!("a/{path}"), &format!("b/{path}"))
         .to_string();
-    if let Err(err) = ledger.observe_diff(vec![path.to_string()], patch) {
+    if let Err(err) = ledger.observe_diff(vec![path.to_string()], diff_patch) {
         tracing::warn!(
             session_id,
             path,

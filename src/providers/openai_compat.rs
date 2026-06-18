@@ -9,7 +9,7 @@
 //!
 //! - the provider `name`,
 //! - the chat-completions URL suffix (most use `/v1/chat/completions`;
-//!   DeepSeek and Z.AI use `/chat/completions` because their public base URLs
+//!   `DeepSeek` and `Z.AI` use `/chat/completions` because their public base URLs
 //!   do not want an extra `/v1` in the adapter path),
 //! - the thinking/reasoning toggle keyed into the request body
 //!   (different providers spell the toggle differently — `enable_thinking`,
@@ -88,6 +88,7 @@ impl ThinkingInjector {
     /// `serde_json::to_value(request)` (an object). The `model` argument
     /// is supplied for variants that gate behaviour on the model name
     /// (currently only `OpenAiReasoningEffort`).
+    #[allow(clippy::too_many_lines)]
     fn inject(self, body: &mut Value, thinking: &ThinkingConfig, model: &str) {
         match self {
             Self::OpenAiReasoningEffort => {
@@ -253,15 +254,15 @@ fn is_kimi_k27_code_model(model: &str) -> bool {
     model == "kimi-k2.7-code" || model == "kimi-k2.7-code-highspeed"
 }
 
-fn is_kimi_k26_model(model: &str) -> bool {
+const fn is_kimi_k26_model(model: &str) -> bool {
     model.eq_ignore_ascii_case("kimi-k2.6")
 }
 
-fn is_kimi_k25_model(model: &str) -> bool {
+const fn is_kimi_k25_model(model: &str) -> bool {
     model.eq_ignore_ascii_case("kimi-k2.5")
 }
 
-fn has_explicit_kimi_thinking_option(thinking: &ThinkingConfig) -> bool {
+const fn has_explicit_kimi_thinking_option(thinking: &ThinkingConfig) -> bool {
     thinking.budget_tokens.is_some()
         || thinking.reasoning_effort.is_some()
         || thinking.preserve_across_turns
@@ -288,7 +289,7 @@ pub(super) struct OpenAiCompatibleAdapter {
     /// Path returned from [`ProviderAdapter::chat_endpoint`]. Stored as
     /// `&'static str` (rather than a closure) because every observed
     /// variation is a string constant — most providers use
-    /// `/v1/chat/completions`; DeepSeek and Z.AI use `/chat/completions`.
+    /// `/v1/chat/completions`; `DeepSeek` and `Z.AI` use `/chat/completions`.
     chat_path: &'static str,
     thinking: ThinkingInjector,
     supports_models: bool,
