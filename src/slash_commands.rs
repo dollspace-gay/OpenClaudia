@@ -146,9 +146,9 @@ const SKILLS: &[SlashCommand] = &[
 ];
 
 /// Time-travel and session-shape commands (crosslink #653, #657, #659,
-/// #662). `/rewind`/`/checkpoint` and `/fast` are implemented in the legacy REPL;
-/// the remaining entries may begin as surface-only "tracked but not
-/// implemented" responses while their storage/overlay support lands.
+/// #662). `/rewind`/`/checkpoint`, `/thinkback`, and `/fast` are implemented
+/// in the legacy REPL; `/teleport` remains a tracked but not implemented
+/// response while named-checkpoint storage lands.
 const TIME_TRAVEL: &[SlashCommand] = &[
     cmd("/rewind", "Show turns or rewind the last N turns"),
     cmd("/checkpoint", "Alias for /rewind"),
@@ -158,7 +158,7 @@ const TIME_TRAVEL: &[SlashCommand] = &[
     ),
     cmd(
         "/thinkback",
-        "Replay the last assistant turn's thinking blocks",
+        "Replay the latest assistant turn's saved thinking block",
     ),
     cmd(
         "/fast",

@@ -1452,6 +1452,39 @@ pub fn slash_rewind(args: &str, messages: &[serde_json::Value]) -> SlashCommandR
     }
 }
 
+fn latest_assistant_reasoning_content(messages: &[serde_json::Value]) -> Option<&str> {
+    let latest_assistant = messages
+        .iter()
+        .rev()
+        .find(|msg| msg.get("role").and_then(|role| role.as_str()) == Some("assistant"))?;
+
+    latest_assistant
+        .get("reasoning_content")
+        .and_then(|content| content.as_str())
+        .map(str::trim)
+        .filter(|content| !content.is_empty())
+}
+
+pub fn slash_thinkback(args: &str, messages: &[serde_json::Value]) -> SlashCommandResult {
+    if !args.trim().is_empty() {
+        println!("\nUsage: /thinkback\n");
+        return SlashCommandResult::Handled;
+    }
+
+    match latest_assistant_reasoning_content(messages) {
+        Some(reasoning) => {
+            println!("\nLast assistant thinking block:\n");
+            println!("{reasoning}");
+            println!();
+        }
+        None => {
+            println!("\nNo saved thinking block for the latest assistant turn.\n");
+        }
+    }
+
+    SlashCommandResult::Handled
+}
+
 pub fn slash_copy(messages: &[serde_json::Value]) -> SlashCommandResult {
     if let Some(last_assistant) = messages
         .iter()
@@ -3384,11 +3417,86 @@ mod tests {
         );
     }
 
+    #[test]
+    fn latest_assistant_reasoning_uses_newest_assistant_only() {
+        let messages = vec![
+            serde_json::json!({
+                "role": "assistant",
+                "content": "older",
+                "reasoning_content": "older thinking"
+            }),
+            serde_json::json!({"role": "user", "content": "next"}),
+            serde_json::json!({
+                "role": "assistant",
+                "content": "newer",
+                "reasoning_content": "  newest thinking  "
+            }),
+        ];
+
+        assert_eq!(
+            super::latest_assistant_reasoning_content(&messages),
+            Some("newest thinking")
+        );
+    }
+
+    #[test]
+    fn latest_assistant_reasoning_does_not_skip_back_past_latest_assistant() {
+        let messages = vec![
+            serde_json::json!({
+                "role": "assistant",
+                "content": "older",
+                "reasoning_content": "older thinking"
+            }),
+            serde_json::json!({"role": "user", "content": "next"}),
+            serde_json::json!({"role": "assistant", "content": "newer"}),
+        ];
+
+        assert_eq!(super::latest_assistant_reasoning_content(&messages), None);
+    }
+
+    #[test]
+    fn thinkback_command_is_registered_and_returns_handled() {
+        assert!(
+            super::super::command_registry::registry()
+                .get("thinkback")
+                .is_some(),
+            "/thinkback must be registered, not unknown-command fallback"
+        );
+        let result = handle_slash_command(
+            "/thinkback",
+            &mut vec![serde_json::json!({
+                "role": "assistant",
+                "content": "answer",
+                "reasoning_content": "private reasoning"
+            })],
+            "anthropic",
+            "claude-sonnet",
+        );
+        assert!(
+            matches!(result, Some(SlashCommandResult::Handled)),
+            "/thinkback must replay saved reasoning and return Handled"
+        );
+    }
+
+    #[test]
+    fn thinkback_with_args_returns_usage_handled() {
+        let result = handle_slash_command(
+            "/thinkback now",
+            &mut conversation_with_two_turns(),
+            "anthropic",
+            "claude-sonnet",
+        );
+        assert!(
+            matches!(result, Some(SlashCommandResult::Handled)),
+            "/thinkback with extra args must stay handled"
+        );
+    }
+
     // ── Remaining gap commands absent from OC (pin unknown-command path) ─────
     //
-    // These tests document that the commands from CC gap issues #657,
-    // #659, #663, #666 currently fall through to the unknown-command arm
-    // and return Handled.  If any of these start returning something else, a
+    // These tests document that the commands from CC gap issue #657 currently
+    // fall through to the unknown-command arm and return Handled. If it starts
+    // returning something else, a
     // Phase 3 implementation landed and this pin must be updated.
 
     /// Gap B (#657): `/teleport` does not exist in OC → unknown-command path.
@@ -3398,16 +3506,6 @@ mod tests {
         assert!(
             matches!(result, Some(SlashCommandResult::Handled)),
             "/teleport must return Handled — command not yet implemented (gap #657)"
-        );
-    }
-
-    /// Gap C (#659): `/thinkback` does not exist in OC → unknown-command path.
-    #[test]
-    fn gap_missing_thinkback_returns_handled() {
-        let result = handle_slash_command("/thinkback", &mut ctx(), "anthropic", "claude-sonnet");
-        assert!(
-            matches!(result, Some(SlashCommandResult::Handled)),
-            "/thinkback must return Handled — command not yet implemented (gap #659)"
         );
     }
 
