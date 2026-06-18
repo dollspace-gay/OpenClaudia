@@ -356,6 +356,23 @@ impl RealityLedger {
         })
     }
 
+    /// Return all observations in chronological order.
+    ///
+    /// This hydrates the in-memory cache, not the SQLite connection directly.
+    /// Callers that need compact prompt context should prefer
+    /// [`Self::observation_index`]; this method is for policy/packet builders
+    /// that need to inspect typed observation variants.
+    #[must_use]
+    pub fn observations_chronological(&self) -> Vec<&Observation> {
+        let mut observations = self
+            .records
+            .values()
+            .map(|record| &record.observation)
+            .collect::<Vec<_>>();
+        observations.sort_by_key(|observation| observation.ts);
+        observations
+    }
+
     /// Append a fully-formed observation.
     ///
     /// # Errors

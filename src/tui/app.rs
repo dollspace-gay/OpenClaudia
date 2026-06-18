@@ -3057,7 +3057,96 @@ struct AgenticCtx<'a> {
     hook_engine: Option<std::sync::Arc<crate::hooks::HookEngine>>,
     task_mgr: std::sync::Arc<std::sync::Mutex<crate::session::TaskManager>>,
     session_id: &'a str,
+    task_obs: Option<crate::ledger::ObsId>,
     tx: &'a std::sync::mpsc::Sender<super::events::AppEvent>,
+}
+
+fn latest_user_message_content(messages: &[serde_json::Value]) -> Option<&str> {
+    messages.iter().rev().find_map(|message| {
+        (message.get("role").and_then(|role| role.as_str()) == Some("user"))
+            .then(|| message.get("content").and_then(|content| content.as_str()))
+            .flatten()
+    })
+}
+
+fn observe_turn_user_task(
+    session_id: &str,
+    messages: &[serde_json::Value],
+) -> Option<crate::ledger::ObsId> {
+    let content = latest_user_message_content(messages)?;
+    let mut ledger = match crate::ledger::RealityLedger::open_project_session(session_id) {
+        Ok(ledger) => ledger,
+        Err(err) => {
+            tracing::warn!(
+                session_id,
+                error = %err,
+                "failed to open session reality ledger for user task"
+            );
+            return None;
+        }
+    };
+    match ledger.observe_user_task(content.to_string()) {
+        Ok(id) => Some(id),
+        Err(err) => {
+            tracing::warn!(
+                session_id,
+                error = %err,
+                "failed to append user task observation to reality ledger"
+            );
+            None
+        }
+    }
+}
+
+fn request_messages_with_grounding(
+    session_id: &str,
+    task_obs: Option<crate::ledger::ObsId>,
+    session_messages: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
+    let mut request_messages = session_messages.to_vec();
+    let Some(task_obs) = task_obs else {
+        return request_messages;
+    };
+    let ledger = match crate::ledger::RealityLedger::open_project_session(session_id) {
+        Ok(ledger) => ledger,
+        Err(err) => {
+            tracing::warn!(
+                session_id,
+                error = %err,
+                "failed to open session reality ledger for grounding packet"
+            );
+            return request_messages;
+        }
+    };
+    let packet = match crate::grounded_loop::build_prompt_packet(
+        &ledger,
+        task_obs,
+        crate::grounded_loop::DEFAULT_GROUNDING_INDEX_LIMIT,
+        Vec::new(),
+    ) {
+        Ok(packet) => packet,
+        Err(err) => {
+            tracing::warn!(
+                session_id,
+                reason = %err.reason(),
+                "failed to build grounding packet"
+            );
+            return request_messages;
+        }
+    };
+    let content = crate::grounded_loop::render_grounding_system_message(&packet);
+    let insert_at = request_messages
+        .iter()
+        .position(|message| message.get("role").and_then(|role| role.as_str()) != Some("system"))
+        .unwrap_or(request_messages.len());
+    request_messages.insert(
+        insert_at,
+        serde_json::json!({
+            "role": "system",
+            "content": content,
+        }),
+    );
+    request_messages
 }
 
 /// Run the pre-turn `UserPromptSubmit` hook. Returns `false` and sends an
@@ -3346,10 +3435,12 @@ async fn run_agentic_loop(ctx: &AgenticCtx<'_>, session_messages: &mut Vec<serde
             );
             break;
         }
+        let request_messages =
+            request_messages_with_grounding(ctx.session_id, ctx.task_obs, session_messages);
         let body = match crate::pipeline::build_request(
             ctx.provider,
             ctx.model,
-            session_messages,
+            &request_messages,
             ctx.effort_level,
             ctx.claude_code_token,
             ctx.prompt_blocks,
@@ -3448,10 +3539,13 @@ async fn run_api_turn_async(p: ApiTurnParams) {
             return;
         }
     }
+    let task_obs = observe_turn_user_task(&session_id, &session_messages);
+    let request_messages =
+        request_messages_with_grounding(&session_id, task_obs, &session_messages);
     let request_body = match crate::pipeline::build_request(
         &provider,
         &model,
-        &session_messages,
+        &request_messages,
         effort_level.as_str(),
         claude_code_token.as_deref(),
         prompt_blocks.as_ref(),
@@ -3497,6 +3591,7 @@ async fn run_api_turn_async(p: ApiTurnParams) {
                     hook_engine,
                     task_mgr,
                     session_id: &session_id,
+                    task_obs,
                     tx: &tx,
                 },
             )
@@ -3526,6 +3621,7 @@ struct TurnContext<'a> {
     hook_engine: Option<std::sync::Arc<crate::hooks::HookEngine>>,
     task_mgr: std::sync::Arc<std::sync::Mutex<crate::session::TaskManager>>,
     session_id: &'a str,
+    task_obs: Option<crate::ledger::ObsId>,
     tx: &'a std::sync::mpsc::Sender<super::events::AppEvent>,
 }
 
@@ -3574,6 +3670,7 @@ async fn handle_turn_result(
             hook_engine: ctx.hook_engine,
             task_mgr: ctx.task_mgr,
             session_id: ctx.session_id,
+            task_obs: ctx.task_obs,
             tx: ctx.tx,
         };
         run_agentic_loop(&agentic, &mut session_messages).await;
