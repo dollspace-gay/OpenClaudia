@@ -68,7 +68,7 @@ Generated 2026-03-05
 | Glob (file search) | Yes | Yes | No |
 | Grep (content search) | Yes | Yes | Yes |
 | Web fetch | Yes | Yes | No |
-| Web search | Yes (DDG/Tavily/Brave) | Yes | No |
+| Web search | Yes (free DuckDuckGo/Bing browser scraping) | Yes | No |
 | NotebookEdit (Jupyter) | Yes | Yes | No |
 | AskUserQuestion | Yes | Yes | No |
 | Plan mode (EnterPlanMode/ExitPlanMode) | Yes | Yes | No |

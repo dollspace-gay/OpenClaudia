@@ -1327,6 +1327,79 @@ fn comparison_provider_counts_match_current_adapter_surface() {
 }
 
 #[test]
+fn init_refuses_overwrite_unless_force_and_creates_documented_tree() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+
+    let output = isolated_command(&cwd, &home)
+        .arg("init")
+        .output()
+        .expect("openclaudia init must run");
+    assert!(
+        output.status.success(),
+        "init should succeed in empty tempdir; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let config_dir = cwd.path().join(".openclaudia");
+    for path in [
+        "config.yaml",
+        "hooks/session-start.py",
+        "rules/global.md",
+        "plugins",
+    ] {
+        assert!(
+            config_dir.join(path).exists(),
+            "init should create documented path .openclaudia/{path}"
+        );
+    }
+
+    fs::write(config_dir.join("config.yaml"), "sentinel: true\n").expect("replace config");
+    let output = isolated_command(&cwd, &home)
+        .arg("init")
+        .output()
+        .expect("second openclaudia init must run");
+    assert!(
+        !output.status.success(),
+        "second init without --force must refuse overwrite; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("already exists") && combined.contains("--force"),
+        "init overwrite refusal should explain --force; got {combined:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(config_dir.join("config.yaml")).expect("config should remain"),
+        "sentinel: true\n",
+        "init without --force must not overwrite existing config"
+    );
+
+    let output = isolated_command(&cwd, &home)
+        .args(["init", "--force"])
+        .output()
+        .expect("openclaudia init --force must run");
+    assert!(
+        output.status.success(),
+        "init --force should overwrite existing config; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let config = fs::read_to_string(config_dir.join("config.yaml"))
+        .expect("forced init should write config");
+    assert!(
+        config.contains("OpenClaudia Configuration") && !config.contains("sentinel"),
+        "init --force must replace the previous config contents"
+    );
+}
+
+#[test]
 fn init_template_marks_keybindings_as_legacy_repl_specific() {
     let cwd = tempfile::tempdir().expect("cwd tempdir");
     let home = tempfile::tempdir().expect("home tempdir");

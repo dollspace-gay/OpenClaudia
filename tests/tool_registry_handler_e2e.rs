@@ -410,19 +410,28 @@ fn web_tool_descriptions_match_browser_feature_set() {
 #[test]
 fn readme_web_search_docs_explain_browser_feature_boundary() {
     let readme = include_str!("../README.md");
+    let comparison = include_str!("../COMPARISON.md");
 
     assert!(
         readme.contains("Free DuckDuckGo/Bing browser scraping"),
         "README must explain that web search is free and browser-backed"
     );
     assert!(
+        comparison.contains("free DuckDuckGo/Bing browser scraping"),
+        "COMPARISON.md must describe OpenClaudia web search as free and browser-backed"
+    );
+    assert!(
         readme.contains("web_search is unavailable"),
         "README no-default-features build note must explain web_search's browser-feature requirement"
     );
-    assert!(
-        !readme.contains("API keys work in all builds")
-            && !readme.contains("web_search requires")
-            && !readme.contains("APIs work in all builds"),
-        "README must not advertise paid web-search API backends"
-    );
+    for doc in [readme, comparison] {
+        assert!(
+            !doc.contains("API keys work in all builds")
+                && !doc.contains("web_search requires")
+                && !doc.contains("APIs work in all builds")
+                && !doc.contains("Tavily")
+                && !doc.contains("Brave"),
+            "docs must not advertise paid web-search API backends"
+        );
+    }
 }
