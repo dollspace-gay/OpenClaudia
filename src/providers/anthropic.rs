@@ -10,6 +10,51 @@ use crate::session::TokenUsage;
 
 use super::{ApiKey, ProviderAdapter, ProviderError};
 
+/// Whether the model rejects manual extended thinking budgets.
+///
+/// Anthropic's current docs require adaptive thinking for these models;
+/// sending `thinking: {type: "enabled", budget_tokens: ...}` returns 400.
+#[must_use]
+pub fn anthropic_rejects_manual_thinking(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.starts_with("claude-fable-5")
+        || model.starts_with("claude-mythos-5")
+        || model.starts_with("claude-opus-4-8")
+        || model.starts_with("claude-opus-4-7")
+}
+
+fn anthropic_rejects_sampling_parameters(model: &str) -> bool {
+    anthropic_rejects_manual_thinking(model)
+}
+
+fn anthropic_has_implicit_adaptive_thinking(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.starts_with("claude-fable-5") || model.starts_with("claude-mythos-5")
+}
+
+/// Normalize a user-facing Anthropic effort level for `output_config.effort`.
+#[must_use]
+pub fn anthropic_output_effort(effort: Option<&str>) -> Option<&'static str> {
+    match effort?.to_ascii_lowercase().as_str() {
+        "low" | "l" => Some("low"),
+        "medium" | "med" | "m" => Some("medium"),
+        "high" | "h" => Some("high"),
+        "xhigh" => Some("xhigh"),
+        "max" | "x" => Some("max"),
+        _ => None,
+    }
+}
+
+/// Apply the adaptive-thinking request shape required by newer Claude models.
+pub fn apply_anthropic_adaptive_thinking(body: &mut Value, model: &str, effort: Option<&str>) {
+    if !anthropic_has_implicit_adaptive_thinking(model) {
+        body["thinking"] = json!({"type": "adaptive"});
+    }
+    if let Some(effort) = anthropic_output_effort(effort) {
+        body["output_config"] = json!({"effort": effort});
+    }
+}
+
 /// Anthropic Messages API adapter
 pub struct AnthropicAdapter;
 
@@ -226,9 +271,19 @@ impl ProviderAdapter for AnthropicAdapter {
             body["system"] = build_system_blocks_from_string(&system);
         }
 
-        // Add temperature if specified
+        // Add temperature if specified and supported by the target model.
+        // Claude Opus 4.7/4.8 and Claude 5-family models reject non-default
+        // sampling parameters; omitting them locally avoids an upstream 400.
         if let Some(temp) = request.temperature {
-            body["temperature"] = json!(temp);
+            if anthropic_rejects_sampling_parameters(&request.model) {
+                warn!(
+                    model = %request.model,
+                    temperature = temp,
+                    "omitting unsupported Anthropic temperature parameter"
+                );
+            } else {
+                body["temperature"] = json!(temp);
+            }
         }
 
         // Convert tools with cache_control on last tool for prompt caching.
@@ -261,6 +316,20 @@ impl ProviderAdapter for AnthropicAdapter {
         // Add Anthropic extended thinking params if enabled
         // See: https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking
         if thinking.enabled {
+            if anthropic_rejects_manual_thinking(&request.model) {
+                apply_anthropic_adaptive_thinking(
+                    &mut body,
+                    &request.model,
+                    thinking.reasoning_effort.as_deref(),
+                );
+                debug!(
+                    model = %request.model,
+                    effort = ?thinking.reasoning_effort,
+                    "Added Anthropic adaptive thinking params"
+                );
+                return Ok(body);
+            }
+
             // Crosslink #599: pull the effective budget through
             // ThinkingConfig::effective_budget so a `reasoning_effort`
             // setting of `medium`/`high` (with `adaptive=true`, the

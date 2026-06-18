@@ -123,7 +123,8 @@ providers:
     base_url: https://api.anthropic.com
     thinking:
       enabled: false
-      budget_tokens: 10000        # Anthropic thinking budget
+      reasoning_effort: "high"    # Claude Opus 4.8/4.7/Fable/Mythos adaptive effort
+      # budget_tokens: 10000      # Manual-thinking Claude models only
   openai:
     base_url: https://api.openai.com
     thinking:

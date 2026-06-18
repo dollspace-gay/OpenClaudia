@@ -221,6 +221,71 @@ fn anthropic_thinking_object_has_type_enabled_marker() {
 }
 
 #[test]
+fn anthropic_opus_4_8_uses_adaptive_thinking_not_manual_budget() {
+    let adapter = get_adapter("anthropic").expect("anthropic adapter");
+    let req = minimal_request("claude-opus-4-8");
+    let thinking = ThinkingConfig {
+        enabled: true,
+        budget_tokens: Some(32_000),
+        preserve_across_turns: false,
+        reasoning_effort: Some("xhigh".to_string()),
+        adaptive: true,
+    };
+    let body = adapter
+        .transform_request_with_thinking(&req, &thinking)
+        .expect("transform");
+    assert_eq!(body["thinking"]["type"], "adaptive");
+    assert!(
+        body["thinking"].get("budget_tokens").is_none(),
+        "Opus 4.8 rejects manual thinking budgets; got {body}"
+    );
+    assert_eq!(body["output_config"]["effort"], "xhigh");
+}
+
+#[test]
+fn anthropic_opus_4_7_uses_adaptive_thinking_not_manual_budget() {
+    let adapter = get_adapter("anthropic").expect("anthropic adapter");
+    let req = minimal_request("claude-opus-4-7");
+    let thinking = ThinkingConfig {
+        enabled: true,
+        budget_tokens: Some(32_000),
+        preserve_across_turns: false,
+        reasoning_effort: Some("max".to_string()),
+        adaptive: true,
+    };
+    let body = adapter
+        .transform_request_with_thinking(&req, &thinking)
+        .expect("transform");
+    assert_eq!(body["thinking"]["type"], "adaptive");
+    assert!(
+        body["thinking"].get("budget_tokens").is_none(),
+        "Opus 4.7 rejects manual thinking budgets; got {body}"
+    );
+    assert_eq!(body["output_config"]["effort"], "max");
+}
+
+#[test]
+fn anthropic_fable_5_omits_explicit_thinking_because_adaptive_is_implicit() {
+    let adapter = get_adapter("anthropic").expect("anthropic adapter");
+    let req = minimal_request("claude-fable-5");
+    let thinking = ThinkingConfig {
+        enabled: true,
+        budget_tokens: Some(32_000),
+        preserve_across_turns: false,
+        reasoning_effort: Some("high".to_string()),
+        adaptive: true,
+    };
+    let body = adapter
+        .transform_request_with_thinking(&req, &thinking)
+        .expect("transform");
+    assert!(
+        body.get("thinking").is_none(),
+        "Fable 5 has implicit adaptive thinking and rejects manual budgets; got {body}"
+    );
+    assert_eq!(body["output_config"]["effort"], "high");
+}
+
+#[test]
 fn anthropic_thinking_disabled_does_not_inject_thinking_field() {
     let adapter = get_adapter("anthropic").expect("anthropic adapter");
     let req = minimal_request("claude-sonnet-4-5");

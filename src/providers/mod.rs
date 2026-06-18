@@ -37,6 +37,7 @@ use crate::session::TokenUsage;
 
 // Re-export all adapter types and public functions
 pub use anthropic::{
+    anthropic_output_effort, anthropic_rejects_manual_thinking, apply_anthropic_adaptive_thinking,
     build_system_blocks, build_system_blocks_from_string, convert_messages_to_anthropic,
     convert_messages_to_anthropic_checked, convert_tool_definitions_to_anthropic_checked,
     convert_tools_to_anthropic, convert_tools_to_anthropic_checked, AnthropicAdapter,

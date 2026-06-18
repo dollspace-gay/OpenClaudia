@@ -7,6 +7,7 @@ use crate::config::ThinkingConfig;
 use crate::memory::MemoryDb;
 use crate::permissions::{PermissionManager, PermissionRule};
 use crate::providers::{
+    anthropic_rejects_manual_thinking, apply_anthropic_adaptive_thinking,
     convert_messages_to_anthropic_checked, convert_tool_definitions_to_anthropic_checked,
     convert_tools_to_gemini_functions, extract_gemini_text_content, get_adapter,
 };
@@ -124,13 +125,21 @@ pub fn build_anthropic_request(
         crate::claude_credentials::inject_system_prompt(&mut req);
     }
 
-    // Apply effort level. `high` / `max` switch the Anthropic thinking
-    // budget to Claude Code's ULTRATHINK constant (31999); MAX_THINKING_TOKENS
-    // env var overrides outright. See `crate::thinking` for the precedence
-    // chain and keyword-trigger logic (ultrathink / think ultra hard).
+    // Apply effort level. `high` / `max` switch Anthropic into thinking mode.
+    // Newer models (Fable/Mythos, Opus 4.8/4.7) reject manual thinking
+    // budgets, so they use the adaptive-thinking + output_config.effort
+    // shape. Older/manual-capable models keep the Claude Code budget path.
+    // MAX_THINKING_TOKENS env var overrides manual budgets outright. See
+    // `crate::thinking` for the precedence chain and keyword-trigger logic
+    // (ultrathink / think ultra hard).
     match effort_level {
-        "high" | "max" => {
-            if let Some(budget) = crate::thinking::anthropic_thinking_budget(Some(effort_level)) {
+        "high" | "max" | "xhigh" => {
+            if anthropic_rejects_manual_thinking(model) {
+                apply_anthropic_adaptive_thinking(&mut req, model, Some(effort_level));
+                req["max_tokens"] = serde_json::json!(40_000);
+            } else if let Some(budget) =
+                crate::thinking::anthropic_thinking_budget(Some(effort_level))
+            {
                 req["thinking"] = serde_json::json!({
                     "type": "enabled",
                     "budget_tokens": budget,
@@ -2874,6 +2883,33 @@ mod tests {
             maxr["thinking"]["budget_tokens"],
             crate::thinking::ULTRATHINK_BUDGET_TOKENS,
         );
+
+        let opus48 = build_anthropic_request("claude-opus-4-8", &messages, "high", None, None)
+            .expect("opus 4.8 high-effort request should build");
+        assert_eq!(opus48["thinking"]["type"], "adaptive");
+        assert!(
+            opus48["thinking"].get("budget_tokens").is_none(),
+            "Opus 4.8 rejects manual thinking budgets: {opus48}"
+        );
+        assert_eq!(opus48["output_config"]["effort"], "high");
+        assert_eq!(opus48["max_tokens"], 40_000);
+
+        let opus47 = build_anthropic_request("claude-opus-4-7", &messages, "max", None, None)
+            .expect("opus 4.7 max-effort request should build");
+        assert_eq!(opus47["thinking"]["type"], "adaptive");
+        assert!(
+            opus47["thinking"].get("budget_tokens").is_none(),
+            "Opus 4.7 rejects manual thinking budgets: {opus47}"
+        );
+        assert_eq!(opus47["output_config"]["effort"], "max");
+
+        let fable = build_anthropic_request("claude-fable-5", &messages, "high", None, None)
+            .expect("fable high-effort request should build");
+        assert!(
+            fable.get("thinking").is_none(),
+            "Fable 5 has implicit adaptive thinking; explicit thinking object is unnecessary: {fable}"
+        );
+        assert_eq!(fable["output_config"]["effort"], "high");
 
         let low = build_anthropic_request("claude-sonnet-4-6", &messages, "low", None, None)
             .expect("low effort anthropic request should build");

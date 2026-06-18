@@ -159,7 +159,7 @@ pub fn resolve_effort(base_effort: &str, messages: &[Value]) -> Option<String> {
 /// Returns `None` when no thinking block should be attached.
 ///
 /// - `MAX_THINKING_TOKENS` env var wins outright (matches Claude Code).
-/// - `high` and `max` → [`ULTRATHINK_BUDGET_TOKENS`].
+/// - `high`, `xhigh`, and `max` → [`ULTRATHINK_BUDGET_TOKENS`].
 /// - `low`/`medium`/other → `None` (no thinking).
 #[must_use]
 pub fn anthropic_thinking_budget(effort: Option<&str>) -> Option<u32> {
@@ -167,7 +167,7 @@ pub fn anthropic_thinking_budget(effort: Option<&str>) -> Option<u32> {
         return Some(n);
     }
     match effort? {
-        "high" | "max" => Some(ULTRATHINK_BUDGET_TOKENS),
+        "high" | "xhigh" | "max" => Some(ULTRATHINK_BUDGET_TOKENS),
         _ => None,
     }
 }
@@ -267,6 +267,10 @@ mod tests {
         );
         assert_eq!(
             anthropic_thinking_budget(Some("max")),
+            Some(ULTRATHINK_BUDGET_TOKENS)
+        );
+        assert_eq!(
+            anthropic_thinking_budget(Some("xhigh")),
             Some(ULTRATHINK_BUDGET_TOKENS)
         );
         assert_eq!(anthropic_thinking_budget(Some("medium")), None);
