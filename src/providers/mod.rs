@@ -434,10 +434,30 @@ pub const DEFAULT_MODEL_FALLBACK: &str = "gpt-5.5";
 /// Look up the canonical default model for a target, or [`DEFAULT_MODEL_FALLBACK`].
 #[must_use]
 pub fn default_model_for_target(target: &str) -> &'static str {
+    let target = target.trim();
     DEFAULT_MODELS_BY_TARGET
         .iter()
-        .find_map(|(t, m)| (*t == target).then_some(*m))
+        .find_map(|(t, m)| t.eq_ignore_ascii_case(target).then_some(*m))
         .unwrap_or(DEFAULT_MODEL_FALLBACK)
+}
+
+/// Environment variable users should set for a provider API key.
+///
+/// Matching is ASCII-case-insensitive so diagnostics stay aligned with the
+/// case-insensitive provider dispatch surface.
+#[must_use]
+pub fn api_key_env_var_for_target(provider_name: &str) -> &'static str {
+    match provider_name.trim().to_ascii_lowercase().as_str() {
+        "anthropic" => "ANTHROPIC_API_KEY",
+        "openai" => "OPENAI_API_KEY",
+        "google" | "gemini" => "GOOGLE_API_KEY",
+        "zai" | "glm" | "zhipu" => "ZAI_API_KEY",
+        "deepseek" => "DEEPSEEK_API_KEY",
+        "qwen" | "alibaba" => "QWEN_API_KEY",
+        "kimi" | "moonshot" => "KIMI_API_KEY or MOONSHOT_API_KEY",
+        "minimax" => "MINIMAX_API_KEY",
+        _ => "API_KEY",
+    }
 }
 
 /// Resolve a provider name to its singleton adapter.
@@ -1488,5 +1508,27 @@ mod tests {
                  get_adapter rejects it"
             );
         }
+    }
+
+    #[test]
+    fn default_model_lookup_is_case_insensitive() {
+        assert_eq!(
+            default_model_for_target("Anthropic"),
+            default_model_for_target("anthropic")
+        );
+        assert_eq!(
+            default_model_for_target("  GEMINI  "),
+            default_model_for_target("gemini")
+        );
+    }
+
+    #[test]
+    fn api_key_env_var_lookup_is_case_insensitive() {
+        assert_eq!(api_key_env_var_for_target("OpenAI"), "OPENAI_API_KEY");
+        assert_eq!(
+            api_key_env_var_for_target("  MOONSHOT  "),
+            "KIMI_API_KEY or MOONSHOT_API_KEY"
+        );
+        assert_eq!(api_key_env_var_for_target("unknown"), "API_KEY");
     }
 }

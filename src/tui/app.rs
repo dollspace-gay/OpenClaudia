@@ -484,16 +484,7 @@ struct ProviderSwitchAuth {
 }
 
 fn missing_provider_auth_message(target: &str) -> String {
-    let env_var = match target {
-        "openai" => "OPENAI_API_KEY",
-        "google" | "gemini" => "GOOGLE_API_KEY",
-        "zai" | "glm" | "zhipu" => "ZAI_API_KEY",
-        "deepseek" => "DEEPSEEK_API_KEY",
-        "qwen" | "alibaba" => "QWEN_API_KEY",
-        "kimi" | "moonshot" => "KIMI_API_KEY or MOONSHOT_API_KEY",
-        "minimax" => "MINIMAX_API_KEY",
-        _ => "API_KEY",
-    };
+    let env_var = crate::providers::api_key_env_var_for_target(target);
     format!("No API key configured for '{target}'. Set {env_var} or add it to config.")
 }
 
@@ -501,7 +492,7 @@ async fn resolve_provider_switch_auth(
     target: &str,
     provider: &crate::config::ProviderConfig,
 ) -> Result<ProviderSwitchAuth, String> {
-    if target == "anthropic" && provider.api_key.is_none() {
+    if target.eq_ignore_ascii_case("anthropic") && provider.api_key.is_none() {
         if !crate::claude_credentials::has_claude_code_credentials() {
             return Err(
                 "No API key configured for Anthropic. Log in with Claude Code or set ANTHROPIC_API_KEY."

@@ -45,7 +45,7 @@ pub async fn cmd_start(
     };
 
     if provider.api_key.is_none() {
-        if config.proxy.target == "anthropic" {
+        if config.proxy.target.eq_ignore_ascii_case("anthropic") {
             tracing::warn!(
                 "No API key configured for '{}'. OAuth authentication is available.",
                 config.proxy.target

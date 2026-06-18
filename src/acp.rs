@@ -1151,7 +1151,9 @@ impl AcpServer {
                 return "error".to_string();
             };
             let claude_code_token = self.claude_code_token.as_deref();
-            if claude_code_token.is_some() && self.config.proxy.target == "anthropic" {
+            if claude_code_token.is_some()
+                && self.config.proxy.target.eq_ignore_ascii_case("anthropic")
+            {
                 crate::claude_credentials::inject_system_prompt(&mut transformed);
             }
             let endpoint = match crate::pipeline::resolve_endpoint(

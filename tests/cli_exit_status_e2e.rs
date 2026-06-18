@@ -191,37 +191,49 @@ providers:
 }
 
 fn write_openai_provider_config(cwd: &tempfile::TempDir) {
+    write_openai_provider_config_with_target(cwd, "openai");
+}
+
+fn write_openai_provider_config_with_target(cwd: &tempfile::TempDir, target: &str) {
     let config_dir = cwd.path().join(".openclaudia");
     fs::create_dir_all(&config_dir).expect("config dir");
     fs::write(
         config_dir.join("config.yaml"),
-        r#"
+        format!(
+            r#"
 proxy:
   port: 8080
   host: "127.0.0.1"
-  target: openai
+  target: {target}
 providers:
   openai:
     base_url: https://api.openai.com/v1
 "#,
+        ),
     )
     .expect("config file");
 }
 
 fn write_anthropic_provider_config(cwd: &tempfile::TempDir) {
+    write_anthropic_provider_config_with_target(cwd, "anthropic");
+}
+
+fn write_anthropic_provider_config_with_target(cwd: &tempfile::TempDir, target: &str) {
     let config_dir = cwd.path().join(".openclaudia");
     fs::create_dir_all(&config_dir).expect("config dir");
     fs::write(
         config_dir.join("config.yaml"),
-        r#"
+        format!(
+            r#"
 proxy:
   port: 8080
   host: "127.0.0.1"
-  target: anthropic
+  target: {target}
 providers:
   anthropic:
     base_url: https://api.anthropic.com
 "#,
+        ),
     )
     .expect("config file");
 }
@@ -636,6 +648,40 @@ fn start_allows_keyless_local_provider_until_bind_failure() {
 }
 
 #[test]
+fn start_mixed_case_anthropic_target_keeps_anthropic_auth_path() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    write_anthropic_provider_config_with_target(&cwd, "Anthropic");
+    let (_listener, port) = held_loopback_port();
+    let port = port.to_string();
+
+    let output = isolated_command(&cwd, &home)
+        .args(["start", "--port", &port])
+        .output()
+        .expect("openclaudia start must run");
+
+    assert!(
+        !output.status.success(),
+        "held port should make start fail after mixed-case Anthropic auth preflight; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.to_lowercase().contains("address already in use"),
+        "mixed-case Anthropic target should reach bind; got {combined:?}"
+    );
+    assert!(
+        !combined.contains("Set API_KEY"),
+        "mixed-case Anthropic target must not fall through to generic API_KEY diagnostics; got {combined:?}"
+    );
+}
+
+#[test]
 fn start_target_flag_overrides_config_before_auth_preflight() {
     let cwd = tempfile::tempdir().expect("cwd tempdir");
     let home = tempfile::tempdir().expect("home tempdir");
@@ -1006,6 +1052,34 @@ fn print_rejects_keyless_remote_provider_before_request() {
 }
 
 #[test]
+fn print_mixed_case_remote_provider_names_specific_env_var() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    write_openai_provider_config_with_target(&cwd, "OpenAI");
+
+    let output = isolated_command(&cwd, &home)
+        .args(["--print", "hello"])
+        .output()
+        .expect("openclaudia --print must run");
+
+    assert!(
+        !output.status.success(),
+        "print should reject mixed-case OpenAI without an API key; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("OPENAI_API_KEY") && !combined.contains("Set API_KEY"),
+        "mixed-case OpenAI target should keep the OpenAI env-var hint; got {combined:?}"
+    );
+}
+
+#[test]
 fn print_rejects_interactive_only_root_flags_instead_of_ignoring_them() {
     for (args, expected) in [
         (
@@ -1142,6 +1216,34 @@ fn doctor_skips_endpoint_probe_when_active_provider_auth_fails() {
     assert!(
         combined.contains("Endpoint reachability for openai... SKIPPED (auth failed)"),
         "doctor should explicitly skip reachability when auth failed; got {combined:?}"
+    );
+}
+
+#[test]
+fn doctor_mixed_case_remote_provider_names_specific_env_var() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    write_openai_provider_config_with_target(&cwd, "OpenAI");
+
+    let output = isolated_command(&cwd, &home)
+        .arg("doctor")
+        .output()
+        .expect("openclaudia doctor must run");
+
+    assert!(
+        !output.status.success(),
+        "doctor should fail mixed-case OpenAI without an API key; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("OPENAI_API_KEY") && !combined.contains("set API_KEY"),
+        "mixed-case OpenAI doctor auth should keep the OpenAI env-var hint; got {combined:?}"
     );
 }
 

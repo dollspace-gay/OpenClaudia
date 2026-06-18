@@ -1134,7 +1134,7 @@ async fn resolve_chat_auth(
     provider: &openclaudia::config::ProviderConfig,
 ) -> anyhow::Result<Option<ChatAuth>> {
     // Anthropic / no API-key branch: try Claude Code first.
-    if target == "anthropic" && provider.api_key.is_none() {
+    if target.eq_ignore_ascii_case("anthropic") && provider.api_key.is_none() {
         if !openclaudia::claude_credentials::has_claude_code_credentials() {
             eprintln!("No API key configured for Anthropic.");
             eprintln!("Install Claude Code and run `claude` to log in, or set ANTHROPIC_API_KEY.");
@@ -1176,16 +1176,7 @@ async fn resolve_chat_auth(
         }));
     }
 
-    let env_var = match target {
-        "openai" => "OPENAI_API_KEY",
-        "google" | "gemini" => "GOOGLE_API_KEY",
-        "zai" | "glm" | "zhipu" => "ZAI_API_KEY",
-        "deepseek" => "DEEPSEEK_API_KEY",
-        "qwen" | "alibaba" => "QWEN_API_KEY",
-        "kimi" | "moonshot" => "KIMI_API_KEY or MOONSHOT_API_KEY",
-        "minimax" => "MINIMAX_API_KEY",
-        _ => "API_KEY",
-    };
+    let env_var = openclaudia::providers::api_key_env_var_for_target(target);
     eprintln!("No API key configured for '{target}'. Set {env_var} or add to config.");
     Ok(None)
 }

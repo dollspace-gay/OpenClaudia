@@ -2020,7 +2020,7 @@ impl ChatRepl {
             full_content.push_str("\n\n[Response interrupted by user]");
         }
 
-        if self.config.proxy.target == "anthropic" && !cancelled {
+        if self.config.proxy.target.eq_ignore_ascii_case("anthropic") && !cancelled {
             self.dispatch_anthropic_tool_path(
                 &mut anthropic_accumulator,
                 full_content,
@@ -3230,7 +3230,7 @@ impl ChatRepl {
     /// the Anthropic direct branch and the generic `OpenAI` shape).
     fn build_openai_followup_request(&self) -> Result<serde_json::Value, String> {
         let request_messages = self.request_messages_with_grounding()?;
-        if self.config.proxy.target == "anthropic" {
+        if self.config.proxy.target.eq_ignore_ascii_case("anthropic") {
             let system_msg = request_messages
                 .iter()
                 .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
