@@ -1665,6 +1665,8 @@ impl ToolHandler for ToolSearchHandler {
                         },
                         "max_results": {
                             "type": "integer",
+                            "minimum": 1,
+                            "maximum": 50,
                             "description": "Maximum number of results to return (default: 5, ceiling: 50)"
                         }
                     },

@@ -511,6 +511,28 @@ fn grep_context_schema_advertises_non_negative_bound() {
 }
 
 #[test]
+fn tool_search_max_results_schema_advertises_bounds() {
+    let def = registry()
+        .get("tool_search")
+        .expect("tool_search registered")
+        .definition();
+    let max_results_schema = def
+        .pointer("/function/parameters/properties/max_results")
+        .expect("tool_search max_results schema");
+
+    assert_eq!(
+        max_results_schema.get("minimum").and_then(Value::as_u64),
+        Some(1),
+        "tool_search max_results schema must advertise the enforced lower bound"
+    );
+    assert_eq!(
+        max_results_schema.get("maximum").and_then(Value::as_u64),
+        Some(50),
+        "tool_search max_results schema must advertise the enforced ceiling"
+    );
+}
+
+#[test]
 fn file_tool_path_descriptions_match_relative_path_support() {
     for (tool_name, path_property) in [
         ("read_file", "path"),
