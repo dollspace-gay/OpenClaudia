@@ -824,6 +824,84 @@ fn append_command_observation(
             "failed to append bash command observation to reality ledger"
         );
     }
+    let Some(findings) = verification_findings_for_command(command, exit_code, stdout, stderr)
+    else {
+        return;
+    };
+    if let Err(err) = ledger.append(
+        crate::ledger::Authority::Verifier,
+        crate::ledger::ObservationKind::Verification {
+            passed: exit_code == 0,
+            command: Some(command.to_string()),
+            findings,
+        },
+    ) {
+        tracing::warn!(
+            command = %command,
+            error = %err,
+            "failed to append bash verification observation to reality ledger"
+        );
+    }
+}
+
+fn verification_findings_for_command(
+    command: &str,
+    exit_code: i32,
+    stdout: &str,
+    stderr: &str,
+) -> Option<Vec<String>> {
+    if !is_likely_verification_command(command) {
+        return None;
+    }
+
+    let mut findings = vec![format!("verification command exited with code {exit_code}")];
+    if exit_code != 0 {
+        if !stdout.trim().is_empty() {
+            findings.push(format!(
+                "stdout: {}",
+                safe_truncate(stdout, LEDGER_COMMAND_OUTPUT_MAX_BYTES)
+            ));
+        }
+        if !stderr.trim().is_empty() {
+            findings.push(format!(
+                "stderr: {}",
+                safe_truncate(stderr, LEDGER_COMMAND_OUTPUT_MAX_BYTES)
+            ));
+        }
+    }
+    Some(findings)
+}
+
+fn is_likely_verification_command(command: &str) -> bool {
+    let normalized = command
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    const NEEDLES: &[&str] = &[
+        "cargo test",
+        "cargo check",
+        "cargo clippy",
+        "cargo fmt",
+        "cargo nextest",
+        "npm test",
+        "npm run test",
+        "pnpm test",
+        "pnpm run test",
+        "yarn test",
+        "yarn run test",
+        "bun test",
+        "pytest",
+        "python -m pytest",
+        "go test",
+        "zig test",
+        "swift test",
+        "mvn test",
+        "gradle test",
+        "make test",
+        "ctest",
+    ];
+    NEEDLES.iter().any(|needle| normalized.contains(needle))
 }
 
 /// Execute a bash command, returning the legacy `(content, is_error)` tuple.
@@ -890,6 +968,67 @@ mod tests {
         let mut args = bash_args(cmd);
         args.insert("run_in_background".to_string(), Value::Bool(true));
         args
+    }
+
+    #[test]
+    fn verification_commands_append_verifier_observation() {
+        let mut ledger = crate::ledger::RealityLedger::new();
+        append_command_observation(
+            &mut ledger,
+            Path::new("/tmp/project"),
+            "cargo check --all-targets",
+            0,
+            "ok",
+            "",
+        );
+
+        let index = ledger.observation_index(8);
+        assert_eq!(index.len(), 2);
+        let verification = index
+            .iter()
+            .filter_map(|entry| ledger.get(entry.id))
+            .find(|obs| {
+                matches!(
+                    obs.kind,
+                    crate::ledger::ObservationKind::Verification { .. }
+                )
+            })
+            .expect("verification observation");
+        assert_eq!(verification.authority, crate::ledger::Authority::Verifier);
+        let crate::ledger::ObservationKind::Verification {
+            passed,
+            command,
+            findings,
+        } = &verification.kind
+        else {
+            panic!("expected verification observation");
+        };
+        assert!(*passed);
+        assert_eq!(command.as_deref(), Some("cargo check --all-targets"));
+        assert!(findings
+            .iter()
+            .any(|finding| finding.contains("exited with code 0")));
+    }
+
+    #[test]
+    fn non_verification_commands_only_append_command_observation() {
+        let mut ledger = crate::ledger::RealityLedger::new();
+        append_command_observation(
+            &mut ledger,
+            Path::new("/tmp/project"),
+            "printf hello",
+            0,
+            "hello",
+            "",
+        );
+
+        let index = ledger.observation_index(8);
+        assert_eq!(index.len(), 1);
+        let observation = ledger.get(index[0].id).expect("observation");
+        assert!(matches!(
+            observation.kind,
+            crate::ledger::ObservationKind::CommandRun { .. }
+        ));
     }
 
     #[test]
