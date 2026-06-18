@@ -1,6 +1,6 @@
 //! End-to-end tests for `subagent` tool-definition shapes —
 //! `get_task_tool_definition`, `get_agent_output_tool_definition`,
-//! `get_subagent_tool_definitions` enum membership +
+//! `get_task_stop_tool_definition`, `get_subagent_tool_definitions` enum membership +
 //! required-field contract + the documented `subagent_type`
 //! + model + isolation enum values.
 //!
@@ -9,14 +9,15 @@
 //! description; this file pins the tool-definition wire
 //! shape that the model receives via `tools` array (task
 //! tool `subagent_type` enum, `agent_output` required
-//! fields, model + isolation enum values).
+//! fields, `task_stop`, model + isolation enum values).
 
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 
 use openclaudia::subagent::{
-    get_agent_output_tool_definition, get_subagent_tool_definitions, get_task_tool_definition,
+    get_agent_output_tool_definition, get_subagent_tool_definitions, get_task_stop_tool_definition,
+    get_task_tool_definition,
 };
 use serde_json::Value;
 
@@ -170,18 +171,63 @@ fn agent_output_tool_parameters_type_is_object() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Section B2 — get_task_stop_tool_definition shape
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn task_stop_tool_function_envelope_uses_type_function() {
+    let def = get_task_stop_tool_definition();
+    assert_eq!(def["type"], "function");
+}
+
+#[test]
+fn task_stop_tool_function_name_is_task_stop() {
+    let def = get_task_stop_tool_definition();
+    assert_eq!(def["function"]["name"], "task_stop");
+}
+
+#[test]
+fn task_stop_tool_description_mentions_stop_or_abort() {
+    let def = get_task_stop_tool_definition();
+    let desc = def["function"]["description"].as_str().expect("string");
+    assert!(
+        desc.contains("Stop") || desc.contains("abort") || desc.contains("Aborts"),
+        "MUST describe cancellation behavior; got {desc:?}"
+    );
+}
+
+#[test]
+fn task_stop_tool_parameters_required_includes_agent_id() {
+    let def = get_task_stop_tool_definition();
+    let required = def["function"]["parameters"]["required"]
+        .as_array()
+        .expect("required array");
+    let names: Vec<&str> = required.iter().filter_map(Value::as_str).collect();
+    assert!(
+        names.contains(&"agent_id"),
+        "MUST require agent_id; got {names:?}"
+    );
+}
+
+#[test]
+fn task_stop_tool_parameters_type_is_object() {
+    let def = get_task_stop_tool_definition();
+    assert_eq!(def["function"]["parameters"]["type"], "object");
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Section C — get_subagent_tool_definitions array
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn get_subagent_tool_definitions_returns_2_tools() {
+fn get_subagent_tool_definitions_returns_3_tools() {
     let tools = get_subagent_tool_definitions();
     let arr = tools.as_array().expect("array");
-    assert_eq!(arr.len(), 2);
+    assert_eq!(arr.len(), 3);
 }
 
 #[test]
-fn get_subagent_tool_definitions_includes_both_documented_names() {
+fn get_subagent_tool_definitions_includes_documented_names() {
     let tools = get_subagent_tool_definitions();
     let arr = tools.as_array().expect("array");
     let names: Vec<&str> = arr
@@ -190,6 +236,7 @@ fn get_subagent_tool_definitions_includes_both_documented_names() {
         .collect();
     assert!(names.contains(&"task"));
     assert!(names.contains(&"agent_output"));
+    assert!(names.contains(&"task_stop"));
 }
 
 #[test]

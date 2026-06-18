@@ -321,7 +321,10 @@ fn execute_tool_with_memory_unchecked(
 
     // Subagent tools require full config context; surface a clear error here
     // so callers know to use execute_tool_full() instead.
-    if matches!(tool_call.function.name.as_str(), "task" | "agent_output") {
+    if matches!(
+        tool_call.function.name.as_str(),
+        "task" | "agent_output" | "task_stop"
+    ) {
         return ToolResult {
             tool_call_id: tool_call.id.clone(),
             content:
@@ -396,6 +399,7 @@ fn execute_tool_full_unchecked(
             |config| subagent::execute_task_tool(&args, config),
         ),
         "agent_output" => subagent::execute_agent_output_tool(&args),
+        "task_stop" => subagent::execute_task_stop_tool(&args),
         _ => {
             let mut ctx = ToolContext {
                 memory_db,
@@ -724,9 +728,12 @@ pub(crate) fn execute_tool_with_tasks_unchecked(
         Err(result) => return result,
     };
 
-    // Subagent tools (task / agent_output) need app_config and are handled
+    // Subagent tools (task / agent_output / task_stop) need app_config and are handled
     // inside execute_tool_full before the registry is consulted.
-    if matches!(tool_call.function.name.as_str(), "task" | "agent_output") {
+    if matches!(
+        tool_call.function.name.as_str(),
+        "task" | "agent_output" | "task_stop"
+    ) {
         return execute_tool_full_unchecked(tool_call, memory_db, app_config);
     }
 

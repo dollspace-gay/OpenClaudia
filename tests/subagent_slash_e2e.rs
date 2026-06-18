@@ -183,7 +183,7 @@ fn guide_agent_does_not_have_bash() {
 }
 
 #[test]
-fn coordinator_has_task_and_agent_output_for_delegation() {
+fn coordinator_has_task_agent_output_and_task_stop_for_delegation() {
     let tools = AgentType::Coordinator.allowed_tools();
     assert!(
         tools.contains(&"task"),
@@ -192,6 +192,10 @@ fn coordinator_has_task_and_agent_output_for_delegation() {
     assert!(
         tools.contains(&"agent_output"),
         "Coordinator MUST have agent_output tool; got {tools:?}"
+    );
+    assert!(
+        tools.contains(&"task_stop"),
+        "Coordinator MUST have task_stop tool; got {tools:?}"
     );
 }
 

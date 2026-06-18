@@ -167,6 +167,7 @@ impl AgentType {
             Self::Coordinator => vec![
                 "task",
                 "agent_output",
+                "task_stop",
                 "task_create",
                 "task_update",
                 "task_get",
@@ -318,6 +319,13 @@ pub struct BackgroundAgent {
     /// Used by [`BackgroundAgentManager::gc`] to evict entries past
     /// [`FINISHED_AGENT_TTL_SECS`].
     pub finished_at: Mutex<Option<Instant>>,
+    /// Abort handle for the spawned tokio task, present only for background
+    /// agents. This is intentionally separate from the `JoinHandle` so the
+    /// task remains detached while still being externally cancellable.
+    abort_handle: Mutex<Option<tokio::task::AbortHandle>>,
+    /// Serializes terminal-state transitions (`finish`, `fail`, `stop`) so an
+    /// external cancellation cannot be overwritten by a late model response.
+    terminal_lock: Mutex<()>,
 }
 
 /// Manager for background agents
@@ -396,6 +404,8 @@ impl BackgroundAgentManager {
             error: Mutex::new(None),
             turns: AtomicU64::new(0),
             finished_at: Mutex::new(None),
+            abort_handle: Mutex::new(None),
+            terminal_lock: Mutex::new(()),
         });
         agents.insert(id.to_string(), agent);
         true
@@ -409,29 +419,123 @@ impl BackgroundAgentManager {
 
     /// Mark an agent as finished with a result
     pub fn finish(&self, id: &str, result: String) {
-        if let Some(agent) = self.get(id) {
-            if let Some(mut r) = agent_field_guard(&agent.result, "finish", id, "result") {
-                *r = Some(result);
-            }
-            if let Some(mut t) = agent_field_guard(&agent.finished_at, "finish", id, "finished_at")
-            {
-                *t = Some(Instant::now());
-            }
-            agent.finished.store(true, Ordering::SeqCst);
-        }
+        self.mark_terminal(id, Some(result), None, "finish");
     }
 
     /// Mark an agent as failed with an error
     pub fn fail(&self, id: &str, error: String) {
+        self.mark_terminal(id, None, Some(error), "fail");
+    }
+
+    fn mark_terminal(
+        &self,
+        id: &str,
+        result: Option<String>,
+        error: Option<String>,
+        operation: &'static str,
+    ) -> bool {
         if let Some(agent) = self.get(id) {
-            if let Some(mut e) = agent_field_guard(&agent.error, "fail", id, "error") {
-                *e = Some(error);
+            let Ok(_terminal) = agent.terminal_lock.lock() else {
+                tracing::error!(
+                    operation,
+                    agent_id = id,
+                    "Background agent terminal-state lock poisoned"
+                );
+                return false;
+            };
+            if agent.finished.load(Ordering::SeqCst) {
+                return false;
             }
-            if let Some(mut t) = agent_field_guard(&agent.finished_at, "fail", id, "finished_at") {
+            if let Some(result) = result {
+                if let Some(mut r) = agent_field_guard(&agent.result, operation, id, "result") {
+                    *r = Some(result);
+                }
+            }
+            if let Some(error) = error {
+                if let Some(mut e) = agent_field_guard(&agent.error, operation, id, "error") {
+                    *e = Some(error);
+                }
+            }
+            if let Some(mut t) = agent_field_guard(&agent.finished_at, operation, id, "finished_at")
+            {
                 *t = Some(Instant::now());
             }
+            if let Some(mut handle) =
+                agent_field_guard(&agent.abort_handle, operation, id, "abort_handle")
+            {
+                *handle = None;
+            }
             agent.finished.store(true, Ordering::SeqCst);
+            return true;
         }
+        false
+    }
+
+    /// Attach the abort handle for a background agent task.
+    pub fn attach_abort_handle(
+        &self,
+        id: &str,
+        abort_handle: tokio::task::AbortHandle,
+    ) -> Result<(), String> {
+        let agent = self
+            .get(id)
+            .ok_or_else(|| format!("Agent '{id}' not found"))?;
+        if agent.finished.load(Ordering::SeqCst) {
+            abort_handle.abort();
+            return Ok(());
+        }
+        let Some(mut slot) = agent_field_guard(
+            &agent.abort_handle,
+            "attach_abort_handle",
+            id,
+            "abort_handle",
+        ) else {
+            return Err(format!("Agent '{id}' abort handle lock poisoned"));
+        };
+        *slot = Some(abort_handle);
+        Ok(())
+    }
+
+    /// Stop a running background agent and abort its spawned task if possible.
+    pub fn stop(&self, id: &str, reason: &str) -> Result<String, String> {
+        let agent = self
+            .get(id)
+            .ok_or_else(|| format!("Agent '{id}' not found"))?;
+        let turns = agent.turns.load(Ordering::SeqCst);
+        let task = agent.task.clone();
+        let reason = if reason.trim().is_empty() {
+            "stopped by task_stop"
+        } else {
+            reason.trim()
+        };
+
+        let abort_handle = {
+            let Ok(_terminal) = agent.terminal_lock.lock() else {
+                return Err(format!("Agent '{id}' terminal-state lock poisoned"));
+            };
+            if agent.finished.load(Ordering::SeqCst) {
+                return Ok(format!("Agent '{id}' is already finished ({turns} turns)."));
+            }
+
+            if let Some(mut e) = agent_field_guard(&agent.error, "stop", id, "error") {
+                *e = Some(reason.to_string());
+            }
+            if let Some(mut t) = agent_field_guard(&agent.finished_at, "stop", id, "finished_at") {
+                *t = Some(Instant::now());
+            }
+            let abort_handle = agent_field_guard(&agent.abort_handle, "stop", id, "abort_handle")
+                .and_then(|mut h| h.take());
+            agent.finished.store(true, Ordering::SeqCst);
+            abort_handle
+        };
+
+        if let Some(handle) = abort_handle {
+            handle.abort();
+        }
+        let shell_cleanup = crate::tools::BACKGROUND_SHELLS.kill_for_agent(id);
+        Ok(format!(
+            "Agent '{id}' stopped after {turns} turns.\nTask: {task}\nReason: {reason}\n{shell_cleanup}"
+        ))
     }
 
     /// Increment turn counter for an agent
@@ -1037,12 +1141,39 @@ pub fn get_agent_output_tool_definition() -> Value {
     })
 }
 
+/// Get the `TaskStop` tool definition
+#[must_use]
+pub fn get_task_stop_tool_definition() -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": "task_stop",
+            "description": "Stop a running background subagent by agent_id. Aborts the spawned task and terminates any background shell processes owned by that agent.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "The agent ID returned from a task call with run_in_background=true"
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Optional reason to record for the stopped agent"
+                    }
+                },
+                "required": ["agent_id"]
+            }
+        }
+    })
+}
+
 /// Get all subagent tool definitions
 #[must_use]
 pub fn get_subagent_tool_definitions() -> Value {
     json!([
         get_task_tool_definition(),
-        get_agent_output_tool_definition()
+        get_agent_output_tool_definition(),
+        get_task_stop_tool_definition()
     ])
 }
 
@@ -1078,6 +1209,16 @@ pub async fn run_subagent(
     app_config: &AppConfig,
     client: &Client,
 ) -> SubagentResult {
+    run_subagent_inner(config, app_config, client, None).await
+}
+
+#[allow(clippy::too_many_lines)]
+async fn run_subagent_inner(
+    config: &SubagentConfig,
+    app_config: &AppConfig,
+    client: &Client,
+    preallocated_agent_id: Option<&str>,
+) -> SubagentResult {
     // Handle resume: reuse the *original* agent_id and load transcript.
     //
     // Crosslink #582 — previously this path called `BACKGROUND_AGENTS.register(...)`,
@@ -1092,7 +1233,21 @@ pub async fn run_subagent(
     // reattached to the tracker. If the id was already registered
     // (e.g. a previous turn of the same resume chain), `register_with_id`
     // is a no-op and preserves the existing turn counter / state.
-    let (agent_id, mut messages) = if let Some(ref resume_id) = config.resume_agent_id {
+    let (agent_id, mut messages) = if let Some(preallocated_id) = preallocated_agent_id {
+        BACKGROUND_AGENTS.register_with_id(config.agent_type, &config.task, preallocated_id);
+        let system_prompt = config.agent_type.system_prompt();
+        let msgs = vec![
+            json!({
+                "role": "system",
+                "content": system_prompt
+            }),
+            json!({
+                "role": "user",
+                "content": format!("Task: {}\n\n{}", config.task, config.prompt)
+            }),
+        ];
+        (preallocated_id.to_string(), msgs)
+    } else if let Some(ref resume_id) = config.resume_agent_id {
         match load_transcript(resume_id) {
             Some((prev_messages, _prev_type)) => {
                 BACKGROUND_AGENTS.register_with_id(config.agent_type, &config.task, resume_id);
@@ -1229,6 +1384,22 @@ pub async fn run_subagent(
 
     loop {
         turns = BACKGROUND_AGENTS.increment_turns(&agent_id);
+        if let Some(agent) = BACKGROUND_AGENTS.get(&agent_id) {
+            if agent.finished.load(Ordering::SeqCst) {
+                let error = agent_field_guard(&agent.error, "run_subagent", &agent_id, "error")
+                    .and_then(|e| e.clone())
+                    .unwrap_or_else(|| "Agent stopped before the next turn".to_string());
+                store_transcript(&agent_id, messages, config.agent_type);
+                return SubagentResult {
+                    agent_id,
+                    success: false,
+                    output: error,
+                    turns_used: turns,
+                    is_background: config.run_in_background,
+                    worktree: worktree.clone(),
+                };
+            }
+        }
 
         if turns > MAX_SUBAGENT_TURNS as u64 {
             BACKGROUND_AGENTS.fail(
@@ -1760,16 +1931,46 @@ pub fn execute_task_tool<S: BuildHasher>(
         let app_config_bg = app_config.clone();
         let client_bg = client;
         let agent_id_bg = agent_id.clone();
+        let preallocated_agent_id_bg = config_bg
+            .resume_agent_id
+            .is_none()
+            .then(|| agent_id_bg.clone());
 
         // Use tokio runtime to spawn the background task
-        if let Ok(handle) = Handle::try_current() {
-            handle.spawn(async move {
-                let result = run_subagent(&config_bg, &app_config_bg, &client_bg).await;
+        let handle = match Handle::try_current() {
+            Ok(handle) => handle,
+            Err(_) => {
+                BACKGROUND_AGENTS.fail(
+                    &agent_id,
+                    "Background task requires an active tokio runtime".to_string(),
+                );
+                return (
+                    "Background task requires an active tokio runtime".to_string(),
+                    true,
+                );
+            }
+        };
+        let join_handle = handle.spawn(async move {
+            let result = run_subagent_inner(
+                &config_bg,
+                &app_config_bg,
+                &client_bg,
+                preallocated_agent_id_bg.as_deref(),
+            )
+            .await;
 
-                if !result.success {
-                    BACKGROUND_AGENTS.fail(&agent_id_bg, result.output);
-                }
-            });
+            if !result.success {
+                BACKGROUND_AGENTS.fail(&agent_id_bg, result.output);
+            }
+        });
+        if let Err(err) =
+            BACKGROUND_AGENTS.attach_abort_handle(&agent_id, join_handle.abort_handle())
+        {
+            tracing::warn!(
+                agent_id,
+                error = %err,
+                "failed to attach background subagent abort handle"
+            );
         }
 
         let message = format!(
@@ -1972,6 +2173,21 @@ pub fn execute_agent_output_tool<S: BuildHasher>(
             false,
         )
     }
+}
+
+/// Execute the `TaskStop` tool.
+pub fn execute_task_stop_tool<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String, bool) {
+    let Some(agent_id) = args.get("agent_id").and_then(|v| v.as_str()) else {
+        return ("Missing 'agent_id' argument".to_string(), true);
+    };
+    let reason = args
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("stopped by task_stop");
+
+    BACKGROUND_AGENTS
+        .stop(agent_id, reason)
+        .map_or_else(|err| (err, true), |msg| (msg, false))
 }
 
 #[cfg(test)]
@@ -2683,36 +2899,51 @@ mod tests {
         );
     }
 
-    // ── Spec #527 behavior 5: task_stop — confirmed MISSING (gap #580) ──
+    // ── Spec #527 behavior 5: task_stop ─────────────────────────────────────
 
-    /// Spec #527 §5 gap #580 — OC has no `task_stop` mechanism. The
-    /// `BackgroundAgentManager` exposes no abort method. `fail()` exists as
-    /// an internal marker but cannot abort a spawned tokio task.
     #[test]
-    fn spec5_gap580_no_stop_method_on_background_agent_manager() {
-        let mgr = BackgroundAgentManager::new();
-        let id = mgr.register(AgentType::GeneralPurpose, "long running task");
+    fn spec5_task_stop_aborts_handle_and_marks_agent_failed() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("runtime must build");
+        rt.block_on(async {
+            let mgr = BackgroundAgentManager::new();
+            let id = mgr.register(AgentType::GeneralPurpose, "long running task");
+            let join = tokio::spawn(async {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            });
+            mgr.attach_abort_handle(&id, join.abort_handle())
+                .expect("abort handle attaches");
 
-        // fail() marks finished=true but does NOT abort the tokio task.
-        mgr.fail(&id, "externally terminated".to_string());
+            let msg = mgr
+                .stop(&id, "external cancellation")
+                .expect("stop must succeed");
+            assert!(
+                msg.contains("stopped"),
+                "stop message must be explicit: {msg}"
+            );
+            assert!(
+                msg.contains(&id),
+                "stop message must include agent id: {msg}"
+            );
 
-        let agent = mgr.get(&id).unwrap();
-        assert!(
-            agent.finished.load(Ordering::SeqCst),
-            "fail() marks finished but cannot abort the tokio task (gap #580)"
-        );
-        assert_eq!(
-            agent.error.lock().unwrap().as_deref(),
-            Some("externally terminated")
-        );
-        // The real task handle (tokio JoinHandle) is not stored in the struct.
-        // No field or method enables external abort — that is gap #580.
+            let err = join
+                .await
+                .expect_err("task_stop must abort the spawned task");
+            assert!(err.is_cancelled(), "join error must be cancellation: {err}");
+
+            let agent = mgr.get(&id).expect("stopped agent remains readable");
+            assert!(agent.finished.load(Ordering::SeqCst));
+            assert_eq!(
+                agent.error.lock().unwrap().as_deref(),
+                Some("external cancellation")
+            );
+        });
     }
 
-    /// Spec #527 §5 gap #580 — `get_subagent_tool_definitions()` does NOT include
-    /// a `task_stop` tool. CC has `TaskStopTool`; OC does not.
     #[test]
-    fn spec5_gap580_task_stop_not_in_tool_definitions() {
+    fn spec5_task_stop_tool_definition_is_exposed() {
         let defs = get_subagent_tool_definitions();
         let names: Vec<&str> = defs
             .as_array()
@@ -2722,14 +2953,92 @@ mod tests {
             .collect();
 
         assert!(
-            !names.contains(&"task_stop"),
-            "gap #580: task_stop tool is absent from OC tool definitions (CC has TaskStopTool)"
+            names.contains(&"task_stop"),
+            "task_stop tool must be present so callers can stop background work"
         );
         assert!(names.contains(&"task"), "task tool must be present");
         assert!(
             names.contains(&"agent_output"),
             "agent_output tool must be present"
         );
+    }
+
+    #[test]
+    fn spec5_execute_task_stop_tool_marks_agent_failed() {
+        let id = BACKGROUND_AGENTS.register(AgentType::Plan, "stoppable task");
+        let mut args: HashMap<String, Value> = HashMap::new();
+        args.insert("agent_id".to_string(), json!(id));
+        args.insert("reason".to_string(), json!("user cancelled"));
+
+        let (msg, is_err) = execute_task_stop_tool(&args);
+
+        assert!(!is_err, "task_stop must succeed for running agent: {msg}");
+        assert!(
+            msg.contains("user cancelled"),
+            "reason must be surfaced: {msg}"
+        );
+        let agent = BACKGROUND_AGENTS
+            .get(&id)
+            .expect("stopped agent remains tracked");
+        assert!(agent.finished.load(Ordering::SeqCst));
+        assert_eq!(
+            agent.error.lock().unwrap().as_deref(),
+            Some("user cancelled")
+        );
+        let _ = BACKGROUND_AGENTS.remove(&id);
+    }
+
+    #[test]
+    fn issue580_background_spawn_finishes_returned_agent_id() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("multi_thread runtime must build");
+
+        rt.block_on(async {
+            let app_config = issue719_app_config();
+            let mut args: HashMap<String, Value> = HashMap::new();
+            args.insert("description".to_string(), json!("issue580 background id"));
+            args.insert("prompt".to_string(), json!("try one provider call"));
+            args.insert("subagent_type".to_string(), json!("general-purpose"));
+            args.insert("run_in_background".to_string(), json!(true));
+
+            let (msg, is_err) = execute_task_tool(&args, &app_config);
+            assert!(!is_err, "background task should start: {msg}");
+            let agent_id = msg
+                .lines()
+                .find_map(|line| line.strip_prefix("Background agent started with ID: "))
+                .expect("message must include returned agent id")
+                .to_string();
+
+            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                loop {
+                    if BACKGROUND_AGENTS
+                        .get(&agent_id)
+                        .is_some_and(|agent| agent.finished.load(Ordering::SeqCst))
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("returned agent id must reach a terminal state");
+
+            let agent = BACKGROUND_AGENTS
+                .get(&agent_id)
+                .expect("returned id must remain the tracked agent");
+            assert!(
+                agent.finished.load(Ordering::SeqCst),
+                "returned id must be terminal"
+            );
+            assert!(
+                agent.error.lock().unwrap().is_some(),
+                "invalid test provider should fail the returned id, not a hidden id"
+            );
+            let _ = BACKGROUND_AGENTS.remove(&agent_id);
+        });
     }
 
     // ── Spec #527 §1 — agent_output edge cases ──

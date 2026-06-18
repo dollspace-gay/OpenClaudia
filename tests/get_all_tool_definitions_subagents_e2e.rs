@@ -68,25 +68,25 @@ fn get_all_with_subagents_false_matches_base_count() {
 }
 
 #[test]
-fn get_all_with_subagents_true_adds_2_tools() {
-    // PINS DOC: get_subagent_tool_definitions adds exactly 2 tools.
+fn get_all_with_subagents_true_adds_3_tools() {
+    // PINS DOC: get_subagent_tool_definitions adds exactly 3 tools.
     let base = get_tool_definitions();
     let with_sub = get_all_tool_definitions(true);
     let base_count = base.as_array().unwrap().len();
     let with_sub_count = with_sub.as_array().unwrap().len();
     assert_eq!(
         with_sub_count,
-        base_count + 2,
-        "PINS DELTA: subagents=true adds exactly 2 tools"
+        base_count + 3,
+        "PINS DELTA: subagents=true adds exactly 3 tools"
     );
 }
 
 #[test]
-fn get_all_with_subagents_true_count_is_37() {
-    // PINS: 35 base + 2 subagent = 37 total. The `web_browser` handler is
+fn get_all_with_subagents_true_count_is_38() {
+    // PINS: 35 base + 3 subagent = 38 total. The `web_browser` handler is
     // only registered when the `browser` feature is compiled in, so
     // feature-less builds pin one fewer.
-    let expected = if cfg!(feature = "browser") { 37 } else { 36 };
+    let expected = if cfg!(feature = "browser") { 38 } else { 37 };
     let defs = get_all_tool_definitions(true);
     let arr = defs.as_array().expect("array");
     assert_eq!(arr.len(), expected);
@@ -105,10 +105,19 @@ fn subagent_tools_appear_at_end_after_base_tools() {
 
 #[test]
 fn subagents_true_adds_task_tool() {
-    // PINS DOC: task tool is one of the 2 subagent tools.
+    // PINS DOC: task tool is one of the 3 subagent tools.
     let names = tool_names(&get_all_tool_definitions(true));
     let has_task = names.iter().any(|n| n.contains("task") || n == "Task");
     assert!(has_task, "PINS: task tool present in subagent set");
+}
+
+#[test]
+fn subagents_true_adds_task_stop_tool() {
+    let names = tool_names(&get_all_tool_definitions(true));
+    assert!(
+        names.iter().any(|n| n == "task_stop"),
+        "PINS: task_stop tool present in subagent set"
+    );
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -193,14 +202,14 @@ fn subagent_only_tools_have_unique_names_not_in_base_catalog() {
         .collect();
     assert_eq!(
         subagent_only.len(),
-        2,
-        "PINS: exactly 2 subagent-only tools added"
+        3,
+        "PINS: exactly 3 subagent-only tools added"
     );
     // Each subagent tool name MUST be distinct.
     let mut deduped = subagent_only.clone();
     deduped.sort();
     deduped.dedup();
-    assert_eq!(deduped.len(), 2);
+    assert_eq!(deduped.len(), 3);
 }
 
 #[test]

@@ -1664,6 +1664,10 @@ mod tool_definitions {
             tool_names.contains(&"agent_output"),
             "Subagent mode should include 'agent_output' tool"
         );
+        assert!(
+            tool_names.contains(&"task_stop"),
+            "Subagent mode should include 'task_stop' tool"
+        );
     }
 }
 
@@ -2144,7 +2148,7 @@ mod subagent_tools {
         let tools = get_subagent_tool_definitions();
         let tools_array = tools.as_array().expect("Should be array");
 
-        assert_eq!(tools_array.len(), 2, "Should have 2 subagent tools");
+        assert_eq!(tools_array.len(), 3, "Should have 3 subagent tools");
 
         let tool_names: Vec<&str> = tools_array
             .iter()
@@ -2155,6 +2159,10 @@ mod subagent_tools {
         assert!(
             tool_names.contains(&"agent_output"),
             "Should have agent_output tool"
+        );
+        assert!(
+            tool_names.contains(&"task_stop"),
+            "Should have task_stop tool"
         );
     }
 

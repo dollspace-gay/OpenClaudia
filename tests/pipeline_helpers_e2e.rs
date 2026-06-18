@@ -106,6 +106,7 @@ fn safe_read_only_tools_do_not_need_permission() {
         "todo_read",
         "task",
         "agent_output",
+        "task_stop",
         "enter_plan_mode",
         "exit_plan_mode",
     ] {

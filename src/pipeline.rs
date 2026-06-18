@@ -1499,6 +1499,7 @@ const SAFE_TOOLS: &[&str] = &[
     "todo_read",
     "task",
     "agent_output",
+    "task_stop",
     "enter_plan_mode",
     "exit_plan_mode",
     "lsp",
