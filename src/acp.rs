@@ -1212,21 +1212,19 @@ impl AcpServer {
 
             match stream_result {
                 StreamResult::EndTurn { content } => {
-                    if iteration > 0 {
-                        if let Err(reason) = crate::grounded_loop::validate_agentic_final_response(
-                            oc_session_id,
-                            &content,
-                        ) {
-                            self.send_session_update(
-                                acp_session_id,
-                                "agent_message_chunk",
-                                &json!({
-                                    "type": "text",
-                                    "text": format!("\nFinal answer failed grounding gate: {reason}"),
-                                }),
-                            );
-                            return "error".to_string();
-                        }
+                    if let Err(reason) = crate::grounded_loop::validate_agentic_final_response(
+                        oc_session_id,
+                        &content,
+                    ) {
+                        self.send_session_update(
+                            acp_session_id,
+                            "agent_message_chunk",
+                            &json!({
+                                "type": "text",
+                                "text": format!("\nFinal answer failed grounding gate: {reason}"),
+                            }),
+                        );
+                        return "error".to_string();
                     }
                     // No tool calls — we're done
                     if !content.is_empty() {

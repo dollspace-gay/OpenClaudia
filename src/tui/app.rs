@@ -3135,6 +3135,34 @@ fn validate_agentic_final_response(session_id: &str, content: &str) -> Result<()
     crate::grounded_loop::validate_agentic_final_response(session_id, content)
 }
 
+fn validate_final_response_or_report(
+    session_id: &str,
+    content: &str,
+    tx: &std::sync::mpsc::Sender<super::events::AppEvent>,
+) -> bool {
+    if content.trim().is_empty() {
+        return true;
+    }
+    match validate_agentic_final_response(session_id, content.trim()) {
+        Ok(()) => true,
+        Err(reason) => {
+            tracing::warn!(
+                session_id,
+                reason,
+                "final answer rejected by grounding gate"
+            );
+            send_or_warn(
+                tx,
+                super::events::AppEvent::ApiError(format!(
+                    "Final answer failed grounding gate: {reason}"
+                )),
+                session_id,
+            );
+            false
+        }
+    }
+}
+
 /// Run the pre-turn `UserPromptSubmit` hook. Returns `false` and sends an
 /// `ApiError` event if the hook denies the request; injects any system
 /// messages from hook outputs and returns `true` on success.
@@ -3523,21 +3551,11 @@ async fn run_agentic_loop(ctx: &AgenticCtx<'_>, session_messages: &mut Vec<serde
                         .as_deref()
                         .filter(|text| !text.is_empty());
                     if !followup.content.is_empty() || reasoning.is_some() {
-                        if let Err(reason) =
-                            validate_agentic_final_response(ctx.session_id, &followup.content)
-                        {
-                            tracing::warn!(
-                                session_id = ctx.session_id,
-                                reason,
-                                "agentic final answer rejected by grounding gate"
-                            );
-                            send_or_warn(
-                                ctx.tx,
-                                super::events::AppEvent::ApiError(format!(
-                                    "Final answer failed grounding gate: {reason}"
-                                )),
-                                ctx.session_id,
-                            );
+                        if !validate_final_response_or_report(
+                            ctx.session_id,
+                            &followup.content,
+                            ctx.tx,
+                        ) {
                             break;
                         }
                         let mut message =
@@ -3735,6 +3753,9 @@ async fn handle_turn_result(
             ctx.session_id,
         );
     } else if !turn_result.content.is_empty() {
+        if !validate_final_response_or_report(ctx.session_id, &turn_result.content, ctx.tx) {
+            return;
+        }
         let mut message =
             serde_json::json!({ "role": "assistant", "content": turn_result.content });
         if let Some(reasoning) = turn_result
@@ -3779,8 +3800,9 @@ mod tests {
     use super::{compile_file_ref_regex, expand_file_refs};
     use super::{
         current_exe_command, format_api_retry_delay, format_api_retry_message,
-        format_stream_timeout_message, git_bin, resolve_provider_switch_auth, save_session,
-        ApiClient, App, AppEvent, ProviderSwitch, SpawnTarget, TuiSession, TEST_SESSIONS_DIR,
+        format_stream_timeout_message, git_bin, handle_turn_result, resolve_provider_switch_auth,
+        save_session, ApiClient, App, AppEvent, EffortLevel, ProviderSwitch, SpawnTarget,
+        TuiSession, TurnContext, TEST_SESSIONS_DIR,
     };
     use crate::tui::events::ApiRetryKind;
     use std::io::Write as _;
@@ -4056,6 +4078,163 @@ mod tests {
             headers: std::collections::HashMap::new(),
             thinking: crate::config::ThinkingConfig::default(),
         }
+    }
+
+    fn reset_project_ledger(session_id: &str) -> PathBuf {
+        let path = crate::ledger::project_session_ledger_path(session_id)
+            .expect("test session id must be ledger-safe");
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    fn seed_valid_final_ledger(session_id: &str) -> String {
+        let mut ledger = crate::ledger::RealityLedger::open_project_session(session_id)
+            .expect("open test ledger");
+        let task = ledger
+            .observe_user_task("Audit direct TUI final.")
+            .expect("task");
+        let command = ledger
+            .observe_command_run(
+                "/repo",
+                vec!["cargo".to_string(), "check".to_string()],
+                0,
+                "ok",
+                "",
+            )
+            .expect("command");
+        let verification = ledger
+            .append(
+                crate::ledger::Authority::Verifier,
+                crate::ledger::ObservationKind::Verification {
+                    passed: true,
+                    command: Some("cargo check".to_string()),
+                    findings: Vec::new(),
+                },
+            )
+            .expect("verification");
+        format!("Verified direct TUI final using [{task}] [{command}] [{verification}].")
+    }
+
+    fn direct_turn_result(content: String) -> crate::pipeline::TurnResult {
+        crate::pipeline::TurnResult {
+            content,
+            reasoning_content: None,
+            tool_calls: Vec::new(),
+            tool_results: Vec::new(),
+            usage: crate::session::TokenUsage::default(),
+            needs_followup: false,
+            finish_reason: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn tui_direct_final_rejects_uncited_response() {
+        let session_id = "tui-direct-final-denied";
+        let ledger_path = reset_project_ledger(session_id);
+        let (tx, rx) = mpsc::channel();
+        let client = reqwest::Client::new();
+        let headers: Vec<(String, String)> = Vec::new();
+        let task_mgr = Arc::new(Mutex::new(crate::session::TaskManager::new()));
+
+        handle_turn_result(
+            direct_turn_result("Verified with cargo check.".to_string()),
+            vec![serde_json::json!({"role":"user","content":"verify this"})],
+            TurnContext {
+                client: &client,
+                endpoint: "https://example.invalid",
+                headers: &headers,
+                provider: "openai",
+                model: "gpt-test",
+                effort_level: EffortLevel::Medium,
+                claude_code_token: None,
+                prompt_blocks: None,
+                memory_db: None,
+                permission_mgr: None,
+                transient_allowed_tool_rules: &[],
+                hook_engine: None,
+                task_mgr,
+                session_id,
+                task_obs: None,
+                tx: &tx,
+            },
+        )
+        .await;
+
+        let mut saw_error = false;
+        let mut saw_sync = false;
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                AppEvent::ApiError(msg) => {
+                    saw_error = msg.contains("Final answer failed grounding gate");
+                }
+                AppEvent::SyncMessages(_) => saw_sync = true,
+                _ => {}
+            }
+        }
+        let _ = std::fs::remove_file(ledger_path);
+
+        assert!(saw_error, "ungrounded direct final must surface an error");
+        assert!(
+            !saw_sync,
+            "ungrounded direct final must not be appended to history"
+        );
+    }
+
+    #[tokio::test]
+    async fn tui_direct_final_accepts_cited_evidence_and_verification() {
+        let session_id = "tui-direct-final-accepted";
+        let ledger_path = reset_project_ledger(session_id);
+        let content = seed_valid_final_ledger(session_id);
+        let (tx, rx) = mpsc::channel();
+        let client = reqwest::Client::new();
+        let headers: Vec<(String, String)> = Vec::new();
+        let task_mgr = Arc::new(Mutex::new(crate::session::TaskManager::new()));
+
+        handle_turn_result(
+            direct_turn_result(content.clone()),
+            vec![serde_json::json!({"role":"user","content":"verify this"})],
+            TurnContext {
+                client: &client,
+                endpoint: "https://example.invalid",
+                headers: &headers,
+                provider: "openai",
+                model: "gpt-test",
+                effort_level: EffortLevel::Medium,
+                claude_code_token: None,
+                prompt_blocks: None,
+                memory_db: None,
+                permission_mgr: None,
+                transient_allowed_tool_rules: &[],
+                hook_engine: None,
+                task_mgr,
+                session_id,
+                task_obs: None,
+                tx: &tx,
+            },
+        )
+        .await;
+
+        let mut saw_error = false;
+        let mut synced_messages = None;
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                AppEvent::ApiError(_) => saw_error = true,
+                AppEvent::SyncMessages(messages) => synced_messages = Some(messages),
+                _ => {}
+            }
+        }
+        let _ = std::fs::remove_file(ledger_path);
+
+        assert!(!saw_error, "grounded direct final must not be rejected");
+        let messages = synced_messages.expect("grounded final should sync messages");
+        assert_eq!(
+            messages.last().and_then(|msg| msg.get("role")),
+            Some(&serde_json::json!("assistant"))
+        );
+        assert_eq!(
+            messages.last().and_then(|msg| msg.get("content")),
+            Some(&serde_json::json!(content))
+        );
     }
 
     #[tokio::test]
