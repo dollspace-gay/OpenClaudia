@@ -1999,6 +1999,7 @@ impl AcpServer {
             .get("run_in_background")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
+        let cwd = std::env::current_dir().unwrap_or_default();
 
         // Create terminal
         let terminal_id = match self
@@ -2006,10 +2007,7 @@ impl AcpServer {
                 "terminal/create",
                 Some(json!({
                     "command": command,
-                    "cwd": std::env::current_dir()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string(),
+                    "cwd": cwd.to_string_lossy().to_string(),
                 })),
             )
             .await
@@ -2028,6 +2026,7 @@ impl AcpServer {
         };
 
         if run_in_background {
+            record_acp_background_command_start(session_id, &cwd, command);
             return AcpToolResult {
                 content: format!(
                     "Background shell started with terminal ID: {terminal_id}\nUse bash_output with this ID to retrieve output."
@@ -2078,7 +2077,6 @@ impl AcpServer {
             .and_then(serde_json::Value::as_i64)
             .unwrap_or(-1);
 
-        let cwd = std::env::current_dir().unwrap_or_default();
         let stdout = output.as_str();
         let stderr = "";
         crate::tools::record_command_observation_for_session(
@@ -2208,6 +2206,8 @@ impl AcpServer {
 /// shell-interpreted.
 const SEARCH_OUTPUT_CAP_BYTES: usize = 256 * 1024;
 const ACP_LEDGER_EXCERPT_MAX_BYTES: usize = 100_000;
+const ACP_BACKGROUND_COMMAND_PENDING_STDERR: &str =
+    "background command started; completion pending via bash_output";
 
 fn record_acp_file_read_observation(
     session_id: &str,
@@ -2328,6 +2328,35 @@ fn record_acp_command_argv_observation(
             program = %program.display(),
             error = %err,
             "failed to append ACP command observation to reality ledger"
+        );
+    }
+}
+
+fn record_acp_background_command_start(session_id: &str, cwd: &std::path::Path, command: &str) {
+    let mut ledger = match crate::ledger::RealityLedger::open_project_session(session_id) {
+        Ok(ledger) => ledger,
+        Err(err) => {
+            tracing::warn!(
+                session_id,
+                command,
+                error = %err,
+                "failed to open session reality ledger for ACP background command"
+            );
+            return;
+        }
+    };
+    if let Err(err) = ledger.observe_command_run(
+        cwd.to_string_lossy().to_string(),
+        vec!["bash".to_string(), "-c".to_string(), command.to_string()],
+        -1,
+        "",
+        ACP_BACKGROUND_COMMAND_PENDING_STDERR,
+    ) {
+        tracing::warn!(
+            session_id,
+            command,
+            error = %err,
+            "failed to append ACP background command observation to reality ledger"
         );
     }
 }
@@ -3141,7 +3170,8 @@ mod search_security_tests {
 #[cfg(test)]
 mod acp_ledger_helper_tests {
     use super::{
-        acp_read_line_range, record_acp_tool_result_observation, AcpToolResult,
+        acp_read_line_range, record_acp_background_command_start,
+        record_acp_tool_result_observation, AcpToolResult, ACP_BACKGROUND_COMMAND_PENDING_STDERR,
         ACP_LEDGER_EXCERPT_MAX_BYTES,
     };
 
@@ -3193,6 +3223,47 @@ mod acp_ledger_helper_tests {
         assert_eq!(
             result["content"].as_str().expect("content").len(),
             crate::grounded_loop::TOOL_RESULT_LEDGER_CONTENT_MAX_BYTES
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn acp_background_bash_records_pending_command_without_verifier_authority() {
+        let session_id = "acp-background-command-ledger-test";
+        let path = crate::ledger::project_session_ledger_path(session_id)
+            .expect("test session id must be ledger safe");
+        let _ = std::fs::remove_file(&path);
+        let cwd = std::env::current_dir().expect("cwd");
+
+        record_acp_background_command_start(session_id, &cwd, "cargo test");
+
+        let ledger = crate::ledger::RealityLedger::open_project_session(session_id)
+            .expect("reopen session ledger");
+        let observations = ledger.observations_chronological();
+        assert_eq!(observations.len(), 1);
+        assert_eq!(observations[0].authority, crate::ledger::Authority::Command);
+        let crate::ledger::ObservationKind::CommandRun {
+            cwd: observed_cwd,
+            argv,
+            exit_code,
+            stdout,
+            stderr,
+        } = &observations[0].kind
+        else {
+            panic!("expected command observation");
+        };
+        assert_eq!(observed_cwd, &cwd.to_string_lossy());
+        assert_eq!(argv, &vec!["bash", "-c", "cargo test"]);
+        assert_eq!(*exit_code, -1);
+        assert!(stdout.is_empty());
+        assert_eq!(stderr, ACP_BACKGROUND_COMMAND_PENDING_STDERR);
+        assert!(
+            observations.iter().all(|obs| !matches!(
+                obs.kind,
+                crate::ledger::ObservationKind::Verification { .. }
+            )),
+            "pending background command must not mint verifier authority"
         );
 
         let _ = std::fs::remove_file(path);
