@@ -28,6 +28,9 @@ const GPT41_CONTEXT: usize = 1_000_000;
 const GPT35_CONTEXT: usize = 16_385;
 const GEMINI_PRO_CONTEXT: usize = 1_000_000;
 const DEEPSEEK_V4_CONTEXT: usize = 1_000_000;
+const QWEN_1M_CONTEXT: usize = 1_000_000;
+const QWEN_256K_CONTEXT: usize = 262_144;
+const QWEN_MAX_CONTEXT: usize = 32_768;
 const DEFAULT_CONTEXT: usize = 128_000;
 
 /// Safety margin - trigger compaction before hitting the limit
@@ -408,6 +411,60 @@ const CONTEXT_WINDOW_TABLE: &[ContextWindowRow] = &[
     ContextWindowRow {
         needle: "deepseek-reasoner",
         tokens: DEEPSEEK_V4_CONTEXT,
+    },
+    // Qwen current commercial families. Specific rows precede any broad
+    // `qwen` fallback because matching is substring-based.
+    ContextWindowRow {
+        needle: "qwen3.7",
+        tokens: QWEN_1M_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "qwen3.6-plus",
+        tokens: QWEN_1M_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "qwen3.6-flash",
+        tokens: QWEN_1M_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "qwen3.6-max-preview",
+        tokens: QWEN_256K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "qwen3.6-35b-a3b",
+        tokens: QWEN_256K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "qwen3.5-plus",
+        tokens: QWEN_1M_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "qwen3.5-flash",
+        tokens: QWEN_1M_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "qwen3.5",
+        tokens: QWEN_256K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "qwen3-coder",
+        tokens: QWEN_1M_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "qwen3-max",
+        tokens: QWEN_256K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "qwen-plus",
+        tokens: QWEN_1M_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "qwen-flash",
+        tokens: QWEN_1M_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "qwen-max",
+        tokens: QWEN_MAX_CONTEXT,
     },
     // OpenAI reasoning family share the gpt-4o window; one row each
     // so a future divergence can be applied without ratchet-untangling.
@@ -1629,6 +1686,15 @@ mod tests {
         assert_eq!(get_context_window("deepseek-v4-flash"), DEEPSEEK_V4_CONTEXT);
         assert_eq!(get_context_window("deepseek-chat"), DEEPSEEK_V4_CONTEXT);
         assert_eq!(get_context_window("deepseek-reasoner"), DEEPSEEK_V4_CONTEXT);
+        assert_eq!(get_context_window("qwen3.7-plus"), QWEN_1M_CONTEXT);
+        assert_eq!(
+            get_context_window("qwen3.7-max-2026-05-17"),
+            QWEN_1M_CONTEXT
+        );
+        assert_eq!(get_context_window("qwen3.6-flash"), QWEN_1M_CONTEXT);
+        assert_eq!(get_context_window("qwen3.6-max-preview"), QWEN_256K_CONTEXT);
+        assert_eq!(get_context_window("qwen3.5-397b-a17b"), QWEN_256K_CONTEXT);
+        assert_eq!(get_context_window("qwen-max"), QWEN_MAX_CONTEXT);
         assert_eq!(get_context_window("unknown-model"), DEFAULT_CONTEXT);
     }
 

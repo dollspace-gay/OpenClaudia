@@ -183,6 +183,25 @@ fn get_pricing_for_current_deepseek_v4_models_returns_documented_rates() {
 }
 
 #[test]
+fn get_pricing_for_current_qwen_models_returns_documented_base_rates() {
+    let max = get_pricing("qwen3.7-max-2026-05-17").expect("qwen3.7-max");
+    assert_eq!(max.input_per_million, 2.50);
+    assert_eq!(max.output_per_million, 7.50);
+
+    let plus = get_pricing("qwen3.7-plus-2026-05-26").expect("qwen3.7-plus");
+    assert_eq!(plus.input_per_million, 0.40);
+    assert_eq!(plus.output_per_million, 1.60);
+
+    let legacy_plus = get_pricing("qwen-plus-2025-12-01").expect("qwen-plus");
+    assert_eq!(legacy_plus.input_per_million, 0.40);
+    assert_eq!(legacy_plus.output_per_million, 1.20);
+
+    let coder_flash = get_pricing("qwen3-coder-flash").expect("qwen3-coder-flash");
+    assert_eq!(coder_flash.input_per_million, 0.30);
+    assert_eq!(coder_flash.output_per_million, 1.50);
+}
+
+#[test]
 fn get_pricing_for_unknown_model_returns_none() {
     let pricing = get_pricing("totally-unknown-model");
     assert!(pricing.is_none());

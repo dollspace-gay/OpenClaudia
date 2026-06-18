@@ -421,10 +421,27 @@ pub static PRICING_TABLE: &[(&str, ModelPricing)] = &[
     // ---------------------------------------------------------------------
     // Qwen / QwQ
     // ---------------------------------------------------------------------
-    ("qwen-max", ModelPricing::other(0.50, 2.0)),
+    ("qwen3.7-max", ModelPricing::other(2.50, 7.50)),
+    ("qwen3.7-plus", ModelPricing::other(0.40, 1.60)),
+    ("qwen3.6-max-preview", ModelPricing::other(1.30, 7.80)),
+    ("qwen3.6-plus", ModelPricing::other(0.50, 3.0)),
+    ("qwen3.6-flash", ModelPricing::other(0.20, 1.20)),
+    ("qwen3.6-35b-a3b", ModelPricing::other(0.25, 1.50)),
+    ("qwen3.5-397b-a17b", ModelPricing::other(0.60, 3.60)),
+    ("qwen3.5-122b-a10b", ModelPricing::other(0.40, 3.20)),
+    ("qwen3.5-35b-a3b", ModelPricing::other(0.25, 2.0)),
+    ("qwen3.5-27b", ModelPricing::other(0.30, 2.40)),
+    ("qwen3.5-plus", ModelPricing::other(0.40, 2.40)),
+    ("qwen3.5-flash", ModelPricing::other(0.10, 0.40)),
+    ("qwen3-coder-plus", ModelPricing::other(0.574, 2.294)),
+    ("qwen3-coder-flash", ModelPricing::other(0.30, 1.50)),
+    ("qwen3-max", ModelPricing::other(1.20, 6.0)),
+    ("qwen-flash", ModelPricing::other(0.05, 0.40)),
     ("qwen-plus", ModelPricing::other(0.40, 1.20)),
+    ("qwen-max", ModelPricing::other(0.50, 2.0)),
     ("qwen-turbo", ModelPricing::other(0.30, 0.60)),
     ("qwen-long", ModelPricing::other(0.50, 2.0)),
+    ("qwq-plus", ModelPricing::other(0.80, 2.40)),
     ("qwq-32b", ModelPricing::other(0.50, 2.0)),
 ];
 
@@ -968,6 +985,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn qwen_static_catalog_models_resolve_pricing() {
+        let missing = crate::providers::QWEN_MODELS
+            .iter()
+            .copied()
+            .filter(|model| get_pricing(model).is_none())
+            .collect::<Vec<_>>();
+        assert!(
+            missing.is_empty(),
+            "PRICING_TABLE is missing Qwen catalog model(s): {missing:?}"
+        );
+    }
+
     // -----------------------------------------------------------------------
     // Behavioural regressions retained from #495 work — these keep the
     // pre-refactor cost numbers intact for default-TTL workloads.
@@ -985,6 +1015,9 @@ mod tests {
         assert!(get_pricing("deepseek-v4-flash").is_some());
         assert!(get_pricing("deepseek-chat").is_some());
         assert!(get_pricing("deepseek-reasoner").is_some());
+        assert!(get_pricing("qwen3.7-plus").is_some());
+        assert!(get_pricing("qwen3.7-max-2026-05-17").is_some());
+        assert!(get_pricing("qwen-plus-2025-12-01").is_some());
     }
 
     /// Haiku pricing — 1 M input + 0.1 M output ≈ $0.375.
@@ -1067,6 +1100,14 @@ mod tests {
         let p = get_pricing("deepseek-chat").expect("deepseek-chat must be known");
         assert!((p.input_per_million - 0.14).abs() < f64::EPSILON);
         assert!((p.output_per_million - 0.28).abs() < f64::EPSILON);
+
+        let p = get_pricing("qwen3.7-max").expect("qwen3.7-max must be known");
+        assert!((p.input_per_million - 2.50).abs() < f64::EPSILON);
+        assert!((p.output_per_million - 7.50).abs() < f64::EPSILON);
+
+        let p = get_pricing("qwen3.7-plus").expect("qwen3.7-plus must be known");
+        assert!((p.input_per_million - 0.40).abs() < f64::EPSILON);
+        assert!((p.output_per_million - 1.60).abs() < f64::EPSILON);
     }
 
     /// Case-insensitive lookup on the input.

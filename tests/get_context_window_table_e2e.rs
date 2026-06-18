@@ -2,7 +2,8 @@
 //! exact per-model constants pinned (current Claude long-context
 //! models at 1M, older Claude family at 200k, GPT-5.5/5.4 at
 //! 1M/1.05M, GPT-4o at 128k, GPT-4.1 at 1M, GPT-5 at 400k,
-//! Gemini Pro at 1M, DeepSeek V4 at 1M),
+//! Gemini Pro at 1M, DeepSeek V4 at 1M, Qwen current
+//! families at 1M or 256k),
 //! the substring-precedence rule (gpt-4o matches
 //! BEFORE generic gpt-4), the unknown-model fallback, and
 //! case-insensitivity.
@@ -150,7 +151,50 @@ fn current_deepseek_v4_models_and_aliases_return_1m() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section E — Unknown model fallback
+// Section E — Qwen
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn current_qwen_1m_models_return_1m() {
+    for model in [
+        "qwen3.7-plus",
+        "qwen3.7-plus-2026-05-26",
+        "qwen3.7-max",
+        "qwen3.7-max-2026-05-17",
+        "qwen3.7-max-2026-06-08",
+        "qwen3.6-plus",
+        "qwen3.6-flash",
+        "qwen3.5-plus",
+        "qwen3.5-flash",
+        "qwen3-coder-plus",
+        "qwen3-coder-flash",
+        "qwen-plus-2025-12-01",
+        "qwen-flash-2025-07-28",
+    ] {
+        assert_eq!(get_context_window(model), 1_000_000, "{model}");
+    }
+}
+
+#[test]
+fn qwen_max_and_open_weight_families_return_documented_smaller_windows() {
+    for model in [
+        "qwen3.6-max-preview",
+        "qwen3.6-35b-a3b",
+        "qwen3.5-397b-a17b",
+        "qwen3.5-122b-a10b",
+        "qwen3.5-27b",
+        "qwen3.5-35b-a3b",
+        "qwen3-max",
+        "qwen3-max-2026-01-23",
+    ] {
+        assert_eq!(get_context_window(model), 262_144, "{model}");
+    }
+
+    assert_eq!(get_context_window("qwen-max"), 32_768);
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section F — Unknown model fallback
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -179,7 +223,7 @@ fn random_bytes_in_name_return_default_no_panic() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section F — Case insensitivity
+// Section G — Case insensitivity
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -207,8 +251,14 @@ fn lookup_is_case_insensitive_for_deepseek() {
     assert_eq!(get_context_window("DeepSeek-Reasoner"), 1_000_000);
 }
 
+#[test]
+fn lookup_is_case_insensitive_for_qwen() {
+    assert_eq!(get_context_window("QWEN3.7-PLUS"), 1_000_000);
+    assert_eq!(get_context_window("Qwen3.6-Max-Preview"), 262_144);
+}
+
 // ───────────────────────────────────────────────────────────────────────────
-// Section G — Substring match (PINS NOT-PREFIX, contains-anywhere)
+// Section H — Substring match (PINS NOT-PREFIX, contains-anywhere)
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -235,7 +285,7 @@ fn earlier_needle_in_table_wins_over_later_within_same_model_string() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section H — Return value always positive + sensible
+// Section I — Return value always positive + sensible
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
