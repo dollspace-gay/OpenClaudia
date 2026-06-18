@@ -45,6 +45,124 @@ pub struct PermissionRule {
     pub decision: PermissionDecision,
 }
 
+/// Convert Claude-compatible `allowed-tools` entries into permission allow rules.
+///
+/// Entries that name read-only tools, unknown tools, or malformed scopes are
+/// ignored because they do not correspond to an OpenClaudia permission target.
+/// The returned rules are intended for turn-scoped pre-approval, not for
+/// broadening persisted user configuration.
+#[must_use]
+pub fn allowed_tool_specs_to_permission_rules(specs: Option<&[String]>) -> Vec<PermissionRule> {
+    specs
+        .into_iter()
+        .flatten()
+        .filter_map(|spec| allowed_tool_spec_to_permission_rule(spec))
+        .collect()
+}
+
+fn allowed_tool_spec_to_permission_rule(spec: &str) -> Option<PermissionRule> {
+    let spec = spec.trim();
+    if spec.is_empty() {
+        return None;
+    }
+
+    let (tool, pattern) = parse_allowed_tool_spec(spec);
+    let canonical = canonical_permission_tool(tool)?;
+    let pattern = pattern
+        .map(|p| {
+            if canonical == "Bash" {
+                normalize_bash_allowed_tool_pattern(p)
+            } else {
+                p.trim().to_string()
+            }
+        })
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| "**".to_string());
+
+    Some(PermissionRule {
+        tool: canonical.to_string(),
+        pattern,
+        decision: PermissionDecision::Allow,
+    })
+}
+
+fn parse_allowed_tool_spec(spec: &str) -> (&str, Option<&str>) {
+    let Some(open) = spec.find('(') else {
+        return (spec.trim(), None);
+    };
+    if !spec.ends_with(')') || open == 0 {
+        return (spec.trim(), None);
+    }
+
+    let tool = spec[..open].trim();
+    let pattern = spec[open + 1..spec.len() - 1].trim();
+    (tool, Some(pattern))
+}
+
+fn canonical_permission_tool(tool: &str) -> Option<&'static str> {
+    let normalized: String = tool
+        .chars()
+        .filter(|c| *c != '_' && *c != '-')
+        .flat_map(char::to_lowercase)
+        .collect();
+
+    match normalized.as_str() {
+        "bash" | "shell" => Some("Bash"),
+        "write" | "writefile" => Some("Write"),
+        "edit" | "editfile" | "multiedit" | "notebookedit" => Some("Edit"),
+        "webfetch" => Some("WebFetch"),
+        _ => None,
+    }
+}
+
+fn normalize_bash_allowed_tool_pattern(pattern: &str) -> String {
+    let pattern = pattern.trim();
+    if !pattern.contains("://") {
+        if let Some((command, args)) = pattern.split_once(':') {
+            if !command.trim().is_empty() && !args.trim().is_empty() {
+                return format!("{} {}", command.trim_end(), args.trim_start());
+            }
+        }
+    }
+    pattern.to_string()
+}
+
+/// Split an `allowed-tools` scalar while preserving spaces inside tool scopes.
+///
+/// Supports both current Claude-style whitespace-separated strings such as
+/// `Bash(git add *) Bash(git status *)` and legacy comma-separated strings.
+#[must_use]
+pub fn split_allowed_tool_specs_scalar(s: &str) -> Vec<String> {
+    let mut specs = Vec::new();
+    let mut start = 0usize;
+    let mut paren_depth = 0u32;
+
+    for (idx, ch) in s.char_indices() {
+        match ch {
+            '(' => paren_depth = paren_depth.saturating_add(1),
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            ',' if paren_depth == 0 => {
+                push_tool_spec(&mut specs, &s[start..idx]);
+                start = idx + ch.len_utf8();
+            }
+            ch if ch.is_whitespace() && paren_depth == 0 => {
+                push_tool_spec(&mut specs, &s[start..idx]);
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    push_tool_spec(&mut specs, &s[start..]);
+    specs
+}
+
+fn push_tool_spec(out: &mut Vec<String>, raw: &str) {
+    let trimmed = raw.trim();
+    if !trimmed.is_empty() {
+        out.push(trimmed.to_string());
+    }
+}
+
 /// Result of a permission check
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckResult {
@@ -1417,6 +1535,59 @@ mod tests {
         assert!(
             matches!(result, CheckResult::Denied(_)),
             "transient allows must not outrank explicit denies: {result:?}"
+        );
+    }
+
+    #[test]
+    fn allowed_tool_spec_parses_bash_scoped_rule() {
+        let rules =
+            allowed_tool_specs_to_permission_rules(Some(&["Bash(git status *)".to_string()]));
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].tool, "Bash");
+        assert_eq!(rules[0].pattern, "git status *");
+        assert_eq!(rules[0].decision, PermissionDecision::Allow);
+    }
+
+    #[test]
+    fn allowed_tool_spec_normalizes_legacy_colon_bash_scope() {
+        let rules =
+            allowed_tool_specs_to_permission_rules(Some(&["Bash(git status:*)".to_string()]));
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].tool, "Bash");
+        assert_eq!(rules[0].pattern, "git status *");
+    }
+
+    #[test]
+    fn allowed_tool_specs_skip_read_only_and_unknown_tools() {
+        let specs = vec![
+            "Read".to_string(),
+            "Glob".to_string(),
+            "mcp__example__read".to_string(),
+            "Write(src/**)".to_string(),
+        ];
+
+        let rules = allowed_tool_specs_to_permission_rules(Some(&specs));
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].tool, "Write");
+        assert_eq!(rules[0].pattern, "src/**");
+    }
+
+    #[test]
+    fn split_allowed_tool_specs_preserves_spaces_inside_bash_scopes() {
+        let specs =
+            split_allowed_tool_specs_scalar("Read Bash(git add *) Bash(git status *) Write");
+
+        assert_eq!(
+            specs,
+            vec![
+                "Read".to_string(),
+                "Bash(git add *)".to_string(),
+                "Bash(git status *)".to_string(),
+                "Write".to_string()
+            ]
         );
     }
 

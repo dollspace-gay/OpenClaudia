@@ -310,12 +310,7 @@ where
             Ok(if tools.is_empty() { None } else { Some(tools) })
         }
         Some(serde_yaml::Value::String(s)) => {
-            // Comma-separated: "Bash(git add:*), Bash(git status:*)"
-            let tools: Vec<String> = s
-                .split(',')
-                .map(|t| t.trim().to_string())
-                .filter(|t| !t.is_empty())
-                .collect();
+            let tools = crate::permissions::split_allowed_tool_specs_scalar(&s);
             Ok(if tools.is_empty() { None } else { Some(tools) })
         }
         None | Some(_) => Ok(None),
@@ -2291,6 +2286,28 @@ Do something.
         let tools = fm.allowed_tools.unwrap();
         assert_eq!(tools, vec!["Read", "Glob", "Grep", "Bash"]);
         assert!(fm.body.starts_with("# Example Command"));
+    }
+
+    #[test]
+    fn test_command_front_matter_space_separated_scoped_tools() {
+        let content = r"---
+description: Commit helper
+allowed-tools: Bash(git add *) Bash(git status *) Bash(git commit *)
+---
+
+Create a commit.
+";
+        let fm = parse_command_front_matter(content);
+        let tools = fm.allowed_tools.unwrap();
+
+        assert_eq!(
+            tools,
+            vec![
+                "Bash(git add *)",
+                "Bash(git status *)",
+                "Bash(git commit *)"
+            ]
+        );
     }
 
     #[test]

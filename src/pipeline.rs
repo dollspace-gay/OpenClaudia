@@ -5,7 +5,7 @@
 
 use crate::config::ThinkingConfig;
 use crate::memory::MemoryDb;
-use crate::permissions::PermissionManager;
+use crate::permissions::{PermissionManager, PermissionRule};
 use crate::providers::{
     convert_messages_to_anthropic_checked, convert_tool_definitions_to_anthropic_checked,
     convert_tools_to_gemini_functions, extract_gemini_text_content, get_adapter,
@@ -398,6 +398,7 @@ pub struct RunTurnParams<'a> {
     pub provider: &'a str,
     pub memory_db: Option<Arc<MemoryDb>>,
     pub permission_mgr: Option<Arc<PermissionManager>>,
+    pub transient_allowed_tool_rules: &'a [PermissionRule],
     pub hook_engine: Option<Arc<crate::hooks::HookEngine>>,
     /// Session-scoped `TaskManager` used by `task_create` / `task_update`
     /// / `task_list` / `task_get`. The TUI keeps a single
@@ -695,6 +696,7 @@ pub async fn run_turn(p: RunTurnParams<'_>) -> Result<TurnResult, String> {
         provider,
         memory_db,
         permission_mgr,
+        transient_allowed_tool_rules,
         hook_engine,
         task_mgr,
         session_id,
@@ -731,6 +733,7 @@ pub async fn run_turn(p: RunTurnParams<'_>) -> Result<TurnResult, String> {
             response,
             memory_db,
             permission_mgr,
+            transient_allowed_tool_rules,
             hook_engine.clone(),
             task_mgr.clone(),
             session_id.clone(),
@@ -745,6 +748,7 @@ pub async fn run_turn(p: RunTurnParams<'_>) -> Result<TurnResult, String> {
         provider,
         memory_db,
         permission_mgr,
+        transient_allowed_tool_rules,
         hook_engine,
         task_mgr,
         session_id,
@@ -941,6 +945,7 @@ async fn handle_google_response(
     response: reqwest::Response,
     memory_db: Option<Arc<MemoryDb>>,
     permission_mgr: Option<Arc<PermissionManager>>,
+    transient_allowed_tool_rules: &[PermissionRule],
     hook_engine: Option<Arc<crate::hooks::HookEngine>>,
     task_mgr: Arc<Mutex<crate::session::TaskManager>>,
     session_id: Option<String>,
@@ -990,6 +995,7 @@ async fn handle_google_response(
         &tool_calls,
         memory_db,
         permission_mgr,
+        transient_allowed_tool_rules,
         hook_engine,
         task_mgr,
         session_id.as_deref(),
@@ -1118,6 +1124,7 @@ struct SseStreamParams<'a> {
     provider: &'a str,
     memory_db: Option<Arc<MemoryDb>>,
     permission_mgr: Option<Arc<PermissionManager>>,
+    transient_allowed_tool_rules: &'a [PermissionRule],
     hook_engine: Option<Arc<crate::hooks::HookEngine>>,
     task_mgr: Arc<Mutex<crate::session::TaskManager>>,
     session_id: Option<String>,
@@ -1130,6 +1137,7 @@ async fn stream_sse_response(p: SseStreamParams<'_>) -> Result<TurnResult, Strin
         provider,
         memory_db,
         permission_mgr,
+        transient_allowed_tool_rules,
         hook_engine,
         task_mgr,
         session_id,
@@ -1216,6 +1224,7 @@ async fn stream_sse_response(p: SseStreamParams<'_>) -> Result<TurnResult, Strin
         stream_usage,
         memory_db,
         permission_mgr,
+        transient_allowed_tool_rules,
         hook_engine,
         task_mgr,
         session_id,
@@ -1279,6 +1288,7 @@ struct SseFinalize<'a> {
     stream_usage: TokenUsage,
     memory_db: Option<Arc<MemoryDb>>,
     permission_mgr: Option<Arc<PermissionManager>>,
+    transient_allowed_tool_rules: &'a [PermissionRule],
     hook_engine: Option<Arc<crate::hooks::HookEngine>>,
     task_mgr: Arc<Mutex<crate::session::TaskManager>>,
     session_id: Option<String>,
@@ -1303,6 +1313,7 @@ async fn finalize_sse_stream(f: SseFinalize<'_>) -> Result<TurnResult, String> {
         &tool_calls,
         f.memory_db,
         f.permission_mgr,
+        f.transient_allowed_tool_rules,
         f.hook_engine,
         f.task_mgr,
         f.session_id.as_deref(),
@@ -1554,6 +1565,7 @@ fn permission_manager_outcome_for_tui(
     tool_call_id: &str,
     arguments: &str,
     mgr: &PermissionManager,
+    transient_allowed_tool_rules: &[PermissionRule],
     tx: &mpsc::Sender<AppEvent>,
 ) -> Option<PermissionOutcome> {
     let args = match parse_permission_arguments_for_tui(tool_name, tool_call_id, arguments, tx) {
@@ -1561,7 +1573,7 @@ fn permission_manager_outcome_for_tui(
         Err(outcome) => return Some(outcome),
     };
 
-    match mgr.check(tool_name, &args) {
+    match mgr.check_with_transient_allow_rules(tool_name, &args, transient_allowed_tool_rules) {
         crate::permissions::CheckResult::Allowed => {
             Some(PermissionOutcome::Allowed { checked: true })
         }
@@ -1594,6 +1606,7 @@ async fn check_tool_permission(
     always_allowed: &mut std::collections::HashSet<String>,
     always_denied: &mut std::collections::HashSet<String>,
     permission_mgr: Option<&PermissionManager>,
+    transient_allowed_tool_rules: &[PermissionRule],
     tx: &mpsc::Sender<AppEvent>,
 ) -> PermissionOutcome {
     // Batch-scoped cache (this invocation of execute_tool_calls_for_tui).
@@ -1624,9 +1637,14 @@ async fn check_tool_permission(
         if mgr.tui_is_always_allowed(tool_name) {
             session_always_allowed = true;
         }
-        if let Some(outcome) =
-            permission_manager_outcome_for_tui(tool_name, tool_call_id, arguments, mgr, tx)
-        {
+        if let Some(outcome) = permission_manager_outcome_for_tui(
+            tool_name,
+            tool_call_id,
+            arguments,
+            mgr,
+            transient_allowed_tool_rules,
+            tx,
+        ) {
             return outcome;
         }
     }
@@ -1912,6 +1930,7 @@ async fn execute_tool_calls_for_tui(
     tool_calls: &[ToolCall],
     memory_db: Option<Arc<MemoryDb>>,
     permission_mgr: Option<Arc<PermissionManager>>,
+    transient_allowed_tool_rules: &[PermissionRule],
     hook_engine: Option<Arc<crate::hooks::HookEngine>>,
     task_mgr: Arc<Mutex<crate::session::TaskManager>>,
     session_id: Option<&str>,
@@ -1970,6 +1989,7 @@ async fn execute_tool_calls_for_tui(
                 &mut always_allowed,
                 &mut always_denied,
                 permission_mgr.as_deref(),
+                transient_allowed_tool_rules,
                 tx,
             )
             .await
@@ -2213,9 +2233,17 @@ mod tests {
         let (tx, rx) = std_mpsc::channel::<AppEvent>();
         let task_mgr = Arc::new(Mutex::new(crate::session::TaskManager::new()));
 
-        let (results, has_tools) =
-            execute_tool_calls_for_tui(&[tool_call], None, None, None, task_mgr, Some("s"), &tx)
-                .await;
+        let (results, has_tools) = execute_tool_calls_for_tui(
+            &[tool_call],
+            None,
+            None,
+            &[],
+            None,
+            task_mgr,
+            Some("s"),
+            &tx,
+        )
+        .await;
 
         assert!(has_tools);
         assert_eq!(results.len(), 1);
@@ -2280,6 +2308,7 @@ mod tests {
                     &tool_calls,
                     None,
                     Some(mgr),
+                    &[],
                     None,
                     task_mgr,
                     Some("s"),
@@ -3047,6 +3076,7 @@ mod tests {
             &mut always_allowed,
             &mut always_denied,
             Some(&mgr),
+            &[],
             &tx,
         )
         .await;
@@ -3087,6 +3117,7 @@ mod tests {
             &mut always_allowed,
             &mut always_denied,
             Some(&mgr),
+            &[],
             &tx,
         )
         .await;
@@ -3097,6 +3128,46 @@ mod tests {
         assert!(
             rx.try_recv().is_err(),
             "#603: no PermissionRequest event should be sent for preapproved web_fetch"
+        );
+    }
+
+    #[tokio::test]
+    async fn check_tool_permission_allows_matching_transient_rule_without_prompt() {
+        use crate::permissions::{PermissionDecision, PermissionRule};
+        use std::sync::mpsc as std_mpsc;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().expect("tempdir");
+        let mgr = PermissionManager::new(dir.path().join("permissions.json"), true, Vec::new());
+        let transient = [PermissionRule {
+            tool: "Bash".to_string(),
+            pattern: "git status *".to_string(),
+            decision: PermissionDecision::Allow,
+        }];
+        let mut always_allowed: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut always_denied: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        let (tx, rx) = std_mpsc::channel::<AppEvent>();
+        let outcome = check_tool_permission(
+            "bash",
+            "call_git",
+            r#"{"command":"git status --short"}"#,
+            &mut always_allowed,
+            &mut always_denied,
+            Some(&mgr),
+            &transient,
+            &tx,
+        )
+        .await;
+
+        assert!(
+            matches!(outcome, PermissionOutcome::Allowed { checked: true }),
+            "matching transient allowed-tools rule must allow without prompting"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "transient allowed-tools rule must not emit a PermissionRequest"
         );
     }
 
@@ -3121,6 +3192,7 @@ mod tests {
             &mut always_allowed,
             &mut always_denied,
             Some(&mgr),
+            &[],
             &tx,
         )
         .await;

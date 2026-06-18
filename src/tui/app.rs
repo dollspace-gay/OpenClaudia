@@ -679,6 +679,9 @@ pub struct App {
     /// `prompt_blocks` that used to live directly on `App`.
     pub api_client: ApiClient,
     pub effort_level: EffortLevel,
+    next_turn_effort_level: Option<EffortLevel>,
+    next_turn_model: Option<String>,
+    next_turn_allowed_tool_rules: Vec<crate::permissions::PermissionRule>,
     pub system_prompt: String,
     /// Memory database for auto-learning from tool execution.
     pub memory_db: Option<std::sync::Arc<crate::memory::MemoryDb>>,
@@ -751,6 +754,9 @@ impl App {
             api_event_tx: None,
             api_client: ApiClient::new(),
             effort_level: EffortLevel::Medium,
+            next_turn_effort_level: None,
+            next_turn_model: None,
+            next_turn_allowed_tool_rules: Vec::new(),
             system_prompt: String::new(),
             memory_db: None,
             permission_mgr: None,
@@ -2066,12 +2072,16 @@ impl App {
     /// Table-handler entry point for `/skill` / `/skills` (no-arg list form).
     fn slash_skill_list(&mut self) {
         let skills = crate::skills::load_skills();
-        if skills.is_empty() {
+        let invocable_skills = skills
+            .iter()
+            .filter(|skill| skill.user_invocable)
+            .collect::<Vec<_>>();
+        if invocable_skills.is_empty() {
             self.messages.add(DisplayMessage::system(
                 "No skills found. Add .md files to .openclaudia/skills/",
             ));
         } else {
-            let list = skills
+            let list = invocable_skills
                 .iter()
                 .map(|s| format!("  /{} — {}", s.name, s.description))
                 .collect::<Vec<_>>()
@@ -2088,11 +2098,12 @@ impl App {
         } else {
             text.strip_prefix('/').unwrap_or("")
         };
-        if let Some(skill) = crate::skills::get_skill(skill_name) {
+        if let Some(skill) = crate::skills::get_user_invocable_skill(skill_name) {
             self.messages.add(DisplayMessage::system(format!(
                 "Running skill: /{}",
                 skill.name
             )));
+            self.apply_skill_turn_metadata(&skill);
             self.session_messages
                 .push(serde_json::json!({ "role": "user", "content": skill.prompt }));
             self.is_waiting = true;
@@ -2121,6 +2132,37 @@ impl App {
         self.messages.add(DisplayMessage::system(format!(
             "Unknown command: {text}. Type /help for commands."
         )));
+    }
+
+    fn apply_skill_turn_metadata(&mut self, skill: &crate::skills::SkillDefinition) {
+        self.next_turn_allowed_tool_rules =
+            crate::permissions::allowed_tool_specs_to_permission_rules(
+                skill.allowed_tools.as_deref(),
+            );
+
+        if let Some(model) = skill
+            .model
+            .as_deref()
+            .filter(|model| self.can_use_prompt_model(model))
+        {
+            self.next_turn_model = Some(model.to_string());
+        } else if let Some(model) = skill.model.as_deref() {
+            tracing::debug!(
+                model = %model,
+                provider = %self.provider,
+                "ignoring skill model hint for a different provider in TUI"
+            );
+        }
+
+        if let Some(level) = skill.effort.as_deref().and_then(parse_prompt_effort_level) {
+            self.next_turn_effort_level = Some(level);
+        }
+    }
+
+    fn can_use_prompt_model(&self, model: &str) -> bool {
+        let detected = crate::providers::ProviderKind::from_model(model);
+        detected == crate::providers::ProviderKind::Unknown
+            || canonical_provider_name(detected.name()) == canonical_provider_name(&self.provider)
     }
 
     fn handle_slash_provider(&mut self, text: &str) -> bool {
@@ -2555,11 +2597,13 @@ impl App {
                 "[No async runtime — cannot call API. Run with tokio.]",
             ));
             self.is_waiting = false;
+            self.clear_next_turn_metadata();
             return;
         };
 
         let Some(tx) = self.event_sender() else {
             self.is_waiting = false;
+            self.clear_next_turn_metadata();
             return;
         };
 
@@ -2569,8 +2613,15 @@ impl App {
         let endpoint = api.endpoint;
         let headers = api.headers;
         let provider = self.provider.clone();
-        let model = self.model.clone();
-        let effort_level = self.effort_level;
+        let model = self
+            .next_turn_model
+            .take()
+            .unwrap_or_else(|| self.model.clone());
+        let effort_level = self
+            .next_turn_effort_level
+            .take()
+            .unwrap_or(self.effort_level);
+        let transient_allowed_tool_rules = std::mem::take(&mut self.next_turn_allowed_tool_rules);
         let claude_code_token = api.claude_code_token;
         let prompt_blocks = api.prompt_blocks;
         let hook_engine = self.hook_engine.clone();
@@ -2593,11 +2644,18 @@ impl App {
             prompt_blocks,
             memory_db,
             permission_mgr,
+            transient_allowed_tool_rules,
             hook_engine,
             task_mgr,
             session_id: session_id_for_task,
             tx,
         }));
+    }
+
+    fn clear_next_turn_metadata(&mut self) {
+        self.next_turn_effort_level = None;
+        self.next_turn_model = None;
+        self.next_turn_allowed_tool_rules.clear();
     }
 
     fn draw(&mut self, frame: &mut Frame) {
@@ -2897,6 +2955,7 @@ struct ApiTurnParams {
     prompt_blocks: Option<crate::prompt::SystemPromptBlocks>,
     memory_db: Option<std::sync::Arc<crate::memory::MemoryDb>>,
     permission_mgr: Option<std::sync::Arc<crate::permissions::PermissionManager>>,
+    transient_allowed_tool_rules: Vec<crate::permissions::PermissionRule>,
     hook_engine: Option<std::sync::Arc<crate::hooks::HookEngine>>,
     task_mgr: std::sync::Arc<std::sync::Mutex<crate::session::TaskManager>>,
     session_id: String,
@@ -2915,6 +2974,7 @@ struct AgenticCtx<'a> {
     prompt_blocks: Option<&'a crate::prompt::SystemPromptBlocks>,
     memory_db: Option<std::sync::Arc<crate::memory::MemoryDb>>,
     permission_mgr: Option<std::sync::Arc<crate::permissions::PermissionManager>>,
+    transient_allowed_tool_rules: &'a [crate::permissions::PermissionRule],
     hook_engine: Option<std::sync::Arc<crate::hooks::HookEngine>>,
     task_mgr: std::sync::Arc<std::sync::Mutex<crate::session::TaskManager>>,
     session_id: &'a str,
@@ -3230,6 +3290,7 @@ async fn run_agentic_loop(ctx: &AgenticCtx<'_>, session_messages: &mut Vec<serde
             provider: ctx.provider,
             memory_db: ctx.memory_db.clone(),
             permission_mgr: ctx.permission_mgr.clone(),
+            transient_allowed_tool_rules: ctx.transient_allowed_tool_rules,
             hook_engine: ctx.hook_engine.clone(),
             task_mgr: ctx.task_mgr.clone(),
             session_id: Some(ctx.session_id.to_string()),
@@ -3297,6 +3358,7 @@ async fn run_api_turn_async(p: ApiTurnParams) {
         prompt_blocks,
         memory_db,
         permission_mgr,
+        transient_allowed_tool_rules,
         hook_engine,
         task_mgr,
         session_id,
@@ -3329,6 +3391,7 @@ async fn run_api_turn_async(p: ApiTurnParams) {
         provider: &provider,
         memory_db: memory_db.clone(),
         permission_mgr: permission_mgr.clone(),
+        transient_allowed_tool_rules: &transient_allowed_tool_rules,
         hook_engine: hook_engine.clone(),
         task_mgr: task_mgr.clone(),
         session_id: Some(session_id.clone()),
@@ -3351,6 +3414,7 @@ async fn run_api_turn_async(p: ApiTurnParams) {
                     prompt_blocks: prompt_blocks.as_ref(),
                     memory_db,
                     permission_mgr,
+                    transient_allowed_tool_rules: &transient_allowed_tool_rules,
                     hook_engine,
                     task_mgr,
                     session_id: &session_id,
@@ -3379,6 +3443,7 @@ struct TurnContext<'a> {
     prompt_blocks: Option<&'a crate::prompt::SystemPromptBlocks>,
     memory_db: Option<std::sync::Arc<crate::memory::MemoryDb>>,
     permission_mgr: Option<std::sync::Arc<crate::permissions::PermissionManager>>,
+    transient_allowed_tool_rules: &'a [crate::permissions::PermissionRule],
     hook_engine: Option<std::sync::Arc<crate::hooks::HookEngine>>,
     task_mgr: std::sync::Arc<std::sync::Mutex<crate::session::TaskManager>>,
     session_id: &'a str,
@@ -3426,6 +3491,7 @@ async fn handle_turn_result(
             prompt_blocks: ctx.prompt_blocks,
             memory_db: ctx.memory_db,
             permission_mgr: ctx.permission_mgr,
+            transient_allowed_tool_rules: ctx.transient_allowed_tool_rules,
             hook_engine: ctx.hook_engine,
             task_mgr: ctx.task_mgr,
             session_id: ctx.session_id,
@@ -3458,6 +3524,27 @@ async fn handle_turn_result(
             super::events::AppEvent::SyncMessages(session_messages),
             ctx.session_id,
         );
+    }
+}
+
+fn canonical_provider_name(provider: &str) -> &str {
+    match provider {
+        "gemini" => "google",
+        "alibaba" => "qwen",
+        "zhipu" | "glm" => "zai",
+        "moonshot" => "kimi",
+        other => other,
+    }
+}
+
+fn parse_prompt_effort_level(effort: &str) -> Option<EffortLevel> {
+    match effort.trim().to_ascii_lowercase().as_str() {
+        "low" | "l" => Some(EffortLevel::Low),
+        "medium" | "m" => Some(EffortLevel::Medium),
+        "high" | "h" => Some(EffortLevel::High),
+        "max" | "x" => Some(EffortLevel::Max),
+        "auto" | "unset" => Some(EffortLevel::Auto),
+        _ => None,
     }
 }
 
@@ -3557,6 +3644,58 @@ mod tests {
         // Sanity: model/provider stay on App (not migrated into ApiClient).
         assert_eq!(app.model, "test-model");
         assert_eq!(app.provider, "anthropic");
+    }
+
+    fn skill_fixture(
+        allowed_tools: Option<Vec<String>>,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> crate::skills::SkillDefinition {
+        crate::skills::SkillDefinition {
+            name: "test-skill".to_string(),
+            description: "test skill".to_string(),
+            allowed_tools,
+            when_to_use: None,
+            argument_hint: None,
+            model: model.map(str::to_string),
+            effort: effort.map(str::to_string),
+            paths: None,
+            hooks: None,
+            user_invocable: true,
+            prompt: "Do the skill work.".to_string(),
+            path: std::path::PathBuf::new(),
+        }
+    }
+
+    #[test]
+    fn tui_skill_metadata_sets_next_turn_hints() {
+        let mut app = App::new("claude-sonnet-4-6", "anthropic");
+        let skill = skill_fixture(
+            Some(vec!["Bash(git status *)".to_string()]),
+            Some("claude-opus-4-7"),
+            Some("high"),
+        );
+
+        app.apply_skill_turn_metadata(&skill);
+
+        assert_eq!(app.next_turn_allowed_tool_rules.len(), 1);
+        assert_eq!(app.next_turn_allowed_tool_rules[0].tool, "Bash");
+        assert_eq!(app.next_turn_model.as_deref(), Some("claude-opus-4-7"));
+        assert_eq!(
+            app.next_turn_effort_level,
+            Some(crate::tui::messages::EffortLevel::High)
+        );
+    }
+
+    #[test]
+    fn tui_skill_metadata_ignores_cross_provider_model_hint() {
+        let mut app = App::new("claude-sonnet-4-6", "anthropic");
+        let skill = skill_fixture(None, Some("gpt-5.5"), Some("future-effort"));
+
+        app.apply_skill_turn_metadata(&skill);
+
+        assert!(app.next_turn_model.is_none());
+        assert!(app.next_turn_effort_level.is_none());
     }
 
     fn provider_config_without_key(base_url: &str) -> crate::config::ProviderConfig {

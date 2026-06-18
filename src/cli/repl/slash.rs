@@ -67,6 +67,18 @@ pub struct PluginCommandInvocation {
     pub model: Option<String>,
 }
 
+/// Resolved prompt plus per-skill metadata for a skill slash command.
+pub struct SkillInvocation {
+    /// Prompt content to send as the user message.
+    pub prompt: String,
+    /// Tools that should be pre-approved while this skill prompt runs.
+    pub allowed_tools: Option<Vec<String>>,
+    /// Optional model hint from skill front matter.
+    pub model: Option<String>,
+    /// Optional reasoning-effort hint from skill front matter.
+    pub effort: Option<String>,
+}
+
 /// Slash command result
 pub enum SlashCommandResult {
     /// Exit the chat
@@ -110,7 +122,7 @@ pub enum SlashCommandResult {
     /// Toggle vim mode (visual indicator in prompt)
     ToggleVim,
     /// Invoke a skill (inject its prompt as the next user message)
-    Skill(String),
+    Skill(SkillInvocation),
     /// Set effort level for the session (low/medium/high/max/auto)
     SetEffort(String),
     /// Cycle effort level: low → medium → high → low
@@ -1233,14 +1245,18 @@ pub fn slash_plugin(args: &str) -> SlashCommandResult {
 pub fn slash_skill(args: &str) -> SlashCommandResult {
     if args.is_empty() {
         let all_skills = skills::load_skills();
-        if all_skills.is_empty() {
+        let invocable_skills = all_skills
+            .iter()
+            .filter(|skill| skill.user_invocable)
+            .collect::<Vec<_>>();
+        if invocable_skills.is_empty() {
             println!("\nNo skills found.");
             println!("Add skill files to .openclaudia/skills/ or ~/.openclaudia/skills/");
             println!("\nSkill file format (YAML frontmatter + markdown body):");
             println!("  ---\n  name: my-skill\n  description: Does something useful\n  ---\n  \n  You are a specialized agent that...\n");
         } else {
-            println!("\n=== Available Skills ({}) ===\n", all_skills.len());
-            for skill in &all_skills {
+            println!("\n=== Available Skills ({}) ===\n", invocable_skills.len());
+            for skill in invocable_skills {
                 println!("  \x1b[36m{}\x1b[0m - {}", skill.name, skill.description);
                 println!("    \x1b[90m{}\x1b[0m", skill.path.display());
             }
@@ -1249,9 +1265,14 @@ pub fn slash_skill(args: &str) -> SlashCommandResult {
         SlashCommandResult::Handled
     } else {
         let skill_name = args.trim();
-        if let Some(skill) = skills::get_skill(skill_name) {
+        if let Some(skill) = skills::get_user_invocable_skill(skill_name) {
             println!("\n\x1b[36mInvoking skill: {}\x1b[0m\n", skill.name);
-            SlashCommandResult::Skill(skill.prompt)
+            SlashCommandResult::Skill(SkillInvocation {
+                prompt: skill.prompt,
+                allowed_tools: skill.allowed_tools,
+                model: skill.model,
+                effort: skill.effort,
+            })
         } else {
             eprintln!("\nSkill '{skill_name}' not found. Use /skill to list available skills.\n");
             SlashCommandResult::Handled

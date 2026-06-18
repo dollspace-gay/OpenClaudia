@@ -260,6 +260,26 @@ fn parse_skill_with_allowed_tools_list_preserved() {
 }
 
 #[test]
+fn parse_skill_with_allowed_tools_hyphen_scalar_preserved() {
+    let tmp = TempDir::new().expect("tempdir");
+    let path = write_skill(
+        tmp.path(),
+        "s.md",
+        "name: x\ndescription: y\nallowed-tools: Bash(git add *) Bash(git status *)",
+        "body",
+    );
+    let skill = parse_or_fail(&path);
+    let tools = skill.allowed_tools.as_ref().expect("Some");
+    assert_eq!(
+        tools,
+        &vec![
+            "Bash(git add *)".to_string(),
+            "Bash(git status *)".to_string()
+        ]
+    );
+}
+
+#[test]
 fn parse_skill_without_allowed_tools_defaults_to_none() {
     let tmp = TempDir::new().expect("tempdir");
     let path = write_skill(tmp.path(), "s.md", "name: x\ndescription: y", "body");

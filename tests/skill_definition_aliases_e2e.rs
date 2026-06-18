@@ -186,6 +186,25 @@ fn allowed_tools_with_list_preserves_order() {
 }
 
 #[test]
+fn allowed_tools_accepts_hyphenated_scalar_alias() {
+    let skill = parse(json!({
+        "name": "x",
+        "description": "y",
+        "allowed-tools": "Bash(git add *) Bash(git status *)"
+    }));
+    assert_eq!(
+        skill.allowed_tools.as_deref(),
+        Some(
+            [
+                "Bash(git add *)".to_string(),
+                "Bash(git status *)".to_string()
+            ]
+            .as_slice()
+        )
+    );
+}
+
+#[test]
 fn model_field_serde_round_trip() {
     let skill = parse(json!({
         "name": "x",

@@ -72,7 +72,12 @@ pub enum SkillParseError {
 pub struct SkillDefinition {
     pub name: String,
     pub description: String,
-    #[serde(default)]
+    #[serde(
+        default,
+        rename = "allowed_tools",
+        alias = "allowed-tools",
+        deserialize_with = "deserialize_tools_list"
+    )]
     pub allowed_tools: Option<Vec<String>>,
     /// CC parity: longer-form "when to use" hint surfaced to the agent
     /// alongside `description`. Optional; falls back to `description` when
@@ -121,6 +126,31 @@ pub struct SkillDefinition {
 
 const fn default_user_invocable() -> bool {
     true
+}
+
+fn deserialize_tools_list<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let value: Option<serde_yaml::Value> = Option::deserialize(deserializer)?;
+    match value {
+        Some(serde_yaml::Value::Sequence(seq)) => {
+            let tools: Vec<String> = seq
+                .into_iter()
+                .filter_map(|v| match v {
+                    serde_yaml::Value::String(s) => Some(s),
+                    _ => None,
+                })
+                .collect();
+            Ok(if tools.is_empty() { None } else { Some(tools) })
+        }
+        Some(serde_yaml::Value::String(s)) => {
+            let tools = crate::permissions::split_allowed_tool_specs_scalar(&s);
+            Ok(if tools.is_empty() { None } else { Some(tools) })
+        }
+        None | Some(_) => Ok(None),
+    }
 }
 
 /// True iff at least one entry in `paths` matches `touched` as a glob.
@@ -611,6 +641,12 @@ pub fn invalidate_cache() {
 #[must_use]
 pub fn get_skill(name: &str) -> Option<SkillDefinition> {
     load_skills().into_iter().find(|s| s.name == name)
+}
+
+/// Load a skill only if it is allowed to be invoked from user-facing slash UI.
+#[must_use]
+pub fn get_user_invocable_skill(name: &str) -> Option<SkillDefinition> {
+    get_skill(name).filter(|skill| skill.user_invocable)
 }
 
 #[cfg(test)]
