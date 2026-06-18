@@ -251,6 +251,25 @@ providers:
     .expect("config file");
 }
 
+fn write_openai_provider_config_with_api_key(cwd: &tempfile::TempDir) {
+    let config_dir = cwd.path().join(".openclaudia");
+    fs::create_dir_all(&config_dir).expect("config dir");
+    fs::write(
+        config_dir.join("config.yaml"),
+        r#"
+proxy:
+  port: 8080
+  host: "127.0.0.1"
+  target: openai
+providers:
+  openai:
+    base_url: https://api.openai.com/v1
+    api_key: sk-openai-test-key
+"#,
+    )
+    .expect("config file");
+}
+
 fn write_anthropic_provider_config(cwd: &tempfile::TempDir) {
     write_anthropic_provider_config_with_target(cwd, "anthropic");
 }
@@ -1135,6 +1154,104 @@ fn acp_session_set_mode_updates_active_session_over_stdio() {
         auto["result"]["activeMode"], "coding",
         "auto should report the active mode set by the previous request"
     );
+}
+
+#[test]
+fn acp_session_set_config_option_updates_mode_and_model_over_stdio() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    write_openai_provider_config_with_api_key(&cwd);
+
+    let mut child = isolated_command(&cwd, &home)
+        .arg("acp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("openclaudia acp must spawn");
+
+    let mut stdin = child.stdin.take().expect("acp stdin should be piped");
+    let stdout = child.stdout.take().expect("acp stdout should be piped");
+    let mut stderr = child.stderr.take().expect("acp stderr should be piped");
+    let mut reader = BufReader::new(stdout);
+
+    stdin
+        .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"session/new\",\"params\":{}}\n")
+        .expect("acp stdin should accept session/new");
+    stdin.flush().expect("flush session/new");
+
+    let mut created_line = String::new();
+    reader
+        .read_line(&mut created_line)
+        .expect("read session/new response");
+    let created =
+        serde_json::from_str::<serde_json::Value>(&created_line).expect("session/new response");
+    let session_id = created["result"]["sessionId"]
+        .as_str()
+        .expect("session id")
+        .to_string();
+
+    stdin
+        .write_all(
+            format!(
+                "{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session/set_config_option\",\"params\":{{\"sessionId\":\"{session_id}\",\"configId\":\"mode\",\"value\":\"coding\"}}}}\n"
+            )
+            .as_bytes(),
+        )
+        .expect("acp stdin should accept mode config");
+    stdin.flush().expect("flush mode config");
+
+    let mut mode_reply = String::new();
+    reader
+        .read_line(&mut mode_reply)
+        .expect("read mode response");
+
+    stdin
+        .write_all(
+            format!(
+                "{{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"session/set_config_option\",\"params\":{{\"sessionId\":\"{session_id}\",\"configId\":\"model\",\"value\":\"gpt-5.4\"}}}}\n"
+            )
+            .as_bytes(),
+        )
+        .expect("acp stdin should accept model config");
+    stdin.flush().expect("flush model config");
+
+    let mut selected_model_reply = String::new();
+    reader
+        .read_line(&mut selected_model_reply)
+        .expect("read model response");
+
+    drop(stdin);
+    let status = child.wait().expect("openclaudia acp must run");
+    let mut stderr_text = String::new();
+    stderr
+        .read_to_string(&mut stderr_text)
+        .expect("stderr should be readable");
+    assert!(
+        status.success(),
+        "acp stdio session/set_config_option should succeed; stdout={created_line:?}{mode_reply:?}{selected_model_reply:?} stderr={stderr_text:?}"
+    );
+
+    let mode = serde_json::from_str::<serde_json::Value>(&mode_reply).expect("mode response");
+    let coding_mode_id = mode["result"]["configOptions"]
+        .as_array()
+        .expect("configOptions")
+        .iter()
+        .find(|option| option["id"] == "mode")
+        .expect("mode config option")["currentValue"]
+        .as_str();
+    assert_eq!(coding_mode_id, Some("coding"));
+
+    let model =
+        serde_json::from_str::<serde_json::Value>(&selected_model_reply).expect("model response");
+    let returned_model_id = model["result"]["configOptions"]
+        .as_array()
+        .expect("configOptions")
+        .iter()
+        .find(|option| option["id"] == "model")
+        .expect("model config option")["currentValue"]
+        .as_str();
+    assert_eq!(returned_model_id, Some("gpt-5.4"));
 }
 
 #[test]

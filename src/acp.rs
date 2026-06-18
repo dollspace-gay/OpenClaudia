@@ -1,15 +1,15 @@
 //! ACP (Agent Client Protocol) Server — JSON-RPC 2.0 over stdio.
 //!
 //! Enables `OpenClaudia` to interoperate with `acpx` and other agent harnesses.
-//! Implements all stable ACP methods:
+//! Implements the ACP methods `OpenClaudia` currently exposes:
 //! - `initialize` — handshake/capability negotiation
-//! - `authenticate` — credential validation
+//! - `authenticate` — auth acknowledgement; provider credentials are resolved before startup
 //! - `session/new` — create a new session
 //! - `session/load` — resume a persisted session
 //! - `session/prompt` — execute prompt with streaming updates
 //! - `session/cancel` — cancel in-flight prompt
 //! - `session/set_mode` — change session mode
-//! - `session/set_config_option` — set session config
+//! - `session/set_config_option` — set advertised session config options
 //!
 //! Tool execution is delegated through ACP client methods:
 //! - `fs/read_text_file`, `fs/write_text_file` — file operations
@@ -475,6 +475,8 @@ const fn value_type_name(value: &Value) -> &'static str {
 /// otherwise leak unbounded memory (crosslink #759). 64 is the bound
 /// the issue's mandated refactor calls out; we mirror it here.
 const MAX_ACP_SESSIONS: usize = 64;
+const ACP_CONFIG_MODE_ID: &str = "mode";
+const ACP_CONFIG_MODEL_ID: &str = "model";
 
 /// Insert an ACP→openclaudia session-id mapping into `map`, evicting
 /// the oldest entry first if `order` is already at `cap`. Idempotent
@@ -517,6 +519,80 @@ const fn acp_mode_label(mode: SessionMode) -> &'static str {
     }
 }
 
+fn acp_model_option_ids(target: &str, current_model: &str) -> Vec<String> {
+    let target = target.trim().to_ascii_lowercase();
+    let catalog_provider = crate::providers::canonical_static_catalog_provider(&target);
+    let static_models =
+        if crate::providers::STATIC_MODEL_CATALOG_PROVIDERS.contains(&catalog_provider) {
+            crate::providers::static_models_for_provider(catalog_provider)
+        } else {
+            &[]
+        };
+
+    let mut ids = Vec::with_capacity(static_models.len().saturating_add(1));
+    if !current_model.trim().is_empty() {
+        ids.push(current_model.to_string());
+    }
+    for model in static_models {
+        if !ids.iter().any(|id| id.as_str() == *model) {
+            ids.push((*model).to_string());
+        }
+    }
+    if ids.is_empty() {
+        ids.push(crate::providers::default_model_for_target(&target).to_string());
+    }
+    ids
+}
+
+fn acp_config_value_options(ids: impl IntoIterator<Item = String>) -> Vec<Value> {
+    ids.into_iter()
+        .map(|id| {
+            json!({
+                "value": id,
+                "name": id,
+            })
+        })
+        .collect()
+}
+
+fn acp_session_config_options(
+    target: &str,
+    current_model: &str,
+    current_mode: SessionMode,
+) -> Vec<Value> {
+    vec![
+        json!({
+            "id": ACP_CONFIG_MODE_ID,
+            "name": "Session Mode",
+            "description": "Controls whether the session is gathering context or editing code",
+            "category": "mode",
+            "type": "select",
+            "currentValue": acp_mode_label(current_mode),
+            "options": [
+                {
+                    "value": "initializer",
+                    "name": "Initializer",
+                    "description": "Gather context and prepare the task"
+                },
+                {
+                    "value": "coding",
+                    "name": "Coding",
+                    "description": "Implement and verify code changes"
+                }
+            ],
+        }),
+        json!({
+            "id": ACP_CONFIG_MODEL_ID,
+            "name": "Model",
+            "description": "Selects the model used for subsequent provider requests",
+            "category": "model",
+            "type": "select",
+            "currentValue": current_model,
+            "options": acp_config_value_options(acp_model_option_ids(target, current_model)),
+        }),
+    ]
+}
+
 impl AcpServer {
     /// See [`upsert_session_mapping_into`]. Thin instance wrapper so
     /// existing call sites read naturally.
@@ -535,6 +611,47 @@ impl AcpServer {
             .get(acp_session_id)
             .cloned()
             .unwrap_or_else(|| acp_session_id.to_string())
+    }
+
+    fn current_session_mode(&self) -> SessionMode {
+        self.session_manager
+            .get_session()
+            .map_or(SessionMode::Initializer, |session| session.mode)
+    }
+
+    fn acp_config_options(&self) -> Vec<Value> {
+        acp_session_config_options(
+            &self.config.proxy.target,
+            &self.model,
+            self.current_session_mode(),
+        )
+    }
+
+    fn apply_acp_mode_value(&mut self, mode: &str) -> Result<SessionMode, String> {
+        match mode {
+            "initializer" => Ok(self
+                .session_manager
+                .set_current_mode(SessionMode::Initializer)
+                .mode),
+            "coding" => Ok(self
+                .session_manager
+                .set_current_mode(SessionMode::Coding)
+                .mode),
+            _ => Err(format!(
+                "Invalid value for mode: {mode}. Supported values: initializer, coding"
+            )),
+        }
+    }
+
+    fn apply_acp_model_value(&mut self, model: &str) -> Result<(), String> {
+        let options = acp_model_option_ids(&self.config.proxy.target, &self.model);
+        if !options.iter().any(|option| option.as_str() == model) {
+            return Err(format!(
+                "Invalid value for model: {model}. It must be one of the advertised model config options"
+            ));
+        }
+        self.model = model.to_string();
+        Ok(())
     }
 
     /// Create a new ACP server from the loaded config.
@@ -800,6 +917,7 @@ impl AcpServer {
             id,
             Some(json!({
                 "sessionId": acp_session_id,
+                "configOptions": self.acp_config_options(),
             })),
             None,
         );
@@ -828,6 +946,7 @@ impl AcpServer {
                     Some(json!({
                         "sessionId": acp_session_id,
                         "loaded": true,
+                        "configOptions": self.acp_config_options(),
                     })),
                     None,
                 );
@@ -847,6 +966,7 @@ impl AcpServer {
             Some(json!({
                 "sessionId": acp_session_id,
                 "loaded": false,
+                "configOptions": self.acp_config_options(),
             })),
             None,
         );
@@ -873,22 +993,23 @@ impl AcpServer {
     fn handle_session_set_mode(&mut self, id: Option<Value>, params: &Value) {
         let Some(id) = id else { return };
 
-        let Some(mode) = params.get("mode").and_then(|v| v.as_str()) else {
+        let Some(mode) = params
+            .get("mode")
+            .or_else(|| params.get("modeId"))
+            .and_then(|v| v.as_str())
+        else {
             self.send_error(id, INVALID_PARAMS, "Missing mode");
             return;
         };
 
         let active_mode = match mode {
-            "initializer" => {
-                self.session_manager
-                    .set_current_mode(SessionMode::Initializer)
-                    .mode
-            }
-            "coding" => {
-                self.session_manager
-                    .set_current_mode(SessionMode::Coding)
-                    .mode
-            }
+            "initializer" | "coding" => match self.apply_acp_mode_value(mode) {
+                Ok(mode) => mode,
+                Err(reason) => {
+                    self.send_error(id, INVALID_PARAMS, &reason);
+                    return;
+                }
+            },
             "auto" => self.session_manager.get_or_create_session().mode,
             _ => {
                 self.send_error(
@@ -906,6 +1027,7 @@ impl AcpServer {
             Some(json!({
                 "mode": mode,
                 "activeMode": active_mode,
+                "configOptions": self.acp_config_options(),
             })),
             None,
         );
@@ -915,24 +1037,59 @@ impl AcpServer {
     fn handle_session_set_config_option(&mut self, id: Option<Value>, params: &Value) {
         let Some(id) = id else { return };
 
-        let key = if let Some(k) = params.get("key").and_then(|v| v.as_str()) {
-            k.to_string()
+        let uses_v1_shape = params.get("configId").is_some();
+        let config_id = if let Some(config_id) = params
+            .get("configId")
+            .or_else(|| params.get("key"))
+            .and_then(|v| v.as_str())
+        {
+            config_id.to_string()
         } else {
-            self.send_error(id, INVALID_PARAMS, "Missing key");
+            self.send_error(id, INVALID_PARAMS, "Missing configId");
             return;
         };
 
-        let value = if let Some(v) = params.get("value") {
-            v.clone()
+        if uses_v1_shape
+            && params
+                .get("sessionId")
+                .and_then(serde_json::Value::as_str)
+                .is_none()
+        {
+            self.send_error(id, INVALID_PARAMS, "Missing sessionId");
+            return;
+        }
+
+        let value = if let Some(v) = params.get("value").and_then(|v| v.as_str()) {
+            v.to_string()
         } else {
-            self.send_error(id, INVALID_PARAMS, "Missing value");
+            self.send_error(id, INVALID_PARAMS, "Missing string value");
             return;
         };
 
-        self.config_options.insert(key.clone(), value.clone());
-        self.send_response(id, Some(json!({"key": key, "value": value})), None);
+        let apply_result = match config_id.as_str() {
+            ACP_CONFIG_MODE_ID => self.apply_acp_mode_value(&value).map(|_| ()),
+            ACP_CONFIG_MODEL_ID => self.apply_acp_model_value(&value),
+            _ => Err(format!(
+                "Unknown configId: {config_id}. Supported values: mode, model"
+            )),
+        };
 
-        info!(key = %key, "Config option set");
+        if let Err(reason) = apply_result {
+            self.send_error(id, INVALID_PARAMS, &reason);
+            return;
+        }
+
+        self.config_options
+            .insert(config_id.clone(), Value::String(value.clone()));
+        self.send_response(
+            id,
+            Some(json!({
+                "configOptions": self.acp_config_options(),
+            })),
+            None,
+        );
+
+        info!(config_id = %config_id, value = %value, "Config option set");
     }
 
     // ========================================================================
@@ -3495,7 +3652,10 @@ mod tool_argument_tests {
 
 #[cfg(test)]
 mod session_mode_tests {
-    use super::{acp_mode_label, AcpServer, IdeState, INVALID_PARAMS};
+    use super::{
+        acp_mode_label, AcpServer, IdeState, ACP_CONFIG_MODEL_ID, ACP_CONFIG_MODE_ID,
+        INVALID_PARAMS,
+    };
     use crate::config::{AppConfig, HooksConfig};
     use crate::hooks::HookEngine;
     use crate::permissions::PermissionManager;
@@ -3555,6 +3715,15 @@ providers:
     fn next_response(rx: &mut mpsc::UnboundedReceiver<String>) -> Value {
         let line = rx.try_recv().expect("expected ACP response");
         serde_json::from_str(&line).expect("response must be JSON")
+    }
+
+    fn config_option<'a>(response: &'a Value, id: &str) -> &'a Value {
+        response["result"]["configOptions"]
+            .as_array()
+            .expect("configOptions must be an array")
+            .iter()
+            .find(|option| option["id"] == id)
+            .expect("expected config option")
     }
 
     #[test]
@@ -3643,6 +3812,139 @@ providers:
             .expect("session should remain active");
         assert_eq!(session.id, session_id);
         assert_eq!(session.mode, SessionMode::Initializer);
+    }
+
+    #[test]
+    fn session_new_advertises_config_options_matching_active_state() {
+        let (mut server, mut rx, _tmp) = test_server();
+
+        server.handle_session_new(Some(json!(1)), Value::Null);
+        let response = next_response(&mut rx);
+
+        assert_eq!(
+            config_option(&response, ACP_CONFIG_MODE_ID)["currentValue"],
+            "initializer"
+        );
+        assert_eq!(
+            config_option(&response, ACP_CONFIG_MODEL_ID)["currentValue"],
+            "local-model"
+        );
+    }
+
+    #[test]
+    fn session_set_config_option_mode_updates_session_and_returns_full_state() {
+        let (mut server, mut rx, _tmp) = test_server();
+        server.handle_session_new(Some(json!(1)), Value::Null);
+        let created = next_response(&mut rx);
+        let acp_session_id = created["result"]["sessionId"]
+            .as_str()
+            .expect("session id")
+            .to_string();
+
+        server.handle_session_set_config_option(
+            Some(json!(2)),
+            &json!({
+                "sessionId": acp_session_id,
+                "configId": "mode",
+                "value": "coding",
+            }),
+        );
+        let response = next_response(&mut rx);
+
+        assert_eq!(
+            config_option(&response, ACP_CONFIG_MODE_ID)["currentValue"],
+            "coding"
+        );
+        assert_eq!(
+            server
+                .session_manager
+                .get_session()
+                .expect("session should remain active")
+                .mode,
+            SessionMode::Coding
+        );
+    }
+
+    #[test]
+    fn session_set_config_option_model_updates_provider_request_model() {
+        let (mut server, mut rx, _tmp) = test_server();
+        server.config.proxy.target = "anthropic".to_string();
+        server.model = "claude-opus-4-8".to_string();
+        server.handle_session_new(Some(json!(1)), Value::Null);
+        let created = next_response(&mut rx);
+        let acp_session_id = created["result"]["sessionId"]
+            .as_str()
+            .expect("session id")
+            .to_string();
+
+        server.handle_session_set_config_option(
+            Some(json!(2)),
+            &json!({
+                "sessionId": acp_session_id,
+                "configId": "model",
+                "value": "claude-opus-4-7",
+            }),
+        );
+        let response = next_response(&mut rx);
+
+        assert_eq!(server.model, "claude-opus-4-7");
+        assert_eq!(
+            config_option(&response, ACP_CONFIG_MODEL_ID)["currentValue"],
+            "claude-opus-4-7"
+        );
+    }
+
+    #[test]
+    fn session_set_config_option_rejects_unadvertised_model_without_mutation() {
+        let (mut server, mut rx, _tmp) = test_server();
+        server.config.proxy.target = "anthropic".to_string();
+        server.model = "claude-opus-4-8".to_string();
+        server.handle_session_new(Some(json!(1)), Value::Null);
+        let created = next_response(&mut rx);
+        let acp_session_id = created["result"]["sessionId"]
+            .as_str()
+            .expect("session id")
+            .to_string();
+
+        server.handle_session_set_config_option(
+            Some(json!(2)),
+            &json!({
+                "sessionId": acp_session_id,
+                "configId": "model",
+                "value": "not-advertised",
+            }),
+        );
+        let response = next_response(&mut rx);
+
+        assert_eq!(response["error"]["code"], INVALID_PARAMS);
+        assert_eq!(server.model, "claude-opus-4-8");
+    }
+
+    #[test]
+    fn session_set_config_option_accepts_legacy_key_alias_for_mode() {
+        let (mut server, mut rx, _tmp) = test_server();
+
+        server.handle_session_set_config_option(
+            Some(json!(1)),
+            &json!({
+                "key": "mode",
+                "value": "coding",
+            }),
+        );
+        let response = next_response(&mut rx);
+
+        assert_eq!(
+            config_option(&response, ACP_CONFIG_MODE_ID)["currentValue"],
+            "coding"
+        );
+        assert_eq!(
+            server
+                .session_manager
+                .get_session()
+                .expect("mode set should create an active session")
+                .mode,
+            SessionMode::Coding
+        );
     }
 }
 

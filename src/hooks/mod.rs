@@ -554,6 +554,9 @@ impl HookEngine {
                      (see crosslink #835)"
                 );
                 let mut failed = HookResult::allowed();
+                if event.is_deny_intent() {
+                    failed.allowed = false;
+                }
                 failed.errors.push(HookError::ParseError(format!(
                     "hook input serialize failed: {e}"
                 )));
@@ -594,6 +597,14 @@ impl HookEngine {
                     hook_result.errors.push(e);
                 }
             }
+        }
+        if event.is_deny_intent() && !hook_result.errors.is_empty() {
+            warn!(
+                event = ?event,
+                error_count = hook_result.errors.len(),
+                "Deny-intent hook execution failed; failing closed"
+            );
+            hook_result.allowed = false;
         }
 
         hook_result
@@ -2125,6 +2136,67 @@ mod tests {
                 "{ev:?} must NOT be deny-intent (would change fail-mode)"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn pre_tool_use_command_error_fails_closed() {
+        let config = HooksConfig {
+            pre_tool_use: vec![HookEntry {
+                matcher: None,
+                hooks: vec![Hook::Command {
+                    command: "__openclaudia_missing_pre_hook_binary__".to_string(),
+                    shell: false,
+                    timeout: 1,
+                }],
+            }],
+            ..Default::default()
+        };
+        let engine = HookEngine::new(config);
+        let input = HookInput::new(HookEvent::PreToolUse)
+            .with_tool("bash", serde_json::json!({"command": "cargo test"}));
+
+        let result = engine.run(HookEvent::PreToolUse, &input).await;
+
+        assert!(
+            !result.allowed,
+            "PreToolUse hook execution errors must fail closed; got {result:?}"
+        );
+        assert!(
+            !result.errors.is_empty(),
+            "spawn failure should be preserved for diagnostics"
+        );
+        assert!(
+            HookEngine::check_blocked(&result).is_err(),
+            "deny-intent hook errors must be visible to gate callers"
+        );
+    }
+
+    #[tokio::test]
+    async fn post_tool_use_command_error_stays_allowed_but_records_error() {
+        let config = HooksConfig {
+            post_tool_use: vec![HookEntry {
+                matcher: None,
+                hooks: vec![Hook::Command {
+                    command: "__openclaudia_missing_post_hook_binary__".to_string(),
+                    shell: false,
+                    timeout: 1,
+                }],
+            }],
+            ..Default::default()
+        };
+        let engine = HookEngine::new(config);
+        let input = HookInput::new(HookEvent::PostToolUse).with_tool("bash", serde_json::json!({}));
+
+        let result = engine.run(HookEvent::PostToolUse, &input).await;
+
+        assert!(
+            result.allowed,
+            "observe-intent hook execution errors must still fail open"
+        );
+        assert!(
+            !result.errors.is_empty(),
+            "observe-intent errors should still be recorded"
+        );
     }
 
     /// Crosslink #758: a `PreToolUse` (deny-intent) hook whose matcher regex
