@@ -37,7 +37,7 @@ proxy:
   target: anthropic
 
 providers:
-  # Anthropic - Models: claude-fable-5, claude-opus-4-8, claude-sonnet-4-6
+  # Anthropic - Models: claude-fable-5, claude-opus-4-8, claude-opus-4-7, claude-sonnet-4-6
   anthropic:
     base_url: https://api.anthropic.com
     # api_key: ${ANTHROPIC_API_KEY}  # Set via environment variable
