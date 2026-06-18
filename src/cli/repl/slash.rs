@@ -1180,6 +1180,11 @@ pub fn slash_plugin(args: &str) -> SlashCommandResult {
                     plugin: None,
                     marketplace: None,
                 }
+            } else if looks_like_git_plugin_source(sub_args) {
+                PluginAction::Install {
+                    plugin: Some(sub_args.to_string()),
+                    marketplace: None,
+                }
             } else if sub_args.contains('@') {
                 let parts: Vec<&str> = sub_args.splitn(2, '@').collect();
                 PluginAction::Install {
@@ -2304,7 +2309,8 @@ fn plugin_action_help() {
     println!("  Installation:");
     println!("    /plugin install              - Browse and install plugins");
     println!("    /plugin install <plugin>      - Install specific plugin");
-    println!("    /plugin install <p>@<market>  - Install from marketplace\n");
+    println!("    /plugin install <p>@<market>  - Install from marketplace");
+    println!("    /plugin install <git-url>#<ref> - Install pinned git plugin\n");
     println!("  Management:");
     println!("    /plugin                      - List installed plugins");
     println!("    /plugin manage               - Manage installed plugins");
@@ -2466,95 +2472,122 @@ fn plugin_install(
     plugin_manager: &mut plugins::PluginManager,
 ) {
     match (plugin, marketplace) {
-        (Some(p), Some(m)) => {
-            println!("\nInstalling plugin '{p}' from marketplace '{m}'...");
-            match plugin_manager.install_from_marketplace(p, m) {
-                Ok(id) => println!("Installed '{id}'. Restart to apply changes.\n"),
-                Err(e) => eprintln!("Failed to install: {e}\n"),
-            }
-        }
-        (Some(p), None) => {
-            println!("\nInstalling plugin '{p}'...");
-            let path = std::path::Path::new(p);
-            if path.exists() && path.is_dir() {
-                match plugins::Plugin::load(path) {
-                    Ok(loaded) => {
-                        let name = loaded.name().to_string();
-                        let dest = match plugin_install_dir_for_name(&name) {
-                            Ok(path) => path,
-                            Err(e) => {
-                                eprintln!(
-                                    "Failed to install plugin: invalid plugin name '{name}': {e}\n"
-                                );
-                                return;
-                            }
-                        };
-                        if let Err(e) = plugins::copy_dir_recursive(path, &dest) {
-                            eprintln!("Failed to install plugin: {e}\n");
-                            return;
-                        }
-                        let project_root = std::env::current_dir()
-                            .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                        let mut installed = plugins::InstalledPlugins::load(&project_root);
-                        installed.upsert(
-                            &name,
-                            plugins::PluginInstallEntry {
-                                scope: plugins::InstallScope::Project,
-                                project_path: Some(
-                                    std::env::current_dir()
-                                        .unwrap_or_default()
-                                        .to_string_lossy()
-                                        .to_string(),
-                                ),
-                                install_path: dest.to_string_lossy().to_string(),
-                                version: loaded.manifest.version,
-                                installed_at: Some(chrono::Utc::now().to_rfc3339()),
-                                last_updated: None,
-                                git_commit_sha: None,
-                            },
-                        );
-                        if let Err(e) = installed.save(&project_root) {
-                            tracing::warn!("Failed to save install tracking: {}", e);
-                        }
-                        let _ = plugin_manager.reload();
-                        println!("Installed plugin '{name}'. Restart to apply changes.\n");
-                    }
-                    Err(e) => eprintln!("Failed to load plugin from path: {e}\n"),
+        (Some(p), Some(m)) => plugin_install_from_marketplace(p, m, plugin_manager),
+        (Some(p), None) => plugin_install_from_source(p, plugin_manager),
+        (None, _) => print_available_plugin_installs(plugin_manager),
+    }
+}
+
+fn plugin_install_from_marketplace(
+    plugin: &str,
+    marketplace: &str,
+    plugin_manager: &mut plugins::PluginManager,
+) {
+    println!("\nInstalling plugin '{plugin}' from marketplace '{marketplace}'...");
+    let policy = repl_plugin_policy();
+    match plugin_manager.install_from_marketplace_with_policy(plugin, marketplace, &policy) {
+        Ok(id) => println!("Installed '{id}'. Restart to apply changes.\n"),
+        Err(e) => eprintln!("Failed to install: {e}\n"),
+    }
+}
+
+fn plugin_install_from_source(plugin: &str, plugin_manager: &mut plugins::PluginManager) {
+    println!("\nInstalling plugin '{plugin}'...");
+    let path = std::path::Path::new(plugin);
+    if path.exists() && path.is_dir() {
+        install_local_plugin_path(path, plugin_manager);
+    } else if looks_like_git_plugin_source(plugin) {
+        install_git_plugin_source(plugin, plugin_manager);
+    } else {
+        eprintln!("\nPlugin '{plugin}' not found as a local path.");
+        println!(
+            "Try: /plugin install <git-url>#<ref> or /plugin install <plugin>@<marketplace>\n"
+        );
+    }
+}
+
+fn install_local_plugin_path(path: &std::path::Path, plugin_manager: &mut plugins::PluginManager) {
+    match plugins::Plugin::load(path) {
+        Ok(loaded) => {
+            let name = loaded.name().to_string();
+            let dest = match plugin_install_dir_for_name(&name) {
+                Ok(path) => path,
+                Err(e) => {
+                    eprintln!("Failed to install plugin: invalid plugin name '{name}': {e}\n");
+                    return;
                 }
-            } else if p.contains('/')
-                || std::path::Path::new(p)
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("git"))
-                || p.starts_with("http")
-            {
-                println!("\nCloning plugin from '{p}'...");
-                match plugin_manager.install_from_git(p, None) {
-                    Ok(name) => println!("Installed plugin '{name}'. Restart to apply changes.\n"),
-                    Err(e) => eprintln!("Failed to install: {e}\n"),
-                }
-            } else {
-                eprintln!("\nPlugin '{p}' not found as a local path.");
-                println!(
-                    "Try: /plugin install <git-url> or /plugin install <plugin>@<marketplace>\n"
-                );
+            };
+            if let Err(e) = plugins::copy_dir_recursive(path, &dest) {
+                eprintln!("Failed to install plugin: {e}\n");
+                return;
             }
+            record_local_plugin_install(&name, &dest, loaded.manifest.version);
+            let _ = plugin_manager.reload();
+            println!("Installed plugin '{name}'. Restart to apply changes.\n");
         }
-        (None, _) => {
-            let available = plugin_manager.list_available_plugins();
-            if available.is_empty() {
-                println!("\nNo marketplaces configured.");
-                println!("Add a marketplace: /plugin marketplace add <path-or-url>");
-                println!("Install from local directory: /plugin install /path/to/plugin");
-                println!("Install from git: /plugin install <git-url>\n");
-            } else {
-                println!("\n=== Available Plugins ===\n");
-                for (mkt, plug) in &available {
-                    let desc = plug.description.as_deref().unwrap_or("No description");
-                    println!("  {}@{} - {}", plug.name, mkt, desc);
-                }
-                println!("\nInstall: /plugin install <plugin-name>@<marketplace>\n");
-            }
+        Err(e) => eprintln!("Failed to load plugin from path: {e}\n"),
+    }
+}
+
+fn record_local_plugin_install(name: &str, dest: &std::path::Path, version: Option<String>) {
+    let project_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let mut installed = plugins::InstalledPlugins::load(&project_root);
+    installed.upsert(
+        name,
+        plugins::PluginInstallEntry {
+            scope: plugins::InstallScope::Project,
+            project_path: Some(
+                std::env::current_dir()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            install_path: dest.to_string_lossy().to_string(),
+            version,
+            installed_at: Some(chrono::Utc::now().to_rfc3339()),
+            last_updated: None,
+            git_commit_sha: None,
+        },
+    );
+    if let Err(e) = installed.save(&project_root) {
+        tracing::warn!("Failed to save install tracking: {}", e);
+    }
+}
+
+fn install_git_plugin_source(source: &str, plugin_manager: &mut plugins::PluginManager) {
+    let spec = match parse_pinned_git_source(source) {
+        Ok(spec) => spec,
+        Err(e) => {
+            eprintln!("\nCannot install git plugin: {e}");
+            println!("Use: /plugin install <git-url>#<tag-or-commit>\n");
+            return;
         }
+    };
+    println!(
+        "\nCloning plugin from '{}' at ref '{}'...",
+        spec.url, spec.git_ref
+    );
+    let policy = repl_plugin_policy();
+    match plugin_manager.install_from_git_with_policy(spec.url, Some(spec.git_ref), &policy) {
+        Ok(name) => println!("Installed plugin '{name}'. Restart to apply changes.\n"),
+        Err(e) => eprintln!("Failed to install: {e}\n"),
+    }
+}
+
+fn print_available_plugin_installs(plugin_manager: &plugins::PluginManager) {
+    let available = plugin_manager.list_available_plugins();
+    if available.is_empty() {
+        println!("\nNo marketplaces configured.");
+        println!("Add a marketplace: /plugin marketplace add <path-or-url>");
+        println!("Install from local directory: /plugin install /path/to/plugin");
+        println!("Install from git: /plugin install <git-url>#<ref>\n");
+    } else {
+        println!("\n=== Available Plugins ===\n");
+        for (mkt, plug) in &available {
+            let desc = plug.description.as_deref().unwrap_or("No description");
+            println!("  {}@{} - {}", plug.name, mkt, desc);
+        }
+        println!("\nInstall: /plugin install <plugin-name>@<marketplace>\n");
     }
 }
 
@@ -2625,111 +2658,208 @@ fn plugin_install_dir_for_name(plugin: &str) -> Result<std::path::PathBuf, plugi
     Ok(std::path::PathBuf::from(".openclaudia/plugins").join(plugin))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PinnedGitSource<'a> {
+    url: &'a str,
+    git_ref: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PinnedGitSourceError {
+    MissingRef,
+    EmptyUrl,
+    EmptyRef,
+}
+
+impl std::fmt::Display for PinnedGitSourceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingRef => write!(
+                f,
+                "git installs must include an explicit ref, for example <url>#v1.2.3"
+            ),
+            Self::EmptyUrl => write!(f, "git install URL is empty"),
+            Self::EmptyRef => write!(f, "git install ref is empty"),
+        }
+    }
+}
+
+fn parse_pinned_git_source(raw: &str) -> Result<PinnedGitSource<'_>, PinnedGitSourceError> {
+    let Some((url, git_ref)) = raw.rsplit_once('#') else {
+        return Err(PinnedGitSourceError::MissingRef);
+    };
+    let url = url.trim();
+    let git_ref = git_ref.trim();
+    if url.is_empty() {
+        return Err(PinnedGitSourceError::EmptyUrl);
+    }
+    if git_ref.is_empty() {
+        return Err(PinnedGitSourceError::EmptyRef);
+    }
+    Ok(PinnedGitSource { url, git_ref })
+}
+
+fn looks_like_git_plugin_source(candidate: &str) -> bool {
+    candidate.starts_with("http://")
+        || candidate.starts_with("https://")
+        || candidate.starts_with("ssh://")
+        || candidate.starts_with("git@")
+        || candidate.contains('/')
+        || std::path::Path::new(candidate)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("git"))
+}
+
+fn repl_plugin_policy() -> plugins::policy::PluginPolicy {
+    plugins::policy::PluginPolicy::default()
+}
+
 fn plugin_marketplace(
     action: Option<&str>,
     target: Option<&str>,
     plugin_manager: &plugins::PluginManager,
 ) {
     match action {
-        Some("add") => {
-            if let Some(t) = target {
-                let path = std::path::Path::new(t);
-                if path.exists() && path.is_dir() {
-                    match plugin_manager.add_marketplace_from_directory(path) {
-                        Ok(manifest) => println!(
-                            "\nAdded marketplace '{}' ({} plugins).\n",
-                            manifest.name,
-                            manifest.plugins.len()
-                        ),
-                        Err(e) => eprintln!("\nFailed to add marketplace: {e}\n"),
-                    }
-                } else if t.contains('/')
-                    || std::path::Path::new(t)
-                        .extension()
-                        .is_some_and(|ext| ext.eq_ignore_ascii_case("git"))
-                    || t.starts_with("http")
-                {
-                    println!("\nCloning marketplace from '{t}'...");
-                    match plugin_manager.add_marketplace_from_git(t, None) {
-                        Ok(manifest) => println!(
-                            "Added marketplace '{}' ({} plugins).\n",
-                            manifest.name,
-                            manifest.plugins.len()
-                        ),
-                        Err(e) => eprintln!("Failed to add marketplace: {e}\n"),
-                    }
-                } else {
-                    eprintln!("\nCould not resolve '{t}' as a path or URL.\n");
-                }
-            } else {
-                println!("\nUsage: /plugin marketplace add <path-or-url>\n");
-            }
+        Some("add") => plugin_marketplace_add(target, plugin_manager),
+        Some("remove" | "rm") => plugin_marketplace_remove(target, plugin_manager),
+        Some("update") => plugin_marketplace_update(target, plugin_manager),
+        Some("list") => plugin_marketplace_list(plugin_manager),
+        _ => plugin_marketplace_help(),
+    }
+}
+
+fn plugin_marketplace_add(target: Option<&str>, plugin_manager: &plugins::PluginManager) {
+    let Some(target) = target else {
+        println!("\nUsage: /plugin marketplace add <path-or-git-url>#<ref>\n");
+        return;
+    };
+
+    let path = std::path::Path::new(target);
+    if path.exists() && path.is_dir() {
+        add_marketplace_from_local_dir(path, plugin_manager);
+    } else if looks_like_git_plugin_source(target) {
+        add_marketplace_from_git_source(target, plugin_manager);
+    } else {
+        eprintln!("\nCould not resolve '{target}' as a path or URL.\n");
+    }
+}
+
+fn add_marketplace_from_local_dir(path: &std::path::Path, plugin_manager: &plugins::PluginManager) {
+    let policy = repl_plugin_policy();
+    match plugin_manager.add_marketplace_from_directory_with_policy(path, &policy) {
+        Ok(manifest) => println!(
+            "\nAdded marketplace '{}' ({} plugins).\n",
+            manifest.name,
+            manifest.plugins.len()
+        ),
+        Err(e) => eprintln!("\nFailed to add marketplace: {e}\n"),
+    }
+}
+
+fn add_marketplace_from_git_source(source: &str, plugin_manager: &plugins::PluginManager) {
+    let spec = match parse_pinned_git_source(source) {
+        Ok(spec) => spec,
+        Err(e) => {
+            eprintln!("\nCannot add git marketplace: {e}");
+            println!("Use: /plugin marketplace add <git-url>#<tag-or-commit>\n");
+            return;
         }
-        Some("remove" | "rm") => {
-            if let Some(t) = target {
-                match plugin_manager.remove_marketplace(t) {
-                    Ok(()) => println!("\nRemoved marketplace '{t}'.\n"),
-                    Err(e) => eprintln!("\nFailed to remove marketplace: {e}\n"),
-                }
-            } else {
-                println!("\nUsage: /plugin marketplace remove <name>\n");
-            }
+    };
+    println!(
+        "\nCloning marketplace from '{}' at ref '{}'...",
+        spec.url, spec.git_ref
+    );
+    let policy = repl_plugin_policy();
+    match plugin_manager.add_marketplace_from_git_with_policy(spec.url, Some(spec.git_ref), &policy)
+    {
+        Ok(manifest) => println!(
+            "Added marketplace '{}' ({} plugins).\n",
+            manifest.name,
+            manifest.plugins.len()
+        ),
+        Err(e) => eprintln!("Failed to add marketplace: {e}\n"),
+    }
+}
+
+fn plugin_marketplace_remove(target: Option<&str>, plugin_manager: &plugins::PluginManager) {
+    if let Some(target) = target {
+        match plugin_manager.remove_marketplace(target) {
+            Ok(()) => println!("\nRemoved marketplace '{target}'.\n"),
+            Err(e) => eprintln!("\nFailed to remove marketplace: {e}\n"),
         }
-        Some("update") => {
-            let marketplaces = plugin_manager.list_marketplaces();
-            if marketplaces.is_empty() {
-                println!("\nNo marketplaces installed.\n");
-            } else if let Some(t) = target {
-                match plugin_manager.update_marketplace(t) {
-                    Ok(manifest) => println!(
-                        "\nUpdated marketplace '{}' ({} plugins).\n",
-                        manifest.name,
-                        manifest.plugins.len()
-                    ),
-                    Err(e) => eprintln!("\nFailed to update '{t}': {e}\n"),
-                }
-            } else {
-                println!("\nUpdating {} marketplace(s)...", marketplaces.len());
-                for (name, _) in &marketplaces {
-                    match plugin_manager.update_marketplace(name) {
-                        Ok(m) => println!("  {} - updated ({} plugins)", name, m.plugins.len()),
-                        Err(e) => eprintln!("  {name} - failed: {e}"),
-                    }
-                }
-                println!();
-            }
+    } else {
+        println!("\nUsage: /plugin marketplace remove <name>\n");
+    }
+}
+
+fn plugin_marketplace_update(target: Option<&str>, plugin_manager: &plugins::PluginManager) {
+    let marketplaces = plugin_manager.list_marketplaces();
+    if marketplaces.is_empty() {
+        println!("\nNo marketplaces installed.\n");
+    } else if let Some(target) = target {
+        update_named_marketplace(target, plugin_manager);
+    } else {
+        println!("\nUpdating {} marketplace(s)...", marketplaces.len());
+        for (name, _) in &marketplaces {
+            update_marketplace_row(name, plugin_manager);
         }
-        Some("list") => {
-            let marketplaces = plugin_manager.list_marketplaces();
-            if marketplaces.is_empty() {
-                println!("\nNo marketplaces installed.");
-                println!("Use /plugin marketplace add <path-or-url> to add one.\n");
-            } else {
-                println!(
-                    "\n=== Installed Marketplaces ({}) ===\n",
-                    marketplaces.len()
-                );
-                for (name, manifest) in &marketplaces {
-                    println!("  {} ({} plugins)", name, manifest.plugins.len());
-                    for plugin in &manifest.plugins {
-                        println!(
-                            "    - {} - {}",
-                            plugin.name,
-                            plugin.description.as_deref().unwrap_or("No description")
-                        );
-                    }
-                }
-                println!("\nInstall: /plugin install <plugin>@<marketplace>\n");
-            }
-        }
-        _ => {
-            println!("\nMarketplace Commands:");
-            println!("  /plugin marketplace add <path/url> - Add a marketplace");
-            println!("  /plugin marketplace remove <name>  - Remove a marketplace");
-            println!("  /plugin marketplace update         - Update all marketplaces");
-            println!("  /plugin marketplace list           - List marketplaces\n");
+        println!();
+    }
+}
+
+fn update_named_marketplace(name: &str, plugin_manager: &plugins::PluginManager) {
+    match plugin_manager.update_marketplace(name) {
+        Ok(manifest) => println!(
+            "\nUpdated marketplace '{}' ({} plugins).\n",
+            manifest.name,
+            manifest.plugins.len()
+        ),
+        Err(e) => eprintln!("\nFailed to update '{name}': {e}\n"),
+    }
+}
+
+fn update_marketplace_row(name: &str, plugin_manager: &plugins::PluginManager) {
+    match plugin_manager.update_marketplace(name) {
+        Ok(manifest) => println!(
+            "  {} - updated ({} plugins)",
+            manifest.name,
+            manifest.plugins.len()
+        ),
+        Err(e) => eprintln!("  {name} - failed: {e}"),
+    }
+}
+
+fn plugin_marketplace_list(plugin_manager: &plugins::PluginManager) {
+    let marketplaces = plugin_manager.list_marketplaces();
+    if marketplaces.is_empty() {
+        println!("\nNo marketplaces installed.");
+        println!("Use /plugin marketplace add <path-or-git-url>#<ref> to add one.\n");
+        return;
+    }
+
+    println!(
+        "\n=== Installed Marketplaces ({}) ===\n",
+        marketplaces.len()
+    );
+    for (name, manifest) in &marketplaces {
+        println!("  {} ({} plugins)", name, manifest.plugins.len());
+        for plugin in &manifest.plugins {
+            println!(
+                "    - {} - {}",
+                plugin.name,
+                plugin.description.as_deref().unwrap_or("No description")
+            );
         }
     }
+    println!("\nInstall: /plugin install <plugin>@<marketplace>\n");
+}
+
+fn plugin_marketplace_help() {
+    println!("\nMarketplace Commands:");
+    println!("  /plugin marketplace add <path/git-url>#<ref> - Add a marketplace");
+    println!("  /plugin marketplace remove <name>  - Remove a marketplace");
+    println!("  /plugin marketplace update         - Update all marketplaces");
+    println!("  /plugin marketplace list           - List marketplaces\n");
 }
 
 fn plugin_run_command(
@@ -2941,9 +3071,10 @@ fn parse_axis_overrides(parts: &[&str]) -> SlashCommandResult {
 #[cfg(test)]
 mod tests {
     use super::{
-        gh_bin, git_bin, handle_slash_command, hook_status_lines, permission_status_lines,
-        plugin_install_dir_for_name, project_mcp_server_count_from_str, render_agents_listing,
-        render_plugin_command_prompt, PluginAction, SlashCommandResult,
+        gh_bin, git_bin, handle_slash_command, hook_status_lines, parse_pinned_git_source,
+        permission_status_lines, plugin_install_dir_for_name, project_mcp_server_count_from_str,
+        render_agents_listing, render_plugin_command_prompt, slash_plugin, PinnedGitSource,
+        PinnedGitSourceError, PluginAction, SlashCommandResult,
     };
     use openclaudia::config::{Hook, HookEntry, HookPolicy, HooksConfig, PermissionsConfig};
     use openclaudia::permissions::{PermissionDecision, PermissionRule};
@@ -3564,6 +3695,55 @@ mod tests {
             path,
             std::path::PathBuf::from(".openclaudia/plugins/safe-plugin")
         );
+    }
+
+    #[test]
+    fn pinned_git_source_accepts_https_url_with_ref() {
+        assert_eq!(
+            parse_pinned_git_source("https://github.com/acme/demo.git#v1.2.3").unwrap(),
+            PinnedGitSource {
+                url: "https://github.com/acme/demo.git",
+                git_ref: "v1.2.3"
+            }
+        );
+    }
+
+    #[test]
+    fn pinned_git_source_accepts_scp_style_url_with_ref() {
+        assert_eq!(
+            parse_pinned_git_source("git@github.com:acme/demo.git#main").unwrap(),
+            PinnedGitSource {
+                url: "git@github.com:acme/demo.git",
+                git_ref: "main"
+            }
+        );
+    }
+
+    #[test]
+    fn pinned_git_source_rejects_missing_or_empty_ref() {
+        assert_eq!(
+            parse_pinned_git_source("https://github.com/acme/demo.git").unwrap_err(),
+            PinnedGitSourceError::MissingRef
+        );
+        assert_eq!(
+            parse_pinned_git_source("https://github.com/acme/demo.git#").unwrap_err(),
+            PinnedGitSourceError::EmptyRef
+        );
+    }
+
+    #[test]
+    fn plugin_install_scp_git_url_is_not_parsed_as_marketplace_spec() {
+        let result = slash_plugin("install git@github.com:acme/demo.git#main");
+        match result {
+            SlashCommandResult::Plugin(PluginAction::Install {
+                plugin,
+                marketplace,
+            }) => {
+                assert_eq!(plugin.as_deref(), Some("git@github.com:acme/demo.git#main"));
+                assert_eq!(marketplace, None);
+            }
+            _ => panic!("scp-style git source must remain a direct plugin install"),
+        }
     }
 
     #[test]
