@@ -1849,10 +1849,6 @@ async fn execute_single_tool(
         content: format!("Tool execution panicked: {e}"),
         is_error: true,
     });
-    if let Some(session_id) = session_id {
-        crate::grounded_loop::observe_tool_result_for_session(session_id, tool_name, &result);
-    }
-
     if tx
         .send(AppEvent::ToolDone {
             name: tool_name.clone(),
@@ -2192,6 +2188,7 @@ async fn execute_tool_calls_for_tui(
                 if intercept_user_question(&mut result_json, tx).await.is_err() {
                     break;
                 }
+                observe_tool_result_json(session_id, tool_name, &result_json);
                 results.push(result_json);
             }
         }
@@ -2200,6 +2197,29 @@ async fn execute_tool_calls_for_tui(
     emit_failed_quality_gate_events(tx, session_id);
 
     (results, true)
+}
+
+fn observe_tool_result_json(session_id: Option<&str>, tool_name: &str, result_json: &Value) {
+    let Some(session_id) = session_id else {
+        return;
+    };
+    let result = tools::ToolResult {
+        tool_call_id: result_json
+            .get("tool_call_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        content: result_json
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        is_error: result_json
+            .get("is_error")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    };
+    crate::grounded_loop::observe_tool_result_for_session(session_id, tool_name, &result);
 }
 
 /// Bridge the sync `ask_user_question` tool's `USER_QUESTION_MARKER`
@@ -2589,6 +2609,34 @@ mod tests {
         assert_eq!(result["is_error"], false);
         assert_eq!(result["truncated"], false);
         assert!(result["content"].as_str().is_some_and(|s| !s.is_empty()));
+    }
+
+    #[test]
+    fn observe_tool_result_json_records_model_visible_content() {
+        let session_id = "tooljsonledger";
+        let ledger = Arc::new(Mutex::new(crate::ledger::RealityLedger::new()));
+        let _ledger_guard =
+            crate::ledger::install_active_ledger_for_session(session_id, Arc::clone(&ledger));
+        let result_json = serde_json::json!({
+            "tool_call_id": "call_question",
+            "content": "{\"answer\":\"use the SSD\"}",
+            "is_error": false
+        });
+
+        observe_tool_result_json(Some(session_id), "ask_user_question", &result_json);
+
+        let ledger = ledger.lock().expect("ledger lock");
+        let observation = ledger
+            .observations_chronological()
+            .into_iter()
+            .find(|obs| matches!(obs.kind, crate::ledger::ObservationKind::ToolResult { .. }))
+            .expect("tool result observation");
+        let crate::ledger::ObservationKind::ToolResult { tool, result } = &observation.kind else {
+            panic!("expected tool result observation");
+        };
+        assert_eq!(tool, "ask_user_question");
+        assert_eq!(result["tool_call_id"], "call_question");
+        assert_eq!(result["content"], "{\"answer\":\"use the SSD\"}");
     }
 
     #[test]

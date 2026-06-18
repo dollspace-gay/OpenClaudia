@@ -77,15 +77,22 @@ fn install_cli_active_ledger(
     openclaudia::grounded_loop::install_active_project_ledger_for_session(session_id)
 }
 
-fn observe_cli_tool_result(
+fn observe_cli_model_visible_tool_result(
     session_id: &str,
     tool_call: &tools::ToolCall,
-    result: &tools::ToolResult,
+    tool_call_id: &str,
+    content: &str,
+    is_error: bool,
 ) {
+    let result = tools::ToolResult {
+        tool_call_id: tool_call_id.to_string(),
+        content: content.to_string(),
+        is_error,
+    };
     openclaudia::grounded_loop::observe_tool_result_for_session(
         session_id,
         &tool_call.function.name,
-        result,
+        &result,
     );
 }
 
@@ -1854,7 +1861,6 @@ impl ChatRepl {
             &self.permission_mgr,
             permission_already_checked,
         );
-        observe_cli_tool_result(&self.chat_session.id, tool_call, &result);
         Self::auto_learn_observe(auto_learner, tool_call, &result);
         result
     }
@@ -1873,6 +1879,13 @@ impl ChatRepl {
         );
         let final_is_error = if was_marker { false } else { result.is_error };
         display_tool_result(&tool_call.function.name, &final_content, final_is_error);
+        observe_cli_model_visible_tool_result(
+            &self.chat_session.id,
+            tool_call,
+            &result.tool_call_id,
+            &final_content,
+            final_is_error,
+        );
 
         let response_content = if final_is_error {
             serde_json::json!({"error": final_content})
@@ -2526,6 +2539,13 @@ impl ChatRepl {
             &result.content,
         );
         let final_is_error = if was_marker { false } else { result.is_error };
+        observe_cli_model_visible_tool_result(
+            &self.chat_session.id,
+            tool_call,
+            &result.tool_call_id,
+            &final_content,
+            final_is_error,
+        );
 
         if let Err(e) = self.audit_logger.log_security(
             "tool_result",
@@ -2633,7 +2653,6 @@ impl ChatRepl {
             &self.permission_mgr,
             permission_already_checked,
         );
-        observe_cli_tool_result(&self.chat_session.id, tool_call, &result);
         Self::auto_learn_observe(auto_learner, tool_call, &result);
         result
     }
@@ -3402,6 +3421,13 @@ impl ChatRepl {
         let final_is_error = if was_marker { false } else { result.is_error };
 
         Self::log_openai_activity(memory_db, &self.chat_session.id, tool_call, final_is_error);
+        observe_cli_model_visible_tool_result(
+            &self.chat_session.id,
+            tool_call,
+            &result.tool_call_id,
+            &final_content,
+            final_is_error,
+        );
         display_tool_result(&tool_call.function.name, &final_content, final_is_error);
         self.push_tool_result_message(&result.tool_call_id, &final_content, final_is_error);
     }
@@ -3425,7 +3451,6 @@ impl ChatRepl {
             &self.permission_mgr,
             permission_already_checked,
         );
-        observe_cli_tool_result(&self.chat_session.id, tool_call, &result);
         Self::auto_learn_observe(auto_learner, tool_call, &result);
         result
     }
