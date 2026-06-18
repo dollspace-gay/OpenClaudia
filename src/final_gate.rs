@@ -26,6 +26,14 @@ pub fn validate_final_answer(
 
     let hydrated_evidence =
         authoritative_evidence(evidence, ledger, "final answer requires evidence")?;
+    if !hydrated_evidence
+        .iter()
+        .any(|obs| is_final_evidence_observation(obs))
+    {
+        return Err(Denial::new(
+            "final answer requires non-verification evidence",
+        ));
+    }
 
     if verification.is_empty() {
         return Err(Denial::new(
@@ -154,7 +162,12 @@ pub fn extract_cited_obs_ids(text: &str) -> Vec<ObsId> {
 
 fn summary_mentions_tests(summary: &str) -> bool {
     let lower = summary.to_ascii_lowercase();
-    lower.contains("test") || lower.contains("cargo check") || lower.contains("verified")
+    lower.contains("cargo check")
+        || lower.contains("cargo test")
+        || lower.contains("cargo nextest")
+        || lower
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|token| matches!(token, "test" | "tests" | "tested" | "testing"))
 }
 
 fn summary_claims_verification_success(summary: &str) -> bool {
@@ -195,6 +208,17 @@ fn command_observation_exit_code(observation: &crate::ledger::Observation) -> Op
         return None;
     };
     Some(*exit_code)
+}
+
+fn is_final_evidence_observation(observation: &crate::ledger::Observation) -> bool {
+    matches!(
+        observation.kind,
+        ObservationKind::UserTask { .. }
+            | ObservationKind::FileRead { .. }
+            | ObservationKind::CommandRun { .. }
+            | ObservationKind::DiffObserved { .. }
+            | ObservationKind::ToolResult { .. }
+    )
 }
 
 fn command_observation_is_passing_test_command(observation: &crate::ledger::Observation) -> bool {
@@ -378,6 +402,29 @@ mod tests {
         let report = validate_cited_final_answer(&summary, &ledger).expect("valid final");
         assert_eq!(report.evidence, vec![command, verification]);
         assert_eq!(report.verification, vec![verification]);
+    }
+
+    #[test]
+    fn cited_final_rejects_verifier_only_evidence() {
+        let mut ledger = RealityLedger::new();
+        let verification = ledger
+            .append(
+                Authority::Verifier,
+                ObservationKind::Verification {
+                    passed: false,
+                    command: Some("cargo check".to_string()),
+                    findings: vec!["cargo check failed".to_string()],
+                },
+            )
+            .expect("verification");
+        let summary = format!("No changes were completed [{verification}].");
+
+        let denial = validate_cited_final_answer(&summary, &ledger).expect_err("denied");
+
+        assert_eq!(
+            denial.reason(),
+            "final answer requires non-verification evidence"
+        );
     }
 
     #[test]
@@ -678,6 +725,33 @@ mod tests {
         );
 
         validate_cited_final_answer(&summary, &ledger).expect("fresh diff grounds file claim");
+    }
+
+    #[test]
+    fn final_latest_file_claim_does_not_count_as_test_claim() {
+        let mut ledger = RealityLedger::new();
+        let diff = ledger
+            .observe_diff(
+                vec!["src/providers/mod.rs".to_string()],
+                "diff --git a/src/providers/mod.rs b/src/providers/mod.rs",
+            )
+            .expect("diff");
+        let verification = ledger
+            .append(
+                Authority::Verifier,
+                ObservationKind::Verification {
+                    passed: false,
+                    command: None,
+                    findings: vec!["tests were not run".to_string()],
+                },
+            )
+            .expect("verification");
+        let summary = format!(
+            "Updated the latest model list in src/providers/mod.rs [{diff}] [{verification}]."
+        );
+
+        validate_cited_final_answer(&summary, &ledger)
+            .expect("latest must not be parsed as a test claim");
     }
 
     #[test]
