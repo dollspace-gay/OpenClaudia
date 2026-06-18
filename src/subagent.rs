@@ -1130,6 +1130,10 @@ pub async fn run_subagent(
         ];
         (id, msgs)
     };
+    let task_obs = crate::grounded_loop::observe_session_user_task(
+        &agent_id,
+        &format!("Subagent task: {}\n\n{}", config.task, config.prompt),
+    );
 
     // Set up worktree isolation if requested
     let worktree = if config.isolation.as_deref() == Some("worktree") {
@@ -1212,6 +1216,7 @@ pub async fn run_subagent(
     // Run the agent loop
     let mut final_output = String::new();
     let mut turns: u64;
+    let mut used_tools = false;
 
     // Library-layer permission gate — consulted by every
     // `execute_tool_with_memory` call inside this subagent's tool loop.
@@ -1242,10 +1247,14 @@ pub async fn run_subagent(
             };
         }
 
-        // Build the request
+        // Build the request. The grounding packet is request-scoped:
+        // it helps the provider navigate the current ledger, but it is
+        // not persisted into the resumable transcript.
+        let request_messages =
+            crate::grounded_loop::request_messages_with_grounding(&agent_id, task_obs, &messages);
         let request_body = json!({
             "model": model,
-            "messages": messages,
+            "messages": request_messages,
             "tools": filtered_tools,
             "max_tokens": SUBAGENT_MAX_TOKENS
         });
@@ -1323,9 +1332,26 @@ pub async fn run_subagent(
             .unwrap_or_default();
 
         if tool_calls.is_empty() {
+            if used_tools {
+                if let Err(reason) =
+                    crate::grounded_loop::validate_agentic_final_response(&agent_id, &final_output)
+                {
+                    BACKGROUND_AGENTS.fail(&agent_id, reason.clone());
+                    store_transcript(&agent_id, messages, config.agent_type);
+                    return SubagentResult {
+                        agent_id,
+                        success: false,
+                        output: format!("Final answer failed grounding gate: {reason}"),
+                        turns_used: turns,
+                        is_background: config.run_in_background,
+                        worktree: worktree.clone(),
+                    };
+                }
+            }
             // No tool calls means agent is done
             break;
         }
+        used_tools = true;
 
         // Add assistant message to history
         messages.push(assistant_message.clone());
@@ -1369,6 +1395,21 @@ pub async fn run_subagent(
             // `agentId ?? sessionId` fallback; here agent_id is always
             // present. Closes crosslink #518 for subagents.
             let _session_guard = crate::tools::SessionIdGuard::set(&agent_id);
+            let _ledger_guard = match crate::ledger::RealityLedger::open_project_session(&agent_id)
+            {
+                Ok(ledger) => Some(crate::ledger::install_active_ledger_for_session(
+                    agent_id.clone(),
+                    Arc::new(Mutex::new(ledger)),
+                )),
+                Err(err) => {
+                    tracing::warn!(
+                        agent_id,
+                        error = %err,
+                        "failed to open session reality ledger for subagent tool"
+                    );
+                    None
+                }
+            };
             let result = crate::tools::execute_tool_with_memory(&tc, None, Some(&permission_mgr));
 
             messages.push(json!({
