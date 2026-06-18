@@ -2,7 +2,7 @@
 //! exact per-model constants pinned (current Claude long-context
 //! models at 1M, older Claude family at 200k, GPT-5.5/5.4 at
 //! 1M/1.05M, GPT-4o at 128k, GPT-4.1 at 1M, GPT-5 at 400k,
-//! Gemini Pro at 1M),
+//! Gemini Pro at 1M, DeepSeek V4 at 1M),
 //! the substring-precedence rule (gpt-4o matches
 //! BEFORE generic gpt-4), the unknown-model fallback, and
 //! case-insensitivity.
@@ -134,7 +134,23 @@ fn gemini_pro_returns_1m_tokens() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section D — Unknown model fallback
+// Section D — DeepSeek
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn current_deepseek_v4_models_and_aliases_return_1m() {
+    for model in [
+        "deepseek-v4-pro",
+        "deepseek-v4-flash",
+        "deepseek-chat",
+        "deepseek-reasoner",
+    ] {
+        assert_eq!(get_context_window(model), 1_000_000, "{model}");
+    }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section E — Unknown model fallback
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -152,7 +168,6 @@ fn empty_string_returns_default() {
 fn arbitrary_provider_name_returns_default() {
     assert_eq!(get_context_window("llama-3.1"), 128_000);
     assert_eq!(get_context_window("mistral-large"), 128_000);
-    assert_eq!(get_context_window("deepseek-chat"), 128_000);
 }
 
 #[test]
@@ -164,7 +179,7 @@ fn random_bytes_in_name_return_default_no_panic() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section E — Case insensitivity
+// Section F — Case insensitivity
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -186,8 +201,14 @@ fn lookup_is_case_insensitive_for_gemini() {
     assert_eq!(get_context_window("GEMINI-2.5-PRO"), 1_000_000);
 }
 
+#[test]
+fn lookup_is_case_insensitive_for_deepseek() {
+    assert_eq!(get_context_window("DEEPSEEK-V4-PRO"), 1_000_000);
+    assert_eq!(get_context_window("DeepSeek-Reasoner"), 1_000_000);
+}
+
 // ───────────────────────────────────────────────────────────────────────────
-// Section F — Substring match (PINS NOT-PREFIX, contains-anywhere)
+// Section G — Substring match (PINS NOT-PREFIX, contains-anywhere)
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -214,7 +235,7 @@ fn earlier_needle_in_table_wins_over_later_within_same_model_string() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section G — Return value always positive + sensible
+// Section H — Return value always positive + sensible
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]

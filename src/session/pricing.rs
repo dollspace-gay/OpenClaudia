@@ -198,6 +198,26 @@ impl ModelPricing {
         }
     }
 
+    /// Non-Anthropic pricing with explicit cache rates. Use this for
+    /// providers that publish cache-hit prices as a fraction of their
+    /// cache-miss input price.
+    const fn other_with_cache(
+        input_per_million: f64,
+        output_per_million: f64,
+        cache_read_multiplier: f64,
+        cache_write_multiplier: f64,
+    ) -> Self {
+        Self {
+            input_per_million,
+            output_per_million,
+            cache_read_multiplier,
+            cache_write_5m_multiplier: cache_write_multiplier,
+            cache_write_1hr_multiplier: cache_write_multiplier,
+            fast_mode_input_per_million: None,
+            fast_mode_output_per_million: None,
+        }
+    }
+
     /// Select the cache-write multiplier for the requested TTL.
     #[must_use]
     pub const fn cache_write_multiplier(&self, ttl: CacheWriteTtl) -> f64 {
@@ -379,8 +399,24 @@ pub static PRICING_TABLE: &[(&str, ModelPricing)] = &[
     // ---------------------------------------------------------------------
     // DeepSeek
     // ---------------------------------------------------------------------
-    ("deepseek-chat", ModelPricing::other(0.27, 1.10)),
-    ("deepseek-reasoner", ModelPricing::other(0.55, 2.19)),
+    (
+        "deepseek-v4-flash",
+        ModelPricing::other_with_cache(0.14, 0.28, 0.02, 1.0),
+    ),
+    (
+        "deepseek-v4-pro",
+        ModelPricing::other_with_cache(0.435, 0.87, 1.0 / 120.0, 1.0),
+    ),
+    // Compatibility aliases route to DeepSeek V4 Flash until their
+    // announced 2026-07-24 retirement.
+    (
+        "deepseek-chat",
+        ModelPricing::other_with_cache(0.14, 0.28, 0.02, 1.0),
+    ),
+    (
+        "deepseek-reasoner",
+        ModelPricing::other_with_cache(0.14, 0.28, 0.02, 1.0),
+    ),
     ("deepseek-r1", ModelPricing::other(0.55, 2.19)),
     // ---------------------------------------------------------------------
     // Qwen / QwQ
@@ -910,6 +946,9 @@ mod tests {
             // Google provider
             "gemini-2.5-pro",
             // DeepSeek
+            "deepseek-v4-pro",
+            "deepseek-v4-flash",
+            "deepseek-chat",
             "deepseek-r1",
             "deepseek-reasoner",
             // Qwen / QwQ
@@ -942,7 +981,10 @@ mod tests {
         assert!(get_pricing("gpt-4o").is_some());
         assert!(get_pricing("gpt-4o-mini").is_some());
         assert!(get_pricing("gemini-2.0-flash").is_some());
+        assert!(get_pricing("deepseek-v4-pro").is_some());
+        assert!(get_pricing("deepseek-v4-flash").is_some());
         assert!(get_pricing("deepseek-chat").is_some());
+        assert!(get_pricing("deepseek-reasoner").is_some());
     }
 
     /// Haiku pricing — 1 M input + 0.1 M output ≈ $0.375.
@@ -1013,6 +1055,18 @@ mod tests {
         let p = get_pricing("o1-mini").expect("o1-mini must be known");
         assert!((p.input_per_million - 1.10).abs() < f64::EPSILON);
         assert!((p.output_per_million - 4.40).abs() < f64::EPSILON);
+
+        let p = get_pricing("deepseek-v4-pro").expect("deepseek-v4-pro must be known");
+        assert!((p.input_per_million - 0.435).abs() < f64::EPSILON);
+        assert!((p.output_per_million - 0.87).abs() < f64::EPSILON);
+
+        let p = get_pricing("deepseek-v4-flash").expect("deepseek-v4-flash must be known");
+        assert!((p.input_per_million - 0.14).abs() < f64::EPSILON);
+        assert!((p.output_per_million - 0.28).abs() < f64::EPSILON);
+
+        let p = get_pricing("deepseek-chat").expect("deepseek-chat must be known");
+        assert!((p.input_per_million - 0.14).abs() < f64::EPSILON);
+        assert!((p.output_per_million - 0.28).abs() < f64::EPSILON);
     }
 
     /// Case-insensitive lookup on the input.

@@ -152,6 +152,37 @@ fn get_pricing_for_current_openai_o_series_returns_documented_rates() {
 }
 
 #[test]
+fn get_pricing_for_current_deepseek_v4_models_returns_documented_rates() {
+    let flash = get_pricing("deepseek-v4-flash").expect("deepseek-v4-flash");
+    assert_eq!(flash.input_per_million, 0.14);
+    assert_eq!(flash.output_per_million, 0.28);
+    assert!((flash.cache_read_multiplier - 0.02).abs() < 1e-12);
+    assert_eq!(
+        flash.cache_write_multiplier(CacheWriteTtl::FiveMinutes),
+        1.0
+    );
+    assert_eq!(flash.cache_write_multiplier(CacheWriteTtl::OneHour), 1.0);
+
+    let pro = get_pricing("deepseek-v4-pro").expect("deepseek-v4-pro");
+    assert_eq!(pro.input_per_million, 0.435);
+    assert_eq!(pro.output_per_million, 0.87);
+    assert!((pro.cache_read_multiplier - (1.0 / 120.0)).abs() < 1e-12);
+    assert_eq!(pro.cache_write_multiplier(CacheWriteTtl::FiveMinutes), 1.0);
+    assert_eq!(pro.cache_write_multiplier(CacheWriteTtl::OneHour), 1.0);
+
+    for alias in ["deepseek-chat", "deepseek-reasoner"] {
+        let pricing = get_pricing(alias).expect(alias);
+        assert_eq!(pricing.input_per_million, flash.input_per_million);
+        assert_eq!(pricing.output_per_million, flash.output_per_million);
+        assert_eq!(pricing.cache_read_multiplier, flash.cache_read_multiplier);
+        assert_eq!(
+            pricing.cache_write_multiplier(CacheWriteTtl::FiveMinutes),
+            flash.cache_write_multiplier(CacheWriteTtl::FiveMinutes)
+        );
+    }
+}
+
+#[test]
 fn get_pricing_for_unknown_model_returns_none() {
     let pricing = get_pricing("totally-unknown-model");
     assert!(pricing.is_none());

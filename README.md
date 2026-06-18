@@ -385,7 +385,7 @@ The lists below are the built-in `/model list` fallback catalog. Model names are
 
 ### DeepSeek
 - `deepseek-v4-pro`, `deepseek-v4-flash` — DeepSeek V4 family
-- `deepseek-chat`, `deepseek-reasoner` — Legacy V3.2 aliases
+- `deepseek-chat`, `deepseek-reasoner` — Compatibility aliases for V4 Flash through 2026-07-24
 
 ### Qwen
 - `qwen3.7-max`, `qwen3.7-max-2026-06-08`, `qwen3.7-max-2026-05-20`, `qwen3.7-max-preview`, `qwen3.6-max-preview`, `qwen3-max`, `qwen3-max-2026-01-23`, `qwen3-max-preview`, `qwen-max` — Qwen Max family

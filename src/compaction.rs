@@ -27,6 +27,7 @@ const GPT4O_CONTEXT: usize = 128_000;
 const GPT41_CONTEXT: usize = 1_000_000;
 const GPT35_CONTEXT: usize = 16_385;
 const GEMINI_PRO_CONTEXT: usize = 1_000_000;
+const DEEPSEEK_V4_CONTEXT: usize = 1_000_000;
 const DEFAULT_CONTEXT: usize = 128_000;
 
 /// Safety margin - trigger compaction before hitting the limit
@@ -394,6 +395,19 @@ const CONTEXT_WINDOW_TABLE: &[ContextWindowRow] = &[
     ContextWindowRow {
         needle: "gemini",
         tokens: GEMINI_PRO_CONTEXT,
+    },
+    // DeepSeek V4 family and compatibility aliases.
+    ContextWindowRow {
+        needle: "deepseek-v4",
+        tokens: DEEPSEEK_V4_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "deepseek-chat",
+        tokens: DEEPSEEK_V4_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "deepseek-reasoner",
+        tokens: DEEPSEEK_V4_CONTEXT,
     },
     // OpenAI reasoning family share the gpt-4o window; one row each
     // so a future divergence can be applied without ratchet-untangling.
@@ -1611,6 +1625,10 @@ mod tests {
         assert_eq!(get_context_window("gpt-4"), GPT4_CONTEXT);
         assert_eq!(get_context_window("gpt-3.5-turbo"), GPT35_CONTEXT);
         assert_eq!(get_context_window("gemini-pro"), GEMINI_PRO_CONTEXT);
+        assert_eq!(get_context_window("deepseek-v4-pro"), DEEPSEEK_V4_CONTEXT);
+        assert_eq!(get_context_window("deepseek-v4-flash"), DEEPSEEK_V4_CONTEXT);
+        assert_eq!(get_context_window("deepseek-chat"), DEEPSEEK_V4_CONTEXT);
+        assert_eq!(get_context_window("deepseek-reasoner"), DEEPSEEK_V4_CONTEXT);
         assert_eq!(get_context_window("unknown-model"), DEFAULT_CONTEXT);
     }
 
