@@ -1251,6 +1251,19 @@ mod tests {
     }
 
     #[test]
+    fn openai_static_catalog_models_resolve_pricing() {
+        let missing = crate::providers::OPENAI_MODELS
+            .iter()
+            .copied()
+            .filter(|model| get_pricing(model).is_none())
+            .collect::<Vec<_>>();
+        assert!(
+            missing.is_empty(),
+            "PRICING_TABLE is missing OpenAI catalog model(s): {missing:?}"
+        );
+    }
+
+    #[test]
     fn priced_zai_static_catalog_models_resolve_pricing() {
         let missing = crate::providers::ZAI_MODELS
             .iter()
