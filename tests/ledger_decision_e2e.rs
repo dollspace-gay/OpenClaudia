@@ -1,6 +1,10 @@
 use openclaudia::decision::{validate_decision, AgentDecision};
+use openclaudia::grounded_loop::{
+    append_tool_result_observation, TOOL_RESULT_LEDGER_CONTENT_MAX_BYTES,
+};
 use openclaudia::ledger::{Authority, ObservationKind, RealityLedger};
 use openclaudia::task_spec::TaskSpec;
+use openclaudia::tools::ToolResult;
 
 #[test]
 fn summary_observation_cannot_authorize_edit() {
@@ -73,6 +77,34 @@ fn diff_marks_previous_file_reads_stale() {
 
     assert!(ledger.is_stale(read));
     assert!(!ledger.is_stale(diff));
+}
+
+#[test]
+fn tool_result_observation_records_bounded_result_envelope() {
+    let mut ledger = RealityLedger::new();
+    let content = "x".repeat(TOOL_RESULT_LEDGER_CONTENT_MAX_BYTES + 128);
+    let result = ToolResult {
+        tool_call_id: "call_tool".to_string(),
+        content,
+        is_error: false,
+    };
+
+    let id =
+        append_tool_result_observation(&mut ledger, "list_files", &result).expect("tool result");
+    let observation = ledger.get(id).expect("observation");
+
+    assert_eq!(observation.authority, Authority::Tool);
+    let ObservationKind::ToolResult { tool, result } = &observation.kind else {
+        panic!("expected tool result observation");
+    };
+    assert_eq!(tool, "list_files");
+    assert_eq!(result["tool_call_id"], "call_tool");
+    assert_eq!(result["is_error"], false);
+    assert_eq!(result["truncated"], true);
+    assert_eq!(
+        result["content"].as_str().expect("content").len(),
+        TOOL_RESULT_LEDGER_CONTENT_MAX_BYTES
+    );
 }
 
 #[test]

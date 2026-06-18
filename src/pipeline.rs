@@ -1815,23 +1815,9 @@ async fn execute_single_tool(
     let task_mgr_for_blocking = task_mgr;
     let result = tokio::task::spawn_blocking(move || {
         let _session_guard = session_for_task.map(tools::SessionIdGuard::set);
-        let _ledger_guard = session_for_ledger.as_deref().and_then(|session_id| {
-            let ledger = match crate::ledger::RealityLedger::open_project_session(session_id) {
-                Ok(ledger) => ledger,
-                Err(err) => {
-                    tracing::warn!(
-                        session_id,
-                        error = %err,
-                        "failed to open session reality ledger; tool observations disabled"
-                    );
-                    return None;
-                }
-            };
-            Some(crate::ledger::install_active_ledger_for_session(
-                session_id,
-                std::sync::Arc::new(std::sync::Mutex::new(ledger)),
-            ))
-        });
+        let _ledger_guard = session_for_ledger
+            .as_deref()
+            .and_then(crate::grounded_loop::install_active_project_ledger_for_session);
         // Lock the TaskManager only inside the blocking thread so we
         // don't hold the mutex across `.await`. Failure-mode parity with
         // the legacy "no session" branch: poisoned mutex → recover the
@@ -1863,6 +1849,9 @@ async fn execute_single_tool(
         content: format!("Tool execution panicked: {e}"),
         is_error: true,
     });
+    if let Some(session_id) = session_id {
+        crate::grounded_loop::observe_tool_result_for_session(session_id, tool_name, &result);
+    }
 
     if tx
         .send(AppEvent::ToolDone {
@@ -2548,6 +2537,58 @@ mod tests {
             "one-time Allow must not leak nested legacy permission prompts: {content}"
         );
         assert_eq!(results[0]["is_error"], false);
+    }
+
+    #[tokio::test]
+    async fn execute_tool_calls_for_tui_records_tool_result_observation() {
+        use std::sync::mpsc as std_mpsc;
+
+        let session_id = "toolresultledger";
+        let ledger = Arc::new(Mutex::new(crate::ledger::RealityLedger::new()));
+        let _ledger_guard =
+            crate::ledger::install_active_ledger_for_session(session_id, Arc::clone(&ledger));
+        let tool_call = ToolCall {
+            id: "call_list".to_string(),
+            call_type: "function".to_string(),
+            function: tools::FunctionCall {
+                name: "list_files".to_string(),
+                arguments: r#"{"path":"."}"#.to_string(),
+            },
+        };
+        let (tx, _rx) = std_mpsc::channel::<AppEvent>();
+        let task_mgr = Arc::new(Mutex::new(crate::session::TaskManager::new()));
+
+        let (results, has_tools) = execute_tool_calls_for_tui(
+            &[tool_call],
+            None,
+            None,
+            &[],
+            None,
+            task_mgr,
+            Some(session_id),
+            &tx,
+        )
+        .await;
+
+        assert!(has_tools);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["is_error"], false);
+
+        let ledger = ledger.lock().expect("ledger lock");
+        let observation = ledger
+            .observations_chronological()
+            .into_iter()
+            .find(|obs| matches!(obs.kind, crate::ledger::ObservationKind::ToolResult { .. }))
+            .expect("tool result observation");
+        assert_eq!(observation.authority, crate::ledger::Authority::Tool);
+        let crate::ledger::ObservationKind::ToolResult { tool, result } = &observation.kind else {
+            panic!("expected tool result observation");
+        };
+        assert_eq!(tool, "list_files");
+        assert_eq!(result["tool_call_id"], "call_list");
+        assert_eq!(result["is_error"], false);
+        assert_eq!(result["truncated"], false);
+        assert!(result["content"].as_str().is_some_and(|s| !s.is_empty()));
     }
 
     #[test]

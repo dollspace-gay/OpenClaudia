@@ -71,6 +71,24 @@ fn execute_tool_with_memory_after_permission(
     }
 }
 
+fn install_cli_active_ledger(
+    session_id: &str,
+) -> Option<openclaudia::ledger::ActiveRealityLedgerGuard> {
+    openclaudia::grounded_loop::install_active_project_ledger_for_session(session_id)
+}
+
+fn observe_cli_tool_result(
+    session_id: &str,
+    tool_call: &tools::ToolCall,
+    result: &tools::ToolResult,
+) {
+    openclaudia::grounded_loop::observe_tool_result_for_session(
+        session_id,
+        &tool_call.function.name,
+        result,
+    );
+}
+
 /// Arguments accepted by [`ChatRepl::new`] — kept as a struct so the
 /// public `cmd_chat` signature stays a thin wrapper.
 pub struct ChatReplArgs {
@@ -1829,12 +1847,14 @@ impl ChatRepl {
         }
 
         let _session_guard = tools::SessionIdGuard::set(&self.chat_session.id);
+        let _ledger_guard = install_cli_active_ledger(&self.chat_session.id);
         let result = execute_tool_with_memory_after_permission(
             tool_call,
             memory_db,
             &self.permission_mgr,
             permission_already_checked,
         );
+        observe_cli_tool_result(&self.chat_session.id, tool_call, &result);
         Self::auto_learn_observe(auto_learner, tool_call, &result);
         result
     }
@@ -2606,12 +2626,14 @@ impl ChatRepl {
             tracing::error!("Security audit failed for tool_call: {e}");
         }
         let _session_guard = tools::SessionIdGuard::set(&self.chat_session.id);
+        let _ledger_guard = install_cli_active_ledger(&self.chat_session.id);
         let result = execute_tool_with_memory_after_permission(
             tool_call,
             memory_db,
             &self.permission_mgr,
             permission_already_checked,
         );
+        observe_cli_tool_result(&self.chat_session.id, tool_call, &result);
         Self::auto_learn_observe(auto_learner, tool_call, &result);
         result
     }
@@ -2897,10 +2919,11 @@ impl ChatRepl {
         all_tools: &[tool_intercept::InterceptedToolCall],
         memory_db: Option<&memory::MemoryDb>,
     ) {
-        let results = tool_intercept::execute_intercepted_tools(
+        let results = tool_intercept::execute_intercepted_tools_for_session(
             all_tools,
             memory_db,
             Some(&self.permission_mgr),
+            Some(&self.chat_session.id),
         );
         let results_xml = tool_intercept::format_execution_results_xml(&results);
         self.chat_session.messages.push(serde_json::json!({
@@ -3395,12 +3418,14 @@ impl ChatRepl {
     ) -> tools::ToolResult {
         println!("\n\x1b[36m⚡ Running {}...\x1b[0m", tool_call.function.name);
         let _session_guard = tools::SessionIdGuard::set(&self.chat_session.id);
+        let _ledger_guard = install_cli_active_ledger(&self.chat_session.id);
         let result = execute_tool_with_memory_after_permission(
             tool_call,
             memory_db,
             &self.permission_mgr,
             permission_already_checked,
         );
+        observe_cli_tool_result(&self.chat_session.id, tool_call, &result);
         Self::auto_learn_observe(auto_learner, tool_call, &result);
         result
     }

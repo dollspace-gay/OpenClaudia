@@ -493,6 +493,30 @@ impl RealityLedger {
         )
     }
 
+    /// Record a tool result envelope.
+    ///
+    /// Tool-specific observers such as file reads and command runs remain the
+    /// authoritative source for detailed filesystem/command facts. This
+    /// generic observation records that a model-visible tool result was
+    /// produced, including bounded result metadata for later grounding.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if persistence fails.
+    pub fn observe_tool_result(
+        &mut self,
+        tool: impl Into<String>,
+        result: serde_json::Value,
+    ) -> Result<ObsId, LedgerError> {
+        self.append(
+            Authority::Tool,
+            ObservationKind::ToolResult {
+                tool: tool.into(),
+                result,
+            },
+        )
+    }
+
     /// Record a diff and stale prior file reads for every touched path.
     ///
     /// # Errors

@@ -5,13 +5,16 @@
 //! ledger entries first, lower-authority navigation aids later.
 
 use crate::evidence::Denial;
-use crate::ledger::{Authority, ObservationKind, RealityLedger};
+use crate::ledger::{
+    ActiveRealityLedgerGuard, Authority, LedgerError, ObservationKind, RealityLedger,
+};
 use crate::ledger::{ObsId, ObservationIndexEntry};
 use crate::task_spec::TaskSpec;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 
 pub const DEFAULT_GROUNDING_INDEX_LIMIT: usize = 64;
+pub const TOOL_RESULT_LEDGER_CONTENT_MAX_BYTES: usize = 16 * 1024;
 const MAX_RENDERED_TASK_CHARS: usize = 500;
 const MAX_NAV_IDS: usize = 16;
 
@@ -116,6 +119,99 @@ pub fn observe_session_user_task(session_id: &str, content: &str) -> Option<ObsI
             None
         }
     }
+}
+
+#[must_use]
+pub fn install_active_project_ledger_for_session(
+    session_id: &str,
+) -> Option<ActiveRealityLedgerGuard> {
+    if crate::ledger::active_ledger_for_session(session_id).is_some() {
+        return None;
+    }
+    let ledger = match RealityLedger::open_project_session(session_id) {
+        Ok(ledger) => ledger,
+        Err(err) => {
+            tracing::warn!(
+                session_id,
+                error = %err,
+                "failed to open session reality ledger; tool observations disabled"
+            );
+            return None;
+        }
+    };
+    Some(crate::ledger::install_active_ledger_for_session(
+        session_id,
+        std::sync::Arc::new(std::sync::Mutex::new(ledger)),
+    ))
+}
+
+pub fn observe_tool_result_for_session(
+    session_id: &str,
+    tool_name: &str,
+    result: &crate::tools::ToolResult,
+) -> Option<ObsId> {
+    if let Some(shared) = crate::ledger::active_ledger_for_session(session_id) {
+        let mut ledger = shared.lock().unwrap_or_else(|err| {
+            tracing::error!("active reality ledger lock poisoned; recovering inner state");
+            err.into_inner()
+        });
+        return match append_tool_result_observation(&mut ledger, tool_name, result) {
+            Ok(id) => Some(id),
+            Err(err) => {
+                tracing::warn!(
+                    session_id,
+                    tool = tool_name,
+                    error = %err,
+                    "failed to append tool result observation to active reality ledger"
+                );
+                None
+            }
+        };
+    }
+
+    let mut ledger = match RealityLedger::open_project_session(session_id) {
+        Ok(ledger) => ledger,
+        Err(err) => {
+            tracing::warn!(
+                session_id,
+                tool = tool_name,
+                error = %err,
+                "failed to open session reality ledger for tool result observation"
+            );
+            return None;
+        }
+    };
+    match append_tool_result_observation(&mut ledger, tool_name, result) {
+        Ok(id) => Some(id),
+        Err(err) => {
+            tracing::warn!(
+                session_id,
+                tool = tool_name,
+                error = %err,
+                "failed to append tool result observation to reality ledger"
+            );
+            None
+        }
+    }
+}
+
+pub fn append_tool_result_observation(
+    ledger: &mut RealityLedger,
+    tool_name: &str,
+    result: &crate::tools::ToolResult,
+) -> Result<ObsId, LedgerError> {
+    let content =
+        crate::tools::safe_truncate(&result.content, TOOL_RESULT_LEDGER_CONTENT_MAX_BYTES)
+            .to_string();
+    ledger.observe_tool_result(
+        tool_name,
+        serde_json::json!({
+            "tool_call_id": &result.tool_call_id,
+            "is_error": result.is_error,
+            "content": content,
+            "truncated": result.content.len() > content.len(),
+        }),
+    )
 }
 
 pub fn session_grounding_system_content(session_id: &str, task_obs: ObsId) -> Option<String> {

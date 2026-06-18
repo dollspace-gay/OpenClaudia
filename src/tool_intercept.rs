@@ -1032,6 +1032,21 @@ pub fn execute_intercepted_tools(
     memory_db: Option<&crate::memory::MemoryDb>,
     permission_mgr: Option<&crate::permissions::PermissionManager>,
 ) -> Vec<ToolExecutionResult> {
+    execute_intercepted_tools_for_session(tools, memory_db, permission_mgr, None)
+}
+
+/// Execute intercepted tool calls locally with an optional session ledger.
+///
+/// When `session_id` is supplied, filesystem/command observers see the same
+/// active reality ledger as ordinary function-call tools, and every tool
+/// result is appended as a bounded generic `ToolResult` observation.
+#[must_use]
+pub fn execute_intercepted_tools_for_session(
+    tools: &[InterceptedToolCall],
+    memory_db: Option<&crate::memory::MemoryDb>,
+    permission_mgr: Option<&crate::permissions::PermissionManager>,
+    session_id: Option<&str>,
+) -> Vec<ToolExecutionResult> {
     let mut results = Vec::new();
 
     for tool in tools {
@@ -1039,7 +1054,17 @@ pub fn execute_intercepted_tools(
 
         println!("\n\x1b[36m⚡ Running {} locally...\x1b[0m", tool.name);
 
+        let _session_guard = session_id.map(crate::tools::SessionIdGuard::set);
+        let _ledger_guard =
+            session_id.and_then(crate::grounded_loop::install_active_project_ledger_for_session);
         let result = crate::tools::execute_tool_with_memory(&tool_call, memory_db, permission_mgr);
+        if let Some(session_id) = session_id {
+            crate::grounded_loop::observe_tool_result_for_session(
+                session_id,
+                &tool_call.function.name,
+                &result,
+            );
+        }
 
         // Show preview
         let preview: String = result
@@ -1179,6 +1204,46 @@ pub fn format_tool_results_xml_with_names(results: &[(&str, Option<&str>, &str, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn execute_intercepted_tools_for_session_records_tool_result_observation() {
+        let session_id = "xmltoolledger";
+        let ledger =
+            std::sync::Arc::new(std::sync::Mutex::new(crate::ledger::RealityLedger::new()));
+        let _ledger_guard = crate::ledger::install_active_ledger_for_session(
+            session_id,
+            std::sync::Arc::clone(&ledger),
+        );
+        let mut parameters = HashMap::new();
+        parameters.insert("path".to_string(), ".".to_string());
+        let tool = InterceptedToolCall {
+            name: "list_files".to_string(),
+            parameters,
+            id: "xml_call_list".to_string(),
+        };
+
+        let results = execute_intercepted_tools_for_session(&[tool], None, None, Some(session_id));
+
+        assert_eq!(results.len(), 1);
+        assert!(
+            !results[0].is_error,
+            "unexpected tool error: {}",
+            results[0].content
+        );
+        let ledger = ledger.lock().expect("ledger lock");
+        let observation = ledger
+            .observations_chronological()
+            .into_iter()
+            .find(|obs| matches!(obs.kind, crate::ledger::ObservationKind::ToolResult { .. }))
+            .expect("tool result observation");
+        assert_eq!(observation.authority, crate::ledger::Authority::Tool);
+        let crate::ledger::ObservationKind::ToolResult { tool, result } = &observation.kind else {
+            panic!("expected tool result observation");
+        };
+        assert_eq!(tool, "list_files");
+        assert_eq!(result["tool_call_id"], "xml_call_list");
+        assert_eq!(result["is_error"], false);
+    }
 
     #[test]
     fn test_parse_bash_invocation() {
