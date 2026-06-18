@@ -45,7 +45,16 @@ pub enum PluginAction {
     RunCommand {
         plugin_name: String,
         command_name: String,
+        arguments: String,
     },
+}
+
+/// Result of applying a plugin action in the legacy REPL.
+pub enum PluginActionOutcome {
+    /// Management/listing action completed without producing a prompt.
+    Handled,
+    /// A plugin slash command resolved to a prompt that should be sent.
+    Prompt(String),
 }
 
 /// Slash command result
@@ -1856,6 +1865,7 @@ pub fn handle_slash_command(
             return Some(SlashCommandResult::Plugin(PluginAction::RunCommand {
                 plugin_name: colon_parts[0].to_string(),
                 command_name: colon_parts[1].to_string(),
+                arguments: args.trim().to_string(),
             }));
         }
     }
@@ -2255,11 +2265,11 @@ fn plugin_action_help() {
 pub trait PluginActionRunner {
     /// Execute this action against `plugin_manager`. Errors are surfaced
     /// to stdout/stderr by the impl — the CLI is the only consumer.
-    fn apply(self, plugin_manager: &mut plugins::PluginManager);
+    fn apply(self, plugin_manager: &mut plugins::PluginManager) -> PluginActionOutcome;
 }
 
 impl PluginActionRunner for PluginAction {
-    fn apply(self, plugin_manager: &mut plugins::PluginManager) {
+    fn apply(self, plugin_manager: &mut plugins::PluginManager) -> PluginActionOutcome {
         match self {
             Self::Menu => plugin_action_menu(plugin_manager),
             Self::Help => plugin_action_help(),
@@ -2285,10 +2295,12 @@ impl PluginActionRunner for PluginAction {
             Self::RunCommand {
                 plugin_name,
                 command_name,
+                arguments,
             } => {
-                plugin_run_command(&plugin_name, &command_name, plugin_manager);
+                return plugin_run_command(&plugin_name, &command_name, &arguments, plugin_manager)
             }
-        }
+        };
+        PluginActionOutcome::Handled
     }
 }
 
@@ -2629,14 +2641,14 @@ fn plugin_marketplace(
 fn plugin_run_command(
     plugin_name: &str,
     command_name: &str,
+    arguments: &str,
     plugin_manager: &plugins::PluginManager,
-) {
+) -> PluginActionOutcome {
     if let Some(plugin) = plugin_manager.get(plugin_name) {
         let commands = plugin.resolved_commands();
         if let Some(cmd) = commands.iter().find(|c| c.name == command_name) {
-            println!("\n--- /{plugin_name}: {command_name} ---\n");
-            println!("{}", cmd.content);
-            println!();
+            println!("\nRunning plugin command /{plugin_name}:{command_name}\n");
+            return PluginActionOutcome::Prompt(render_plugin_command_prompt(cmd, arguments));
         } else {
             let available: Vec<_> = commands.iter().map(|c| c.name.clone()).collect();
             eprintln!("\nCommand '{command_name}' not found in plugin '{plugin_name}'.");
@@ -2649,6 +2661,20 @@ fn plugin_run_command(
     } else {
         eprintln!("\nPlugin '{plugin_name}' not found. Use /plugin to see installed plugins.\n");
     }
+    PluginActionOutcome::Handled
+}
+
+fn render_plugin_command_prompt(cmd: &plugins::PluginCommand, arguments: &str) -> String {
+    let arguments = arguments.trim();
+    if arguments.is_empty() {
+        return cmd.content.clone();
+    }
+
+    if cmd.content.contains("$ARGUMENTS") {
+        return cmd.content.replace("$ARGUMENTS", arguments);
+    }
+
+    format!("{}\n\nArguments:\n{arguments}", cmd.content.trim_end())
 }
 
 /// Handle the `/mode` slash command.
@@ -2819,10 +2845,12 @@ fn parse_axis_overrides(parts: &[&str]) -> SlashCommandResult {
 mod tests {
     use super::{
         gh_bin, git_bin, handle_slash_command, hook_status_lines, permission_status_lines,
-        plugin_install_dir_for_name, project_mcp_server_count_from_str, SlashCommandResult,
+        plugin_install_dir_for_name, project_mcp_server_count_from_str,
+        render_plugin_command_prompt, PluginAction, SlashCommandResult,
     };
     use openclaudia::config::{Hook, HookEntry, HookPolicy, HooksConfig, PermissionsConfig};
     use openclaudia::permissions::{PermissionDecision, PermissionRule};
+    use openclaudia::plugins::PluginCommand;
     use std::collections::{HashMap, HashSet};
 
     /// Convenience: empty message vec, dummy provider + model.
@@ -3409,6 +3437,62 @@ mod tests {
         assert_eq!(
             path,
             std::path::PathBuf::from(".openclaudia/plugins/safe-plugin")
+        );
+    }
+
+    #[test]
+    fn plugin_run_command_slash_preserves_arguments() {
+        let result = handle_slash_command(
+            "/demo:fix src/main.rs --strict",
+            &mut ctx(),
+            "anthropic",
+            "claude-sonnet",
+        );
+        match result {
+            Some(SlashCommandResult::Plugin(PluginAction::RunCommand {
+                plugin_name,
+                command_name,
+                arguments,
+            })) => {
+                assert_eq!(plugin_name, "demo");
+                assert_eq!(command_name, "fix");
+                assert_eq!(arguments, "src/main.rs --strict");
+            }
+            _ => panic!("/plugin:command args must resolve to RunCommand with arguments"),
+        }
+    }
+
+    #[test]
+    fn plugin_command_prompt_replaces_arguments_placeholder() {
+        let cmd = PluginCommand {
+            name: "fix".to_string(),
+            description: None,
+            content: "Review $ARGUMENTS carefully.".to_string(),
+            allowed_tools: None,
+            argument_hint: None,
+            model: None,
+        };
+
+        assert_eq!(
+            render_plugin_command_prompt(&cmd, "src/main.rs"),
+            "Review src/main.rs carefully."
+        );
+    }
+
+    #[test]
+    fn plugin_command_prompt_appends_arguments_when_no_placeholder_exists() {
+        let cmd = PluginCommand {
+            name: "fix".to_string(),
+            description: None,
+            content: "Review this request.\n".to_string(),
+            allowed_tools: None,
+            argument_hint: None,
+            model: None,
+        };
+
+        assert_eq!(
+            render_plugin_command_prompt(&cmd, "src/main.rs"),
+            "Review this request.\n\nArguments:\nsrc/main.rs"
         );
     }
 

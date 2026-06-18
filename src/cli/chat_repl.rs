@@ -30,8 +30,8 @@ use crate::cli::repl::session_io::{
     save_session_to_short_term_memory,
 };
 use crate::cli::repl::slash::{
-    handle_activity_command, handle_memory_command, handle_slash_command, PluginActionRunner,
-    SlashCommandResult,
+    handle_activity_command, handle_memory_command, handle_slash_command, PluginActionOutcome,
+    PluginActionRunner, SlashCommandResult,
 };
 use crate::cli::repl::vim::{self, VimState};
 use crate::cli::repl::{load_chat_session, save_chat_session, ChatSession};
@@ -649,6 +649,14 @@ impl ChatRepl {
                 *input = skill_prompt;
                 SlashOutcome::FallThrough
             }
+            SlashCommandResult::Plugin(action) => match action.apply(&mut self.plugin_manager) {
+                PluginActionOutcome::Handled => SlashOutcome::Continue,
+                PluginActionOutcome::Prompt(plugin_prompt) => {
+                    eprintln!("\x1b[36m⚡ Running plugin command...\x1b[0m");
+                    *input = plugin_prompt;
+                    SlashOutcome::FallThrough
+                }
+            },
             other => self.dispatch_slash_simple(other, memory_db),
         }
     }
@@ -678,11 +686,6 @@ impl ChatRepl {
             SlashCommandResult::Memory(args) => handle_memory_command(&args, memory_db),
             SlashCommandResult::Activity(args) => {
                 handle_activity_command(&args, &self.chat_session.id, memory_db);
-            }
-            SlashCommandResult::Plugin(action) => {
-                // crosslink #898: dispatch through the Tell-Don't-Ask trait
-                // method directly. The free-function shim has been removed.
-                action.apply(&mut self.plugin_manager);
             }
             SlashCommandResult::ThemeChanged(name) => {
                 if let Some(theme) = tui::Theme::from_name(&name) {
