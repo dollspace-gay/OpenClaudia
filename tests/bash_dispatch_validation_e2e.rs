@@ -15,6 +15,7 @@
 use openclaudia::tools::registry::{registry, ToolContext};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 fn dispatch_bash(args: &HashMap<String, Value>) -> (String, bool) {
     let mut ctx = ToolContext {
@@ -127,6 +128,47 @@ fn command_at_exactly_4096_bytes_passes_length_check() {
             "length cap MUST NOT fire under cap; got {msg:?}"
         );
     }
+}
+
+#[test]
+fn bash_records_command_observation_when_session_ledger_is_active() {
+    let _session_guard = openclaudia::tools::SessionIdGuard::set("bashledger");
+    let ledger = Arc::new(Mutex::new(openclaudia::ledger::RealityLedger::new()));
+    let _ledger_guard =
+        openclaudia::ledger::install_active_ledger_for_session("bashledger", Arc::clone(&ledger));
+
+    let command = "printf ledger-bash";
+    let args = args_with(&[("command", json!(command))]);
+    let (msg, is_err) = dispatch_bash(&args);
+    assert!(!is_err, "bash should succeed: {msg}");
+    assert_eq!(msg, "ledger-bash");
+
+    let ledger = ledger.lock().expect("ledger lock");
+    assert_eq!(ledger.len(), 1);
+    let index = ledger.observation_index(8);
+    let observation = ledger.get(index[0].id).expect("observation");
+    let openclaudia::ledger::ObservationKind::CommandRun {
+        cwd,
+        argv,
+        exit_code,
+        stdout,
+        stderr,
+    } = &observation.kind
+    else {
+        panic!("expected CommandRun observation");
+    };
+    assert!(cwd.ends_with("OpenClaudia"), "unexpected cwd: {cwd}");
+    assert_eq!(
+        argv,
+        &vec!["bash".to_string(), "-c".to_string(), command.to_string()]
+    );
+    assert_eq!(*exit_code, 0);
+    assert_eq!(stdout, "ledger-bash");
+    assert_eq!(stderr, "");
+    assert_eq!(
+        observation.authority,
+        openclaudia::ledger::Authority::Command
+    );
 }
 
 // ───────────────────────────────────────────────────────────────────────────

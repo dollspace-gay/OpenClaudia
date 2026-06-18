@@ -36,6 +36,7 @@ use uuid::Uuid;
 
 /// Maximum number of background shells allowed before refusing new ones
 const MAX_BACKGROUND_SHELLS: usize = 50;
+const LEDGER_COMMAND_OUTPUT_MAX_BYTES: usize = 100_000;
 
 static BASH_BIN: LazyLock<Result<PathBuf, String>> = LazyLock::new(|| {
     which::which("bash").map_err(|e| format!("bash binary not found on PATH: {e}"))
@@ -651,6 +652,7 @@ pub fn try_execute_bash(args: &HashMap<String, Value>) -> Result<ToolOutput, Too
 
     let output =
         output.map_err(|e| ToolError::External(format!("Failed to execute command: {e}")))?;
+    record_active_command_observation(&cwd, command, &output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -686,6 +688,34 @@ pub fn try_execute_bash(args: &HashMap<String, Value>) -> Result<ToolOutput, Too
         // so the legacy tuple shape stays byte-identical to the pre-migration
         // executor. The message *is* the captured stdout+stderr.
         Err(ToolError::External(result))
+    }
+}
+
+fn record_active_command_observation(cwd: &Path, command: &str, output: &std::process::Output) {
+    let session_key = super::todo::current_session_key();
+    let Some(ledger) = crate::ledger::active_ledger_for_session(&session_key) else {
+        return;
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let exit_code = output.status.code().unwrap_or(-1);
+    let mut ledger = ledger.lock().unwrap_or_else(|err| {
+        tracing::error!("active reality ledger lock poisoned; recovering inner state");
+        err.into_inner()
+    });
+    if let Err(err) = ledger.observe_command_run(
+        cwd.to_string_lossy().to_string(),
+        vec!["bash".to_string(), "-c".to_string(), command.to_string()],
+        exit_code,
+        safe_truncate(&stdout, LEDGER_COMMAND_OUTPUT_MAX_BYTES).to_string(),
+        safe_truncate(&stderr, LEDGER_COMMAND_OUTPUT_MAX_BYTES).to_string(),
+    ) {
+        tracing::warn!(
+            command = %command,
+            error = %err,
+            "failed to append bash command observation to reality ledger"
+        );
     }
 }
 
