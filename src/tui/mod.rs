@@ -4,7 +4,8 @@
 //! with two-column layout, tips panel, styled text, markdown rendering,
 //! status bar, and theme management.
 //!
-//! The interactive full-screen TUI is in the `app` submodule, launched via `--tui`.
+//! The interactive full-screen TUI is in the `app` submodule and is the
+//! default when no subcommand, `--print`, or `--tui-mode` is supplied.
 
 pub mod app;
 pub mod components;
@@ -1347,6 +1348,24 @@ mod tests {
         assert!(
             tips.iter().any(|t| t.contains("/help")),
             "Tips should mention /help command"
+        );
+    }
+
+    #[test]
+    fn module_docs_do_not_advertise_removed_tui_flag() {
+        let src = include_str!("mod.rs");
+        let cfg_test = src
+            .find("#[cfg(test)]")
+            .expect("test module marker must be present");
+        let production = &src[..cfg_test];
+
+        assert!(
+            production.contains("default when no subcommand"),
+            "TUI module docs must describe the actual default launch path"
+        );
+        assert!(
+            !production.contains("via `--tui`"),
+            "TUI module docs must not advertise the removed --tui flag"
         );
     }
 

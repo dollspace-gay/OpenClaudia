@@ -1,6 +1,7 @@
 //! Full-screen interactive TUI application.
 //!
-//! Launched via `openclaudia` (default) or `openclaudia --tui`.
+//! Launched via `openclaudia` when no subcommand, `--print`, or `--tui-mode`
+//! is supplied.
 //! Provides a scrollable message view, text input area, status bar,
 //! and streaming response display wired to the real API pipeline.
 
@@ -3867,6 +3868,24 @@ mod tests {
                 n = idx + 1,
             );
         }
+    }
+
+    #[test]
+    fn tui_module_docs_do_not_advertise_removed_tui_flag() {
+        let src = include_str!("app.rs");
+        let cfg_test = src
+            .find("#[cfg(test)]")
+            .expect("test module marker must be present");
+        let production = &src[..cfg_test];
+
+        assert!(
+            production.contains("Launched via `openclaudia` when no subcommand"),
+            "TUI module docs must describe the actual default launch path"
+        );
+        assert!(
+            !production.contains("openclaudia --tui`"),
+            "TUI module docs must not advertise the removed --tui flag"
+        );
     }
 
     fn advertised_tui_invocation_roots(invocation: &str) -> Vec<String> {
