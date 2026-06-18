@@ -61,6 +61,54 @@ fn edit_requires_non_stale_file_read() {
 }
 
 #[test]
+fn edit_patch_target_must_match_file_read_evidence() {
+    let mut ledger = RealityLedger::new();
+    let read = ledger
+        .observe_file_read("src/a.rs", "pub fn a() {}\n", 1, 1, "1| pub fn a() {}")
+        .expect("read observation");
+
+    let decision = AgentDecision::Edit {
+        reason: "replace b".to_string(),
+        evidence: vec![read],
+        patch: "*** Begin Patch\n*** Update File: src/b.rs\n*** End Patch".to_string(),
+    };
+
+    let denial = validate_decision(&decision, &ledger).expect_err("wrong file read denied");
+    assert_eq!(
+        denial.reason(),
+        "edit patch requires fresh file observation: src/b.rs"
+    );
+}
+
+#[test]
+fn edit_unified_diff_target_must_match_file_read_evidence() {
+    let mut ledger = RealityLedger::new();
+    let read = ledger
+        .observe_file_read("src/a.rs", "pub fn a() {}\n", 1, 1, "1| pub fn a() {}")
+        .expect("read observation");
+
+    let decision = AgentDecision::Edit {
+        reason: "apply unified diff".to_string(),
+        evidence: vec![read],
+        patch: concat!(
+            "diff --git a/src/b.rs b/src/b.rs\n",
+            "--- a/src/b.rs\n",
+            "+++ b/src/b.rs\n",
+            "@@ -1 +1 @@\n",
+            "-old\n",
+            "+new\n"
+        )
+        .to_string(),
+    };
+
+    let denial = validate_decision(&decision, &ledger).expect_err("wrong diff read denied");
+    assert_eq!(
+        denial.reason(),
+        "edit patch requires fresh file observation: src/b.rs"
+    );
+}
+
+#[test]
 fn diff_marks_previous_file_reads_stale() {
     let mut ledger = RealityLedger::new();
     let read = ledger
