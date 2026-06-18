@@ -941,6 +941,20 @@ impl AcpServer {
     // Prompt execution — the core agentic loop
     // ========================================================================
 
+    fn record_failed_prompt_turn(&mut self, reason: &str) {
+        crate::session::append_failed_turn_message(&mut self.messages, reason);
+    }
+
+    fn fail_prompt_with_update(&mut self, acp_session_id: &str, text: String) -> String {
+        self.send_session_update(
+            acp_session_id,
+            "agent_message_chunk",
+            &json!({"type": "text", "text": text.clone()}),
+        );
+        self.record_failed_prompt_turn(&text);
+        "error".to_string()
+    }
+
     async fn handle_session_prompt(&mut self, id: Option<Value>, params: Value) {
         let Some(id) = id else { return };
 
@@ -1006,7 +1020,8 @@ impl AcpServer {
             Ok(a) => a,
             Err(e) => {
                 tracing::error!(error = %e, "ACP: unknown provider in config.proxy.target");
-                return "error".to_string();
+                return self
+                    .fail_prompt_with_update(acp_session_id, format!("Provider error: {e}"));
             }
         };
         let client = reqwest::Client::new();
@@ -1019,12 +1034,10 @@ impl AcpServer {
         let max_iterations = match crate::config::AcpConfig::load() {
             Ok(cfg) => cfg.max_iterations,
             Err(e) => {
-                self.send_session_update(
+                return self.fail_prompt_with_update(
                     acp_session_id,
-                    "agent_message_chunk",
-                    &json!({"type": "text", "text": format!("Invalid ACP configuration: {e}")}),
+                    format!("Invalid ACP configuration: {e}"),
                 );
-                return "error".to_string();
             }
         };
 
@@ -1039,12 +1052,7 @@ impl AcpServer {
                     Ok(tools) => tools,
                     Err(e) => {
                         let text = format!("Internal ACP tool registry error: {e}");
-                        self.send_session_update(
-                            acp_session_id,
-                            "agent_message_chunk",
-                            &json!({"type": "text", "text": text}),
-                        );
-                        return "error".to_string();
+                        return self.fail_prompt_with_update(acp_session_id, text);
                     }
                 };
             // Crosslink #694: inject `.openclaudia/rules` content into the
@@ -1093,23 +1101,17 @@ impl AcpServer {
             ) {
                 Ok(messages) => messages,
                 Err(e) => {
-                    self.send_session_update(
-                        acp_session_id,
-                        "agent_message_chunk",
-                        &json!({"type": "text", "text": format!("Grounding error: {e}")}),
-                    );
-                    return "error".to_string();
+                    return self
+                        .fail_prompt_with_update(acp_session_id, format!("Grounding error: {e}"));
                 }
             };
             let decoded_messages = match decode_acp_messages(&grounded_messages) {
                 Ok(messages) => messages,
                 Err(e) => {
-                    self.send_session_update(
+                    return self.fail_prompt_with_update(
                         acp_session_id,
-                        "agent_message_chunk",
-                        &json!({"type": "text", "text": format!("Invalid ACP message history: {e}")}),
+                        format!("Invalid ACP message history: {e}"),
                     );
-                    return "error".to_string();
                 }
             };
             all_messages.extend(decoded_messages);
@@ -1137,18 +1139,17 @@ impl AcpServer {
             ) {
                 Ok(t) => t,
                 Err(e) => {
-                    self.send_session_update(
-                        acp_session_id,
-                        "agent_message_chunk",
-                        &json!({"type": "text", "text": format!("Provider error: {}", e)}),
-                    );
-                    return "error".to_string();
+                    return self
+                        .fail_prompt_with_update(acp_session_id, format!("Provider error: {e}"));
                 }
             };
 
             // Determine endpoint
             let Some(provider) = self.config.active_provider() else {
-                return "error".to_string();
+                return self.fail_prompt_with_update(
+                    acp_session_id,
+                    "No active provider configured".to_string(),
+                );
             };
             let claude_code_token = self.claude_code_token.as_deref();
             if claude_code_token.is_some()
@@ -1164,12 +1165,8 @@ impl AcpServer {
             ) {
                 Ok(endpoint) => endpoint,
                 Err(e) => {
-                    self.send_session_update(
-                        acp_session_id,
-                        "agent_message_chunk",
-                        &json!({"type": "text", "text": format!("Provider error: {}", e)}),
-                    );
-                    return "error".to_string();
+                    return self
+                        .fail_prompt_with_update(acp_session_id, format!("Provider error: {e}"));
                 }
             };
 
@@ -1187,12 +1184,8 @@ impl AcpServer {
             ) {
                 Ok(headers) => headers,
                 Err(e) => {
-                    self.send_session_update(
-                        acp_session_id,
-                        "agent_message_chunk",
-                        &json!({"type": "text", "text": format!("Provider error: {}", e)}),
-                    );
-                    return "error".to_string();
+                    return self
+                        .fail_prompt_with_update(acp_session_id, format!("Provider error: {e}"));
                 }
             };
 
@@ -1206,12 +1199,8 @@ impl AcpServer {
             let response = match req.send().await {
                 Ok(r) => r,
                 Err(e) => {
-                    self.send_session_update(
-                        acp_session_id,
-                        "agent_message_chunk",
-                        &json!({"type": "text", "text": format!("Request failed: {}", e)}),
-                    );
-                    return "error".to_string();
+                    return self
+                        .fail_prompt_with_update(acp_session_id, format!("Request failed: {e}"));
                 }
             };
 
@@ -1234,8 +1223,7 @@ impl AcpServer {
                     "agent_message_chunk",
                     &json!({"type": "text", "text": error_msg}),
                 );
-                // Remove the failed user message
-                self.messages.pop();
+                self.record_failed_prompt_turn(&error_msg);
                 return "error".to_string();
             }
 

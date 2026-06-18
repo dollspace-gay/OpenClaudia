@@ -74,6 +74,44 @@ pub enum EndSessionError {
 /// serialised session JSON under ~500 KB for the default [`TurnMetrics`] size.
 pub const MAX_TURN_METRICS: usize = 1_000;
 
+/// Maximum provider/runtime failure reason bytes persisted into chat history.
+///
+/// Failure bodies can be large HTML/JSON payloads. Persist enough context for
+/// diagnosis without allowing a transient provider error to bloat sessions.
+pub const FAILED_TURN_REASON_MAX_BYTES: usize = 1_000;
+
+/// Append a local assistant marker for a prompt that failed before a model
+/// response was produced.
+///
+/// Failed turns are part of the user-visible transcript. Recording them as an
+/// assistant message keeps the user prompt durable and prevents the next turn
+/// from replaying it as an unanswered prompt.
+pub fn append_failed_turn_message(messages: &mut Vec<serde_json::Value>, reason: &str) {
+    let reason = truncate_reason(reason.trim());
+    let reason = if reason.is_empty() {
+        "unknown failure"
+    } else {
+        reason
+    };
+    messages.push(serde_json::json!({
+        "role": "assistant",
+        "content": format!(
+            "OpenClaudia local runtime status: request failed before a model response was produced. Reason: {reason}"
+        )
+    }));
+}
+
+fn truncate_reason(reason: &str) -> &str {
+    if reason.len() <= FAILED_TURN_REASON_MAX_BYTES {
+        return reason;
+    }
+    let mut end = FAILED_TURN_REASON_MAX_BYTES;
+    while end > 0 && !reason.is_char_boundary(end) {
+        end -= 1;
+    }
+    &reason[..end]
+}
+
 fn validate_session_file_id(id: &str) -> Result<(), &'static str> {
     if id.is_empty() {
         return Err("session id must not be empty");
@@ -1040,6 +1078,40 @@ impl Drop for OwnedSessionGuard<'_> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn failed_turn_marker_preserves_user_prompt_and_balances_turn() {
+        let mut messages = vec![serde_json::json!({
+            "role": "user",
+            "content": "please call the provider"
+        })];
+
+        append_failed_turn_message(&mut messages, "HTTP 503 upstream unavailable");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"], "please call the provider");
+        assert_eq!(messages[1]["role"], "assistant");
+        let marker = messages[1]["content"]
+            .as_str()
+            .expect("failed-turn marker content must be text");
+        assert!(marker.contains("request failed before a model response was produced"));
+        assert!(marker.contains("HTTP 503 upstream unavailable"));
+    }
+
+    #[test]
+    fn failed_turn_marker_truncates_large_reasons_at_char_boundary() {
+        let reason = format!("{}é", "a".repeat(FAILED_TURN_REASON_MAX_BYTES));
+        let mut messages = Vec::new();
+
+        append_failed_turn_message(&mut messages, &reason);
+
+        let marker = messages[0]["content"]
+            .as_str()
+            .expect("failed-turn marker content must be text");
+        assert!(marker.ends_with(&"a".repeat(FAILED_TURN_REASON_MAX_BYTES)));
+        assert!(!marker.ends_with('é'));
+    }
 
     #[test]
     fn test_new_initializer_session() {

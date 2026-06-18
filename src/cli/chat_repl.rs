@@ -1150,8 +1150,7 @@ impl ChatRepl {
                 .and_then(|o| o.reason.clone())
                 .unwrap_or_else(|| "Request blocked by hook".to_string());
             eprintln!("\nBlocked: {reason}\n");
-            let _ = save_chat_session(&self.chat_session);
-            self.chat_session.messages.pop();
+            self.record_failed_turn(&format!("UserPromptSubmit hook blocked the turn: {reason}"));
             return false;
         }
 
@@ -1202,6 +1201,14 @@ impl ChatRepl {
                 eprintln!("\n\x1b[31mFinal answer failed grounding gate: {reason}\x1b[0m");
                 false
             }
+        }
+    }
+
+    fn record_failed_turn(&mut self, reason: &str) {
+        session::append_failed_turn_message(&mut self.chat_session.messages, reason);
+        self.chat_session.touch();
+        if let Err(e) = save_chat_session(&self.chat_session) {
+            tracing::warn!("Failed to save failed turn marker: {}", e);
         }
     }
 
@@ -1423,15 +1430,14 @@ impl ChatRepl {
             Err(e) => {
                 spinner.finish_and_clear();
                 eprintln!("\nRequest failed: {e}\n");
-                let _ = save_chat_session(&self.chat_session);
-                self.chat_session.messages.pop();
+                self.record_failed_turn(&format!("request failed: {e}"));
                 false
             }
         }
     }
 
     /// Read body of a non-2xx response, print user-friendly error, and
-    /// roll back the failed user message.
+    /// record a failed-turn marker.
     async fn handle_failed_response(&mut self, response: reqwest::Response) {
         let status = response.status();
         let content_type = response
@@ -1443,11 +1449,13 @@ impl ChatRepl {
         let body = response.text().await.unwrap_or_default();
         if content_type.contains("text/html") {
             eprintln!("\nError {status}: (HTML response — check your provider configuration)\n");
+            self.record_failed_turn(&format!(
+                "HTTP {status}: HTML response; check provider configuration"
+            ));
         } else {
             eprintln!("\nError {status}: {body}\n");
+            self.record_failed_turn(&format!("HTTP {status}: {body}"));
         }
-        let _ = save_chat_session(&self.chat_session);
-        self.chat_session.messages.pop();
     }
 
     /// Google Gemini path: non-streaming JSON response + native
@@ -1471,8 +1479,7 @@ impl ChatRepl {
                 Ok(parsed) => parsed,
                 Err(e) => {
                     eprintln!("\nInvalid Gemini response: {e}");
-                    let _ = save_chat_session(&self.chat_session);
-                    self.chat_session.messages.pop();
+                    self.record_failed_turn(&format!("invalid Gemini response: {e}"));
                     return;
                 }
             };
@@ -1510,16 +1517,15 @@ impl ChatRepl {
             .await;
     }
 
-    /// Parse the Gemini HTTP body to JSON, or print an error, pop the
-    /// pending user message and return `None` on failure.
+    /// Parse the Gemini HTTP body to JSON, or print an error and record
+    /// a failed-turn marker on failure.
     fn parse_gemini_initial_body(&mut self, body: &str) -> Option<serde_json::Value> {
         match serde_json::from_str::<serde_json::Value>(body) {
             Ok(v) => Some(v),
             Err(e) => {
                 eprintln!("\nFailed to parse Gemini response: {e}");
                 eprintln!("Raw body: {}", &body[..body.len().min(500)]);
-                let _ = save_chat_session(&self.chat_session);
-                self.chat_session.messages.pop();
+                self.record_failed_turn(&format!("failed to parse Gemini response: {e}"));
                 None
             }
         }
@@ -3197,8 +3203,7 @@ impl ChatRepl {
             && reasoning_content.is_empty()
             && !tool_accumulator.has_tool_calls()
         {
-            let _ = save_chat_session(&self.chat_session);
-            self.chat_session.messages.pop();
+            self.record_failed_turn("provider returned no assistant content or tool calls");
             true
         } else {
             true
