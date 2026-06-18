@@ -423,7 +423,7 @@ fn default_distillation_model_for_provider(provider: &str) -> &'static str {
         "google" | "gemini" => "gemini-3.5-flash",
         "deepseek" => "deepseek-v4-flash",
         "qwen" | "alibaba" => "qwen3.6-flash",
-        "zai" | "glm" | "zhipu" => "glm-4.7-flash",
+        "zai" | "glm" | "zhipu" => "glm-5-turbo",
         other => default_model_for_target(other),
     }
 }

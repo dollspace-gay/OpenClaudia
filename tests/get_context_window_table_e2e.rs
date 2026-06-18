@@ -152,7 +152,45 @@ fn current_deepseek_v4_models_and_aliases_return_1m() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section E — Qwen
+// Section E — Z.AI / GLM
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn current_zai_glm_models_return_documented_context_windows() {
+    assert_eq!(get_context_window("glm-5.2"), 1_000_000);
+
+    for model in [
+        "glm-5.1",
+        "glm-5",
+        "glm-5-turbo",
+        "glm-5v-turbo",
+        "glm-4.7",
+        "glm-4.7-flashx",
+        "glm-4.7-flash",
+        "glm-4.6",
+        "glm-4.5-flash",
+    ] {
+        assert_eq!(get_context_window(model), 200_000, "{model}");
+    }
+
+    for model in [
+        "glm-4.6v",
+        "glm-4.6v-flash",
+        "glm-4.6v-flashx",
+        "glm-4.5",
+        "glm-4.5-air",
+        "glm-4.5-x",
+        "glm-4.5-airx",
+        "glm-4-32b-0414-128k",
+    ] {
+        assert_eq!(get_context_window(model), 128_000, "{model}");
+    }
+
+    assert_eq!(get_context_window("glm-4.5v"), 64_000);
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section F — Qwen
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -195,7 +233,7 @@ fn qwen_max_and_open_weight_families_return_documented_smaller_windows() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section F — Kimi / Moonshot
+// Section G — Kimi / Moonshot
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]

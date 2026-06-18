@@ -1651,7 +1651,7 @@ fn fast_model_for_provider(provider: &str) -> Option<&'static str> {
             "gemini-2.5-flash-lite",
             "gemini-3-flash-preview",
         ],
-        "zai" => &["glm-4.7-flashx", "glm-4.7-flash", "glm-4.5-airx"],
+        "zai" => &["glm-5.2", "glm-5v-turbo", "glm-5-turbo"],
         "qwen" => &["qwen3.6-flash", "qwen3.5-flash", "qwen-turbo"],
         "deepseek" => &["deepseek-v4-flash", "deepseek-chat"],
         "kimi" => &["kimi-k2.7-code-highspeed", "moonshot-v1-8k"],

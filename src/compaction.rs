@@ -28,6 +28,10 @@ const GPT41_CONTEXT: usize = 1_000_000;
 const GPT35_CONTEXT: usize = 16_385;
 const GEMINI_PRO_CONTEXT: usize = 1_000_000;
 const DEEPSEEK_V4_CONTEXT: usize = 1_000_000;
+const ZAI_1M_CONTEXT: usize = 1_000_000;
+const ZAI_200K_CONTEXT: usize = 200_000;
+const ZAI_128K_CONTEXT: usize = 128_000;
+const ZAI_64K_CONTEXT: usize = 64_000;
 const QWEN_1M_CONTEXT: usize = 1_000_000;
 const QWEN_256K_CONTEXT: usize = 262_144;
 const QWEN_MAX_CONTEXT: usize = 32_768;
@@ -418,6 +422,55 @@ const CONTEXT_WINDOW_TABLE: &[ContextWindowRow] = &[
     ContextWindowRow {
         needle: "deepseek-reasoner",
         tokens: DEEPSEEK_V4_CONTEXT,
+    },
+    // Z.AI GLM text and vision chat families.
+    ContextWindowRow {
+        needle: "glm-5.2",
+        tokens: ZAI_1M_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "glm-5v-turbo",
+        tokens: ZAI_200K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "glm-5.1",
+        tokens: ZAI_200K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "glm-5-turbo",
+        tokens: ZAI_200K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "glm-5",
+        tokens: ZAI_200K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "glm-4.7",
+        tokens: ZAI_200K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "glm-4.6v",
+        tokens: ZAI_128K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "glm-4.6",
+        tokens: ZAI_200K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "glm-4.5v",
+        tokens: ZAI_64K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "glm-4.5-flash",
+        tokens: ZAI_200K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "glm-4.5",
+        tokens: ZAI_128K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "glm-4-32b-0414-128k",
+        tokens: ZAI_128K_CONTEXT,
     },
     // Qwen current commercial families. Specific rows precede any broad
     // `qwen` fallback because matching is substring-based.

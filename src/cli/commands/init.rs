@@ -49,7 +49,7 @@ providers:
   google:
     base_url: https://generativelanguage.googleapis.com
     # api_key: ${GOOGLE_API_KEY}
-  # Z.AI/GLM (OpenAI-compatible) - Models: glm-5.2, glm-5-turbo
+  # Z.AI/GLM (OpenAI-compatible) - Models: glm-5.2, glm-5v-turbo, glm-5-turbo
   zai:
     base_url: https://api.z.ai/api/coding/paas/v4
     # api_key: ${ZAI_API_KEY}

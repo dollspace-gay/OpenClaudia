@@ -102,9 +102,8 @@ pub const GOOGLE_MODELS: &[&str] = &[
 pub const ZAI_MODELS: &[&str] = &[
     "glm-5.2",
     "glm-5.1",
-    "glm-5.1-highspeed",
-    "glm-5",
     "glm-5-turbo",
+    "glm-5",
     "glm-4.7",
     "glm-4.7-flashx",
     "glm-4.7-flash",
@@ -115,6 +114,12 @@ pub const ZAI_MODELS: &[&str] = &[
     "glm-4.5-airx",
     "glm-4.5-flash",
     "glm-4-32b-0414-128k",
+    "glm-5v-turbo",
+    "glm-4.6v",
+    "autoglm-phone-multilingual",
+    "glm-4.6v-flash",
+    "glm-4.6v-flashx",
+    "glm-4.5v",
 ];
 
 pub const DEEPSEEK_MODELS: &[&str] = &[
@@ -267,10 +272,39 @@ mod tests {
     }
 
     #[test]
-    fn zai_catalog_includes_glm_5_1_highspeed() {
+    fn zai_catalog_matches_current_documented_chat_models() {
+        let models = static_models_for_provider("zai");
+        for model in [
+            "glm-5.2",
+            "glm-5.1",
+            "glm-5-turbo",
+            "glm-5",
+            "glm-4.7",
+            "glm-4.7-flash",
+            "glm-4.7-flashx",
+            "glm-4.6",
+            "glm-4.5",
+            "glm-4.5-air",
+            "glm-4.5-x",
+            "glm-4.5-airx",
+            "glm-4.5-flash",
+            "glm-4-32b-0414-128k",
+            "glm-5v-turbo",
+            "glm-4.6v",
+            "autoglm-phone-multilingual",
+            "glm-4.6v-flash",
+            "glm-4.6v-flashx",
+            "glm-4.5v",
+        ] {
+            assert!(
+                models.contains(&model),
+                "Z.AI static catalog must include documented chat model {model}"
+            );
+        }
+
         assert!(
-            static_models_for_provider("zai").contains(&"glm-5.1-highspeed"),
-            "Z.AI static catalog must include glm-5.1-highspeed"
+            !models.contains(&"glm-5.1-highspeed"),
+            "Z.AI static catalog should not advertise undocumented chat model glm-5.1-highspeed"
         );
     }
 

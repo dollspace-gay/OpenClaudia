@@ -514,6 +514,73 @@ pub static PRICING_TABLE: &[(&str, ModelPricing)] = &[
     ),
     ("deepseek-r1", ModelPricing::other(0.55, 2.19)),
     // ---------------------------------------------------------------------
+    // Z.AI / GLM
+    // ---------------------------------------------------------------------
+    (
+        "glm-5v-turbo",
+        ModelPricing::other_with_cache(1.20, 4.0, 0.20, 1.0),
+    ),
+    (
+        "glm-5.2",
+        ModelPricing::other_with_cache(1.40, 4.40, 0.26 / 1.40, 1.0),
+    ),
+    (
+        "glm-5.1",
+        ModelPricing::other_with_cache(1.40, 4.40, 0.26 / 1.40, 1.0),
+    ),
+    (
+        "glm-5-turbo",
+        ModelPricing::other_with_cache(1.20, 4.0, 0.20, 1.0),
+    ),
+    (
+        "glm-5",
+        ModelPricing::other_with_cache(1.0, 3.20, 0.20, 1.0),
+    ),
+    (
+        "glm-4.7-flashx",
+        ModelPricing::other_with_cache(0.07, 0.40, 0.01 / 0.07, 1.0),
+    ),
+    ("glm-4.7-flash", ModelPricing::other(0.0, 0.0)),
+    (
+        "glm-4.7",
+        ModelPricing::other_with_cache(0.60, 2.20, 0.11 / 0.60, 1.0),
+    ),
+    (
+        "glm-4.6v-flashx",
+        ModelPricing::other_with_cache(0.04, 0.40, 0.10, 1.0),
+    ),
+    ("glm-4.6v-flash", ModelPricing::other(0.0, 0.0)),
+    (
+        "glm-4.6v",
+        ModelPricing::other_with_cache(0.30, 0.90, 0.05 / 0.30, 1.0),
+    ),
+    (
+        "glm-4.6",
+        ModelPricing::other_with_cache(0.60, 2.20, 0.11 / 0.60, 1.0),
+    ),
+    (
+        "glm-4.5-airx",
+        ModelPricing::other_with_cache(1.10, 4.50, 0.22 / 1.10, 1.0),
+    ),
+    (
+        "glm-4.5-air",
+        ModelPricing::other_with_cache(0.20, 1.10, 0.03 / 0.20, 1.0),
+    ),
+    ("glm-4.5-flash", ModelPricing::other(0.0, 0.0)),
+    (
+        "glm-4.5-x",
+        ModelPricing::other_with_cache(2.20, 8.90, 0.45 / 2.20, 1.0),
+    ),
+    (
+        "glm-4.5v",
+        ModelPricing::other_with_cache(0.60, 1.80, 0.11 / 0.60, 1.0),
+    ),
+    (
+        "glm-4.5",
+        ModelPricing::other_with_cache(0.60, 2.20, 0.11 / 0.60, 1.0),
+    ),
+    ("glm-4-32b-0414-128k", ModelPricing::other(0.10, 0.10)),
+    // ---------------------------------------------------------------------
     // Qwen / QwQ
     // ---------------------------------------------------------------------
     ("qwen3.7-max", ModelPricing::other(2.50, 7.50)),
@@ -1151,6 +1218,20 @@ mod tests {
         assert!(
             missing.is_empty(),
             "PRICING_TABLE is missing Qwen catalog model(s): {missing:?}"
+        );
+    }
+
+    #[test]
+    fn priced_zai_static_catalog_models_resolve_pricing() {
+        let missing = crate::providers::ZAI_MODELS
+            .iter()
+            .copied()
+            .filter(|model| *model != "autoglm-phone-multilingual")
+            .filter(|model| get_pricing(model).is_none())
+            .collect::<Vec<_>>();
+        assert!(
+            missing.is_empty(),
+            "PRICING_TABLE is missing priced Z.AI catalog model(s): {missing:?}"
         );
     }
 
