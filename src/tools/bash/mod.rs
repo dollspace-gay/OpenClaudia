@@ -771,7 +771,7 @@ fn record_active_command_observation(cwd: &Path, command: &str, output: &std::pr
     record_command_observation_for_session(&session_key, cwd, command, exit_code, &stdout, &stderr);
 }
 
-fn record_command_observation_for_session(
+pub(crate) fn record_command_observation_for_session(
     session_key: &str,
     cwd: &Path,
     command: &str,

@@ -17,6 +17,7 @@ mod accumulator;
 pub(crate) mod args;
 mod ask_user;
 mod bash;
+pub(crate) use bash::record_command_observation_for_session;
 pub(crate) mod command;
 mod cron;
 pub(crate) mod crosslink;

@@ -518,6 +518,13 @@ impl AcpServer {
         );
     }
 
+    fn oc_session_id_for_acp(&self, acp_session_id: &str) -> String {
+        self.session_map
+            .get(acp_session_id)
+            .cloned()
+            .unwrap_or_else(|| acp_session_id.to_string())
+    }
+
     /// Create a new ACP server from the loaded config.
     #[must_use]
     pub fn new(
@@ -946,15 +953,19 @@ impl AcpServer {
 
         // Reset cancel flag
         self.cancel_flag.store(false, Ordering::SeqCst);
+        let oc_session_id = self.oc_session_id_for_acp(&acp_session_id);
 
         // Add user message
         self.messages.push(json!({
             "role": "user",
-            "content": prompt,
+            "content": prompt.clone(),
         }));
+        let task_obs = crate::grounded_loop::observe_session_user_task(&oc_session_id, &prompt);
 
         // Run the agentic loop
-        let stop_reason = self.run_prompt_loop(&acp_session_id).await;
+        let stop_reason = self
+            .run_prompt_loop(&acp_session_id, &oc_session_id, task_obs)
+            .await;
 
         // Record turn metrics
         if let Some(session) = self.session_manager.get_session_mut() {
@@ -974,7 +985,12 @@ impl AcpServer {
     /// Run the prompt → tool calls → re-prompt loop.
     // Complex protocol handler, splitting would reduce readability
     #[allow(clippy::too_many_lines)]
-    async fn run_prompt_loop(&mut self, acp_session_id: &str) -> String {
+    async fn run_prompt_loop(
+        &mut self,
+        acp_session_id: &str,
+        oc_session_id: &str,
+        task_obs: Option<crate::ledger::ObsId>,
+    ) -> String {
         // Crosslink #433: a typo in `proxy.target` now surfaces here as
         // an explicit error instead of being silently mapped to
         // `OpenAIAdapter`. This matches the other early-exit patterns in
@@ -1063,7 +1079,12 @@ impl AcpServer {
                     tool_call_id: None,
                     extra: std::collections::HashMap::new(),
                 }];
-            let decoded_messages = match decode_acp_messages(&self.messages) {
+            let grounded_messages = crate::grounded_loop::request_messages_with_grounding(
+                oc_session_id,
+                task_obs,
+                &self.messages,
+            );
+            let decoded_messages = match decode_acp_messages(&grounded_messages) {
                 Ok(messages) => messages,
                 Err(e) => {
                     self.send_session_update(
@@ -1191,6 +1212,22 @@ impl AcpServer {
 
             match stream_result {
                 StreamResult::EndTurn { content } => {
+                    if iteration > 0 {
+                        if let Err(reason) = crate::grounded_loop::validate_agentic_final_response(
+                            oc_session_id,
+                            &content,
+                        ) {
+                            self.send_session_update(
+                                acp_session_id,
+                                "agent_message_chunk",
+                                &json!({
+                                    "type": "text",
+                                    "text": format!("\nFinal answer failed grounding gate: {reason}"),
+                                }),
+                            );
+                            return "error".to_string();
+                        }
+                    }
                     // No tool calls — we're done
                     if !content.is_empty() {
                         self.messages.push(json!({
@@ -1240,7 +1277,9 @@ impl AcpServer {
                             }),
                         );
 
-                        let result = self.execute_tool_via_acp(&tc.name, &tc.arguments).await;
+                        let result = self
+                            .execute_tool_via_acp(oc_session_id, &tc.name, &tc.arguments)
+                            .await;
 
                         self.send_session_update(
                             acp_session_id,
@@ -1532,7 +1571,12 @@ impl AcpServer {
     /// 4. Fire `PostToolUse` (or `PostToolUseFailure`) after dispatch so
     ///    post-tool side effects (logging, audit, learn hooks) observe
     ///    ACP-driven calls the same way they observe proxy-driven calls.
-    async fn execute_tool_via_acp(&self, tool_name: &str, arguments_json: &str) -> AcpToolResult {
+    async fn execute_tool_via_acp(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        arguments_json: &str,
+    ) -> AcpToolResult {
         let (args, tool_input) = match parse_acp_tool_arguments(tool_name, arguments_json) {
             Ok(parsed) => parsed,
             Err(result) => return result,
@@ -1549,23 +1593,23 @@ impl AcpServer {
         }
 
         let result = match tool_name {
-            "read_file" => self.acp_read_file(&args).await,
-            "write_file" => self.acp_write_file(&args).await,
-            "edit_file" => self.acp_edit_file(&args).await,
-            "bash" => self.acp_bash(&args).await,
+            "read_file" => self.acp_read_file(session_id, &args).await,
+            "write_file" => self.acp_write_file(session_id, &args).await,
+            "edit_file" => self.acp_edit_file(session_id, &args).await,
+            "bash" => self.acp_bash(session_id, &args).await,
             "bash_output" => self.acp_bash_output(&args).await,
             "kill_shell" => self.acp_kill_shell(&args).await,
-            "list_files" => self.acp_list_files(&args).await,
-            "glob" | "grep" => self.acp_search(&args, tool_name).await,
+            "list_files" => self.acp_list_files(session_id, &args).await,
+            "glob" | "grep" => self.acp_search(session_id, &args, tool_name).await,
             // Internal tools run locally — not file/terminal operations
             "web_fetch" | "web_search" | "web_browser" | "memory_search" | "memory_save"
             | "memory_delete" | "memory_list" | "task_create" | "task_update" | "task_get"
             | "task_list" | "todo_write" | "todo_read" | "enter_plan_mode" | "exit_plan_mode" => {
-                self.execute_local_tool(tool_name, arguments_json)
+                self.execute_local_tool(session_id, tool_name, arguments_json)
             }
             name if name.starts_with("mcp__") => {
                 // MCP tools run locally through the MCP manager
-                self.execute_local_tool(tool_name, arguments_json)
+                self.execute_local_tool(session_id, tool_name, arguments_json)
             }
             _ => AcpToolResult {
                 content: format!("Unknown tool: {tool_name}"),
@@ -1594,7 +1638,12 @@ impl AcpServer {
     /// function intentionally does NOT re-run the gate so the audit
     /// trail emits exactly one `PreToolUse` event per logical tool
     /// dispatch (matches the proxy path's invariant).
-    fn execute_local_tool(&self, tool_name: &str, arguments_json: &str) -> AcpToolResult {
+    fn execute_local_tool(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        arguments_json: &str,
+    ) -> AcpToolResult {
         use crate::tools::{FunctionCall, ToolCall};
 
         let tc = ToolCall {
@@ -1604,6 +1653,22 @@ impl AcpServer {
                 name: tool_name.to_string(),
                 arguments: arguments_json.to_string(),
             },
+        };
+
+        let _session_guard = crate::tools::SessionIdGuard::set(session_id);
+        let _ledger_guard = match crate::ledger::RealityLedger::open_project_session(session_id) {
+            Ok(ledger) => Some(crate::ledger::install_active_ledger_for_session(
+                session_id.to_string(),
+                Arc::new(std::sync::Mutex::new(ledger)),
+            )),
+            Err(err) => {
+                tracing::warn!(
+                    session_id,
+                    error = %err,
+                    "failed to open session reality ledger for ACP local tool"
+                );
+                None
+            }
         };
 
         let result = crate::tools::execute_tool_with_memory(&tc, None, Some(&self.permission_mgr));
@@ -1652,7 +1717,11 @@ impl AcpServer {
 
     // -- File operations via ACP client --
 
-    async fn acp_read_file(&self, args: &HashMap<String, Value>) -> AcpToolResult {
+    async fn acp_read_file(
+        &self,
+        session_id: &str,
+        args: &HashMap<String, Value>,
+    ) -> AcpToolResult {
         let Some(path) = args
             .get("file_path")
             .or_else(|| args.get("path"))
@@ -1699,6 +1768,8 @@ impl AcpServer {
                     .collect::<Vec<_>>()
                     .join("\n");
 
+                record_acp_file_read_observation(session_id, path, text, start, end, &numbered);
+
                 AcpToolResult {
                     content: numbered,
                     is_error: false,
@@ -1711,7 +1782,11 @@ impl AcpServer {
         }
     }
 
-    async fn acp_write_file(&self, args: &HashMap<String, Value>) -> AcpToolResult {
+    async fn acp_write_file(
+        &self,
+        session_id: &str,
+        args: &HashMap<String, Value>,
+    ) -> AcpToolResult {
         let Some(path) = args
             .get("file_path")
             .or_else(|| args.get("path"))
@@ -1730,6 +1805,22 @@ impl AcpServer {
             };
         };
 
+        let before = self
+            .client_request("fs/read_text_file", Some(json!({"path": path})))
+            .await
+            .ok()
+            .and_then(|result| {
+                result
+                    .get("text")
+                    .or_else(|| result.get("content"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            });
+        if let Some(before_text) = before.as_deref() {
+            let end = before_text.lines().count();
+            record_acp_file_read_observation(session_id, path, before_text, 0, end, before_text);
+        }
+
         match self
             .client_request(
                 "fs/write_text_file",
@@ -1737,10 +1828,18 @@ impl AcpServer {
             )
             .await
         {
-            Ok(_) => AcpToolResult {
-                content: format!("Successfully wrote to {path}"),
-                is_error: false,
-            },
+            Ok(_) => {
+                record_acp_diff_observation(
+                    session_id,
+                    path,
+                    before.as_deref().unwrap_or_default(),
+                    content,
+                );
+                AcpToolResult {
+                    content: format!("Successfully wrote to {path}"),
+                    is_error: false,
+                }
+            }
             Err(e) => AcpToolResult {
                 content: format!("Failed to write file: {e}"),
                 is_error: true,
@@ -1748,7 +1847,11 @@ impl AcpServer {
         }
     }
 
-    async fn acp_edit_file(&self, args: &HashMap<String, Value>) -> AcpToolResult {
+    async fn acp_edit_file(
+        &self,
+        session_id: &str,
+        args: &HashMap<String, Value>,
+    ) -> AcpToolResult {
         let Some(path) = args
             .get("file_path")
             .or_else(|| args.get("path"))
@@ -1792,6 +1895,15 @@ impl AcpServer {
                 }
             }
         };
+        let file_end = file_content.lines().count();
+        record_acp_file_read_observation(
+            session_id,
+            path,
+            &file_content,
+            0,
+            file_end,
+            &file_content,
+        );
 
         // Apply the edit
         let replace_all = args
@@ -1828,15 +1940,18 @@ impl AcpServer {
             )
             .await
         {
-            Ok(_) => AcpToolResult {
-                content: format!(
-                    "Successfully edited {} ({} replacement{})",
-                    path,
-                    count,
-                    if count == 1 { "" } else { "s" }
-                ),
-                is_error: false,
-            },
+            Ok(_) => {
+                record_acp_diff_observation(session_id, path, &file_content, &new_content);
+                AcpToolResult {
+                    content: format!(
+                        "Successfully edited {} ({} replacement{})",
+                        path,
+                        count,
+                        if count == 1 { "" } else { "s" }
+                    ),
+                    is_error: false,
+                }
+            }
             Err(e) => AcpToolResult {
                 content: format!("Failed to write edited file: {e}"),
                 is_error: true,
@@ -1846,7 +1961,7 @@ impl AcpServer {
 
     // -- Terminal operations via ACP client --
 
-    async fn acp_bash(&self, args: &HashMap<String, Value>) -> AcpToolResult {
+    async fn acp_bash(&self, session_id: &str, args: &HashMap<String, Value>) -> AcpToolResult {
         let Some(command) = args.get("command").and_then(|v| v.as_str()) else {
             return AcpToolResult {
                 content: "Missing command argument".to_string(),
@@ -1937,6 +2052,18 @@ impl AcpServer {
             .and_then(serde_json::Value::as_i64)
             .unwrap_or(-1);
 
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let stdout = output.as_str();
+        let stderr = "";
+        crate::tools::record_command_observation_for_session(
+            session_id,
+            &cwd,
+            command,
+            i32::try_from(exit_code).unwrap_or(-1),
+            stdout,
+            stderr,
+        );
+
         AcpToolResult {
             content: if output.is_empty() {
                 format!("(exit code {exit_code})")
@@ -2004,7 +2131,11 @@ impl AcpServer {
         }
     }
 
-    async fn acp_list_files(&self, args: &HashMap<String, Value>) -> AcpToolResult {
+    async fn acp_list_files(
+        &self,
+        session_id: &str,
+        args: &HashMap<String, Value>,
+    ) -> AcpToolResult {
         let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
         let command = match acp_list_files_command(path) {
             Ok(command) => command,
@@ -2018,11 +2149,12 @@ impl AcpServer {
         // Delegate as a terminal command
         let mut ls_args = HashMap::new();
         ls_args.insert("command".to_string(), Value::String(command));
-        self.acp_bash(&ls_args).await
+        self.acp_bash(session_id, &ls_args).await
     }
 
     async fn acp_search(
         &self,
+        session_id: &str,
         tool_args: &HashMap<String, Value>,
         tool_name: &str,
     ) -> AcpToolResult {
@@ -2041,7 +2173,7 @@ impl AcpServer {
             }
         };
 
-        run_search_argv(&program, &argv).await
+        run_search_argv(session_id, &program, &argv).await
     }
 }
 
@@ -2049,6 +2181,130 @@ impl AcpServer {
 /// `| head -N` pipeline, which only worked because the command was being
 /// shell-interpreted.
 const SEARCH_OUTPUT_CAP_BYTES: usize = 256 * 1024;
+const ACP_LEDGER_EXCERPT_MAX_BYTES: usize = 100_000;
+
+fn record_acp_file_read_observation(
+    session_id: &str,
+    path: &str,
+    full_text: &str,
+    start: usize,
+    end: usize,
+    excerpt: &str,
+) {
+    let mut ledger = match crate::ledger::RealityLedger::open_project_session(session_id) {
+        Ok(ledger) => ledger,
+        Err(err) => {
+            tracing::warn!(
+                session_id,
+                path,
+                error = %err,
+                "failed to open session reality ledger for ACP file read"
+            );
+            return;
+        }
+    };
+    let (start_line, end_line) = acp_read_line_range(full_text, start, end);
+    if let Err(err) = ledger.observe_file_read(
+        path.to_string(),
+        full_text,
+        start_line,
+        end_line,
+        crate::tools::safe_truncate(excerpt, ACP_LEDGER_EXCERPT_MAX_BYTES).to_string(),
+    ) {
+        tracing::warn!(
+            session_id,
+            path,
+            error = %err,
+            "failed to append ACP file read observation to reality ledger"
+        );
+    }
+}
+
+fn acp_read_line_range(full_text: &str, start: usize, end: usize) -> (usize, usize) {
+    let total_lines = if full_text.is_empty() {
+        0
+    } else {
+        full_text.lines().count().max(1)
+    };
+    if total_lines == 0 {
+        return (0, 0);
+    }
+    let bounded_start = start.min(total_lines.saturating_sub(1));
+    let bounded_end = end.clamp(bounded_start + 1, total_lines);
+    (bounded_start + 1, bounded_end)
+}
+
+fn record_acp_diff_observation(session_id: &str, path: &str, before: &str, after: &str) {
+    if before == after {
+        return;
+    }
+    let mut ledger = match crate::ledger::RealityLedger::open_project_session(session_id) {
+        Ok(ledger) => ledger,
+        Err(err) => {
+            tracing::warn!(
+                session_id,
+                path,
+                error = %err,
+                "failed to open session reality ledger for ACP diff"
+            );
+            return;
+        }
+    };
+    let patch = similar::TextDiff::from_lines(before, after)
+        .unified_diff()
+        .header(&format!("a/{path}"), &format!("b/{path}"))
+        .to_string();
+    if let Err(err) = ledger.observe_diff(vec![path.to_string()], patch) {
+        tracing::warn!(
+            session_id,
+            path,
+            error = %err,
+            "failed to append ACP diff observation to reality ledger"
+        );
+    }
+}
+
+fn record_acp_command_argv_observation(
+    session_id: &str,
+    program: &std::path::Path,
+    argv: &[String],
+    exit_code: i32,
+    stdout: &str,
+    stderr: &str,
+) {
+    let mut ledger = match crate::ledger::RealityLedger::open_project_session(session_id) {
+        Ok(ledger) => ledger,
+        Err(err) => {
+            tracing::warn!(
+                session_id,
+                error = %err,
+                "failed to open session reality ledger for ACP command"
+            );
+            return;
+        }
+    };
+    let cwd = std::env::current_dir()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let mut ledger_argv = Vec::with_capacity(argv.len() + 1);
+    ledger_argv.push(program.to_string_lossy().to_string());
+    ledger_argv.extend(argv.iter().cloned());
+    if let Err(err) = ledger.observe_command_run(
+        cwd,
+        ledger_argv,
+        exit_code,
+        crate::tools::safe_truncate(stdout, ACP_LEDGER_EXCERPT_MAX_BYTES).to_string(),
+        crate::tools::safe_truncate(stderr, ACP_LEDGER_EXCERPT_MAX_BYTES).to_string(),
+    ) {
+        tracing::warn!(
+            session_id,
+            program = %program.display(),
+            error = %err,
+            "failed to append ACP command observation to reality ledger"
+        );
+    }
+}
 
 fn acp_list_files_command(path: &str) -> Result<String, String> {
     let quoted = shlex::try_quote(path).map_err(|err| format!("Invalid list_files path: {err}"))?;
@@ -2175,7 +2431,11 @@ fn build_search_argv(
 /// suitable for an ACP tool reply. Output is byte-capped (replacing the
 /// former `| head -N` shell pipeline) and stdout+stderr are merged in the
 /// natural order Tokio gives us.
-async fn run_search_argv(program: &std::path::Path, argv: &[String]) -> AcpToolResult {
+async fn run_search_argv(
+    session_id: &str,
+    program: &std::path::Path,
+    argv: &[String],
+) -> AcpToolResult {
     let output = match tokio::process::Command::new(program)
         .args(argv)
         .output()
@@ -2190,11 +2450,13 @@ async fn run_search_argv(program: &std::path::Path, argv: &[String]) -> AcpToolR
         }
     };
 
-    let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
-    if !output.stderr.is_empty() {
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let mut combined = stdout.clone();
+    if !stderr.is_empty() {
         // Surface stderr (rg prints "No files were searched" etc. there)
         // but only when present, so happy paths stay clean.
-        combined.push_str(&String::from_utf8_lossy(&output.stderr));
+        combined.push_str(&stderr);
     }
     if combined.len() > SEARCH_OUTPUT_CAP_BYTES {
         combined.truncate(SEARCH_OUTPUT_CAP_BYTES);
@@ -2202,6 +2464,7 @@ async fn run_search_argv(program: &std::path::Path, argv: &[String]) -> AcpToolR
     }
 
     let exit_code = output.status.code().unwrap_or(-1);
+    record_acp_command_argv_observation(session_id, program, argv, exit_code, &stdout, &stderr);
     let content = if combined.is_empty() {
         format!("(exit code {exit_code})")
     } else {
@@ -2810,6 +3073,24 @@ mod search_security_tests {
         assert!(build_search_argv("grep", &tool_args).is_err());
         let tool_args = args_from(&[("pattern", "x"), ("glob", "-rf")]);
         assert!(build_search_argv("grep", &tool_args).is_err());
+    }
+}
+
+#[cfg(test)]
+mod acp_ledger_helper_tests {
+    use super::acp_read_line_range;
+
+    #[test]
+    fn acp_read_line_range_maps_slice_offsets_to_one_based_lines() {
+        assert_eq!(acp_read_line_range("a\nb\nc\n", 0, 3), (1, 3));
+        assert_eq!(acp_read_line_range("a\nb\nc\n", 1, 2), (2, 2));
+    }
+
+    #[test]
+    fn acp_read_line_range_never_returns_inverted_ranges() {
+        assert_eq!(acp_read_line_range("", 0, 0), (0, 0));
+        assert_eq!(acp_read_line_range("a\nb\nc\n", 99, 99), (3, 3));
+        assert_eq!(acp_read_line_range("a\nb\nc\n", 1, 1), (2, 2));
     }
 }
 
