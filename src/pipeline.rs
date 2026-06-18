@@ -1588,12 +1588,55 @@ fn permission_manager_outcome_for_tui(
     }
 }
 
+async fn permission_request_hook_outcome(
+    tool_name: &str,
+    tool_call_id: &str,
+    arguments: &str,
+    session_id: Option<&str>,
+    hook_engine: Option<&crate::hooks::HookEngine>,
+    tx: &mpsc::Sender<AppEvent>,
+) -> Option<PermissionOutcome> {
+    let engine = hook_engine?;
+    let tool_input = serde_json::from_str::<Value>(arguments)
+        .unwrap_or_else(|_| serde_json::json!({ "raw_arguments": arguments }));
+    let mut input = crate::hooks::HookInput::new(crate::hooks::HookEvent::PermissionRequest)
+        .with_tool(tool_name, tool_input)
+        .with_extra(
+            "tool_call_id",
+            serde_json::Value::String(tool_call_id.to_string()),
+        );
+    if let Some(session_id) = session_id {
+        input = input.with_session_id(session_id);
+    }
+
+    let result = engine
+        .run(crate::hooks::HookEvent::PermissionRequest, &input)
+        .await;
+    if result.allowed {
+        return None;
+    }
+
+    let reason = result
+        .outputs
+        .iter()
+        .find_map(|output| output.reason.as_deref())
+        .unwrap_or("Permission request blocked by hook");
+    Some(permission_denied_with_result(
+        tool_name,
+        tool_call_id,
+        &format!("Permission request blocked by hook: {reason}"),
+        &format!("[DENIED] Permission request blocked by hook: {reason}"),
+        tx,
+    ))
+}
+
 /// Check whether a tool call is permitted in the current session.
 ///
 /// Consults batch/session deny caches first, then the `PermissionManager`
 /// (so hard-safety denials and config auto-allows win), then batch/session
-/// allow caches, and finally sends a `PermissionRequest` event and `.await`s
-/// the user's decision via a tokio `oneshot` if no rule matches.
+/// allow caches, then `PermissionRequest` hooks, and finally sends a
+/// `PermissionRequest` event and `.await`s the user's decision via a tokio
+/// `oneshot` if no rule matches.
 ///
 /// `async` so the reply wait yields the runtime — under
 /// `flavor = "current_thread"` a synchronous `mpsc::recv` here would
@@ -1607,6 +1650,8 @@ async fn check_tool_permission(
     always_denied: &mut std::collections::HashSet<String>,
     permission_mgr: Option<&PermissionManager>,
     transient_allowed_tool_rules: &[PermissionRule],
+    hook_engine: Option<&crate::hooks::HookEngine>,
+    session_id: Option<&str>,
     tx: &mpsc::Sender<AppEvent>,
 ) -> PermissionOutcome {
     // Batch-scoped cache (this invocation of execute_tool_calls_for_tui).
@@ -1653,6 +1698,19 @@ async fn check_tool_permission(
         return PermissionOutcome::Allowed {
             checked: permission_mgr.is_some(),
         };
+    }
+
+    if let Some(outcome) = permission_request_hook_outcome(
+        tool_name,
+        tool_call_id,
+        arguments,
+        session_id,
+        hook_engine,
+        tx,
+    )
+    .await
+    {
+        return outcome;
     }
 
     let args_preview = if arguments.len() > 200 {
@@ -1990,6 +2048,8 @@ async fn execute_tool_calls_for_tui(
                 &mut always_denied,
                 permission_mgr.as_deref(),
                 transient_allowed_tool_rules,
+                hook_engine.as_deref(),
+                session_id,
                 tx,
             )
             .await
@@ -3077,6 +3137,8 @@ mod tests {
             &mut always_denied,
             Some(&mgr),
             &[],
+            None,
+            None,
             &tx,
         )
         .await;
@@ -3118,6 +3180,8 @@ mod tests {
             &mut always_denied,
             Some(&mgr),
             &[],
+            None,
+            None,
             &tx,
         )
         .await;
@@ -3157,6 +3221,8 @@ mod tests {
             &mut always_denied,
             Some(&mgr),
             &transient,
+            None,
+            None,
             &tx,
         )
         .await;
@@ -3168,6 +3234,84 @@ mod tests {
         assert!(
             rx.try_recv().is_err(),
             "transient allowed-tools rule must not emit a PermissionRequest"
+        );
+    }
+
+    #[tokio::test]
+    async fn permission_request_hook_can_deny_before_tui_prompt() {
+        use crate::config::{Hook, HookEntry, HooksConfig};
+        use crate::hooks::HookEngine;
+        use std::sync::mpsc as std_mpsc;
+
+        let mut hooks = HooksConfig::default();
+        hooks.permission_request.push(HookEntry {
+            matcher: Some("bash".to_string()),
+            hooks: vec![Hook::Command {
+                command: r#"printf '{"decision":"deny","reason":"hook veto"}'"#.to_string(),
+                shell: false,
+                timeout: 5,
+            }],
+        });
+        let engine = HookEngine::new(hooks);
+        let mut always_allowed: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut always_denied: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let (tx, rx) = std_mpsc::channel::<AppEvent>();
+
+        let outcome = check_tool_permission(
+            "bash",
+            "call_hook",
+            r#"{"command":"rm -rf /tmp/openclaudia-hook-test"}"#,
+            &mut always_allowed,
+            &mut always_denied,
+            None,
+            &[],
+            Some(&engine),
+            Some("session-1"),
+            &tx,
+        )
+        .await;
+
+        let PermissionOutcome::DeniedWithResult(result) = outcome else {
+            panic!("permission hook denial must return DeniedWithResult");
+        };
+        assert_eq!(result["tool_call_id"], "call_hook");
+        assert!(
+            result["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("hook veto")),
+            "model-facing denial must include hook reason: {result}"
+        );
+
+        let mut saw_permission_request = false;
+        let mut saw_tool_done = false;
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                AppEvent::PermissionRequest { reply, .. } => {
+                    saw_permission_request = true;
+                    let _ = reply.send(PermissionResponse::Deny);
+                }
+                AppEvent::ToolDone {
+                    name,
+                    success,
+                    content,
+                } => {
+                    saw_tool_done = true;
+                    assert_eq!(name, "bash");
+                    assert!(!success);
+                    assert!(content.contains("hook veto"), "{content}");
+                }
+                _ => {}
+            }
+        }
+
+        assert!(
+            saw_tool_done,
+            "hook denial must emit a ToolDone failure event"
+        );
+        assert!(
+            !saw_permission_request,
+            "hook denial must short-circuit before the TUI permission prompt"
         );
     }
 
@@ -3193,6 +3337,8 @@ mod tests {
             &mut always_denied,
             Some(&mgr),
             &[],
+            None,
+            None,
             &tx,
         )
         .await;
