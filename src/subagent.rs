@@ -1597,6 +1597,7 @@ async fn run_subagent_inner(
                 }
             };
             let result = crate::tools::execute_tool_with_memory(&tc, None, Some(&permission_mgr));
+            observe_subagent_tool_result(&agent_id, &tc.function.name, &result);
 
             messages.push(json!({
                 "role": "tool",
@@ -1858,6 +1859,14 @@ fn parse_subagent_tool_call(tool_call: &Value, index: usize) -> Result<ToolCall,
             arguments: arguments.to_string(),
         },
     })
+}
+
+fn observe_subagent_tool_result(
+    agent_id: &str,
+    tool_name: &str,
+    result: &crate::tools::ToolResult,
+) {
+    crate::grounded_loop::observe_tool_result_for_session(agent_id, tool_name, result);
 }
 
 // === Tool Execution ===
@@ -2208,6 +2217,7 @@ pub fn execute_task_stop_tool<S: BuildHasher>(args: &HashMap<String, Value, S>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn worktree_git_helpers_use_resolved_binary_path() {
@@ -2233,6 +2243,33 @@ mod tests {
                 n = idx + 1,
             );
         }
+    }
+
+    #[test]
+    fn subagent_tool_result_observer_records_tool_result_observation() {
+        let agent_id = "subagent-tool-result-ledger-test";
+        let ledger = Arc::new(Mutex::new(crate::ledger::RealityLedger::new()));
+        let _guard = crate::ledger::install_active_ledger_for_session(agent_id, ledger.clone());
+        let result = crate::tools::ToolResult {
+            tool_call_id: "call_1".to_string(),
+            content: "model-visible tool output".to_string(),
+            is_error: false,
+        };
+
+        observe_subagent_tool_result(agent_id, "list_files", &result);
+
+        let ledger = ledger.lock().expect("ledger lock");
+        let observations = ledger.observations_chronological();
+        assert!(observations.iter().any(|obs| {
+            matches!(
+                &obs.kind,
+                crate::ledger::ObservationKind::ToolResult { tool, result }
+                    if tool == "list_files"
+                        && result["tool_call_id"] == "call_1"
+                        && result["content"] == "model-visible tool output"
+                        && result["is_error"] == false
+            )
+        }));
     }
 
     #[test]
