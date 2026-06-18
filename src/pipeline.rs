@@ -269,12 +269,12 @@ pub fn build_google_request(messages: &[Value], effort_level: &str) -> Result<Va
         }));
     }
 
-    // Gemini 2.5 takes `thinkingConfig.thinkingBudget` inside
+    // Gemini takes `thinkingConfig.thinkingBudget` inside
     // generationConfig. When effort is high/max we hand it the Claude
-    // Code ULTRATHINK constant, clamped to Gemini's 24k ceiling.
+    // Code ULTRATHINK constant, clamped to Gemini's documented ceiling.
     let mut generation_config = serde_json::json!({"maxOutputTokens": 4096});
     if matches!(effort_level, "high" | "max") {
-        const GEMINI_THINKING_CAP: u32 = 24_576;
+        const GEMINI_THINKING_CAP: u32 = 32_768;
         let budget = crate::thinking::anthropic_thinking_budget(Some(effort_level))
             .unwrap_or(crate::thinking::ULTRATHINK_BUDGET_TOKENS)
             .min(GEMINI_THINKING_CAP);
@@ -2844,10 +2844,10 @@ mod tests {
 
     /// B2 — Google request attaches `thinkingConfig.thinkingBudget` for high effort.
     ///
-    /// Gemini 2.5 thinking is capped at 24576.
+    /// Gemini thinking is capped at 32768.
     #[test]
     fn b2_google_request_thinking_budget_capped() {
-        const GEMINI_CAP: u64 = 24_576;
+        const GEMINI_CAP: u64 = 32_768;
         let prev = std::env::var("MAX_THINKING_TOKENS").ok();
         // SAFETY: single-threaded test, no concurrent writers.
         unsafe {

@@ -86,14 +86,14 @@ pub struct ThinkingConfig {
     pub enabled: bool,
     /// Token budget for thinking (provider-specific)
     /// - Anthropic: min 1024, no max
-    /// - Google Gemini 2.5: 128-32768
+    /// - Google Gemini: 128-32768
     /// - Z.AI/GLM: no explicit budget
     #[serde(default)]
     pub budget_tokens: Option<u32>,
     /// Preserve thinking across turns (Z.AI/GLM specific)
     #[serde(default)]
     pub preserve_across_turns: bool,
-    /// Reasoning effort level for `OpenAI` o1/o3: "low", "medium", "high"
+    /// Reasoning effort level for `OpenAI` GPT-5/o1/o3/o4: "low", "medium", "high"
     #[serde(default)]
     pub reasoning_effort: Option<String>,
     /// When `budget_tokens` is `None`, derive the budget from

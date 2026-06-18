@@ -226,7 +226,7 @@ Generated 2026-03-05
 
 5. **Archival memory with FTS5** — Full-text searchable long-term memory. Neither competitor has this.
 
-6. **Provider auto-detection** — Pass `-m gemini-2.5-flash` and the provider is auto-detected. Neither competitor does this.
+6. **Provider auto-detection** — Pass `-m gemini-3.5-flash` and the provider is auto-detected. Neither competitor does this.
 
 7. **HTTP proxy mode** — Can act as a proxy server, translating between OpenAI-compatible format and native provider APIs. Unique architecture.
 

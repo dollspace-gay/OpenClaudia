@@ -17,7 +17,7 @@ OpenClaudia is a Rust-based CLI that transforms any LLM into an agentic coding a
 - **Web Search** — Browser-feature builds support no-key DuckDuckGo/Bing scraping; Tavily or Brave APIs work in all builds
 - **Auto-Learning Memory** — Automatically captures coding patterns, error resolutions, file relationships, and user preferences across sessions
 - **Background Shells** — Run long-running processes, check output, and kill them on demand
-- **Thinking Mode** — Extended reasoning for Anthropic, OpenAI o1/o3, Gemini 2.5, DeepSeek R1, Qwen QwQ, GLM
+- **Thinking Mode** — Extended reasoning for Anthropic, OpenAI GPT-5/o1/o3/o4, Gemini 3.x/2.5, DeepSeek V4, Qwen QwQ, Z.AI/GLM, and MiniMax-M3
 - **VDD Adversarial Review** — Verification-Driven Development: a separate adversary model reviews code for bugs/vulnerabilities
 - **Hooks System** — Run custom scripts at key moments (session start, tool use, prompt submit, etc.)
 - **Guardrails** — Configurable code quality gates, blast radius limiting, and diff size monitoring
@@ -127,11 +127,11 @@ providers:
   openai:
     base_url: https://api.openai.com
     thinking:
-      reasoning_effort: "medium"  # OpenAI o1/o3/o4: low, medium, high
+      reasoning_effort: "medium"  # OpenAI GPT-5/o1/o3/o4: low, medium, high
   google:
     base_url: https://generativelanguage.googleapis.com
     thinking:
-      budget_tokens: 10000        # Google Gemini 2.5 thinking budget
+      budget_tokens: 10000        # Google Gemini thinking budget
   zai:
     base_url: https://api.z.ai/api/coding/paas/v4
   deepseek:

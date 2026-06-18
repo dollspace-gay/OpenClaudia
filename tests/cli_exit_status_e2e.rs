@@ -1196,8 +1196,26 @@ fn readme_cli_examples_do_not_advertise_stale_tui_or_coordinator_modes() {
         "README must not imply auth --logout deletes shared Claude credentials"
     );
     assert!(
+        readme.contains(
+            "**Thinking Mode** — Extended reasoning for Anthropic, OpenAI GPT-5/o1/o3/o4, Gemini 3.x/2.5, DeepSeek V4, Qwen QwQ, Z.AI/GLM, and MiniMax-M3"
+        ),
+        "README feature list must match the implemented provider thinking surface"
+    );
+    assert!(
+        readme.contains("reasoning_effort: \"medium\"  # OpenAI GPT-5/o1/o3/o4: low, medium, high"),
+        "README config sample must mention every OpenAI reasoning family supported by the adapter"
+    );
+    assert!(
+        readme.contains("budget_tokens: 10000        # Google Gemini thinking budget"),
+        "README config sample must not pin Google thinking to an older Gemini family"
+    );
+    assert!(
         !readme.contains("openclaudia --coordinator      # Multi-agent coordinator mode"),
         "README must not advertise the Phase 1 coordinator as a working binary mode"
+    );
+    assert!(
+        !readme.contains("OpenAI o1/o3, Gemini 2.5, DeepSeek R1"),
+        "README must not retain stale thinking-provider wording"
     );
     assert!(
         !readme.contains("openclaudia --tui-mode         # Full-screen TUI"),
@@ -1270,6 +1288,10 @@ fn comparison_provider_counts_match_current_adapter_surface() {
         comparison
             .contains("8 cloud provider adapters plus Ollama/local OpenAI-compatible routing"),
         "COMPARISON.md must describe the current adapter surface precisely"
+    );
+    assert!(
+        comparison.contains("Pass `-m gemini-3.5-flash` and the provider is auto-detected"),
+        "COMPARISON.md provider auto-detection example should use a current catalog model"
     );
     for stale_claim in ["7 + Ollama", "7 native provider adapters"] {
         assert!(

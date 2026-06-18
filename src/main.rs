@@ -1505,7 +1505,7 @@ mod tests {
         .expect("google request must build");
         assert_eq!(
             google["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            24_576
+            openclaudia::thinking::ULTRATHINK_BUDGET_TOKENS
         );
 
         if let Some(v) = prev {

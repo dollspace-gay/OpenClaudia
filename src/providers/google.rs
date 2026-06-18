@@ -272,7 +272,7 @@ impl ProviderAdapter for GoogleAdapter {
     ) -> Result<Value, ProviderError> {
         let mut body = self.transform_request(request)?;
 
-        // Add Google Gemini 2.5 thinking config if enabled
+        // Add Google Gemini thinking config if enabled
         // See: https://ai.google.dev/gemini-api/docs/thinking
         if thinking.enabled {
             // Crosslink #599: route through effective_budget so the
