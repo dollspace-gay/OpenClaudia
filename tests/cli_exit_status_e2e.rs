@@ -1469,6 +1469,22 @@ fn readme_cli_examples_do_not_advertise_stale_tui_or_coordinator_modes() {
 }
 
 #[test]
+fn architecture_cli_overview_lists_all_binary_subcommands() {
+    let architecture = include_str!("../ARCHITECTURE.md");
+    for command in ["init", "auth", "start", "acp", "config", "doctor", "loop"] {
+        assert!(
+            architecture.contains(command),
+            "ARCHITECTURE.md high-level CLI overview must mention `{command}`"
+        );
+    }
+    assert!(
+        architecture.contains("Subcommands: init, auth, start,")
+            && architecture.contains("acp, config, doctor, loop"),
+        "ARCHITECTURE.md must keep the command inventory in the high-level overview"
+    );
+}
+
+#[test]
 fn comparison_provider_counts_match_current_adapter_surface() {
     let comparison = include_str!("../COMPARISON.md");
 

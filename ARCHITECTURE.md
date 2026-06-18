@@ -16,8 +16,8 @@
                          │   │ (direct) │  │ (proxy srv)  │  │
                          │   └────┬─────┘  └──────┬───────┘  │
                          │        │               │          │
-                         │   Subcommands: init, auth,        │
-                         │   config, doctor, loop            │
+                         │   Subcommands: init, auth, start, │
+                         │   acp, config, doctor, loop       │
                          └────────┬───────────────┬──────────┘
                                   │               │
                     ┌─────────────▼─┐         ┌───▼──────────────┐
