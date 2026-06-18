@@ -135,7 +135,8 @@ impl ToolRegistry {
 
 use super::crosslink as crosslink_tool;
 use super::{
-    ask_user, bash, cron, file, lsp, plan_mode, skill, task, todo, tool_search, web, worktree,
+    ask_user, bash, cron, file, grounding, lsp, plan_mode, skill, task, todo, tool_search, web,
+    worktree,
 };
 
 // ── bash ─────────────────────────────────────────────────────────────────────
@@ -307,6 +308,44 @@ impl ToolHandler for ReadFileHandler {
     }
     fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
         file::execute_read_file(args)
+    }
+}
+
+struct GroundingContextHandler;
+impl ToolHandler for GroundingContextHandler {
+    fn name(&self) -> &'static str {
+        "grounding_context"
+    }
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "grounding_context",
+                "description": "Hydrate selected Reality Ledger observation IDs from the current session. Use this to inspect evidence from the grounding index before citing detailed file, command, diff, tool, or verification facts.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "ids": {
+                            "type": "array",
+                            "description": "Observation IDs to hydrate, as strings from the Reality Ledger index.",
+                            "items": {
+                                "type": "string"
+                            },
+                            "minItems": 1,
+                            "maxItems": 16
+                        },
+                        "include_stale": {
+                            "type": "boolean",
+                            "description": "If true, include stale observations for historical navigation. Stale observations are never authoritative evidence."
+                        }
+                    },
+                    "required": ["ids"]
+                }
+            }
+        })
+    }
+    fn execute(&self, args: &HashMap<String, Value>, _ctx: &mut ToolContext<'_>) -> (String, bool) {
+        grounding::execute_grounding_context(args)
     }
 }
 
@@ -1638,6 +1677,7 @@ static HANDLERS: &[&dyn ToolHandler] = &[
     &KillShellsForAgentHandler,
     // file
     &ReadFileHandler,
+    &GroundingContextHandler,
     &WriteFileHandler,
     &EditFileHandler,
     &ListFilesHandler,

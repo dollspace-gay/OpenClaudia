@@ -302,6 +302,7 @@ The `keybindings:` config map customizes the legacy line-oriented REPL (`opencla
 | `kill_shell` | Terminate a background shell by ID |
 | `kill_shells_for_agent` | Terminate all background shells owned by an agent or session |
 | `read_file` | Read file contents (supports images, PDFs, Jupyter notebooks) with optional offset/limit |
+| `grounding_context` | Hydrate selected Reality Ledger observation IDs for evidence-grounded decisions |
 | `write_file` | Create or overwrite files |
 | `edit_file` | Targeted string replacement edits (requires reading file first) |
 | `list_files` | List directory contents |

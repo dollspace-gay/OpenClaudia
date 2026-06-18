@@ -188,6 +188,7 @@ const CORE_TOOLS: &[&str] = &[
     "kill_shell",
     "kill_shells_for_agent",
     "read_file",
+    "grounding_context",
     "write_file",
     "edit_file",
     "notebook_edit",

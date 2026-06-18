@@ -431,7 +431,7 @@ pub fn render_grounding_system_message(packet: &GroundedPromptPacket) -> String 
         );
     }
     out.push_str(
-        "\nRules: Use memory, summaries, and provider chat history only as navigation aids. Treat facts as grounded only when backed by non-stale, non-summary ledger observations. Cite observation IDs for file, command, diff, and verification claims in final answers.\n",
+        "\nRules: Use memory, summaries, and provider chat history only as navigation aids. Treat facts as grounded only when backed by non-stale, non-summary ledger observations. Use grounding_context to hydrate selected observation IDs when detailed evidence is needed. Cite observation IDs for file, command, diff, and verification claims in final answers.\n",
     );
     out
 }

@@ -192,7 +192,13 @@ fn read_only_tools_declare_no_permission_target() {
     // Documented contract: tools with no side effects return
     // None from permission_target() — the default impl.
     let r = registry();
-    for tool_name in &["read_file", "list_files", "glob", "grep"] {
+    for tool_name in &[
+        "read_file",
+        "grounding_context",
+        "list_files",
+        "glob",
+        "grep",
+    ] {
         let handler = r.get(tool_name).expect("registered");
         assert!(
             handler.permission_target().is_none(),
