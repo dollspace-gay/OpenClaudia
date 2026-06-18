@@ -10,7 +10,7 @@
 //! | Spec behavior | Test(s)                                                          |
 //! |---------------|------------------------------------------------------------------|
 //! | B1 Handshake  | `handshake_sends_correct_protocol_version`                       |
-//! |               | `handshake_no_elicitation_cap` (gap #613)                        |
+//! |               | `handshake_declares_elicitation_cap` (fix #613)                  |
 //! |               | `handshake_initialized_notification_error_swallowed`             |
 //! |               | `handshake_initialize_timeout_returns_timeout_error` (fix #628)  |
 //! | B2 Tool disc. | `tool_refresh_skips_list_without_tools_cap` (fix #627)           |
@@ -117,63 +117,54 @@ async fn handshake_sends_correct_protocol_version() {
     );
 }
 
-/// B1 — OC does NOT declare `elicitation` in the `initialize` capabilities.
+/// B1 — OC declares `elicitation` in the `initialize` capabilities.
 ///
-/// Gap: #613 — servers that send elicitation requests will receive no
-/// response from OC.  This test pins the current absence so a future fix
-/// (adding the capability) is immediately visible in the diff.
-///
-/// We test this by inspecting the *wire message* sent during initialize.
-/// We do so via a wiremock HTTP server that captures the JSON-RPC body.
+/// We test this via a stdio fixture that inspects the initialize request and
+/// reports the observed capability shape through `tools/list`.
 #[tokio::test]
-async fn handshake_no_elicitation_cap() {
-    use openclaudia::mcp::HttpTransport;
+async fn handshake_declares_elicitation_cap() {
+    let script = r#"
+import json
+import sys
 
-    let mock_server = MockServer::start().await;
+def respond(req_id, result):
+    sys.stdout.write(json.dumps({"jsonrpc":"2.0","id":req_id,"result":result}) + "\n")
+    sys.stdout.flush()
 
-    // Respond to initialize
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": { "tools": { "listChanged": false } },
-                "serverInfo": { "name": "mock", "version": "0.0.1" }
-            }
-        })))
-        .expect(1..)
-        .mount(&mock_server)
-        .await;
+init = json.loads(sys.stdin.readline())
+caps = init.get("params", {}).get("capabilities", {})
+cap_ok = "roots" in caps and "elicitation" in caps
+respond(init["id"], {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {"tools": {"listChanged": False}},
+    "serverInfo": {"name": "mock", "version": "0.0.1"},
+})
 
-    let transport = HttpTransport::__test_new_unchecked(&mock_server.uri());
-    // Handshake succeeds; we only need it to complete to verify what was sent.
-    let _ = McpServer::new("mock", Box::new(transport)).await;
+initialized = json.loads(sys.stdin.readline())
+respond(initialized["id"], None)
 
-    // Retrieve captured requests
-    let received = mock_server.received_requests().await.expect("requests");
-    let init_req = received
-        .iter()
-        .find(|r| {
-            r.body_json::<serde_json::Value>()
-                .ok()
-                .and_then(|b| b.get("method").cloned())
-                == Some(json!("initialize"))
-        })
-        .expect("initialize request must have been sent");
+tools = json.loads(sys.stdin.readline())
+tool_name = "client_caps_ok" if cap_ok else "client_caps_missing"
+respond(tools["id"], {
+    "tools": [{
+        "name": tool_name,
+        "description": "reports observed client capabilities",
+        "inputSchema": {"type": "object", "properties": {}},
+    }]
+})
+"#;
+    let transport =
+        StdioTransport::spawn("python3", &["-u", "-c", script]).expect("spawn cap fixture");
+    let server = McpServer::new("mock", Box::new(transport))
+        .await
+        .expect("handshake should succeed");
 
-    let body: serde_json::Value = init_req.body_json().expect("parse body");
-    let caps = &body["params"]["capabilities"];
-
-    // Pin current state: `roots` declared, `elicitation` absent
     assert!(
-        caps.get("roots").is_some(),
-        "OC declares roots capability (current behaviour)"
-    );
-    assert!(
-        caps.get("elicitation").is_none(),
-        "OC does NOT declare elicitation capability — gap #613"
+        server
+            .tools()
+            .iter()
+            .any(|tool| tool.name == "client_caps_ok"),
+        "stdio initialize must declare roots and elicitation capabilities"
     );
 }
 

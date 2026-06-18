@@ -56,6 +56,7 @@ const STDERR_BUFFER_CAP: usize = 1024 * 1024;
 const STDERR_SNIPPET_BYTES: usize = 4096;
 // Fix #445 point 2 — bound BEFORE allocation on the response line.
 const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024;
+const MAX_STDIO_INTERMEDIATE_MESSAGES: usize = 1000;
 
 /// Errors that can occur during MCP operations
 #[derive(Error, Debug)]
@@ -242,6 +243,16 @@ pub struct McpServerInfo {
 /// resulting trait object can cross `.await` points in async tasks.
 #[async_trait]
 pub trait McpTransport: Send + Sync {
+    /// Client capabilities this transport can actually service.
+    ///
+    /// Stdio is fully bidirectional, so it can answer server-initiated
+    /// `roots/list` and `elicitation/create` requests while awaiting a
+    /// response. The default is intentionally empty for transports that
+    /// cannot yet route server-to-client requests back to the server.
+    fn client_capabilities(&self) -> Value {
+        json!({})
+    }
+
     /// Send a request and receive a response
     async fn request(&self, method: &str, params: Option<Value>) -> Result<Value, McpError>;
 
@@ -398,10 +409,132 @@ impl StdioTransport {
     pub(crate) fn stderr_buf_handle(&self) -> Arc<Mutex<Vec<u8>>> {
         Arc::clone(&self.stderr_buf)
     }
+
+    async fn write_json_line(&self, value: &Value) -> Result<(), McpError> {
+        let line = serde_json::to_string(value)
+            .map_err(|e| McpError::Protocol(format!("Failed to serialize MCP message: {e}")))?;
+        let mut child = self.child.lock().await;
+        let Some(stdin) = child.stdin.as_mut() else {
+            return Err(McpError::Transport("Stdin not available".to_string()));
+        };
+        stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(|e| McpError::Transport(format!("Failed to write to stdin: {e}")))?;
+        stdin
+            .write_all(b"\n")
+            .await
+            .map_err(|e| McpError::Transport(format!("Failed to write newline: {e}")))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| McpError::Transport(format!("Failed to flush stdin: {e}")))?;
+        Ok(())
+    }
+
+    async fn read_stdout_line(&self) -> Result<String, McpError> {
+        let buf = {
+            let mut reader = self.reader.lock().await;
+            let mut buf: Vec<u8> = Vec::new();
+            // `+ 1` so we can distinguish "cap reached, no newline"
+            // (oversized) from "exactly cap bytes followed by newline".
+            let cap = (MAX_RESPONSE_SIZE as u64).saturating_add(1);
+            let bytes_read = (&mut *reader)
+                .take(cap)
+                .read_until(b'\n', &mut buf)
+                .await
+                .map_err(|e| McpError::Transport(format!("Failed to read from stdout: {e}")))?;
+            drop(reader);
+
+            if bytes_read == 0 {
+                let snippet = stderr_snippet(&self.stderr_buf).await;
+                return Err(McpError::Transport(format!(
+                    "MCP server closed stdout before responding{snippet}"
+                )));
+            }
+
+            if buf.len() > MAX_RESPONSE_SIZE && !buf.ends_with(b"\n") {
+                let snippet = stderr_snippet(&self.stderr_buf).await;
+                return Err(McpError::Transport(format!(
+                    "MCP response exceeded {MAX_RESPONSE_SIZE} bytes without newline; rejecting{snippet}"
+                )));
+            }
+            buf
+        };
+
+        String::from_utf8(buf)
+            .map_err(|e| McpError::Protocol(format!("MCP response was not valid UTF-8: {e}")))
+    }
+
+    async fn handle_server_message(&self, value: &Value) -> Result<bool, McpError> {
+        let Some(method) = value.get("method").and_then(Value::as_str) else {
+            return Ok(false);
+        };
+
+        if let Some(id) = value.get("id").and_then(Value::as_u64) {
+            let response = build_client_feature_response(id, method);
+            self.write_json_line(&response).await?;
+        } else {
+            debug!(method = %method, "Ignoring MCP server notification while awaiting response");
+        }
+
+        Ok(true)
+    }
+}
+
+fn build_client_feature_response(id: u64, method: &str) -> Value {
+    match method {
+        "ping" => json!({"jsonrpc": "2.0", "id": id, "result": {}}),
+        "roots/list" => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": current_roots_result(),
+        }),
+        "elicitation/create" => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {"action": "decline"},
+        }),
+        other => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": -32601,
+                "message": format!("OpenClaudia MCP client does not handle server request: {other}"),
+            },
+        }),
+    }
+}
+
+fn current_roots_result() -> Value {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let root = cwd.canonicalize().unwrap_or(cwd);
+    let uri = url::Url::from_directory_path(&root)
+        .map(|url| url.to_string())
+        .unwrap_or_else(|()| format!("file://{}", root.display()));
+    let name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("workspace");
+
+    json!({
+        "roots": [{
+            "uri": uri,
+            "name": name,
+        }]
+    })
 }
 
 #[async_trait]
 impl McpTransport for StdioTransport {
+    fn client_capabilities(&self) -> Value {
+        json!({
+            "roots": { "listChanged": false },
+            "elicitation": {}
+        })
+    }
+
     async fn request(&self, method: &str, params: Option<Value>) -> Result<Value, McpError> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
 
@@ -450,63 +583,36 @@ impl McpTransport for StdioTransport {
         // independent file descriptors and the reader has its own mutex.
         drop(child);
 
-        // Fix #445 point 2: bound BEFORE allocation.
-        //
-        // `Take::read_until` consumes at most `MAX_RESPONSE_SIZE + 1` bytes
-        // (cap + the terminating newline). The previous code called
-        // `BufReader::read_line` with NO upper bound and only checked the
-        // length afterwards — by which point a hostile server could already
-        // have forced an arbitrarily large allocation.
-        //
-        // `buf` is `Vec<u8>` rather than `String`: `read_until` works on
-        // bytes, and bounding before UTF-8 validation avoids materialising
-        // an invalid 10 MiB string only to reject it.
-        let buf = {
-            let mut reader = self.reader.lock().await;
-            let mut buf: Vec<u8> = Vec::new();
-            // `+ 1` so we can distinguish "cap reached, no newline"
-            // (oversized) from "exactly cap bytes followed by newline".
-            let cap = (MAX_RESPONSE_SIZE as u64).saturating_add(1);
-            let bytes_read = (&mut *reader)
-                .take(cap)
-                .read_until(b'\n', &mut buf)
-                .await
-                .map_err(|e| McpError::Transport(format!("Failed to read from stdout: {e}")))?;
-            drop(reader);
-
-            if bytes_read == 0 {
-                // EOF before any byte arrived — server died.
-                let snippet = stderr_snippet(&self.stderr_buf).await;
-                return Err(McpError::Transport(format!(
-                    "MCP server closed stdout before responding{snippet}"
-                )));
-            }
-
-            // Cap reached without a newline — oversized line. Reject
-            // before any further processing. This check fires on the
-            // FIRST `read_until` call, so the buffer holds at most
-            // `MAX_RESPONSE_SIZE + 1` bytes — no unbounded allocation
-            // has happened.
-            if buf.len() > MAX_RESPONSE_SIZE && !buf.ends_with(b"\n") {
-                let snippet = stderr_snippet(&self.stderr_buf).await;
-                return Err(McpError::Transport(format!(
-                    "MCP response exceeded {MAX_RESPONSE_SIZE} bytes without newline; rejecting{snippet}"
-                )));
-            }
-            buf
-        };
-
-        let line = std::str::from_utf8(&buf)
-            .map_err(|e| McpError::Protocol(format!("MCP response was not valid UTF-8: {e}")))?;
-
-        let response: JsonRpcResponse = match serde_json::from_str(line) {
-            Ok(r) => r,
-            Err(e) => {
-                let snippet = stderr_snippet(&self.stderr_buf).await;
+        let mut seen_messages = 0usize;
+        let response = loop {
+            if seen_messages >= MAX_STDIO_INTERMEDIATE_MESSAGES {
                 return Err(McpError::Protocol(format!(
-                    "Failed to parse response: {e}{snippet}"
+                    "MCP stdio response scan exceeded {MAX_STDIO_INTERMEDIATE_MESSAGES} messages \
+                     without seeing response id {id}"
                 )));
             }
+            seen_messages += 1;
+
+            let line = self.read_stdout_line().await?;
+            let value: Value = match serde_json::from_str(&line) {
+                Ok(value) => value,
+                Err(e) => {
+                    let snippet = stderr_snippet(&self.stderr_buf).await;
+                    return Err(McpError::Protocol(format!(
+                        "Failed to parse response: {e}{snippet}"
+                    )));
+                }
+            };
+
+            if self.handle_server_message(&value).await? {
+                continue;
+            }
+
+            let response: JsonRpcResponse = serde_json::from_value(value).map_err(|e| {
+                McpError::Protocol(format!("Failed to parse response envelope: {e}"))
+            })?;
+
+            break response;
         };
 
         if response.id != id {
@@ -1111,9 +1217,7 @@ impl McpServer {
     async fn initialize(&mut self) -> Result<(), McpError> {
         let params = json!({
             "protocolVersion": "2024-11-05",
-            "capabilities": {
-                "roots": { "listChanged": true }
-            },
+            "capabilities": self.transport.client_capabilities(),
             "clientInfo": {
                 "name": "openclaudia",
                 "version": env!("CARGO_PKG_VERSION")
@@ -2659,6 +2763,10 @@ mod tests {
         StdioTransport::spawn("sh", &["-c", script])
     }
 
+    fn spawn_python(script: &str) -> Result<StdioTransport, McpError> {
+        StdioTransport::spawn("python3", &["-u", "-c", script])
+    }
+
     /// Fix #445 point 1: a server that writes >64 KiB to stderr does NOT
     /// deadlock the transport. Without the drain, the server would block
     /// on `write(2)` and the stdout reply would never arrive.
@@ -2747,6 +2855,80 @@ mod tests {
         let result = transport.request("ping", None).await.expect("request ok");
         assert_eq!(result["value"], 42);
         let _ = transport.close().await;
+    }
+
+    /// Client-feature requests can arrive while a stdio transport is waiting
+    /// for the response to its own request. `roots/list` is especially
+    /// important because OC advertises the roots capability during initialize.
+    #[tokio::test]
+    async fn stdio_answers_nested_roots_list_request() {
+        let script = r#"
+import json
+import sys
+
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(json.dumps({"jsonrpc":"2.0","id":900,"method":"roots/list"}) + "\n")
+sys.stdout.flush()
+roots_reply = json.loads(sys.stdin.readline())
+root = roots_reply.get("result", {}).get("roots", [{}])[0]
+ok = (
+    roots_reply.get("id") == 900
+    and root.get("uri", "").startswith("file://")
+    and bool(root.get("name"))
+)
+sys.stdout.write(json.dumps({"jsonrpc":"2.0","id":req["id"],"result":{"roots_ok":ok,"roots_reply":roots_reply}}) + "\n")
+sys.stdout.flush()
+"#;
+        let transport = spawn_python(script).expect("spawn python fixture");
+
+        let result = transport.request("ping", None).await.expect("request ok");
+        assert_eq!(result["roots_ok"], true, "roots response: {result}");
+        let _ = transport.close().await;
+    }
+
+    /// Until the UI exposes a user-confirmation flow for MCP elicitation, OC
+    /// answers with a valid conservative `decline` response instead of hanging
+    /// the server or fabricating user-provided data.
+    #[tokio::test]
+    async fn stdio_declines_nested_elicitation_create_request() {
+        let script = r#"
+import json
+import sys
+
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(json.dumps({
+    "jsonrpc":"2.0",
+    "id":901,
+    "method":"elicitation/create",
+    "params":{
+        "message":"Need a value",
+        "requestedSchema":{"type":"object","properties":{"name":{"type":"string"}}}
+    }
+}) + "\n")
+sys.stdout.flush()
+elicitation_reply = json.loads(sys.stdin.readline())
+ok = (
+    elicitation_reply.get("id") == 901
+    and elicitation_reply.get("result", {}).get("action") == "decline"
+    and "content" not in elicitation_reply.get("result", {})
+)
+sys.stdout.write(json.dumps({"jsonrpc":"2.0","id":req["id"],"result":{"elicitation_declined":ok,"elicitation_reply":elicitation_reply}}) + "\n")
+sys.stdout.flush()
+"#;
+        let transport = spawn_python(script).expect("spawn python fixture");
+
+        let result = transport.request("ping", None).await.expect("request ok");
+        assert_eq!(
+            result["elicitation_declined"], true,
+            "elicitation response: {result}"
+        );
+        let _ = transport.close().await;
+    }
+
+    #[test]
+    fn http_transport_advertises_no_bidirectional_client_capabilities_yet() {
+        let transport = HttpTransport::__test_new_unchecked("http://127.0.0.1:9");
+        assert_eq!(transport.client_capabilities(), json!({}));
     }
 
     // ─── Fix #490 — object-safe trait + shared HTTP client ─────────────
