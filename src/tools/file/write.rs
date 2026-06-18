@@ -85,6 +85,14 @@ pub fn execute_write_file(args: &HashMap<String, Value>) -> (String, bool) {
             true,
         );
     }
+    if target_exists {
+        if let Err(msg) = super::require_fresh_file_observation_if_ledger_active(
+            Path::new(path),
+            "overwriting it",
+        ) {
+            return (msg, true);
+        }
+    }
 
     let Some(content) = args.get("content").and_then(|v| v.as_str()) else {
         return ("Missing 'content' argument".to_string(), true);
@@ -253,6 +261,31 @@ mod tests {
         // File contents untouched.
         let after = std::fs::read_to_string(&path).expect("read back");
         assert_eq!(after, "old", "file must not be modified on rejection");
+    }
+
+    #[test]
+    fn active_ledger_overwrite_requires_fresh_file_read_observation() {
+        let _lock = tracker_lock();
+        super::READ_TRACKER.clear_all();
+        let _session_guard = crate::tools::SessionIdGuard::set("write-ledger-read-required");
+        let ledger =
+            std::sync::Arc::new(std::sync::Mutex::new(crate::ledger::RealityLedger::new()));
+        let _ledger_guard =
+            crate::ledger::install_active_ledger_for_session("write-ledger-read-required", ledger);
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("ledger_requires_read.txt");
+        std::fs::write(&path, "old").expect("setup");
+        super::READ_TRACKER.mark_read(&path);
+
+        let args = make_args(&path.to_string_lossy(), "new");
+        let (msg, is_err) = super::execute_write_file(&args);
+
+        assert!(is_err, "ledger-less overwrite must be denied: {msg}");
+        assert!(
+            msg.contains("active reality ledger has no fresh file read observation"),
+            "{msg}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).expect("read back"), "old");
     }
 
     /// crosslink #968: creating a brand-new file (no prior contents to

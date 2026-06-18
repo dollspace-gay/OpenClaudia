@@ -201,6 +201,11 @@ pub fn execute_edit_file(args: &HashMap<String, Value>) -> (String, bool) {
             true,
         );
     }
+    if let Err(msg) =
+        super::require_fresh_file_observation_if_ledger_active(Path::new(path), "editing it")
+    {
+        return (msg, true);
+    }
 
     // Blast radius check
     if let Err(msg) = crate::guardrails::check_file_access(path) {
@@ -491,6 +496,31 @@ mod tests {
         assert!(
             msg2.contains("must read") || msg2.contains("Use read_file"),
             "{msg2}"
+        );
+    }
+
+    #[test]
+    fn active_ledger_edit_requires_fresh_file_read_observation() {
+        let _lock = super::super::shared_tracker_lock();
+        READ_TRACKER.clear_all();
+        let _session_guard = crate::tools::SessionIdGuard::set("edit-ledger-read-required");
+        let ledger =
+            std::sync::Arc::new(std::sync::Mutex::new(crate::ledger::RealityLedger::new()));
+        let _ledger_guard =
+            crate::ledger::install_active_ledger_for_session("edit-ledger-read-required", ledger);
+        let (_f, path) = tmp_readable("before\n");
+
+        let args = make_args(&path, "before", "after");
+        let (msg, is_err) = super::execute_edit_file(&args);
+
+        assert!(is_err, "ledger-less edit must be denied: {msg}");
+        assert!(
+            msg.contains("active reality ledger has no fresh file read observation"),
+            "{msg}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read back"),
+            "before\n"
         );
     }
 

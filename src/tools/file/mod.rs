@@ -524,6 +524,36 @@ fn record_active_file_read_observation(
     }
 }
 
+pub(super) fn require_fresh_file_observation_if_ledger_active(
+    path: &Path,
+    action: &str,
+) -> Result<(), String> {
+    let session_key = super::todo::current_session_key();
+    let Some(ledger) = crate::ledger::active_ledger_for_session(&session_key) else {
+        return Ok(());
+    };
+    let path = path.to_string_lossy().to_string();
+    let ledger = ledger.lock().unwrap_or_else(|err| {
+        tracing::error!("active reality ledger lock poisoned; recovering inner state");
+        err.into_inner()
+    });
+    let has_fresh_read = ledger.observations_chronological().into_iter().any(|obs| {
+        obs.authority == crate::ledger::Authority::Filesystem
+            && !ledger.is_stale(obs.id)
+            && matches!(
+                &obs.kind,
+                crate::ledger::ObservationKind::FileRead { path: observed, .. }
+                    if observed == &path
+            )
+    });
+    if has_fresh_read {
+        return Ok(());
+    }
+    Err(format!(
+        "You must read '{path}' before {action}. The active reality ledger has no fresh file read observation; use read_file first to ground the change."
+    ))
+}
+
 fn read_file_bytes_for_ledger(path: &Path) -> std::io::Result<Vec<u8>> {
     let file = std::fs::File::open(path)?;
     let mut bytes = Vec::new();
