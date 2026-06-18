@@ -308,6 +308,67 @@ pub fn all_tui_commands() -> impl Iterator<Item = &'static SlashCommand> {
 mod tests {
     use super::*;
 
+    fn readme_default_tui_slash_commands() -> Vec<String> {
+        let readme = include_str!("../README.md");
+        let section = readme
+            .split_once("## Slash Commands (Default TUI)")
+            .expect("README must document default TUI slash commands")
+            .1
+            .split_once("### TUI Shell & Files")
+            .expect("default TUI slash command section must end before shell syntax")
+            .0;
+
+        section
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                if !trimmed.starts_with('|') || trimmed.starts_with("| Command") {
+                    return None;
+                }
+                let mut columns = trimmed
+                    .trim_matches('|')
+                    .split_terminator_unescaped('|')
+                    .into_iter()
+                    .map(str::trim);
+                let command_column = columns.next()?;
+                if command_column.is_empty() || command_column.chars().all(|c| c == '-') {
+                    return None;
+                }
+                Some(command_column.replace("\\|", "|").replace('`', ""))
+            })
+            .collect()
+    }
+
+    trait SplitTerminatorUnescaped<'a> {
+        fn split_terminator_unescaped(self, separator: char) -> Vec<&'a str>;
+    }
+
+    impl<'a> SplitTerminatorUnescaped<'a> for &'a str {
+        fn split_terminator_unescaped(self, separator: char) -> Vec<&'a str> {
+            let mut parts = Vec::new();
+            let mut start = 0;
+            let mut escaped = false;
+
+            for (index, ch) in self.char_indices() {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == separator {
+                    parts.push(&self[start..index]);
+                    start = index + ch.len_utf8();
+                }
+            }
+
+            parts.push(&self[start..]);
+            parts
+        }
+    }
+
     /// Guard: if someone empties the table by accident, this fails rather
     /// than shipping an empty help screen in both seams.
     #[test]
@@ -412,5 +473,18 @@ mod tests {
                 "TUI help missing implemented command {tui_command}"
             );
         }
+    }
+
+    #[test]
+    fn readme_default_tui_slash_commands_match_tui_catalog() {
+        let documented = readme_default_tui_slash_commands();
+        let catalogued = all_tui_commands()
+            .map(|c| c.invocation.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            documented, catalogued,
+            "README default-TUI slash commands must match TUI_SLASH_SECTIONS exactly"
+        );
     }
 }

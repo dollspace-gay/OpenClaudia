@@ -244,7 +244,8 @@ The default full-screen TUI intentionally exposes a focused slash-command set. T
 |---------|-------------|
 | `/sessions`, `/list` | List saved sessions |
 | `/resume`, `/continue` | Open the session picker |
-| `/load <id>`, `/continue <id>` | Resume a saved session by ID prefix |
+| `/load <id>` | Resume a saved session by ID prefix |
+| `/continue <id>` | Resume a saved session by ID prefix |
 | `/rename <title>` | Rename the current session |
 | `/export` | Export conversation to markdown |
 | `/undo` | Undo last message exchange |
