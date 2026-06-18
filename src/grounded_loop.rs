@@ -15,6 +15,7 @@ use std::fmt::Write as _;
 
 pub const DEFAULT_GROUNDING_INDEX_LIMIT: usize = 64;
 pub const TOOL_RESULT_LEDGER_CONTENT_MAX_BYTES: usize = 16 * 1024;
+pub const LEDGER_VERIFICATION_OUTPUT_MAX_BYTES: usize = 20_000;
 const MAX_RENDERED_TASK_CHARS: usize = 500;
 const MAX_NAV_IDS: usize = 16;
 
@@ -212,6 +213,68 @@ pub fn append_tool_result_observation(
             "truncated": result.content.len() > content.len(),
         }),
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QualityGateObservationIds {
+    pub command: ObsId,
+    pub verification: ObsId,
+}
+
+pub fn append_quality_gate_observations(
+    ledger: &mut RealityLedger,
+    gate: &crate::guardrails::QualityCheckResult,
+) -> Result<QualityGateObservationIds, LedgerError> {
+    let cwd = std::env::current_dir()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let command = ledger.observe_command_run(
+        cwd,
+        quality_gate_argv(&gate.command),
+        gate.exit_code,
+        crate::tools::safe_truncate(&gate.stdout, LEDGER_VERIFICATION_OUTPUT_MAX_BYTES).to_string(),
+        crate::tools::safe_truncate(&gate.stderr, LEDGER_VERIFICATION_OUTPUT_MAX_BYTES).to_string(),
+    )?;
+
+    let mut findings = Vec::new();
+    if !gate.passed {
+        findings.push(format!(
+            "quality gate '{}' failed: exit_code={} required={}",
+            gate.name, gate.exit_code, gate.required
+        ));
+        if !gate.stdout.trim().is_empty() {
+            findings.push(format!(
+                "stdout: {}",
+                crate::tools::safe_truncate(&gate.stdout, LEDGER_VERIFICATION_OUTPUT_MAX_BYTES)
+            ));
+        }
+        if !gate.stderr.trim().is_empty() {
+            findings.push(format!(
+                "stderr: {}",
+                crate::tools::safe_truncate(&gate.stderr, LEDGER_VERIFICATION_OUTPUT_MAX_BYTES)
+            ));
+        }
+    }
+    let verification = ledger.append(
+        Authority::Verifier,
+        ObservationKind::Verification {
+            passed: gate.passed,
+            command: Some(gate.command.clone()),
+            findings,
+        },
+    )?;
+
+    Ok(QualityGateObservationIds {
+        command,
+        verification,
+    })
+}
+
+fn quality_gate_argv(command: &str) -> Vec<String> {
+    shlex::split(command)
+        .filter(|argv| !argv.is_empty())
+        .unwrap_or_else(|| vec![command.to_string()])
 }
 
 pub fn session_grounding_system_content(session_id: &str, task_obs: ObsId) -> Option<String> {

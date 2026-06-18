@@ -1992,8 +1992,6 @@ fn guardrail_block_for_tool_call(tool_name: &str, args: &Value) -> Option<String
     crate::guardrails::check_file_access(&path).err()
 }
 
-const LEDGER_VERIFICATION_OUTPUT_MAX_BYTES: usize = 20_000;
-
 fn emit_failed_quality_gate_events(tx: &mpsc::Sender<AppEvent>, session_id: Option<&str>) {
     for gate in crate::guardrails::run_quality_gates() {
         record_quality_gate_verification(session_id, &gate);
@@ -2033,47 +2031,14 @@ fn record_quality_gate_verification(
             return;
         }
     };
-    if let Err(err) = append_quality_gate_verification(&mut ledger, gate) {
+    if let Err(err) = crate::grounded_loop::append_quality_gate_observations(&mut ledger, gate) {
         tracing::warn!(
             session_id,
             gate = %gate.name,
             error = %err,
-            "failed to append quality-gate verification to reality ledger"
+            "failed to append quality-gate observations to reality ledger"
         );
     }
-}
-
-fn append_quality_gate_verification(
-    ledger: &mut crate::ledger::RealityLedger,
-    gate: &crate::guardrails::QualityCheckResult,
-) -> Result<crate::ledger::ObsId, crate::ledger::LedgerError> {
-    let mut findings = Vec::new();
-    if !gate.passed {
-        findings.push(format!(
-            "quality gate '{}' failed: exit_code={} required={}",
-            gate.name, gate.exit_code, gate.required
-        ));
-        if !gate.stdout.trim().is_empty() {
-            findings.push(format!(
-                "stdout: {}",
-                tools::safe_truncate(&gate.stdout, LEDGER_VERIFICATION_OUTPUT_MAX_BYTES)
-            ));
-        }
-        if !gate.stderr.trim().is_empty() {
-            findings.push(format!(
-                "stderr: {}",
-                tools::safe_truncate(&gate.stderr, LEDGER_VERIFICATION_OUTPUT_MAX_BYTES)
-            ));
-        }
-    }
-    ledger.append(
-        crate::ledger::Authority::Verifier,
-        crate::ledger::ObservationKind::Verification {
-            passed: gate.passed,
-            command: Some(gate.command.clone()),
-            findings,
-        },
-    )
 }
 
 /// Checks permissions for write/destructive tools via a channel-based
@@ -2324,7 +2289,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn quality_gate_verification_records_failed_gate_findings() {
+    fn quality_gate_records_command_and_failed_gate_findings() {
         let mut ledger = crate::ledger::RealityLedger::new();
         let gate = crate::guardrails::QualityCheckResult {
             name: "unit".to_string(),
@@ -2336,8 +2301,32 @@ mod tests {
             required: true,
         };
 
-        let id = append_quality_gate_verification(&mut ledger, &gate).expect("append");
-        let observation = ledger.get(id).expect("observation");
+        let ids = crate::grounded_loop::append_quality_gate_observations(&mut ledger, &gate)
+            .expect("append");
+        let command_observation = ledger.get(ids.command).expect("command observation");
+        assert_eq!(
+            command_observation.authority,
+            crate::ledger::Authority::Command
+        );
+        let crate::ledger::ObservationKind::CommandRun {
+            argv,
+            exit_code,
+            stdout,
+            stderr,
+            ..
+        } = &command_observation.kind
+        else {
+            panic!("expected command observation");
+        };
+        assert_eq!(
+            argv,
+            &vec!["cargo".to_string(), "test".to_string(), "--lib".to_string()]
+        );
+        assert_eq!(*exit_code, 101);
+        assert_eq!(stdout, "running tests");
+        assert_eq!(stderr, "one failed");
+
+        let observation = ledger.get(ids.verification).expect("observation");
         assert_eq!(observation.authority, crate::ledger::Authority::Verifier);
         let crate::ledger::ObservationKind::Verification {
             passed,

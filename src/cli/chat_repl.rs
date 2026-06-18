@@ -206,7 +206,6 @@ struct SseFrameCtx<'a> {
 /// Spinner template — uses indicatif placeholder syntax, not `format!`.
 const SPINNER_TMPL: &str = "{spinner:.cyan} {msg}";
 const EXTENSION_REGEX_PATTERN: &str = r"[\w/\\.-]+\.([a-zA-Z0-9]{1,10})\b";
-const LEDGER_VERIFICATION_OUTPUT_MAX_BYTES: usize = 20_000;
 
 fn active_provider_for_turn(config: &config::AppConfig) -> Result<&config::ProviderConfig, String> {
     config.active_provider().ok_or_else(|| {
@@ -269,39 +268,6 @@ fn cli_grounding_system_content(
 
 fn validate_cli_agentic_final_response(session_id: &str, content: &str) -> Result<(), String> {
     openclaudia::grounded_loop::validate_agentic_final_response(session_id, content)
-}
-
-fn append_cli_quality_gate_verification(
-    ledger: &mut openclaudia::ledger::RealityLedger,
-    gate: &guardrails::QualityCheckResult,
-) -> Result<openclaudia::ledger::ObsId, openclaudia::ledger::LedgerError> {
-    let mut findings = Vec::new();
-    if !gate.passed {
-        findings.push(format!(
-            "quality gate '{}' failed: exit_code={} required={}",
-            gate.name, gate.exit_code, gate.required
-        ));
-        if !gate.stdout.trim().is_empty() {
-            findings.push(format!(
-                "stdout: {}",
-                safe_truncate(&gate.stdout, LEDGER_VERIFICATION_OUTPUT_MAX_BYTES)
-            ));
-        }
-        if !gate.stderr.trim().is_empty() {
-            findings.push(format!(
-                "stderr: {}",
-                safe_truncate(&gate.stderr, LEDGER_VERIFICATION_OUTPUT_MAX_BYTES)
-            ));
-        }
-    }
-    ledger.append(
-        openclaudia::ledger::Authority::Verifier,
-        openclaudia::ledger::ObservationKind::Verification {
-            passed: gate.passed,
-            command: Some(gate.command.clone()),
-            findings,
-        },
-    )
 }
 
 fn load_repl_config(
@@ -3531,12 +3497,14 @@ impl ChatRepl {
                 }
             };
         for gate in qg_results {
-            if let Err(err) = append_cli_quality_gate_verification(&mut ledger, gate) {
+            if let Err(err) =
+                openclaudia::grounded_loop::append_quality_gate_observations(&mut ledger, gate)
+            {
                 tracing::warn!(
                     session_id = %self.chat_session.id,
                     gate = %gate.name,
                     error = %err,
-                    "failed to append CLI quality-gate verification to reality ledger"
+                    "failed to append CLI quality-gate observations to reality ledger"
                 );
             }
         }
@@ -4036,7 +4004,7 @@ providers: {}
     }
 
     #[test]
-    fn cli_quality_gate_result_records_verification_observation() {
+    fn cli_quality_gate_result_records_command_and_verification_observations() {
         let mut ledger = openclaudia::ledger::RealityLedger::new();
         let gate = guardrails::QualityCheckResult {
             name: "fmt".to_string(),
@@ -4048,11 +4016,30 @@ providers: {}
             required: true,
         };
 
-        let id = append_cli_quality_gate_verification(&mut ledger, &gate)
-            .expect("quality gate should ledger verification");
+        let ids = openclaudia::grounded_loop::append_quality_gate_observations(&mut ledger, &gate)
+            .expect("quality gate should ledger command and verification");
+
+        let command_obs = ledger
+            .get(ids.command)
+            .expect("command observation should exist");
+        let openclaudia::ledger::ObservationKind::CommandRun {
+            argv, exit_code, ..
+        } = &command_obs.kind
+        else {
+            panic!("expected command observation");
+        };
+        assert_eq!(
+            argv,
+            &vec![
+                "cargo".to_string(),
+                "fmt".to_string(),
+                "--check".to_string()
+            ]
+        );
+        assert_eq!(*exit_code, 1);
 
         let obs = ledger
-            .get(id)
+            .get(ids.verification)
             .expect("verification observation should exist");
         let openclaudia::ledger::ObservationKind::Verification {
             passed,
