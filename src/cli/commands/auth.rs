@@ -1,4 +1,12 @@
 use openclaudia::tools::safe_truncate;
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NativeOAuthSessionStoreStatus {
+    Missing,
+    SessionCount(usize),
+    Unreadable(String),
+}
 
 fn spawn_browser_opener(auth_url: &str) {
     #[cfg(target_os = "windows")]
@@ -19,6 +27,79 @@ fn spawn_browser_opener(auth_url: &str) {
     {
         if let Ok(opener) = which::which("xdg-open") {
             let _ = std::process::Command::new(opener).arg(auth_url).spawn();
+        }
+    }
+}
+
+fn native_oauth_session_store_path() -> Option<PathBuf> {
+    dirs::data_local_dir().map(|d| d.join("openclaudia").join("oauth_sessions.json"))
+}
+
+fn native_oauth_session_store_status() -> NativeOAuthSessionStoreStatus {
+    let Some(path) = native_oauth_session_store_path() else {
+        return NativeOAuthSessionStoreStatus::Missing;
+    };
+
+    let file = match open_native_oauth_session_file(&path) {
+        Ok(Some(file)) => file,
+        Ok(None) => return NativeOAuthSessionStoreStatus::Missing,
+        Err(reason) => return NativeOAuthSessionStoreStatus::Unreadable(reason),
+    };
+
+    let content = match std::io::read_to_string(file) {
+        Ok(content) => content,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return NativeOAuthSessionStoreStatus::Missing;
+        }
+        Err(err) => {
+            return NativeOAuthSessionStoreStatus::Unreadable(format!(
+                "failed to read {}: {err}",
+                path.display()
+            ));
+        }
+    };
+
+    match serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&content) {
+        Ok(sessions) => NativeOAuthSessionStoreStatus::SessionCount(sessions.len()),
+        Err(err) => NativeOAuthSessionStoreStatus::Unreadable(format!(
+            "failed to parse {}: {err}",
+            path.display()
+        )),
+    }
+}
+
+fn open_native_oauth_session_file(path: &Path) -> Result<Option<std::fs::File>, String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+        {
+            Ok(file) => Ok(Some(file)),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) if err.raw_os_error() == Some(libc::ELOOP) => {
+                Err(format!("{} is a symlink; refusing to read", path.display()))
+            }
+            Err(err) => Err(format!("failed to open {}: {err}", path.display())),
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        match std::fs::File::open(path) {
+            Ok(file) => {
+                if path
+                    .symlink_metadata()
+                    .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                {
+                    return Err(format!("{} is a symlink; refusing to read", path.display()));
+                }
+                Ok(Some(file))
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(format!("failed to open {}: {err}", path.display())),
         }
     }
 }
@@ -80,30 +161,26 @@ pub async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
             }
         }
 
-        let session_count = dirs::data_local_dir()
-            .map(|d| d.join("openclaudia").join("oauth_sessions.json"))
-            .filter(|path| path.exists())
-            .and_then(|path| std::fs::read_to_string(&path).ok())
-            .and_then(|content| {
-                serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(
-                    &content,
-                )
-                .ok()
-            })
-            .map_or(0, |sessions| sessions.len());
         println!();
-        if session_count == 0 {
-            println!("Native OAuth session store: empty.");
-        } else {
-            println!("Native OAuth session store: {session_count} session(s).");
+        match native_oauth_session_store_status() {
+            NativeOAuthSessionStoreStatus::Missing
+            | NativeOAuthSessionStoreStatus::SessionCount(0) => {
+                println!("Native OAuth session store: empty.");
+            }
+            NativeOAuthSessionStoreStatus::SessionCount(session_count) => {
+                println!("Native OAuth session store: {session_count} session(s).");
+            }
+            NativeOAuthSessionStoreStatus::Unreadable(reason) => {
+                eprintln!("Native OAuth session store unreadable: {reason}");
+                anyhow::bail!("could not read native OAuth session store: {reason}");
+            }
         }
         return Ok(());
     }
 
     // Handle --logout flag
     if logout {
-        let persist_path =
-            dirs::data_local_dir().map(|d| d.join("openclaudia").join("oauth_sessions.json"));
+        let persist_path = native_oauth_session_store_path();
 
         if let Some(path) = persist_path {
             if path.exists() {

@@ -41,7 +41,9 @@ fn assert_missing_config_is_failure(args: &[&str]) {
     command
         .args(args)
         .current_dir(cwd.path())
-        .env("HOME", home.path());
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path().join(".config"))
+        .env("XDG_DATA_HOME", home.path().join(".local/share"));
     for var in CONFIG_ENV_VARS {
         command.env_remove(var);
     }
@@ -99,7 +101,11 @@ fn default_tui_auth_failure_does_not_create_project_state_without_config() {
 
 fn isolated_command(cwd: &tempfile::TempDir, home: &tempfile::TempDir) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_openclaudia"));
-    command.current_dir(cwd.path()).env("HOME", home.path());
+    command
+        .current_dir(cwd.path())
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path().join(".config"))
+        .env("XDG_DATA_HOME", home.path().join(".local/share"));
     for var in CONFIG_ENV_VARS {
         command.env_remove(var);
     }
@@ -1353,6 +1359,39 @@ fn auth_status_with_malformed_credentials_exits_nonzero() {
     assert!(
         combined.contains("Could not read") && combined.contains(".credentials.json"),
         "status failure should identify the unreadable credentials file; got {combined:?}"
+    );
+}
+
+#[test]
+fn auth_status_with_malformed_native_oauth_store_exits_nonzero() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    let xdg_data = home.path().join(".local/share");
+    let store_dir = xdg_data.join("openclaudia");
+    fs::create_dir_all(&store_dir).expect("oauth store dir");
+    fs::write(store_dir.join("oauth_sessions.json"), "{not valid json")
+        .expect("malformed native oauth store");
+
+    let output = isolated_command(&cwd, &home)
+        .args(["auth", "--status"])
+        .output()
+        .expect("openclaudia auth --status must run");
+
+    assert!(
+        !output.status.success(),
+        "auth --status must fail when native OAuth store is malformed; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("Native OAuth session store unreadable")
+            && combined.contains("oauth_sessions.json"),
+        "status failure should identify the unreadable native OAuth store; got {combined:?}"
     );
 }
 
