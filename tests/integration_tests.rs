@@ -1308,7 +1308,6 @@ mod web_tools {
             "web_fetch",
             &json!({
                 "url": "https://example.com/",
-                "prompt": "Extract the page title",
             }),
         );
 
@@ -1322,6 +1321,11 @@ mod web_tools {
         assert!(
             !result.content.is_empty(),
             "web_fetch should return content"
+        );
+        assert!(
+            result.content.contains("URL: https://example.com/"),
+            "web_fetch raw output should include the fetched URL: {}",
+            result.content
         );
     }
 
