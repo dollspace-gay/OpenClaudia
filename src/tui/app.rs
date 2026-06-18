@@ -73,6 +73,43 @@ fn format_init_command_output(out: &Output) -> String {
     }
 }
 
+fn format_review_command_output(out: &Output) -> String {
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if !out.status.success() {
+        let mut parts = Vec::new();
+        let stdout = stdout.trim();
+        let stderr = stderr.trim();
+        if !stdout.is_empty() {
+            parts.push(stdout);
+        }
+        if !stderr.is_empty() {
+            parts.push(stderr);
+        }
+        let details = parts.join("\n");
+        return if details.is_empty() {
+            format!("Failed to run git diff: {}", out.status)
+        } else {
+            format!("Failed to run git diff:\n{details}")
+        };
+    }
+
+    if stdout.trim().is_empty() {
+        return "No changes to review.".to_string();
+    }
+
+    let lines = stdout.lines().collect::<Vec<_>>();
+    if lines.len() > 100 {
+        format!(
+            "{}\n... (truncated, {} total lines)",
+            lines[..100].join("\n"),
+            lines.len()
+        )
+    } else {
+        lines.join("\n")
+    }
+}
+
 /// Process-wide shutdown flag for the TUI event loop.
 ///
 /// crosslink #910: the original `run()` loop relied entirely on the
@@ -2430,23 +2467,7 @@ impl App {
                 .output()
                 .map_err(|e| e.to_string())
         }) {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                if stdout.is_empty() {
-                    "No changes to review.".to_string()
-                } else {
-                    let lines: Vec<&str> = stdout.lines().take(100).collect();
-                    if stdout.lines().count() > 100 {
-                        format!(
-                            "{}\n... (truncated, {} total lines)",
-                            lines.join("\n"),
-                            stdout.lines().count()
-                        )
-                    } else {
-                        lines.join("\n")
-                    }
-                }
-            }
+            Ok(out) => format_review_command_output(&out),
             Err(e) => format!("Failed to run git diff: {e}"),
         };
         self.messages.add(DisplayMessage::system(content));
@@ -3835,10 +3856,10 @@ mod tests {
     use super::{compile_file_ref_regex, expand_file_refs};
     use super::{
         current_exe_command, format_api_retry_delay, format_api_retry_message,
-        format_init_command_output, format_stream_timeout_message, git_bin, handle_turn_result,
-        lookup_tui_slash, resolve_provider_switch_auth, save_session, ApiClient, App, AppEvent,
-        EffortLevel, ProviderSwitch, SpawnTarget, TuiSession, TurnContext, TEST_SESSIONS_DIR,
-        TUI_SLASH_TABLE,
+        format_init_command_output, format_review_command_output, format_stream_timeout_message,
+        git_bin, handle_turn_result, lookup_tui_slash, resolve_provider_switch_auth, save_session,
+        ApiClient, App, AppEvent, EffortLevel, ProviderSwitch, SpawnTarget, TuiSession,
+        TurnContext, TEST_SESSIONS_DIR, TUI_SLASH_TABLE,
     };
     use crate::slash_commands::all_tui_commands;
     use crate::tui::events::ApiRetryKind;
@@ -3951,6 +3972,49 @@ mod tests {
             rendered,
             "Initialized OpenClaudia configuration in .openclaudia/"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tui_review_output_reports_git_failure_stderr() {
+        let output = output_with_status(128, "", "fatal: not a git repository");
+
+        let rendered = format_review_command_output(&output);
+
+        assert!(rendered.starts_with("Failed to run git diff:"));
+        assert!(rendered.contains("fatal: not a git repository"));
+        assert!(
+            !rendered.contains("No changes"),
+            "git failure must not be rendered as a clean diff"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tui_review_output_reports_no_changes_on_empty_success() {
+        let output = output_with_status(0, "", "");
+
+        assert_eq!(
+            format_review_command_output(&output),
+            "No changes to review."
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tui_review_output_truncates_large_successful_diff() {
+        let diff = (0..105)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let output = output_with_status(0, &diff, "");
+
+        let rendered = format_review_command_output(&output);
+
+        assert!(rendered.contains("line 0"));
+        assert!(rendered.contains("line 99"));
+        assert!(!rendered.contains("line 100\n"));
+        assert!(rendered.contains("truncated, 105 total lines"));
     }
 
     #[test]
