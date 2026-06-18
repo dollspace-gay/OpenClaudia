@@ -27,7 +27,7 @@ OpenClaudia is a Rust-based CLI that transforms any LLM into an agentic coding a
 - **LSP Integration** — Language Server Protocol support for go-to-definition, find-references, hover, and more
 - **Subagent System** — Spawn autonomous agents from the agent loop; coordinator infrastructure is experimental and not wired into the default TUI yet
 - **ACP Server** — Agent Control Protocol server for agent interoperability via stdin/stdout
-- **Git Worktrees** — Create, manage, and switch between isolated git worktrees
+- **Git Worktrees** — Create, list, and safely remove isolated git worktrees without mutating the process CWD
 - **Cron Scheduling** — Create, list, and delete recurring scheduled jobs
 - **Skills System** — Load and invoke reusable prompt skills from markdown files
 - **Cross-Platform** — Windows, macOS, Linux with Git Bash for consistent shell behavior
@@ -337,7 +337,7 @@ The `keybindings:` config map customizes the legacy line-oriented REPL (`opencla
 | Tool | Description |
 |------|-------------|
 | `enter_worktree` | Create an isolated git worktree for parallel work |
-| `exit_worktree` | Exit a worktree (keep or remove) |
+| `exit_worktree` | Remove a clean worktree, or merge/discard changes before removal |
 | `list_worktrees` | List all active worktrees |
 
 ### Scheduling Tools

@@ -311,3 +311,29 @@ fn three_worktree_tools_all_registered_in_registry() {
     assert!(registry().get("exit_worktree").is_some());
     assert!(registry().get("list_worktrees").is_some());
 }
+
+#[test]
+fn readme_worktree_claims_match_dispatch_contract() {
+    let readme = include_str!("../README.md");
+
+    assert!(
+        readme.contains(
+            "Create, list, and safely remove isolated git worktrees without mutating the process CWD"
+        ),
+        "README feature list must state the non-CWD-mutating worktree contract"
+    );
+    assert!(
+        readme.contains(
+            "`exit_worktree` | Remove a clean worktree, or merge/discard changes before removal"
+        ),
+        "README tool table must describe exit_worktree removal semantics"
+    );
+    assert!(
+        !readme.contains("switch between isolated git worktrees"),
+        "README must not imply enter_worktree mutates the process CWD"
+    );
+    assert!(
+        !readme.contains("Exit a worktree (keep or remove)"),
+        "README must not imply exit_worktree has a keep mode"
+    );
+}
