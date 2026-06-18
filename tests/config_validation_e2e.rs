@@ -479,14 +479,33 @@ fn readme_config_file_example_uses_real_schema_and_valid_provider_urls() {
     );
 
     let cfg: AppConfig = serde_yaml::from_str(yaml).expect("README config sample deserializes");
+    for provider in openclaudia::providers::SUPPORTED_PROVIDERS {
+        assert!(
+            yaml.contains(provider),
+            "README config sample provider inventory must mention supported target {provider}"
+        );
+    }
     assert_eq!(
         cfg.session.max_turns, 0,
         "README sample must show default unlimited max_turns"
     );
+    let anthropic_thinking = &cfg.providers["anthropic"].thinking;
+    assert!(
+        !anthropic_thinking.enabled,
+        "README sample must place Anthropic thinking.enabled under providers.anthropic"
+    );
     assert_eq!(
-        cfg.providers["anthropic"].thinking.budget_tokens,
-        Some(10_000),
-        "README sample must place Anthropic thinking under providers.anthropic"
+        anthropic_thinking.reasoning_effort.as_deref(),
+        Some("high"),
+        "README sample must place Anthropic reasoning_effort under providers.anthropic"
+    );
+    assert_eq!(
+        anthropic_thinking.budget_tokens, None,
+        "README sample must keep Anthropic budget_tokens commented unless manually enabled"
+    );
+    assert!(
+        yaml.contains("# budget_tokens: 10000"),
+        "README sample must still document the optional manual-thinking Claude budget"
     );
     assert_eq!(
         cfg.providers["openai"].thinking.reasoning_effort.as_deref(),
