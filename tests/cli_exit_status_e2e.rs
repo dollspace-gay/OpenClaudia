@@ -66,6 +66,37 @@ fn assert_missing_config_is_failure(args: &[&str]) {
     );
 }
 
+#[test]
+fn default_tui_auth_failure_does_not_create_project_state_without_config() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+
+    let output = isolated_command(&cwd, &home)
+        .output()
+        .expect("openclaudia default startup must run");
+
+    assert!(
+        !output.status.success(),
+        "default startup without config must fail; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("No API key configured for Anthropic")
+            && combined.contains("could not resolve authentication for target 'anthropic'"),
+        "default startup should surface the auth failure from the default provider; got {combined:?}"
+    );
+    assert!(
+        !cwd.path().join(".openclaudia").exists(),
+        "default startup without config must not create project .openclaudia state"
+    );
+}
+
 fn isolated_command(cwd: &tempfile::TempDir, home: &tempfile::TempDir) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_openclaudia"));
     command.current_dir(cwd.path()).env("HOME", home.path());

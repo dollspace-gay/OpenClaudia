@@ -224,8 +224,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Initialize logging. The full-screen ratatui TUI owns the terminal, so
     // writing log lines to stderr would smear them across the rendered frame.
-    // In that mode we redirect tracing to a per-run log file under
-    // .openclaudia/logs/; everywhere else we keep the stderr writer.
+    // In that mode, once a project config exists, we redirect tracing to a
+    // per-run log file under .openclaudia/logs/; everywhere else we keep the
+    // stderr writer.
     let filter = if cli.verbose {
         "openclaudia=debug,tower_http=debug"
     } else {
@@ -233,7 +234,8 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let tui_mode_active = cli.command.is_none() && !cli.tui_mode && cli.print.is_none();
-    let log_writer: tracing_subscriber::fmt::writer::BoxMakeWriter = if tui_mode_active {
+    let tui_file_logging_active = tui_mode_active && config::config_file_exists();
+    let log_writer: tracing_subscriber::fmt::writer::BoxMakeWriter = if tui_file_logging_active {
         let file = open_tui_log_file(Path::new(".openclaudia/logs"), std::process::id());
         file.map_or_else(
             || tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::sink),
@@ -249,7 +251,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .with(
             tracing_subscriber::fmt::layer()
-                .with_ansi(!tui_mode_active)
+                .with_ansi(!tui_file_logging_active)
                 .with_writer(log_writer),
         )
         .init();
