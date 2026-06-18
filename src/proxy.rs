@@ -429,6 +429,30 @@ async fn auth_status(State(state): State<ProxyState>, headers: HeaderMap) -> imp
     }
 }
 
+fn model_list_json(data: Vec<Value>) -> Value {
+    serde_json::json!({
+        "object": "list",
+        "data": data
+    })
+}
+
+fn static_model_list_json_for_provider(provider: &str) -> Value {
+    let catalog_provider = providers::canonical_static_catalog_provider(provider);
+    let data: Vec<Value> = providers::static_models_for_provider(catalog_provider)
+        .iter()
+        .map(|id| {
+            serde_json::json!({
+                "id": *id,
+                "object": "model",
+                "owned_by": catalog_provider,
+            })
+        })
+        .collect();
+
+    model_list_json(data)
+}
+
+#[cfg(test)]
 fn static_model_list_json() -> Value {
     let data: Vec<Value> = providers::STATIC_MODEL_CATALOG_PROVIDERS
         .iter()
@@ -445,15 +469,79 @@ fn static_model_list_json() -> Value {
         })
         .collect();
 
-    serde_json::json!({
-        "object": "list",
-        "data": data
-    })
+    model_list_json(data)
 }
 
-/// List available fallback models across supported providers.
-async fn list_models(State(_state): State<ProxyState>) -> impl IntoResponse {
-    Json(static_model_list_json())
+fn upstream_model_list_json(fallback_owner: &str, models: Vec<providers::ModelInfo>) -> Value {
+    let data: Vec<Value> = models
+        .into_iter()
+        .map(|model| {
+            let mut value = serde_json::json!({
+                "id": model.id,
+                "object": "model",
+                "owned_by": model.owned_by.as_deref().unwrap_or(fallback_owner),
+            });
+            if let Some(created) = model.created {
+                value["created"] = serde_json::json!(created);
+            }
+            value
+        })
+        .collect();
+
+    model_list_json(data)
+}
+
+async fn model_list_json_for_state(state: &ProxyState) -> Value {
+    let target = state.config.proxy.target.as_str();
+    let adapter = match get_adapter(target) {
+        Ok(adapter) => adapter,
+        Err(err) => {
+            warn!(target, error = %err, "Unknown provider for /v1/models; using static fallback");
+            return static_model_list_json_for_provider(target);
+        }
+    };
+    let fallback_provider = if providers::STATIC_MODEL_CATALOG_PROVIDERS.contains(&adapter.name()) {
+        adapter.name()
+    } else {
+        providers::canonical_static_catalog_provider(target)
+    };
+
+    if adapter.supports_model_listing() {
+        if let Some(provider_config) = state.config.active_provider() {
+            match providers::fetch_models(
+                &provider_config.base_url,
+                provider_config.api_key.as_ref(),
+                adapter,
+            )
+            .await
+            {
+                Ok(models) if !models.is_empty() => {
+                    return upstream_model_list_json(adapter.name(), models);
+                }
+                Ok(_) => {
+                    debug!(
+                        target,
+                        "Provider /v1/models returned no models; using static fallback"
+                    );
+                }
+                Err(err) => {
+                    warn!(target, error = %err, "Provider /v1/models failed; using static fallback");
+                }
+            }
+        } else {
+            warn!(
+                target,
+                "No active provider config for /v1/models; using static fallback"
+            );
+        }
+    }
+
+    static_model_list_json_for_provider(fallback_provider)
+}
+
+/// List available models for the active provider.
+async fn list_models(State(state): State<ProxyState>) -> impl IntoResponse {
+    Json(model_list_json_for_state(&state).await)
 }
 
 /// Run `PreToolUse` hooks for tool calls in the response
@@ -2526,6 +2614,47 @@ mod tests {
         .expect("minimal_config must deserialise")
     }
 
+    fn test_provider_config(base_url: String) -> ProviderConfig {
+        ProviderConfig {
+            api_key: None,
+            base_url,
+            model: None,
+            headers: std::collections::HashMap::new(),
+            thinking: crate::config::ThinkingConfig::default(),
+        }
+    }
+
+    fn test_proxy_state(config: crate::config::AppConfig) -> ProxyState {
+        let session_path = config.session.persist_path.clone();
+        ProxyState {
+            config: Arc::new(config),
+            client: Client::new(),
+            hook_engine: HookEngine::new(crate::config::HooksConfig::default()),
+            rules_engine: RulesEngine::new(".openclaudia/rules"),
+            compactor_overrides: CompactionOverrides::default(),
+            session_manager: Arc::new(RwLock::new(SessionManager::new(&session_path))),
+            plugin_manager: Arc::new(PluginManager::with_paths(vec![])),
+            mcp_manager: Arc::new(RwLock::new(McpManager::new())),
+            oauth_store: Arc::new(OAuthStore::new()),
+            vdd_engine: None,
+            loop_control: None,
+        }
+    }
+
+    fn model_ids(response: &Value) -> Vec<String> {
+        response["data"]
+            .as_array()
+            .expect("model list data must be an array")
+            .iter()
+            .map(|item| {
+                item["id"]
+                    .as_str()
+                    .expect("model list entries must have string ids")
+                    .to_string()
+            })
+            .collect()
+    }
+
     #[test]
     fn proxy_static_model_list_uses_shared_provider_catalog() {
         let response = static_model_list_json();
@@ -2553,6 +2682,86 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn static_model_list_for_provider_returns_only_that_catalog() {
+        let response = static_model_list_json_for_provider("qwen");
+        let ids = model_ids(&response);
+
+        assert!(
+            ids.contains(&"qwen3-coder-flash".to_string()),
+            "Qwen fallback list must include current Qwen coder flash"
+        );
+        assert!(
+            !ids.contains(&"gpt-5.5".to_string()),
+            "provider-specific fallback must not mix in OpenAI models"
+        );
+        assert!(response["data"]
+            .as_array()
+            .expect("model list data")
+            .iter()
+            .all(|item| item["owned_by"] == "qwen"));
+    }
+
+    #[tokio::test]
+    async fn model_list_uses_live_provider_listing_when_available() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "object": "list",
+                "data": [
+                    {"id": "live-openai-a", "owned_by": "upstream", "created": 1},
+                    {"id": "live-openai-b"}
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let mut config = minimal_config("openai");
+        config
+            .providers
+            .insert("openai".to_string(), test_provider_config(server.uri()));
+        let state = test_proxy_state(config);
+
+        let response = model_list_json_for_state(&state).await;
+        let ids = model_ids(&response);
+
+        assert_eq!(ids, vec!["live-openai-a", "live-openai-b"]);
+        assert_eq!(response["data"][0]["owned_by"], "upstream");
+        assert_eq!(response["data"][0]["created"], 1);
+        assert_eq!(response["data"][1]["owned_by"], "openai");
+    }
+
+    #[tokio::test]
+    async fn model_list_falls_back_to_active_static_catalog_when_listing_unsupported() {
+        let mut config = minimal_config("anthropic");
+        config.providers.insert(
+            "anthropic".to_string(),
+            test_provider_config("http://127.0.0.1:9".to_string()),
+        );
+        let state = test_proxy_state(config);
+
+        let response = model_list_json_for_state(&state).await;
+        let ids = model_ids(&response);
+
+        assert!(
+            ids.contains(&"claude-opus-4-7".to_string()),
+            "Anthropic fallback list must include Claude Opus 4.7"
+        );
+        assert!(
+            !ids.contains(&"gpt-5.5".to_string()),
+            "active-provider fallback must not return a cross-provider list"
+        );
+        assert!(response["data"]
+            .as_array()
+            .expect("model list data")
+            .iter()
+            .all(|item| item["owned_by"] == "anthropic"));
     }
 
     async fn upstream_response(
