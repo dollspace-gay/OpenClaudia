@@ -7,7 +7,7 @@ Generated 2026-03-05
 | Area | OpenClaudia | Claude Code | OpenCode |
 |------|:-----------:|:-----------:|:--------:|
 | **Overall maturity** | Alpha | Production | Production |
-| **Provider support** | 7 + Ollama | Claude-only (3rd-party beta) | 75+ providers |
+| **Provider support** | 8 cloud + Ollama/local | Claude-only (3rd-party beta) | 75+ providers |
 | **Tool count** | 30 | ~15 core | ~6 core |
 | **Memory system** | Auto-learning SQLite | CLAUDE.md + auto-memory | Session SQLite |
 | **Safety layers** | 4 (perms + guardrails + hooks + VDD) | 3 (perms + hooks + sandbox) | 1 (permissions) |
@@ -54,7 +54,7 @@ Generated 2026-03-05
 | Groq | No | No | Yes |
 | Provider auto-detection from model name | Yes | No | No |
 | Mid-session model switching | Yes (`/model <name>`) | Yes | Yes |
-| Total providers | 7 + Ollama | 1 (+3 cloud variants) | 75+ |
+| Total providers | 8 cloud + Ollama/local | 1 (+3 cloud variants) | 75+ |
 
 ### Tools
 
@@ -216,7 +216,7 @@ Generated 2026-03-05
 
 ## Where OpenClaudia Leads
 
-1. **Multi-provider with tool loop** — 7 native provider adapters with full tool execution loop across ALL providers. Claude Code only does tools with Claude; OpenCode supports many providers but has fewer tools.
+1. **Multi-provider with tool loop** — 8 cloud provider adapters plus Ollama/local OpenAI-compatible routing with full tool execution loop across ALL providers. Claude Code only does tools with Claude; OpenCode supports many providers but has fewer tools.
 
 2. **VDD adversarial review** — Unique feature. A separate adversary model reviews code output for bugs and vulnerabilities with CWE classification, severity scoring, and confabulation detection. Neither competitor has this.
 

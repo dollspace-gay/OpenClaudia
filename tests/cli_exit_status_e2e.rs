@@ -1259,6 +1259,27 @@ fn readme_cli_examples_do_not_advertise_stale_tui_or_coordinator_modes() {
 }
 
 #[test]
+fn comparison_provider_counts_match_current_adapter_surface() {
+    let comparison = include_str!("../COMPARISON.md");
+
+    assert!(
+        comparison.contains("8 cloud + Ollama/local"),
+        "COMPARISON.md must include Kimi and MiniMax in OpenClaudia's provider count"
+    );
+    assert!(
+        comparison
+            .contains("8 cloud provider adapters plus Ollama/local OpenAI-compatible routing"),
+        "COMPARISON.md must describe the current adapter surface precisely"
+    );
+    for stale_claim in ["7 + Ollama", "7 native provider adapters"] {
+        assert!(
+            !comparison.contains(stale_claim),
+            "COMPARISON.md must not retain stale provider claim: {stale_claim}"
+        );
+    }
+}
+
+#[test]
 fn init_template_marks_keybindings_as_legacy_repl_specific() {
     let cwd = tempfile::tempdir().expect("cwd tempdir");
     let home = tempfile::tempdir().expect("home tempdir");
