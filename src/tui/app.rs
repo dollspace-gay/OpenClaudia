@@ -291,10 +291,22 @@ fn expand_file_refs(input: &str) -> String {
 }
 
 fn sessions_dir() -> PathBuf {
+    #[cfg(test)]
+    if let Some(path) = TEST_SESSIONS_DIR.with(|slot| slot.borrow().clone()) {
+        return path;
+    }
+
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("openclaudia")
         .join("chat_sessions")
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_SESSIONS_DIR: std::cell::RefCell<Option<PathBuf>> = const {
+        std::cell::RefCell::new(None)
+    };
 }
 
 /// Format a [`SystemTime`] as an ISO-8601 date string
@@ -3620,9 +3632,10 @@ mod tests {
     use super::{compile_file_ref_regex, expand_file_refs};
     use super::{
         current_exe_command, git_bin, resolve_provider_switch_auth, save_session, ApiClient, App,
-        AppEvent, ProviderSwitch, SpawnTarget, TuiSession,
+        AppEvent, ProviderSwitch, SpawnTarget, TuiSession, TEST_SESSIONS_DIR,
     };
     use std::io::Write as _;
+    use std::path::PathBuf;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
@@ -4338,10 +4351,33 @@ mod tests {
         }
     }
 
+    /// Test-only override for TUI JSON session storage. This avoids
+    /// process-global `XDG_DATA_HOME` mutations that other parallel tests can
+    /// accidentally observe while still exercising `save_session` /
+    /// `list_sessions` through the real filesystem.
+    struct SessionDirGuard {
+        prev: Option<PathBuf>,
+    }
+
+    impl SessionDirGuard {
+        fn set(path: PathBuf) -> Self {
+            let prev = TEST_SESSIONS_DIR.with(|slot| slot.replace(Some(path)));
+            Self { prev }
+        }
+    }
+
+    impl Drop for SessionDirGuard {
+        fn drop(&mut self) {
+            TEST_SESSIONS_DIR.with(|slot| {
+                slot.replace(self.prev.take());
+            });
+        }
+    }
+
     #[test]
     fn startup_resume_loads_most_recent_saved_session() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let _guard = EnvGuard::set("XDG_DATA_HOME", tmp.path());
+        let _guard = SessionDirGuard::set(tmp.path().join("chat_sessions"));
 
         let mut older = TuiSession::new("old-model", "old-provider");
         older.id = "older-session".to_string();
@@ -4376,7 +4412,7 @@ mod tests {
     #[test]
     fn startup_session_id_takes_precedence_over_resume() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let _guard = EnvGuard::set("XDG_DATA_HOME", tmp.path());
+        let _guard = SessionDirGuard::set(tmp.path().join("chat_sessions"));
 
         let mut older = TuiSession::new("old-model", "old-provider");
         older.id = "older-session".to_string();

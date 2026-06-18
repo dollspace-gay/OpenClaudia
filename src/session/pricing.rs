@@ -443,6 +443,67 @@ pub static PRICING_TABLE: &[(&str, ModelPricing)] = &[
     ("qwen-long", ModelPricing::other(0.50, 2.0)),
     ("qwq-plus", ModelPricing::other(0.80, 2.40)),
     ("qwq-32b", ModelPricing::other(0.50, 2.0)),
+    // ---------------------------------------------------------------------
+    // Kimi / Moonshot
+    // ---------------------------------------------------------------------
+    (
+        "kimi-k2.7-code-highspeed",
+        ModelPricing::other_with_cache(1.90, 8.0, 0.20, 1.0),
+    ),
+    (
+        "kimi-k2.7-code",
+        ModelPricing::other_with_cache(0.95, 4.0, 0.20, 1.0),
+    ),
+    (
+        "kimi-k2.6",
+        ModelPricing::other_with_cache(0.95, 4.0, 0.16 / 0.95, 1.0),
+    ),
+    (
+        "kimi-k2.5",
+        ModelPricing::other_with_cache(0.60, 3.0, 1.0 / 6.0, 1.0),
+    ),
+    ("moonshot-v1-128k", ModelPricing::other(2.0, 5.0)),
+    ("moonshot-v1-32k", ModelPricing::other(1.0, 3.0)),
+    ("moonshot-v1-8k", ModelPricing::other(0.20, 2.0)),
+    // ---------------------------------------------------------------------
+    // MiniMax
+    //
+    // MiniMax-M3 publishes a higher >512k-input token tier. This static
+    // prefix table records the standard <=512k pay-as-you-go tier; adding
+    // per-request tiered pricing requires a broader cost-engine change.
+    // ---------------------------------------------------------------------
+    (
+        "minimax-m3",
+        ModelPricing::other_with_cache(0.30, 1.20, 0.20, 1.0),
+    ),
+    (
+        "minimax-m2.7-highspeed",
+        ModelPricing::other_with_cache(0.60, 2.40, 0.10, 0.625),
+    ),
+    (
+        "minimax-m2.7",
+        ModelPricing::other_with_cache(0.30, 1.20, 0.20, 1.25),
+    ),
+    (
+        "minimax-m2.5-highspeed",
+        ModelPricing::other_with_cache(0.60, 2.40, 0.05, 0.625),
+    ),
+    (
+        "minimax-m2.5",
+        ModelPricing::other_with_cache(0.30, 1.20, 0.10, 1.25),
+    ),
+    (
+        "minimax-m2.1-highspeed",
+        ModelPricing::other_with_cache(0.60, 2.40, 0.05, 0.625),
+    ),
+    (
+        "minimax-m2.1",
+        ModelPricing::other_with_cache(0.30, 1.20, 0.10, 1.25),
+    ),
+    (
+        "minimax-m2",
+        ModelPricing::other_with_cache(0.30, 1.20, 0.10, 1.25),
+    ),
 ];
 
 thread_local! {
@@ -998,6 +1059,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn kimi_static_catalog_models_resolve_pricing() {
+        let missing = crate::providers::KIMI_MODELS
+            .iter()
+            .copied()
+            .filter(|model| get_pricing(model).is_none())
+            .collect::<Vec<_>>();
+        assert!(
+            missing.is_empty(),
+            "PRICING_TABLE is missing Kimi catalog model(s): {missing:?}"
+        );
+    }
+
+    #[test]
+    fn priced_minimax_static_catalog_models_resolve_pricing() {
+        let missing = crate::providers::MINIMAX_MODELS
+            .iter()
+            .copied()
+            .filter(|model| *model != "M2-her")
+            .filter(|model| get_pricing(model).is_none())
+            .collect::<Vec<_>>();
+        assert!(
+            missing.is_empty(),
+            "PRICING_TABLE is missing priced MiniMax catalog model(s): {missing:?}"
+        );
+    }
+
     // -----------------------------------------------------------------------
     // Behavioural regressions retained from #495 work — these keep the
     // pre-refactor cost numbers intact for default-TTL workloads.
@@ -1018,6 +1106,10 @@ mod tests {
         assert!(get_pricing("qwen3.7-plus").is_some());
         assert!(get_pricing("qwen3.7-max-2026-05-17").is_some());
         assert!(get_pricing("qwen-plus-2025-12-01").is_some());
+        assert!(get_pricing("kimi-k2.7-code").is_some());
+        assert!(get_pricing("moonshot-v1-128k-vision-preview").is_some());
+        assert!(get_pricing("MiniMax-M3").is_some());
+        assert!(get_pricing("MiniMax-M2.7-highspeed").is_some());
     }
 
     /// Haiku pricing — 1 M input + 0.1 M output ≈ $0.375.
@@ -1108,6 +1200,19 @@ mod tests {
         let p = get_pricing("qwen3.7-plus").expect("qwen3.7-plus must be known");
         assert!((p.input_per_million - 0.40).abs() < f64::EPSILON);
         assert!((p.output_per_million - 1.60).abs() < f64::EPSILON);
+
+        let p = get_pricing("kimi-k2.7-code-highspeed")
+            .expect("kimi-k2.7-code-highspeed must be known");
+        assert!((p.input_per_million - 1.90).abs() < f64::EPSILON);
+        assert!((p.output_per_million - 8.0).abs() < f64::EPSILON);
+
+        let p = get_pricing("moonshot-v1-32k").expect("moonshot-v1-32k must be known");
+        assert!((p.input_per_million - 1.0).abs() < f64::EPSILON);
+        assert!((p.output_per_million - 3.0).abs() < f64::EPSILON);
+
+        let p = get_pricing("MiniMax-M3").expect("MiniMax-M3 must be known");
+        assert!((p.input_per_million - 0.30).abs() < f64::EPSILON);
+        assert!((p.output_per_million - 1.20).abs() < f64::EPSILON);
     }
 
     /// Case-insensitive lookup on the input.

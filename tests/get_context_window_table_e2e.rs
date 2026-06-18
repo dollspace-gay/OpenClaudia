@@ -3,7 +3,8 @@
 //! models at 1M, older Claude family at 200k, GPT-5.5/5.4 at
 //! 1M/1.05M, GPT-4o at 128k, GPT-4.1 at 1M, GPT-5 at 400k,
 //! Gemini Pro at 1M, DeepSeek V4 at 1M, Qwen current
-//! families at 1M or 256k),
+//! families at 1M or 256k, Kimi/Moonshot at their documented
+//! family windows, MiniMax M3 at 1M / M2.x at 204.8k),
 //! the substring-precedence rule (gpt-4o matches
 //! BEFORE generic gpt-4), the unknown-model fallback, and
 //! case-insensitivity.
@@ -194,7 +195,57 @@ fn qwen_max_and_open_weight_families_return_documented_smaller_windows() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section F — Unknown model fallback
+// Section F — Kimi / Moonshot
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn kimi_k2_models_return_256k() {
+    for model in [
+        "kimi-k2.7-code",
+        "kimi-k2.7-code-highspeed",
+        "kimi-k2.6",
+        "kimi-k2.5",
+    ] {
+        assert_eq!(get_context_window(model), 262_144, "{model}");
+    }
+}
+
+#[test]
+fn moonshot_v1_models_return_documented_windows() {
+    for model in ["moonshot-v1-128k", "moonshot-v1-128k-vision-preview"] {
+        assert_eq!(get_context_window(model), 131_072, "{model}");
+    }
+    for model in ["moonshot-v1-32k", "moonshot-v1-32k-vision-preview"] {
+        assert_eq!(get_context_window(model), 32_768, "{model}");
+    }
+    for model in ["moonshot-v1-8k", "moonshot-v1-8k-vision-preview"] {
+        assert_eq!(get_context_window(model), 8_192, "{model}");
+    }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section G — MiniMax
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn minimax_models_return_documented_windows() {
+    assert_eq!(get_context_window("MiniMax-M3"), 1_000_000);
+    for model in [
+        "MiniMax-M2.7",
+        "MiniMax-M2.7-highspeed",
+        "MiniMax-M2.5",
+        "MiniMax-M2.5-highspeed",
+        "MiniMax-M2.1",
+        "MiniMax-M2.1-highspeed",
+        "MiniMax-M2",
+    ] {
+        assert_eq!(get_context_window(model), 204_800, "{model}");
+    }
+    assert_eq!(get_context_window("M2-her"), 65_536);
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section H — Unknown model fallback
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -223,7 +274,7 @@ fn random_bytes_in_name_return_default_no_panic() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section G — Case insensitivity
+// Section I — Case insensitivity
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -257,8 +308,17 @@ fn lookup_is_case_insensitive_for_qwen() {
     assert_eq!(get_context_window("Qwen3.6-Max-Preview"), 262_144);
 }
 
+#[test]
+fn lookup_is_case_insensitive_for_kimi_and_minimax() {
+    assert_eq!(get_context_window("KIMI-K2.7-CODE"), 262_144);
+    assert_eq!(get_context_window("MOONSHOT-V1-32K"), 32_768);
+    assert_eq!(get_context_window("minimax-m3"), 1_000_000);
+    assert_eq!(get_context_window("minimax-m2.7-highspeed"), 204_800);
+    assert_eq!(get_context_window("m2-HER"), 65_536);
+}
+
 // ───────────────────────────────────────────────────────────────────────────
-// Section H — Substring match (PINS NOT-PREFIX, contains-anywhere)
+// Section J — Substring match (PINS NOT-PREFIX, contains-anywhere)
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -285,7 +345,7 @@ fn earlier_needle_in_table_wins_over_later_within_same_model_string() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section I — Return value always positive + sensible
+// Section K — Return value always positive + sensible
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]

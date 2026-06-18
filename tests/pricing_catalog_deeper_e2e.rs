@@ -202,6 +202,72 @@ fn get_pricing_for_current_qwen_models_returns_documented_base_rates() {
 }
 
 #[test]
+fn get_pricing_for_current_kimi_models_returns_documented_rates() {
+    let k27 = get_pricing("kimi-k2.7-code").expect("kimi-k2.7-code");
+    assert_eq!(k27.input_per_million, 0.95);
+    assert_eq!(k27.output_per_million, 4.0);
+    assert!((k27.cache_read_multiplier - 0.20).abs() < 1e-12);
+
+    let k27_fast = get_pricing("kimi-k2.7-code-highspeed").expect("kimi-k2.7-code-highspeed");
+    assert_eq!(k27_fast.input_per_million, 1.90);
+    assert_eq!(k27_fast.output_per_million, 8.0);
+    assert!((k27_fast.cache_read_multiplier - 0.20).abs() < 1e-12);
+
+    let k26 = get_pricing("kimi-k2.6").expect("kimi-k2.6");
+    assert_eq!(k26.input_per_million, 0.95);
+    assert_eq!(k26.output_per_million, 4.0);
+    assert!((k26.cache_read_multiplier - (0.16 / 0.95)).abs() < 1e-12);
+
+    let k25 = get_pricing("kimi-k2.5").expect("kimi-k2.5");
+    assert_eq!(k25.input_per_million, 0.60);
+    assert_eq!(k25.output_per_million, 3.0);
+    assert!((k25.cache_read_multiplier - (1.0 / 6.0)).abs() < 1e-12);
+}
+
+#[test]
+fn get_pricing_for_moonshot_v1_models_returns_documented_rates() {
+    let v128 = get_pricing("moonshot-v1-128k-vision-preview").expect("moonshot-v1-128k");
+    assert_eq!(v128.input_per_million, 2.0);
+    assert_eq!(v128.output_per_million, 5.0);
+
+    let v32 = get_pricing("moonshot-v1-32k").expect("moonshot-v1-32k");
+    assert_eq!(v32.input_per_million, 1.0);
+    assert_eq!(v32.output_per_million, 3.0);
+
+    let v8 = get_pricing("moonshot-v1-8k").expect("moonshot-v1-8k");
+    assert_eq!(v8.input_per_million, 0.20);
+    assert_eq!(v8.output_per_million, 2.0);
+}
+
+#[test]
+fn get_pricing_for_current_minimax_models_returns_documented_rates() {
+    let m3 = get_pricing("MiniMax-M3").expect("MiniMax-M3");
+    assert_eq!(m3.input_per_million, 0.30);
+    assert_eq!(m3.output_per_million, 1.20);
+    assert!((m3.cache_read_multiplier - 0.20).abs() < 1e-12);
+
+    let m27 = get_pricing("MiniMax-M2.7").expect("MiniMax-M2.7");
+    assert_eq!(m27.input_per_million, 0.30);
+    assert_eq!(m27.output_per_million, 1.20);
+    assert!((m27.cache_read_multiplier - 0.20).abs() < 1e-12);
+    assert_eq!(m27.cache_write_multiplier(CacheWriteTtl::FiveMinutes), 1.25);
+
+    let m27_fast = get_pricing("MiniMax-M2.7-highspeed").expect("MiniMax-M2.7-highspeed");
+    assert_eq!(m27_fast.input_per_million, 0.60);
+    assert_eq!(m27_fast.output_per_million, 2.40);
+    assert!((m27_fast.cache_read_multiplier - 0.10).abs() < 1e-12);
+    assert_eq!(
+        m27_fast.cache_write_multiplier(CacheWriteTtl::FiveMinutes),
+        0.625
+    );
+
+    let m25 = get_pricing("MiniMax-M2.5").expect("MiniMax-M2.5");
+    assert_eq!(m25.input_per_million, 0.30);
+    assert_eq!(m25.output_per_million, 1.20);
+    assert!((m25.cache_read_multiplier - 0.10).abs() < 1e-12);
+}
+
+#[test]
 fn get_pricing_for_unknown_model_returns_none() {
     let pricing = get_pricing("totally-unknown-model");
     assert!(pricing.is_none());

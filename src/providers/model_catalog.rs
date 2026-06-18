@@ -302,4 +302,47 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn kimi_catalog_includes_current_documented_models() {
+        let models = static_models_for_provider("kimi");
+        for model in [
+            "kimi-k2.7-code",
+            "kimi-k2.7-code-highspeed",
+            "kimi-k2.6",
+            "kimi-k2.5",
+            "moonshot-v1-128k",
+            "moonshot-v1-32k",
+            "moonshot-v1-8k",
+            "moonshot-v1-128k-vision-preview",
+            "moonshot-v1-32k-vision-preview",
+            "moonshot-v1-8k-vision-preview",
+        ] {
+            assert!(
+                models.contains(&model),
+                "Kimi static catalog must include documented model {model}"
+            );
+        }
+    }
+
+    #[test]
+    fn minimax_catalog_includes_current_documented_models() {
+        let models = static_models_for_provider("minimax");
+        for model in [
+            "MiniMax-M3",
+            "MiniMax-M2.7",
+            "MiniMax-M2.7-highspeed",
+            "MiniMax-M2.5",
+            "MiniMax-M2.5-highspeed",
+            "MiniMax-M2.1",
+            "MiniMax-M2.1-highspeed",
+            "MiniMax-M2",
+            "M2-her",
+        ] {
+            assert!(
+                models.contains(&model),
+                "MiniMax static catalog must include documented model {model}"
+            );
+        }
+    }
 }

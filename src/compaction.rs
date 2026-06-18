@@ -31,6 +31,13 @@ const DEEPSEEK_V4_CONTEXT: usize = 1_000_000;
 const QWEN_1M_CONTEXT: usize = 1_000_000;
 const QWEN_256K_CONTEXT: usize = 262_144;
 const QWEN_MAX_CONTEXT: usize = 32_768;
+const KIMI_256K_CONTEXT: usize = 262_144;
+const MOONSHOT_V1_128K_CONTEXT: usize = 131_072;
+const MOONSHOT_V1_32K_CONTEXT: usize = 32_768;
+const MOONSHOT_V1_8K_CONTEXT: usize = 8_192;
+const MINIMAX_M3_CONTEXT: usize = 1_000_000;
+const MINIMAX_M2_CONTEXT: usize = 204_800;
+const MINIMAX_M2_HER_CONTEXT: usize = 65_536;
 const DEFAULT_CONTEXT: usize = 128_000;
 
 /// Safety margin - trigger compaction before hitting the limit
@@ -465,6 +472,48 @@ const CONTEXT_WINDOW_TABLE: &[ContextWindowRow] = &[
     ContextWindowRow {
         needle: "qwen-max",
         tokens: QWEN_MAX_CONTEXT,
+    },
+    // Kimi / Moonshot.
+    ContextWindowRow {
+        needle: "kimi-k2",
+        tokens: KIMI_256K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "moonshot-v1-128k",
+        tokens: MOONSHOT_V1_128K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "moonshot-v1-32k",
+        tokens: MOONSHOT_V1_32K_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "moonshot-v1-8k",
+        tokens: MOONSHOT_V1_8K_CONTEXT,
+    },
+    // MiniMax.
+    ContextWindowRow {
+        needle: "minimax-m3",
+        tokens: MINIMAX_M3_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "minimax-m2.7",
+        tokens: MINIMAX_M2_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "minimax-m2.5",
+        tokens: MINIMAX_M2_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "minimax-m2.1",
+        tokens: MINIMAX_M2_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "minimax-m2",
+        tokens: MINIMAX_M2_CONTEXT,
+    },
+    ContextWindowRow {
+        needle: "m2-her",
+        tokens: MINIMAX_M2_HER_CONTEXT,
     },
     // OpenAI reasoning family share the gpt-4o window; one row each
     // so a future divergence can be applied without ratchet-untangling.
@@ -1695,6 +1744,17 @@ mod tests {
         assert_eq!(get_context_window("qwen3.6-max-preview"), QWEN_256K_CONTEXT);
         assert_eq!(get_context_window("qwen3.5-397b-a17b"), QWEN_256K_CONTEXT);
         assert_eq!(get_context_window("qwen-max"), QWEN_MAX_CONTEXT);
+        assert_eq!(get_context_window("kimi-k2.7-code"), KIMI_256K_CONTEXT);
+        assert_eq!(
+            get_context_window("moonshot-v1-128k-vision-preview"),
+            MOONSHOT_V1_128K_CONTEXT
+        );
+        assert_eq!(get_context_window("MiniMax-M3"), MINIMAX_M3_CONTEXT);
+        assert_eq!(
+            get_context_window("MiniMax-M2.7-highspeed"),
+            MINIMAX_M2_CONTEXT
+        );
+        assert_eq!(get_context_window("M2-her"), MINIMAX_M2_HER_CONTEXT);
         assert_eq!(get_context_window("unknown-model"), DEFAULT_CONTEXT);
     }
 
