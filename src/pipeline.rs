@@ -2000,8 +2000,11 @@ fn guardrail_block_for_tool_call(tool_name: &str, args: &Value) -> Option<String
     crate::guardrails::check_file_access(&path).err()
 }
 
-fn emit_failed_quality_gate_events(tx: &mpsc::Sender<AppEvent>) {
+const LEDGER_VERIFICATION_OUTPUT_MAX_BYTES: usize = 20_000;
+
+fn emit_failed_quality_gate_events(tx: &mpsc::Sender<AppEvent>, session_id: Option<&str>) {
     for gate in crate::guardrails::run_quality_gates() {
+        record_quality_gate_verification(session_id, &gate);
         if gate.passed {
             continue;
         }
@@ -2017,6 +2020,68 @@ fn emit_failed_quality_gate_events(tx: &mpsc::Sender<AppEvent>) {
             break;
         }
     }
+}
+
+fn record_quality_gate_verification(
+    session_id: Option<&str>,
+    gate: &crate::guardrails::QualityCheckResult,
+) {
+    let Some(session_id) = session_id else {
+        return;
+    };
+    let mut ledger = match crate::ledger::RealityLedger::open_project_session(session_id) {
+        Ok(ledger) => ledger,
+        Err(err) => {
+            tracing::warn!(
+                session_id,
+                gate = %gate.name,
+                error = %err,
+                "failed to open session reality ledger for quality-gate verification"
+            );
+            return;
+        }
+    };
+    if let Err(err) = append_quality_gate_verification(&mut ledger, gate) {
+        tracing::warn!(
+            session_id,
+            gate = %gate.name,
+            error = %err,
+            "failed to append quality-gate verification to reality ledger"
+        );
+    }
+}
+
+fn append_quality_gate_verification(
+    ledger: &mut crate::ledger::RealityLedger,
+    gate: &crate::guardrails::QualityCheckResult,
+) -> Result<crate::ledger::ObsId, crate::ledger::LedgerError> {
+    let mut findings = Vec::new();
+    if !gate.passed {
+        findings.push(format!(
+            "quality gate '{}' failed: exit_code={} required={}",
+            gate.name, gate.exit_code, gate.required
+        ));
+        if !gate.stdout.trim().is_empty() {
+            findings.push(format!(
+                "stdout: {}",
+                tools::safe_truncate(&gate.stdout, LEDGER_VERIFICATION_OUTPUT_MAX_BYTES)
+            ));
+        }
+        if !gate.stderr.trim().is_empty() {
+            findings.push(format!(
+                "stderr: {}",
+                tools::safe_truncate(&gate.stderr, LEDGER_VERIFICATION_OUTPUT_MAX_BYTES)
+            ));
+        }
+    }
+    ledger.append(
+        crate::ledger::Authority::Verifier,
+        crate::ledger::ObservationKind::Verification {
+            passed: gate.passed,
+            command: Some(gate.command.clone()),
+            findings,
+        },
+    )
 }
 
 /// Checks permissions for write/destructive tools via a channel-based
@@ -2145,7 +2210,7 @@ async fn execute_tool_calls_for_tui(
         }
     }
 
-    emit_failed_quality_gate_events(tx);
+    emit_failed_quality_gate_events(tx, session_id);
 
     (results, true)
 }
@@ -2241,6 +2306,39 @@ pub fn build_assistant_message_with_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quality_gate_verification_records_failed_gate_findings() {
+        let mut ledger = crate::ledger::RealityLedger::new();
+        let gate = crate::guardrails::QualityCheckResult {
+            name: "unit".to_string(),
+            command: "cargo test --lib".to_string(),
+            passed: false,
+            exit_code: 101,
+            stdout: "running tests".to_string(),
+            stderr: "one failed".to_string(),
+            required: true,
+        };
+
+        let id = append_quality_gate_verification(&mut ledger, &gate).expect("append");
+        let observation = ledger.get(id).expect("observation");
+        assert_eq!(observation.authority, crate::ledger::Authority::Verifier);
+        let crate::ledger::ObservationKind::Verification {
+            passed,
+            command,
+            findings,
+        } = &observation.kind
+        else {
+            panic!("expected verification observation");
+        };
+        assert!(!passed);
+        assert_eq!(command.as_deref(), Some("cargo test --lib"));
+        assert!(findings
+            .iter()
+            .any(|finding| finding.contains("quality gate 'unit' failed")));
+        assert!(findings.iter().any(|finding| finding.contains("stdout:")));
+        assert!(findings.iter().any(|finding| finding.contains("stderr:")));
+    }
 
     #[test]
     fn guardrail_path_for_tool_call_uses_actual_read_path() {
