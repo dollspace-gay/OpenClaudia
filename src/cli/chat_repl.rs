@@ -96,6 +96,46 @@ fn observe_cli_model_visible_tool_result(
     );
 }
 
+fn push_observed_cli_tool_result_message(
+    session: &mut ChatSession,
+    tool_call: &tools::ToolCall,
+    tool_call_id: &str,
+    final_content: &str,
+    final_is_error: bool,
+) {
+    observe_cli_model_visible_tool_result(
+        &session.id,
+        tool_call,
+        tool_call_id,
+        final_content,
+        final_is_error,
+    );
+    push_cli_tool_result_message(session, tool_call_id, final_content, final_is_error);
+}
+
+fn push_cli_tool_result_message(
+    session: &mut ChatSession,
+    tool_call_id: &str,
+    final_content: &str,
+    final_is_error: bool,
+) {
+    let result_content = if final_is_error {
+        format!("[ERROR] {final_content}")
+    } else {
+        final_content.to_string()
+    };
+    push_chat_session_message_and_persist(
+        session,
+        serde_json::json!({
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": result_content,
+            "is_error": final_is_error
+        }),
+        "tool result",
+    );
+}
+
 /// Arguments accepted by [`ChatRepl::new`] — kept as a struct so the
 /// public `cmd_chat` signature stays a thin wrapper.
 pub struct ChatReplArgs {
@@ -1777,7 +1817,13 @@ impl ChatRepl {
             "\n\x1b[33m⚠ Blocked in plan mode: {}\x1b[0m",
             tool_call.function.name
         );
-        self.push_tool_result_message(&tool_call.id, &block_msg, true);
+        push_observed_cli_tool_result_message(
+            &mut self.chat_session,
+            tool_call,
+            &tool_call.id,
+            &block_msg,
+            true,
+        );
         Some(serde_json::json!({
             "functionResponse": {
                 "name": tool_call.function.name,
@@ -1795,7 +1841,13 @@ impl ChatRepl {
         let tool_args_val = match parse_tool_args(&tool_call.function) {
             Ok(args) => args,
             Err(msg) => {
-                self.push_tool_result_message(&tool_call.id, &msg, true);
+                push_observed_cli_tool_result_message(
+                    &mut self.chat_session,
+                    tool_call,
+                    &tool_call.id,
+                    &msg,
+                    true,
+                );
                 return Err(gemini_tool_error_response(tool_call, &msg));
             }
         };
@@ -1813,7 +1865,13 @@ impl ChatRepl {
         match result {
             ToolPermissionResult::Allowed { checked } => Ok(checked),
             ToolPermissionResult::Denied(msg) => {
-                self.push_tool_result_message(&tool_call.id, &msg, true);
+                push_observed_cli_tool_result_message(
+                    &mut self.chat_session,
+                    tool_call,
+                    &tool_call.id,
+                    &msg,
+                    true,
+                );
                 Err(gemini_tool_error_response(tool_call, &msg))
             }
         }
@@ -1869,8 +1927,8 @@ impl ChatRepl {
         );
         let final_is_error = if was_marker { false } else { result.is_error };
         display_tool_result(&tool_call.function.name, &final_content, final_is_error);
-        observe_cli_model_visible_tool_result(
-            &self.chat_session.id,
+        push_observed_cli_tool_result_message(
+            &mut self.chat_session,
             tool_call,
             &result.tool_call_id,
             &final_content,
@@ -2546,13 +2604,6 @@ impl ChatRepl {
             &result.content,
         );
         let final_is_error = if was_marker { false } else { result.is_error };
-        observe_cli_model_visible_tool_result(
-            &self.chat_session.id,
-            tool_call,
-            &result.tool_call_id,
-            &final_content,
-            final_is_error,
-        );
 
         if let Err(e) = self.audit_logger.log_security(
             "tool_result",
@@ -2566,7 +2617,13 @@ impl ChatRepl {
             tracing::error!("Security audit failed for tool_result: {e}");
         }
         display_tool_result(&tool_call.function.name, &final_content, final_is_error);
-        self.push_tool_result_message(&result.tool_call_id, &final_content, final_is_error);
+        push_observed_cli_tool_result_message(
+            &mut self.chat_session,
+            tool_call,
+            &result.tool_call_id,
+            &final_content,
+            final_is_error,
+        );
     }
 
     /// If `tool_call` is blocked by plan mode, push the error tool
@@ -2583,7 +2640,13 @@ impl ChatRepl {
             "\n\x1b[33m⚠ Blocked in plan mode: {}\x1b[0m",
             tool_call.function.name
         );
-        self.push_tool_result_message(&tool_call.id, &block_msg, true);
+        push_observed_cli_tool_result_message(
+            &mut self.chat_session,
+            tool_call,
+            &tool_call.id,
+            &block_msg,
+            true,
+        );
         true
     }
 
@@ -2594,7 +2657,13 @@ impl ChatRepl {
         let tool_args_val = match parse_tool_args(&tool_call.function) {
             Ok(args) => args,
             Err(msg) => {
-                self.push_tool_result_message(&tool_call.id, &msg, true);
+                push_observed_cli_tool_result_message(
+                    &mut self.chat_session,
+                    tool_call,
+                    &tool_call.id,
+                    &msg,
+                    true,
+                );
                 return None;
             }
         };
@@ -2611,7 +2680,13 @@ impl ChatRepl {
         };
         match result {
             ToolPermissionResult::Denied(msg) => {
-                self.push_tool_result_message(&tool_call.id, &msg, true);
+                push_observed_cli_tool_result_message(
+                    &mut self.chat_session,
+                    tool_call,
+                    &tool_call.id,
+                    &msg,
+                    true,
+                );
                 None
             }
             ToolPermissionResult::Allowed { checked } => Some(checked),
@@ -2652,31 +2727,6 @@ impl ChatRepl {
         );
         Self::auto_learn_observe(auto_learner, tool_call, &result);
         result
-    }
-
-    /// Push a `tool`-role message with the final content, prefixing
-    /// `[ERROR]` on failure.
-    fn push_tool_result_message(
-        &mut self,
-        tool_call_id: &str,
-        final_content: &str,
-        final_is_error: bool,
-    ) {
-        let result_content = if final_is_error {
-            format!("[ERROR] {final_content}")
-        } else {
-            final_content.to_string()
-        };
-        push_chat_session_message_and_persist(
-            &mut self.chat_session,
-            serde_json::json!({
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "content": result_content,
-                "is_error": final_is_error
-            }),
-            "tool result",
-        );
     }
 
     /// Build the next Anthropic follow-up request body reusing the
@@ -3439,15 +3489,14 @@ impl ChatRepl {
         let final_is_error = if was_marker { false } else { result.is_error };
 
         Self::log_openai_activity(memory_db, &self.chat_session.id, tool_call, final_is_error);
-        observe_cli_model_visible_tool_result(
-            &self.chat_session.id,
+        display_tool_result(&tool_call.function.name, &final_content, final_is_error);
+        push_observed_cli_tool_result_message(
+            &mut self.chat_session,
             tool_call,
             &result.tool_call_id,
             &final_content,
             final_is_error,
         );
-        display_tool_result(&tool_call.function.name, &final_content, final_is_error);
-        self.push_tool_result_message(&result.tool_call_id, &final_content, final_is_error);
     }
 
     /// `OpenAI`-loop variant of `run_tool_with_audit` — same dispatch and
@@ -3958,7 +4007,7 @@ fn new_rustyline_editor(
 mod tests {
     use super::*;
     use std::ffi::OsString;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -4491,6 +4540,70 @@ providers: {}
         assert_eq!(loaded.messages.len(), 1);
         assert_eq!(loaded.messages[0]["role"], "assistant");
         assert_eq!(loaded.messages[0]["content"], "partial provider text");
+    }
+
+    #[test]
+    fn cli_tool_result_append_records_grounding_observation() {
+        let _guard = ENV_LOCK.lock().expect("env lock poisoned");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _xdg = EnvGuard::set_path("XDG_DATA_HOME", tmp.path());
+        let mut session = ChatSession::new(
+            "claude-sonnet",
+            "anthropic",
+            openclaudia::modes::BehaviorMode::default(),
+        );
+        let ledger = Arc::new(Mutex::new(openclaudia::ledger::RealityLedger::new()));
+        let _ledger_guard = openclaudia::ledger::install_active_ledger_for_session(
+            &session.id,
+            Arc::clone(&ledger),
+        );
+        let tool_call = tools::ToolCall {
+            id: "call_denied".to_string(),
+            call_type: "function".to_string(),
+            function: tools::FunctionCall {
+                name: "bash".to_string(),
+                arguments: r#"{"command":"cargo test"}"#.to_string(),
+            },
+        };
+
+        push_observed_cli_tool_result_message(
+            &mut session,
+            &tool_call,
+            &tool_call.id,
+            "Permission denied: policy",
+            true,
+        );
+
+        assert_eq!(session.messages.len(), 1);
+        assert_eq!(session.messages[0]["role"], "tool");
+        assert_eq!(
+            session.messages[0]["content"],
+            "[ERROR] Permission denied: policy"
+        );
+
+        let observation = {
+            let ledger = ledger.lock().expect("ledger lock");
+            ledger
+                .observations_chronological()
+                .into_iter()
+                .find(|obs| {
+                    matches!(
+                        obs.kind,
+                        openclaudia::ledger::ObservationKind::ToolResult { .. }
+                    )
+                })
+                .cloned()
+        }
+        .expect("tool result observation");
+        assert_eq!(observation.authority, openclaudia::ledger::Authority::Tool);
+        let openclaudia::ledger::ObservationKind::ToolResult { tool, result } = &observation.kind
+        else {
+            panic!("expected tool result observation");
+        };
+        assert_eq!(tool, "bash");
+        assert_eq!(result["tool_call_id"], "call_denied");
+        assert_eq!(result["content"], "Permission denied: policy");
+        assert_eq!(result["is_error"], true);
     }
 
     /// Regression guard for the Vim toggle panic path: editor construction is

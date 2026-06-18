@@ -2077,6 +2077,7 @@ async fn execute_tool_calls_for_tui(
             Ok(args) => args,
             Err(msg) => match malformed_tool_arguments_result(tool_call, &msg, tx) {
                 Ok(result_json) => {
+                    observe_tool_result_json(session_id, tool_name, &result_json);
                     results.push(result_json);
                     continue;
                 }
@@ -2095,12 +2096,14 @@ async fn execute_tool_calls_for_tui(
                     content: format!("Blocked by guardrails: {msg}"),
                 }
             );
-            results.push(serde_json::json!({
+            let result_json = serde_json::json!({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
                 "content": format!("[BLOCKED] {msg}"),
                 "is_error": true
-            }));
+            });
+            observe_tool_result_json(session_id, tool_name, &result_json);
+            results.push(result_json);
             continue;
         }
 
@@ -2125,6 +2128,7 @@ async fn execute_tool_calls_for_tui(
                     permission_already_checked = checked;
                 }
                 PermissionOutcome::DeniedWithResult(result_json) => {
+                    observe_tool_result_json(session_id, tool_name, &result_json);
                     results.push(result_json);
                     continue;
                 }
@@ -2430,6 +2434,10 @@ mod tests {
     async fn execute_tool_calls_for_tui_rejects_malformed_arguments_before_prompting() {
         use std::sync::mpsc as std_mpsc;
 
+        let session_id = "tui-malformed-tool-result-ledger";
+        let ledger = Arc::new(Mutex::new(crate::ledger::RealityLedger::new()));
+        let _ledger_guard =
+            crate::ledger::install_active_ledger_for_session(session_id, Arc::clone(&ledger));
         let tool_call = ToolCall {
             id: "call_bad".to_string(),
             call_type: "function".to_string(),
@@ -2448,7 +2456,7 @@ mod tests {
             &[],
             None,
             task_mgr,
-            Some("s"),
+            Some(session_id),
             &tx,
         )
         .await;
@@ -2480,6 +2488,28 @@ mod tests {
         assert!(
             !saw_permission_request,
             "malformed arguments must not trigger a permission prompt"
+        );
+
+        let observation = {
+            let ledger = ledger.lock().expect("ledger lock");
+            ledger
+                .observations_chronological()
+                .into_iter()
+                .find(|obs| matches!(obs.kind, crate::ledger::ObservationKind::ToolResult { .. }))
+                .cloned()
+        }
+        .expect("malformed tool result observation");
+        let crate::ledger::ObservationKind::ToolResult { tool, result } = &observation.kind else {
+            panic!("expected tool result observation");
+        };
+        assert_eq!(tool, "bash");
+        assert_eq!(result["tool_call_id"], "call_bad");
+        assert_eq!(result["is_error"], true);
+        assert!(
+            result["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("Invalid tool arguments JSON")),
+            "ledgered tool result should carry the parse error: {result}"
         );
     }
 
@@ -2559,6 +2589,74 @@ mod tests {
             "one-time Allow must not leak nested legacy permission prompts: {content}"
         );
         assert_eq!(results[0]["is_error"], false);
+    }
+
+    #[tokio::test]
+    async fn execute_tool_calls_for_tui_records_denied_tool_result_observation() {
+        use std::sync::mpsc as std_mpsc;
+
+        let session_id = "tui-denied-tool-result-ledger";
+        let ledger = Arc::new(Mutex::new(crate::ledger::RealityLedger::new()));
+        let _ledger_guard =
+            crate::ledger::install_active_ledger_for_session(session_id, Arc::clone(&ledger));
+        let mgr = Arc::new(PermissionManager::unrestricted());
+        mgr.tui_remember_always_denied("bash".to_string());
+        let tool_call = ToolCall {
+            id: "call_denied".to_string(),
+            call_type: "function".to_string(),
+            function: tools::FunctionCall {
+                name: "bash".to_string(),
+                arguments: r#"{"command":"cargo test"}"#.to_string(),
+            },
+        };
+        let (tx, _rx) = std_mpsc::channel::<AppEvent>();
+        let task_mgr = Arc::new(Mutex::new(crate::session::TaskManager::new()));
+
+        let (results, has_tools) = execute_tool_calls_for_tui(
+            &[tool_call],
+            None,
+            Some(mgr),
+            &[],
+            None,
+            task_mgr,
+            Some(session_id),
+            &tx,
+        )
+        .await;
+
+        assert!(has_tools);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["is_error"], true);
+        assert!(
+            results[0]["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("User denied permission")),
+            "tool result should carry the denial: {}",
+            results[0]
+        );
+
+        let observation = {
+            let ledger = ledger.lock().expect("ledger lock");
+            ledger
+                .observations_chronological()
+                .into_iter()
+                .find(|obs| matches!(obs.kind, crate::ledger::ObservationKind::ToolResult { .. }))
+                .cloned()
+        }
+        .expect("denied tool result observation");
+        assert_eq!(observation.authority, crate::ledger::Authority::Tool);
+        let crate::ledger::ObservationKind::ToolResult { tool, result } = &observation.kind else {
+            panic!("expected tool result observation");
+        };
+        assert_eq!(tool, "bash");
+        assert_eq!(result["tool_call_id"], "call_denied");
+        assert_eq!(result["is_error"], true);
+        assert!(
+            result["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("User denied permission")),
+            "ledgered tool result should carry the denial: {result}"
+        );
     }
 
     #[tokio::test]
