@@ -97,6 +97,33 @@ fn run_auth_with_stdin(input: &str) -> Output {
 }
 
 #[test]
+fn auth_status_and_logout_are_mutually_exclusive() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+
+    let output = isolated_command(&cwd, &home)
+        .args(["auth", "--status", "--logout"])
+        .output()
+        .expect("openclaudia auth must run");
+
+    assert!(
+        !output.status.success(),
+        "auth --status --logout must fail; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("auth --status and --logout cannot be used together"),
+        "mutually exclusive auth flags should explain the conflict; got {combined:?}"
+    );
+}
+
+#[test]
 fn config_without_config_exits_nonzero() {
     assert_missing_config_is_failure(&["config"]);
 }

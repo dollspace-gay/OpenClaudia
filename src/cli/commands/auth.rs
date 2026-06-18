@@ -29,6 +29,10 @@ pub async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
     use openclaudia::oauth::{parse_auth_code, OAuthClient, OAuthStore, PkceParams};
     use std::io::{self, IsTerminal, Write};
 
+    if status && logout {
+        anyhow::bail!("auth --status and --logout cannot be used together");
+    }
+
     let store = OAuthStore::new();
 
     // Handle --status flag
