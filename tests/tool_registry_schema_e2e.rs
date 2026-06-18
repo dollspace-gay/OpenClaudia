@@ -367,3 +367,80 @@ fn cron_create_description_does_not_claim_openclaudia_runs_schedules() {
         "cron_create must not imply OpenClaudia executes schedules automatically; got {desc:?}"
     );
 }
+
+#[test]
+fn cron_delete_schema_matches_identifier_contract() {
+    let def = registry()
+        .get("cron_delete")
+        .expect("cron_delete registered")
+        .definition();
+    let desc = def
+        .pointer("/function/description")
+        .and_then(Value::as_str)
+        .expect("cron_delete description");
+    assert!(
+        desc.contains("stored cron schedule metadata"),
+        "cron_delete must describe deletion as metadata removal; got {desc:?}"
+    );
+    assert!(
+        !desc.contains("scheduled task"),
+        "cron_delete must not imply OpenClaudia owns task execution; got {desc:?}"
+    );
+
+    let params = def
+        .pointer("/function/parameters")
+        .expect("cron_delete parameters");
+    assert!(
+        params.pointer("/properties/name").is_some(),
+        "cron_delete schema must expose preferred name deletion: {params:?}"
+    );
+    assert!(
+        params.pointer("/properties/index").is_some(),
+        "cron_delete schema must expose list-index deletion: {params:?}"
+    );
+    assert!(
+        params.pointer("/properties/id").is_some(),
+        "cron_delete schema must expose legacy id deletion: {params:?}"
+    );
+    let any_of = params
+        .pointer("/anyOf")
+        .and_then(Value::as_array)
+        .expect("cron_delete anyOf");
+    for required_field in ["name", "index", "id"] {
+        assert!(
+            any_of
+                .iter()
+                .any(|entry| entry.pointer("/required/0").and_then(Value::as_str)
+                    == Some(required_field)),
+            "cron_delete anyOf must accept {required_field}; got {any_of:?}"
+        );
+    }
+    let id_desc = params
+        .pointer("/properties/id/description")
+        .and_then(Value::as_str)
+        .expect("cron_delete id description");
+    assert!(
+        id_desc.contains("16-character"),
+        "cron_delete legacy id description must match persisted ids; got {id_desc:?}"
+    );
+}
+
+#[test]
+fn cron_list_schema_describes_stored_metadata_not_runner() {
+    let def = registry()
+        .get("cron_list")
+        .expect("cron_list registered")
+        .definition();
+    let desc = def
+        .pointer("/function/description")
+        .and_then(Value::as_str)
+        .expect("cron_list description");
+    assert!(
+        desc.contains("stored cron schedule metadata"),
+        "cron_list must describe stored metadata; got {desc:?}"
+    );
+    assert!(
+        !desc.contains("scheduled tasks"),
+        "cron_list must not imply OpenClaudia owns task execution; got {desc:?}"
+    );
+}

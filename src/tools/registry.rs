@@ -1084,30 +1084,33 @@ impl ToolHandler for CronDeleteHandler {
         "cron_delete"
     }
     fn definition(&self) -> Value {
-        // NOTE: schema declares no required fields but execute_cron_delete
-        // requires one-of {id, name}. See crosslink #463 violation point 4 —
-        // a future fix should express the one-of constraint via JSON Schema
-        // (`oneOf` / `anyOf`). Keeping the existing schema verbatim here so
-        // this refactor stays byte-for-byte equivalent; the bug is now
-        // tracked next to the handler that exhibits it.
         json!({
             "type": "function",
             "function": {
                 "name": "cron_delete",
-                "description": "Delete a scheduled task by its ID or name.",
+                "description": "Delete stored cron schedule metadata by name, list index, or legacy ID.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "id": {
-                            "type": "string",
-                            "description": "The schedule ID (8-character hex string)"
-                        },
                         "name": {
                             "type": "string",
-                            "description": "The schedule name (alternative to ID)"
+                            "description": "Preferred schedule name to delete"
+                        },
+                        "index": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "1-based index from the cron_list output"
+                        },
+                        "id": {
+                            "type": "string",
+                            "description": "Legacy persisted schedule ID (16-character hex string)"
                         }
                     },
-                    "required": []
+                    "anyOf": [
+                        { "required": ["name"] },
+                        { "required": ["index"] },
+                        { "required": ["id"] }
+                    ]
                 }
             }
         })
@@ -1127,7 +1130,7 @@ impl ToolHandler for CronListHandler {
             "type": "function",
             "function": {
                 "name": "cron_list",
-                "description": "List all scheduled tasks with their status, cron expressions, and run history.",
+                "description": "List stored cron schedule metadata, including enabled status, cron expressions, prompts, and any recorded run counters.",
                 "parameters": {
                     "type": "object",
                     "properties": {},
