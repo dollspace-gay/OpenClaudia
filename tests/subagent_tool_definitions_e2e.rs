@@ -17,7 +17,7 @@
 
 use openclaudia::subagent::{
     get_agent_output_tool_definition, get_subagent_tool_definitions, get_task_stop_tool_definition,
-    get_task_tool_definition,
+    get_task_tool_definition, AgentType,
 };
 use serde_json::Value;
 
@@ -67,13 +67,27 @@ fn task_tool_subagent_type_enum_includes_4_documented_variants() {
         .as_array()
         .expect("enum array");
     let values: Vec<&str> = enum_values.iter().filter_map(Value::as_str).collect();
-    // PINS DOCUMENTED VARIANTS: 4 names in the enum.
-    for expected in &["general-purpose", "explore", "plan", "guide"] {
+    // PINS DOCUMENTED VARIANTS: task-spawnable names in the enum.
+    for expected in AgentType::task_tool_names() {
         assert!(
-            values.contains(expected),
+            values.contains(&expected),
             "subagent_type enum MUST include {expected:?}; got {values:?}"
         );
     }
+}
+
+#[test]
+fn task_tool_subagent_type_enum_matches_task_spawnable_agents() {
+    let def = get_task_tool_definition();
+    let enum_values = def["function"]["parameters"]["properties"]["subagent_type"]["enum"]
+        .as_array()
+        .expect("enum array");
+    let values: Vec<&str> = enum_values.iter().filter_map(Value::as_str).collect();
+    assert_eq!(values, AgentType::task_tool_names());
+    assert!(
+        !values.contains(&"coordinator"),
+        "coordinator is a profile/router type, not a task-spawnable agent"
+    );
 }
 
 #[test]

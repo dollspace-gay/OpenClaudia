@@ -92,8 +92,15 @@ impl AgentType {
         Self::Coordinator,
     ];
 
-    /// Canonical kebab-case name as accepted by `parse_type` and the
-    /// `task` tool's `subagent_type` field.
+    /// Agent types that the `task` tool is allowed to launch directly.
+    ///
+    /// `Coordinator` is a router/profile type. It has a system prompt and a
+    /// legacy REPL mode, but it is not a task-spawnable worker until the
+    /// coordinator runtime is wired end-to-end.
+    pub const TASK_SPAWNABLE: &'static [Self] =
+        &[Self::GeneralPurpose, Self::Explore, Self::Plan, Self::Guide];
+
+    /// Canonical kebab-case name as accepted by `parse_type`.
     #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
@@ -128,6 +135,34 @@ impl AgentType {
             "coordinator" => Some(Self::Coordinator),
             _ => None,
         }
+    }
+
+    /// Canonical `task.subagent_type` value for task-spawnable agents.
+    #[must_use]
+    pub const fn task_tool_name(&self) -> Option<&'static str> {
+        match self {
+            Self::GeneralPurpose => Some("general-purpose"),
+            Self::Explore => Some("explore"),
+            Self::Plan => Some("plan"),
+            Self::Guide => Some("guide"),
+            Self::Coordinator => None,
+        }
+    }
+
+    /// `task.subagent_type` names in schema/display order.
+    #[must_use]
+    pub fn task_tool_names() -> Vec<&'static str> {
+        Self::TASK_SPAWNABLE
+            .iter()
+            .filter_map(Self::task_tool_name)
+            .collect()
+    }
+
+    /// Parse a task-spawnable agent type.
+    #[must_use]
+    pub fn parse_task_type(s: &str) -> Option<Self> {
+        let agent_type = Self::parse_type(s)?;
+        agent_type.task_tool_name().map(|_| agent_type)
     }
 
     /// Get the system prompt for this agent type
@@ -1069,6 +1104,7 @@ fn resolve_model_name(friendly: &str, _provider: &str) -> String {
 /// Get the Task tool definition
 #[must_use]
 pub fn get_task_tool_definition() -> Value {
+    let task_tool_names = AgentType::task_tool_names();
     json!({
         "type": "function",
         "function": {
@@ -1087,7 +1123,7 @@ pub fn get_task_tool_definition() -> Value {
                     },
                     "subagent_type": {
                         "type": "string",
-                        "enum": ["general-purpose", "explore", "plan", "guide"],
+                        "enum": task_tool_names,
                         "description": "The type of specialized agent: 'general-purpose' for complex tasks, 'explore' for fast codebase searches, 'plan' for architecture design, 'guide' for documentation lookup"
                     },
                     "run_in_background": {
@@ -1894,10 +1930,11 @@ pub fn execute_task_tool<S: BuildHasher>(
         return ("Missing 'subagent_type' argument".to_string(), true);
     };
 
-    let Some(agent_type) = AgentType::parse_type(subagent_type_str) else {
+    let Some(agent_type) = AgentType::parse_task_type(subagent_type_str) else {
+        let valid_types = AgentType::task_tool_names().join(", ");
         return (
             format!(
-                "Unknown agent type '{subagent_type_str}'. Valid types: general-purpose, explore, plan, guide"
+                "Unsupported task subagent_type '{subagent_type_str}'. Valid types: {valid_types}"
             ),
             true,
         );
@@ -2315,6 +2352,20 @@ mod tests {
         assert_eq!(AgentType::parse_type("guide"), Some(AgentType::Guide));
         assert_eq!(AgentType::parse_type("test-builder"), None);
         assert_eq!(AgentType::parse_type("unknown"), None);
+    }
+
+    #[test]
+    fn task_type_parsing_rejects_non_spawnable_coordinator() {
+        assert_eq!(
+            AgentType::parse_task_type("general-purpose"),
+            Some(AgentType::GeneralPurpose)
+        );
+        assert_eq!(AgentType::parse_task_type("guide"), Some(AgentType::Guide));
+        assert_eq!(AgentType::parse_task_type("coordinator"), None);
+        assert_eq!(
+            AgentType::task_tool_names(),
+            vec!["general-purpose", "explore", "plan", "guide"]
+        );
     }
 
     #[test]
@@ -3347,6 +3398,24 @@ mod tests {
             json!(format!("issue719-missing-{}", Uuid::new_v4())),
         );
         args
+    }
+
+    #[test]
+    fn execute_task_tool_rejects_coordinator_before_dispatch() {
+        let app_config = issue719_app_config();
+        let mut args = issue719_args();
+        args.insert("subagent_type".to_string(), json!("coordinator"));
+
+        let (msg, is_err) = execute_task_tool(&args, &app_config);
+        assert!(is_err, "coordinator must not be task-spawnable: {msg}");
+        assert!(
+            msg.contains("Unsupported task subagent_type 'coordinator'"),
+            "error must name the unsupported value; got: {msg}"
+        );
+        assert!(
+            msg.contains("general-purpose, explore, plan, guide"),
+            "error must list the task-spawnable values; got: {msg}"
+        );
     }
 
     /// #719 — From a `current_thread` runtime the function must NOT panic

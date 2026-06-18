@@ -1567,13 +1567,38 @@ pub fn slash_copy(messages: &[serde_json::Value]) -> SlashCommandResult {
 }
 
 pub fn slash_agents() {
-    println!("\nAvailable subagent types:\n");
-    for kind in openclaudia::subagent::AgentType::ALL {
-        println!("  \u{2022} {:<20} {}", kind.name(), kind.description());
+    print!("{}", render_agents_listing());
+}
+
+#[must_use]
+pub fn render_agents_listing() -> String {
+    use std::fmt::Write as _;
+
+    let mut output = String::new();
+    output.push_str("\nTask-spawnable subagent types:\n\n");
+    for kind in openclaudia::subagent::AgentType::TASK_SPAWNABLE {
+        let Some(task_name) = kind.task_tool_name() else {
+            continue;
+        };
+        let _ = writeln!(
+            output,
+            "  \u{2022} {:<20} {}",
+            task_name,
+            kind.description()
+        );
     }
-    println!();
-    println!("Invoke via the `task` tool with `subagent_type: \"<name>\"`.");
-    println!();
+    output.push_str("\nInvoke via the `task` tool with `subagent_type: \"<name>\"`.\n\n");
+
+    let coordinator = openclaudia::subagent::AgentType::Coordinator;
+    let _ = writeln!(
+        output,
+        "Coordinator profile:\n\n  \u{2022} {:<20} {}",
+        coordinator.name(),
+        coordinator.description()
+    );
+    output.push_str("    Legacy REPL profile: `openclaudia --coordinator --tui-mode`.\n");
+    output.push_str("    Not accepted by the `task` tool until coordinator dispatch is wired.\n\n");
+    output
 }
 
 pub fn slash_version() {
@@ -2893,7 +2918,7 @@ fn parse_axis_overrides(parts: &[&str]) -> SlashCommandResult {
 mod tests {
     use super::{
         gh_bin, git_bin, handle_slash_command, hook_status_lines, permission_status_lines,
-        plugin_install_dir_for_name, project_mcp_server_count_from_str,
+        plugin_install_dir_for_name, project_mcp_server_count_from_str, render_agents_listing,
         render_plugin_command_prompt, PluginAction, SlashCommandResult,
     };
     use openclaudia::config::{Hook, HookEntry, HookPolicy, HooksConfig, PermissionsConfig};
@@ -3355,7 +3380,7 @@ mod tests {
 
     // ── §7 /agents ───────────────────────────────────────────────────────────
 
-    /// OC: `/agents` prints a static list of `AgentType::ALL` and returns `Handled`.
+    /// OC: `/agents` prints a static list and returns `Handled`.
     /// CC: renders an interactive `AgentsMenu` TUI component.  Pinned divergence.
     #[test]
     fn spec_agents_returns_handled_not_interactive() {
@@ -3364,6 +3389,19 @@ mod tests {
             matches!(result, Some(SlashCommandResult::Handled)),
             "/agents must return Handled (OC is non-interactive; CC renders TUI)"
         );
+    }
+
+    #[test]
+    fn spec_agents_listing_separates_task_spawnable_agents_from_coordinator() {
+        let listing = render_agents_listing();
+        assert!(listing.contains("Task-spawnable subagent types"));
+        assert!(listing.contains("general-purpose"));
+        assert!(listing.contains("explore"));
+        assert!(listing.contains("plan"));
+        assert!(listing.contains("guide"));
+        assert!(listing.contains("Coordinator profile"));
+        assert!(listing.contains("coordinator"));
+        assert!(listing.contains("Not accepted by the `task` tool"));
     }
 
     // ── §8 /skill | /skills ──────────────────────────────────────────────────
