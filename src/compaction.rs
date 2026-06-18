@@ -1537,7 +1537,12 @@ fn record_compaction_summary_observation(session_id: Option<&str>, summary: &str
             return;
         }
     };
-    if let Err(err) = append_compaction_summary_observation(&mut ledger, summary) {
+    let source_obs = ledger
+        .observation_index(crate::grounded_loop::DEFAULT_GROUNDING_INDEX_LIMIT)
+        .into_iter()
+        .map(|entry| entry.id)
+        .collect::<Vec<_>>();
+    if let Err(err) = append_compaction_summary_observation(&mut ledger, summary, source_obs) {
         tracing::warn!(
             session_id,
             error = %err,
@@ -1549,12 +1554,13 @@ fn record_compaction_summary_observation(session_id: Option<&str>, summary: &str
 fn append_compaction_summary_observation(
     ledger: &mut crate::ledger::RealityLedger,
     summary: &str,
+    source_obs: Vec<crate::ledger::ObsId>,
 ) -> Result<crate::ledger::ObsId, crate::ledger::LedgerError> {
     ledger.append(
         crate::ledger::Authority::ModelSummary,
         crate::ledger::ObservationKind::Summary {
             text: summary.to_string(),
-            source_obs: Vec::new(),
+            source_obs,
         },
     )
 }
@@ -1883,9 +1889,13 @@ mod tests {
     #[test]
     fn compaction_summary_observation_is_model_summary_authority() {
         let mut ledger = crate::ledger::RealityLedger::new();
+        let task = ledger
+            .observe_user_task("Summarize older context.")
+            .expect("task observation");
         let id = append_compaction_summary_observation(
             &mut ledger,
             "<context-summary>x</context-summary>",
+            vec![task],
         )
         .expect("summary observation");
         let observation = ledger.get(id).expect("observation");
@@ -1897,11 +1907,61 @@ mod tests {
             panic!("expected summary observation");
         };
         assert_eq!(text, "<context-summary>x</context-summary>");
-        assert!(source_obs.is_empty());
+        assert_eq!(source_obs, &vec![task]);
         assert!(
             !ledger.is_authoritative(id),
             "summary observations must not be authoritative evidence"
         );
+    }
+
+    #[test]
+    fn compaction_summary_records_prior_ledger_ids_as_navigation_sources() {
+        let session_id = "compaction-summary-source-test";
+        let path = crate::ledger::project_session_ledger_path(session_id)
+            .expect("test session id must be ledger safe");
+        let _ = std::fs::remove_file(&path);
+
+        let (task, command) = {
+            let mut ledger = crate::ledger::RealityLedger::open_project_session(session_id)
+                .expect("open project ledger");
+            let task = ledger
+                .observe_user_task("Compact older messages.")
+                .expect("task observation");
+            let command = ledger
+                .observe_command_run(
+                    "/repo",
+                    vec!["cargo".to_string(), "check".to_string()],
+                    0,
+                    "ok",
+                    "",
+                )
+                .expect("command observation");
+            (task, command)
+        };
+
+        record_compaction_summary_observation(
+            Some(session_id),
+            "<context-summary>prior work</context-summary>",
+        );
+
+        let ledger = crate::ledger::RealityLedger::open_project_session(session_id)
+            .expect("reopen project ledger");
+        let summary = ledger
+            .observations_chronological()
+            .into_iter()
+            .find(|obs| matches!(obs.kind, crate::ledger::ObservationKind::Summary { .. }))
+            .expect("summary observation");
+        assert_eq!(summary.authority, crate::ledger::Authority::ModelSummary);
+        let crate::ledger::ObservationKind::Summary { source_obs, .. } = &summary.kind else {
+            panic!("expected summary observation");
+        };
+        assert_eq!(source_obs, &vec![task, command]);
+        assert!(
+            !ledger.is_authoritative(summary.id),
+            "compaction summary must remain non-authoritative"
+        );
+
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
