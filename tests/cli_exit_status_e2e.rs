@@ -227,6 +227,34 @@ providers:
     .expect("config file");
 }
 
+fn write_local_provider_config_with_stop_hook(cwd: &tempfile::TempDir, base_url: &str) {
+    let config_dir = cwd.path().join(".openclaudia");
+    fs::create_dir_all(&config_dir).expect("config dir");
+    fs::write(
+        config_dir.join("config.yaml"),
+        format!(
+            r#"
+proxy:
+  port: 8080
+  host: "127.0.0.1"
+  target: local
+providers:
+  local:
+    base_url: {base_url}
+hooks:
+  stop:
+    - hooks:
+        - type: command
+          shell: true
+          timeout: 2
+          command: |
+            printf '%s' '{{"decision":"deny","reason":"stop hook requested shutdown"}}'
+"#,
+        ),
+    )
+    .expect("config file");
+}
+
 fn write_openai_provider_config(cwd: &tempfile::TempDir) {
     write_openai_provider_config_with_target(cwd, "openai");
 }
@@ -931,6 +959,46 @@ fn loop_proxy_allows_keyless_local_provider_request_and_stops_after_one_iteratio
     assert!(
         output.status.success(),
         "loop --max-iterations 1 should exit cleanly after one completed request; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn loop_stop_hook_denial_shuts_down_unlimited_loop_after_first_iteration() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    let (server, base_url) = spawn_local_chat_server_rejecting_auth();
+    write_local_provider_config_with_stop_hook(&cwd, &base_url);
+    let proxy_port = unused_loopback_port();
+    let proxy_port_arg = proxy_port.to_string();
+
+    let mut child = isolated_command(&cwd, &home)
+        .args(["loop", "--max-iterations", "0", "--port", &proxy_port_arg])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("openclaudia loop must spawn");
+
+    wait_for_loop_proxy(proxy_port, &mut child).expect("loop proxy should start");
+    let response =
+        post_chat_completion_to_proxy(proxy_port).expect("proxy request should complete");
+    let output = wait_for_child_exit(child);
+    let server_result = server.join().expect("local chat server thread should join");
+
+    assert!(
+        server_result.is_ok(),
+        "local chat server failed: {:?}",
+        server_result.err()
+    );
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK") && response.contains("local proxy ok"),
+        "loop proxy should forward the request before Stop hook shutdown; got {response:?}"
+    );
+    assert!(
+        output.status.success(),
+        "loop --max-iterations 0 should exit cleanly when a Stop hook denies; stdout={:?} stderr={:?}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
