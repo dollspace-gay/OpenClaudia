@@ -73,6 +73,16 @@ pub fn validate_final_answer(
             "final test claims require a command observation",
         ));
     }
+    if summary_claims_test_success(summary)
+        && !hydrated_evidence.iter().any(|obs| {
+            matches!(obs.kind, ObservationKind::CommandRun { .. })
+                && command_observation_is_test_command(obs)
+        })
+    {
+        return Err(Denial::new(
+            "final test success claims require a test command observation",
+        ));
+    }
 
     let file_claims = extract_file_claims(summary);
     for claim in file_claims {
@@ -164,6 +174,43 @@ fn summary_claims_verification_success(summary: &str) -> bool {
                 | "verified"
         ) && !has_recent_negation(&tokens, idx)
     })
+}
+
+fn summary_claims_test_success(summary: &str) -> bool {
+    let lower = summary.to_ascii_lowercase();
+    lower.contains("test") && summary_claims_verification_success(summary)
+}
+
+fn command_observation_is_test_command(observation: &crate::ledger::Observation) -> bool {
+    let ObservationKind::CommandRun { argv, .. } = &observation.kind else {
+        return false;
+    };
+    let command = argv.join(" ").to_ascii_lowercase();
+    is_test_command_text(&command)
+}
+
+fn is_test_command_text(command: &str) -> bool {
+    const NEEDLES: &[&str] = &[
+        "cargo test",
+        "cargo nextest",
+        "npm test",
+        "npm run test",
+        "pnpm test",
+        "pnpm run test",
+        "yarn test",
+        "yarn run test",
+        "bun test",
+        "pytest",
+        "python -m pytest",
+        "go test",
+        "zig test",
+        "swift test",
+        "mvn test",
+        "gradle test",
+        "make test",
+        "ctest",
+    ];
+    NEEDLES.iter().any(|needle| command.contains(needle))
 }
 
 fn has_recent_negation(tokens: &[String], idx: usize) -> bool {
@@ -432,6 +479,64 @@ mod tests {
 
         validate_cited_final_answer(&summary, &ledger)
             .expect("honest failed verification summary is allowed");
+    }
+
+    #[test]
+    fn final_test_success_claim_requires_test_command_observation() {
+        let mut ledger = RealityLedger::new();
+        let check = ledger
+            .observe_command_run("/tmp", vec!["cargo".into(), "check".into()], 0, "", "")
+            .expect("command");
+        let verification = ledger
+            .append(
+                Authority::Verifier,
+                ObservationKind::Verification {
+                    passed: true,
+                    command: Some("cargo check".to_string()),
+                    findings: Vec::new(),
+                },
+            )
+            .expect("verification");
+        let summary = format!("Tests passed cleanly [{check}] [{verification}].");
+
+        let denial = validate_cited_final_answer(&summary, &ledger).expect_err("denied");
+
+        assert_eq!(
+            denial.reason(),
+            "final test success claims require a test command observation"
+        );
+    }
+
+    #[test]
+    fn final_test_success_claim_accepts_test_command_observation() {
+        let mut ledger = RealityLedger::new();
+        let test = ledger
+            .observe_command_run(
+                "/tmp",
+                vec![
+                    "cargo".into(),
+                    "test".into(),
+                    "--test".into(),
+                    "ledger_decision_e2e".into(),
+                ],
+                0,
+                "",
+                "",
+            )
+            .expect("command");
+        let verification = ledger
+            .append(
+                Authority::Verifier,
+                ObservationKind::Verification {
+                    passed: true,
+                    command: Some("cargo test --test ledger_decision_e2e".to_string()),
+                    findings: Vec::new(),
+                },
+            )
+            .expect("verification");
+        let summary = format!("Tests passed cleanly [{test}] [{verification}].");
+
+        validate_cited_final_answer(&summary, &ledger).expect("test command grounds test success");
     }
 
     #[test]
