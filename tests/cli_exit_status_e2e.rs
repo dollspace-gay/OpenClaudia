@@ -208,6 +208,26 @@ providers:
     .expect("config file");
 }
 
+fn write_openai_target_with_local_fallback_config(cwd: &tempfile::TempDir) {
+    let config_dir = cwd.path().join(".openclaudia");
+    fs::create_dir_all(&config_dir).expect("config dir");
+    fs::write(
+        config_dir.join("config.yaml"),
+        r#"
+proxy:
+  port: 8080
+  host: "127.0.0.1"
+  target: openai
+providers:
+  openai:
+    base_url: https://api.openai.com/v1
+  local:
+    base_url: http://localhost:1234/v1
+"#,
+    )
+    .expect("config file");
+}
+
 fn write_anthropic_target_with_openai_key_config(cwd: &tempfile::TempDir) {
     let config_dir = cwd.path().join(".openclaudia");
     fs::create_dir_all(&config_dir).expect("config dir");
@@ -521,6 +541,41 @@ fn start_allows_keyless_local_provider_until_bind_failure() {
 }
 
 #[test]
+fn start_target_flag_overrides_config_before_auth_preflight() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    write_openai_target_with_local_fallback_config(&cwd);
+    let (_listener, port) = held_loopback_port();
+    let port = port.to_string();
+
+    let output = isolated_command(&cwd, &home)
+        .args(["start", "--target", "local", "--port", &port])
+        .output()
+        .expect("openclaudia start must run");
+
+    assert!(
+        !output.status.success(),
+        "held port should make start fail after applying target override; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !combined.contains("OPENAI_API_KEY")
+            && !combined.contains("No API key configured for provider 'openai'"),
+        "start --target local must not auth-preflight the config's openai target; got {combined:?}"
+    );
+    assert!(
+        combined.to_lowercase().contains("address already in use"),
+        "start should reach bind after target override; got {combined:?}"
+    );
+}
+
+#[test]
 fn loop_allows_keyless_local_provider_and_reports_bind_failure() {
     let cwd = tempfile::tempdir().expect("cwd tempdir");
     let home = tempfile::tempdir().expect("home tempdir");
@@ -552,6 +607,48 @@ fn loop_allows_keyless_local_provider_and_reports_bind_failure() {
     assert!(
         combined.to_lowercase().contains("address already in use"),
         "loop should surface the bind failure; got {combined:?}"
+    );
+}
+
+#[test]
+fn loop_root_target_flag_overrides_config_before_auth_preflight() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    write_openai_target_with_local_fallback_config(&cwd);
+    let (_listener, port) = held_loopback_port();
+    let port = port.to_string();
+
+    let output = isolated_command(&cwd, &home)
+        .args([
+            "--target",
+            "local",
+            "loop",
+            "--max-iterations",
+            "1",
+            "--port",
+            &port,
+        ])
+        .output()
+        .expect("openclaudia loop must run");
+
+    assert!(
+        !output.status.success(),
+        "held port should make loop fail after applying root target override; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !combined.contains("OPENAI_API_KEY") && !combined.contains("No API key configured"),
+        "openclaudia --target local loop must not auth-preflight the config's openai target; got {combined:?}"
+    );
+    assert!(
+        combined.to_lowercase().contains("address already in use"),
+        "loop should reach bind after root target override; got {combined:?}"
     );
 }
 
