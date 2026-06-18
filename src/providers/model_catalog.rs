@@ -124,21 +124,40 @@ pub const DEEPSEEK_MODELS: &[&str] = &[
 ];
 
 pub const QWEN_MODELS: &[&str] = &[
-    "qwen3.7-plus",
-    "qwen3.7-plus-2026-05-26",
     "qwen3.7-max",
     "qwen3.7-max-2026-06-08",
+    "qwen3.7-max-2026-05-20",
     "qwen3.7-max-preview",
-    "qwen3.6-plus",
-    "qwen3.6-flash",
-    "qwen3.6-35b-a3b",
-    "qwen3.5-plus",
-    "qwen3.5-flash",
+    "qwen3.6-max-preview",
     "qwen3-max",
+    "qwen3-max-2026-01-23",
+    "qwen3-max-preview",
+    "qwen-max",
+    "qwen3.7-plus",
+    "qwen3.7-plus-2026-05-26",
+    "qwen3.6-plus",
+    "qwen3.6-plus-2026-04-02",
+    "qwen3.5-plus",
+    "qwen3.5-plus-2026-04-20",
+    "qwen3.5-plus-2026-02-15",
     "qwen-plus",
+    "qwen-plus-latest",
+    "qwen-plus-2025-09-11",
+    "qwen3.6-flash",
+    "qwen3.6-flash-2026-04-16",
+    "qwen3.5-flash",
+    "qwen3.5-flash-2026-02-23",
+    "qwen-flash",
+    "qwen-flash-2025-07-28",
     "qwen-turbo",
+    "qwen3.6-35b-a3b",
+    "qwen3.5-397b-a17b",
+    "qwen3.5-122b-a10b",
+    "qwen3.5-27b",
+    "qwen3.5-35b-a3b",
     "qwq-plus",
     "qwen3-coder-plus",
+    "qwen3-coder-flash",
 ];
 
 pub const KIMI_MODELS: &[&str] = &[
@@ -230,5 +249,32 @@ mod tests {
             static_models_for_provider("zai").contains(&"glm-5.1-highspeed"),
             "Z.AI static catalog must include glm-5.1-highspeed"
         );
+    }
+
+    #[test]
+    fn qwen_catalog_includes_current_documented_models() {
+        let models = static_models_for_provider("qwen");
+        for model in [
+            "qwen3.7-max-2026-06-08",
+            "qwen3.7-max-2026-05-20",
+            "qwen3.6-max-preview",
+            "qwen3-max-2026-01-23",
+            "qwen3.7-plus-2026-05-26",
+            "qwen3.6-plus-2026-04-02",
+            "qwen3.5-plus-2026-04-20",
+            "qwen3.5-plus-2026-02-15",
+            "qwen-plus-latest",
+            "qwen-plus-2025-09-11",
+            "qwen3.6-flash-2026-04-16",
+            "qwen3.5-flash-2026-02-23",
+            "qwen-flash",
+            "qwen-flash-2025-07-28",
+            "qwen3-coder-flash",
+        ] {
+            assert!(
+                models.contains(&model),
+                "Qwen static catalog must include documented model {model}"
+            );
+        }
     }
 }

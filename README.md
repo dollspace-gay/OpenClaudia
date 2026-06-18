@@ -387,12 +387,11 @@ The lists below are the built-in `/model list` fallback catalog. Model names are
 - `deepseek-chat`, `deepseek-reasoner` — Legacy V3.2 aliases
 
 ### Qwen
-- `qwen3.7-plus`, `qwen3.7-plus-2026-05-26`, `qwen3.7-max`, `qwen3.7-max-2026-06-08`, `qwen3.7-max-preview` — Qwen 3.7 family
-- `qwen3.6-plus`, `qwen3.6-flash`, `qwen3.6-35b-a3b` — Qwen 3.6 family
-- `qwen3.5-plus`, `qwen3.5-flash`, `qwen3-max` — Previous generation
-- `qwen-plus`, `qwen-turbo` — General
-- `qwq-plus` — Reasoning
-- `qwen3-coder-plus` — Coding specialist
+- `qwen3.7-max`, `qwen3.7-max-2026-06-08`, `qwen3.7-max-2026-05-20`, `qwen3.7-max-preview`, `qwen3.6-max-preview`, `qwen3-max`, `qwen3-max-2026-01-23`, `qwen3-max-preview`, `qwen-max` — Qwen Max family
+- `qwen3.7-plus`, `qwen3.7-plus-2026-05-26`, `qwen3.6-plus`, `qwen3.6-plus-2026-04-02`, `qwen3.5-plus`, `qwen3.5-plus-2026-04-20`, `qwen3.5-plus-2026-02-15`, `qwen-plus`, `qwen-plus-latest`, `qwen-plus-2025-09-11` — Qwen Plus family
+- `qwen3.6-flash`, `qwen3.6-flash-2026-04-16`, `qwen3.5-flash`, `qwen3.5-flash-2026-02-23`, `qwen-flash`, `qwen-flash-2025-07-28`, `qwen-turbo` — Qwen Flash/Turbo family
+- `qwen3.6-35b-a3b`, `qwen3.5-397b-a17b`, `qwen3.5-122b-a10b`, `qwen3.5-27b`, `qwen3.5-35b-a3b` — Qwen dense/MoE models
+- `qwq-plus`, `qwen3-coder-plus`, `qwen3-coder-flash` — Reasoning and coding specialists
 
 ### Z.AI (GLM)
 - `glm-5.2`, `glm-5.1`, `glm-5.1-highspeed`, `glm-5`, `glm-5-turbo` — GLM-5 family
