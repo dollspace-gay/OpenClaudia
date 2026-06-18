@@ -223,6 +223,38 @@ fn convert_messages_assistant_with_tool_calls_becomes_tool_use_blocks() {
 }
 
 #[test]
+fn convert_messages_assistant_tool_calls_with_null_content_omits_null_text() {
+    let messages = vec![json!({
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [{
+            "id": "call-null-content",
+            "type": "function",
+            "function": {
+                "name": "bash",
+                "arguments": "{\"command\":\"pwd\"}"
+            }
+        }]
+    })];
+    let converted = convert_messages_to_anthropic(&messages);
+    assert_eq!(converted.len(), 1);
+    let content = converted[0]["content"].as_array().expect("array");
+    assert_eq!(
+        content.len(),
+        1,
+        "null content must not become a text block"
+    );
+    assert_eq!(content[0]["type"], "tool_use");
+    assert_eq!(content[0]["id"], "call-null-content");
+    assert_eq!(content[0]["name"], "bash");
+    assert_eq!(content[0]["input"]["command"], "pwd");
+    assert!(
+        content.iter().all(|block| block["type"] != "text"),
+        "tool-call-only assistant message must not emit content:null or empty text: {content:?}"
+    );
+}
+
+#[test]
 fn convert_messages_assistant_with_empty_tool_calls_array_still_works() {
     let messages = vec![json!({
         "role": "assistant",

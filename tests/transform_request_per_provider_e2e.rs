@@ -164,6 +164,31 @@ fn anthropic_transform_messages_array_excludes_system_role() {
     }
 }
 
+#[test]
+fn anthropic_transform_tool_call_only_assistant_message_has_no_null_content() {
+    let adapter = get_adapter("anthropic").unwrap();
+    let mut assistant = msg("assistant", "");
+    assistant.tool_calls = Some(vec![json!({
+        "id": "call-no-text",
+        "type": "function",
+        "function": {
+            "name": "bash",
+            "arguments": "{\"command\":\"pwd\"}"
+        }
+    })]);
+    let request = req("claude-sonnet-4-5", vec![assistant]);
+    let body = adapter.transform_request(&request).expect("ok");
+    let messages = body["messages"].as_array().expect("messages array");
+    assert_eq!(messages.len(), 1);
+    let content = messages[0]["content"].as_array().expect("content array");
+    assert_eq!(content.len(), 1, "empty text must not become content:null");
+    assert_eq!(content[0]["type"], "tool_use");
+    assert_eq!(content[0]["id"], "call-no-text");
+    assert_eq!(content[0]["name"], "bash");
+    assert_eq!(content[0]["input"]["command"], "pwd");
+    assert_ne!(messages[0]["content"], Value::Null);
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Section B — Ollama body shape
 // ───────────────────────────────────────────────────────────────────────────
