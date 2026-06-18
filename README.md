@@ -81,7 +81,7 @@ openclaudia
 # Use a specific model (provider auto-detected from model name)
 openclaudia -m gemini-3.5-flash
 openclaudia -m gpt-5.5
-openclaudia -m claude-sonnet-4-20250514
+openclaudia -m claude-sonnet-4-6
 
 # Start with a behavioral mode
 openclaudia --mode create     # Autonomous architect — build from scratch
@@ -368,7 +368,6 @@ The lists below are the built-in `/model list` fallback catalog. Model names are
 - `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6` — Claude 4 family
 - `claude-haiku-4-5-20251001`, `claude-haiku-4-5` — Fast, near-frontier
 - `claude-sonnet-4-5-20250929`, `claude-sonnet-4-5`, `claude-opus-4-5-20251101`, `claude-opus-4-5`, `claude-opus-4-1-20250805` — Legacy
-- `claude-sonnet-4-20250514`, `claude-opus-4-20250514` — Legacy
 
 ### OpenAI
 - `gpt-5.5`, `gpt-5.5-pro`, `gpt-5.5-2026-04-23`, `gpt-5.5-pro-2026-04-23` — Latest frontier family
