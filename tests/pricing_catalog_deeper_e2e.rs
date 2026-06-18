@@ -1,7 +1,7 @@
 //! End-to-end tests for `session::pricing` catalog
 //! coverage — `get_pricing` per-prefix lookup, `ModelPricing`
-//! multiplier semantics, `web_search_cost` flat-rate, and
-//! `calculate_cost_*` family precedence across modes/TTLs.
+//! multiplier semantics, and `calculate_cost_*` family precedence
+//! across modes/TTLs.
 //!
 //! Sprint 98 of the verification effort. Sprint 61
 //! (`pricing_audit_e2e`) covered the unknown-model flag +
@@ -17,21 +17,15 @@
 #![allow(clippy::float_cmp)]
 
 use openclaudia::session::{
-    calculate_cost, calculate_cost_fast_mode, calculate_cost_with_ttl, get_pricing,
-    web_search_cost, CacheWriteTtl, ModelPricing, PricingError, TokenUsage,
-    FAST_MODE_INPUT_PER_MILLION, FAST_MODE_OUTPUT_PER_MILLION,
-    OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS, OPUS_4_8_FAST_MODE_INPUT_PER_MILLION,
-    OPUS_4_8_FAST_MODE_OUTPUT_PER_MILLION, WEB_SEARCH_REQUEST_USD,
+    calculate_cost, calculate_cost_fast_mode, calculate_cost_with_ttl, get_pricing, CacheWriteTtl,
+    ModelPricing, PricingError, TokenUsage, FAST_MODE_INPUT_PER_MILLION,
+    FAST_MODE_OUTPUT_PER_MILLION, OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS,
+    OPUS_4_8_FAST_MODE_INPUT_PER_MILLION, OPUS_4_8_FAST_MODE_OUTPUT_PER_MILLION,
 };
 
 // ───────────────────────────────────────────────────────────────────────────
 // Section A — Public constants
 // ───────────────────────────────────────────────────────────────────────────
-
-#[test]
-fn web_search_request_constant_is_one_cent() {
-    assert_eq!(WEB_SEARCH_REQUEST_USD, 0.01);
-}
 
 #[test]
 fn fast_mode_input_per_million_is_30_dollars() {
@@ -402,32 +396,6 @@ fn pricing_input_and_output_per_million_are_positive() {
             assert!(p.output_per_million > 0.0);
         }
     }
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// Section D — web_search_cost flat-rate
-// ───────────────────────────────────────────────────────────────────────────
-
-#[test]
-fn web_search_cost_zero_requests_is_zero() {
-    assert_eq!(web_search_cost(0), 0.0);
-}
-
-#[test]
-fn web_search_cost_one_request_equals_constant() {
-    assert!(
-        (web_search_cost(1) - WEB_SEARCH_REQUEST_USD).abs() < 1e-12,
-        "1 request MUST cost exactly WEB_SEARCH_REQUEST_USD"
-    );
-}
-
-#[test]
-fn web_search_cost_scales_linearly_with_request_count() {
-    let one = web_search_cost(1);
-    let ten = web_search_cost(10);
-    let hundred = web_search_cost(100);
-    assert!((ten - one * 10.0).abs() < 1e-12);
-    assert!((hundred - one * 100.0).abs() < 1e-12);
 }
 
 // ───────────────────────────────────────────────────────────────────────────

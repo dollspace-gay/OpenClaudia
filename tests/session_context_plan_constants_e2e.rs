@@ -196,7 +196,7 @@ fn prefix_constants_end_with_double_underscore() {
 #[test]
 fn usage_extras_default_is_zero() {
     let extras = UsageExtras::default();
-    assert_eq!(extras.web_search_requests, 0);
+    assert_eq!(extras, UsageExtras::ZERO);
 }
 
 #[test]
@@ -205,53 +205,37 @@ fn usage_extras_zero_constant_equals_default() {
 }
 
 #[test]
-fn usage_extras_accumulate_sums_web_search_requests() {
-    let mut a = UsageExtras {
-        web_search_requests: 5,
-    };
-    let b = UsageExtras {
-        web_search_requests: 3,
-    };
+fn usage_extras_accumulate_empty_metadata_is_noop() {
+    let mut a = UsageExtras::default();
+    let b = UsageExtras::ZERO;
     a.accumulate(&b);
-    assert_eq!(a.web_search_requests, 8);
+    assert_eq!(a, UsageExtras::ZERO);
 }
 
 #[test]
 fn usage_extras_accumulate_with_zero_is_identity() {
-    let mut a = UsageExtras {
-        web_search_requests: 7,
-    };
+    let mut a = UsageExtras::default();
     a.accumulate(&UsageExtras::ZERO);
-    assert_eq!(a.web_search_requests, 7);
+    assert_eq!(a, UsageExtras::ZERO);
 }
 
 #[test]
 fn usage_extras_partial_eq_holds_for_equal_values() {
-    let a = UsageExtras {
-        web_search_requests: 5,
-    };
-    let b = UsageExtras {
-        web_search_requests: 5,
-    };
+    let a = UsageExtras::default();
+    let b = UsageExtras::ZERO;
     assert_eq!(a, b);
 }
 
 #[test]
-fn usage_extras_partial_eq_distinguishes_different_values() {
-    let a = UsageExtras {
-        web_search_requests: 5,
-    };
-    let b = UsageExtras {
-        web_search_requests: 6,
-    };
-    assert_ne!(a, b);
+fn usage_extras_legacy_web_search_requests_do_not_create_state() {
+    let extras: UsageExtras =
+        serde_json::from_str(r#"{"web_search_requests":6}"#).expect("legacy extras deserialize");
+    assert_eq!(extras, UsageExtras::ZERO);
 }
 
 #[test]
 fn usage_extras_is_copy() {
-    let a = UsageExtras {
-        web_search_requests: 99,
-    };
+    let a = UsageExtras::default();
     let copy = a;
     let again = a;
     assert_eq!(copy, again);
@@ -259,9 +243,7 @@ fn usage_extras_is_copy() {
 
 #[test]
 fn usage_extras_serde_round_trips() {
-    let original = UsageExtras {
-        web_search_requests: 42,
-    };
+    let original = UsageExtras::default();
     let json = serde_json::to_string(&original).expect("ser");
     let back: UsageExtras = serde_json::from_str(&json).expect("de");
     assert_eq!(back, original);
@@ -269,7 +251,6 @@ fn usage_extras_serde_round_trips() {
 
 #[test]
 fn usage_extras_deserializes_from_empty_object_using_default() {
-    // #[serde(default)] on web_search_requests.
     let back: UsageExtras = serde_json::from_str("{}").expect("de");
     assert_eq!(back, UsageExtras::default());
 }

@@ -24,14 +24,6 @@
 //! point defaults to 5 m, matching the Anthropic API default when
 //! `cache_control.ttl` is omitted.
 //!
-//! ## Web-search per-request charge (#641)
-//!
-//! Anthropic also bills `server_tool_use.web_search_requests` as a flat
-//! per-call charge on top of token usage; CC mirrors this at $0.01/req
-//! (see `cost-tracker.ts:294` / `modelCost.ts:139`).  The count travels
-//! on [`TokenUsage::web_search_requests`] and is added to every cost
-//! computation through [`WEB_SEARCH_REQUEST_USD`].
-//!
 //! ## Fast-mode pricing tier (#642)
 //!
 //! Claude Opus fast mode bills at a premium rate that varies by model:
@@ -55,19 +47,15 @@
 //!
 //! Every successful cost calculation emits a structured
 //! `tracing::info!(target = "openclaudia::analytics", event =
-//! "cost_tracked", ...)` carrying model, token buckets, web-search
-//! requests, the TTL bucket, fast-mode flag, and the computed
-//! `cost_usd`.  Mirrors CC's OTEL `getCostCounter().add()` /
+//! "cost_tracked", ...)` carrying model, token buckets, the TTL bucket,
+//! fast-mode flag, and the computed `cost_usd`.  Mirrors CC's OTEL
+//! `getCostCounter().add()` /
 //! `getTokenCounter().add()` per-request emission (see
 //! `cost-tracker.ts:291-302`).
 
 use super::state::{TokenUsage, UsageExtras};
 use std::cell::Cell;
 use thiserror::Error;
-
-/// Flat USD charge applied per `server_tool_use.web_search_requests`
-/// (crosslink #641).  Matches CC `modelCost.ts:139`.
-pub const WEB_SEARCH_REQUEST_USD: f64 = 0.01;
 
 /// Fast-mode input rate for Claude Opus 4.6 / 4.7 per million tokens
 /// (`COST_TIER_30_150`) — see #642.
@@ -791,23 +779,13 @@ pub fn get_pricing(model: &str) -> Option<ModelPricing> {
     hit
 }
 
-/// Flat per-request charge for `server_tool_use.web_search_requests`
-/// (#641).  Extracted so the rate is referenced from exactly one place.
-#[must_use]
-pub fn web_search_cost(requests: u64) -> f64 {
-    f64_from_tokens(requests) * WEB_SEARCH_REQUEST_USD
-}
-
 /// Calculate the cost for given token usage and model.
 ///
 /// Defaults to the 5 m ephemeral cache-write multiplier — equivalent to
-/// the Anthropic API behaviour when `cache_control.ttl` is omitted —
-/// and to zero [`UsageExtras`] (i.e. no `web_search_requests`).
+/// the Anthropic API behaviour when `cache_control.ttl` is omitted.
 /// Callers that have an explicit TTL should use
 /// [`calculate_cost_with_ttl`]; callers operating in `/fast` mode
-/// should use [`calculate_cost_fast_mode`] (#642); callers carrying
-/// web-search request counts should use [`calculate_cost_with_extras`]
-/// or [`calculate_cost_full`] (#641).
+/// should use [`calculate_cost_fast_mode`] (#642).
 ///
 /// On success this emits a structured `cost_tracked` analytics event
 /// (#649); on unknown-model failure it emits an `unknown_model_cost`
@@ -841,8 +819,7 @@ pub fn calculate_cost_with_ttl(
     calculate_cost_impl(model, usage, UsageExtras::ZERO, ttl, /*fast=*/ false)
 }
 
-/// Calculate cost with explicit [`UsageExtras`] (web-search requests
-/// etc.) — #641 entry point.
+/// Calculate cost with explicit [`UsageExtras`] metadata.
 ///
 /// Defaults to standard mode and 5 m cache-write TTL.
 ///
@@ -915,7 +892,7 @@ pub fn calculate_cost_full(
 fn calculate_cost_impl(
     model: &str,
     usage: &TokenUsage,
-    extras: UsageExtras,
+    _extras: UsageExtras,
     ttl: CacheWriteTtl,
     fast: bool,
 ) -> Result<f64, PricingError> {
@@ -932,7 +909,6 @@ fn calculate_cost_impl(
             output_tokens = usage.output_tokens,
             cache_read_tokens = usage.cache_read_tokens,
             cache_write_tokens = usage.cache_write_tokens,
-            web_search_requests = extras.web_search_requests,
             fast_mode = fast,
             "unknown model for cost lookup; costs may be inaccurate",
         );
@@ -955,10 +931,7 @@ fn calculate_cost_impl(
     let cache_read_cost = cache_read * input_rate * pricing.cache_read_multiplier / 1_000_000.0;
     let cache_write_cost =
         cache_write * input_rate * pricing.cache_write_multiplier(ttl) / 1_000_000.0;
-    // Per #641: flat per-request charge for server-side web search.
-    let web_search = web_search_cost(extras.web_search_requests);
-
-    let cost = input_cost + output_cost + cache_read_cost + cache_write_cost + web_search;
+    let cost = input_cost + output_cost + cache_read_cost + cache_write_cost;
 
     // Per #649: per-request analytics event, mirroring CC's OTEL
     // `getCostCounter().add()` / `getTokenCounter().add()` emission.
@@ -970,7 +943,6 @@ fn calculate_cost_impl(
         output_tokens = usage.output_tokens,
         cache_read_tokens = usage.cache_read_tokens,
         cache_write_tokens = usage.cache_write_tokens,
-        web_search_requests = extras.web_search_requests,
         cache_write_ttl = ?ttl,
         fast_mode = fast,
         cost_usd = cost,
@@ -1576,34 +1548,20 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // #641 — web_search_requests are billed at a flat $0.01/req on top of
-    // token usage.  Validates both the standalone helper and the
-    // through-`calculate_cost_with_extras` path.
+    // Browser-backed web_search is free to the user. UsageExtras remains as a
+    // compatibility carrier, but it must not affect token pricing.
     // -----------------------------------------------------------------------
     #[test]
-    fn web_search_requests_billed_at_one_cent_each() {
-        // Helper: 100 requests = $1.00.
-        let cost = web_search_cost(100);
-        assert!(
-            (cost - 1.0).abs() < 1e-9,
-            "100 web-search requests must cost $1.00 (got {cost})"
-        );
-        // End-to-end: web_search_requests adds $0.01 each on top of any
-        // token cost.  Use a known model and zero token usage so the
-        // resulting cost isolates the per-request charge.
+    fn usage_extras_do_not_add_search_cost() {
         let usage = TokenUsage::default();
-        let extras = UsageExtras {
-            web_search_requests: 5,
-        };
+        let extras = UsageExtras::ZERO;
         let cost = calculate_cost_with_extras("claude-sonnet-4-5", &usage, &extras)
             .expect("sonnet must resolve");
         assert!(
-            (cost - 0.05).abs() < 1e-9,
-            "5 web-search requests at $0.01 each must total $0.05 (got {cost})"
+            (cost - 0.0).abs() < 1e-9,
+            "zero-token usage with extras must stay free (got {cost})"
         );
 
-        // And the charge is *additive* on top of the standard token
-        // pricing — not a replacement for it.
         let usage_with_tokens = TokenUsage {
             input_tokens: 1_000_000,
             output_tokens: 0,
@@ -1616,8 +1574,8 @@ mod tests {
             calculate_cost_with_extras("claude-sonnet-4-5", &usage_with_tokens, &extras)
                 .expect("sonnet must resolve");
         assert!(
-            (cost_with_search - cost_no_search - 0.05).abs() < 1e-9,
-            "web-search charge must be additive on top of token cost \
+            (cost_with_search - cost_no_search).abs() < 1e-9,
+            "UsageExtras must not change token cost \
              (cost_no_search={cost_no_search}, cost_with_search={cost_with_search})"
         );
     }
@@ -1834,7 +1792,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // #642/#641 — calculate_cost_full is the lower-level entry point and
+    // #642 — calculate_cost_full is the lower-level entry point and
     // composes correctly with both the fast-mode flag and extras.
     // -----------------------------------------------------------------------
     #[test]
@@ -1845,11 +1803,9 @@ mod tests {
             cache_read_tokens: 0,
             cache_write_tokens: 0,
         };
-        let extras = UsageExtras {
-            web_search_requests: 10,
-        };
-        // Fast tier on opus-4-6: 1M input @ $30/M = $30, plus 10
-        // searches @ $0.01 = $0.10 → $30.10 total.
+        let extras = UsageExtras::ZERO;
+        // Fast tier on opus-4-6: 1M input @ $30/M = $30. Extras are
+        // compatibility metadata and do not add user-facing charges.
         let cost = calculate_cost_full(
             "claude-opus-4-6",
             &usage,
@@ -1859,23 +1815,25 @@ mod tests {
         )
         .expect("opus-4-6 must resolve");
         assert!(
-            (cost - 30.10).abs() < 1e-9,
-            "fast-mode + 10 web-search reqs must total $30.10 (got {cost})"
+            (cost - 30.0).abs() < 1e-9,
+            "fast-mode + extras must total $30.00 (got {cost})"
         );
     }
 
     // -----------------------------------------------------------------------
-    // UsageExtras::accumulate sums web-search counts across turns.
+    // UsageExtras compatibility behaviour.
     // -----------------------------------------------------------------------
     #[test]
-    fn usage_extras_accumulate_sums_web_search_requests() {
+    fn usage_extras_accumulate_is_noop_for_empty_metadata() {
         let mut acc = UsageExtras::default();
-        acc.accumulate(&UsageExtras {
-            web_search_requests: 3,
-        });
-        acc.accumulate(&UsageExtras {
-            web_search_requests: 7,
-        });
-        assert_eq!(acc.web_search_requests, 10);
+        acc.accumulate(&UsageExtras::ZERO);
+        assert_eq!(acc, UsageExtras::ZERO);
+    }
+
+    #[test]
+    fn usage_extras_ignores_legacy_web_search_requests_json() {
+        let extras: UsageExtras = serde_json::from_str(r#"{"web_search_requests":42}"#)
+            .expect("legacy extras deserialize");
+        assert_eq!(extras, UsageExtras::ZERO);
     }
 }

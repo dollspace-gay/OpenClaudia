@@ -10,8 +10,7 @@
 
 use openclaudia::session::{
     calculate_cost, calculate_cost_fast_mode, calculate_cost_with_extras, calculate_cost_with_ttl,
-    get_pricing, web_search_cost, CacheWriteTtl, PricingError, TokenUsage, UsageExtras,
-    WEB_SEARCH_REQUEST_USD,
+    get_pricing, CacheWriteTtl, PricingError, TokenUsage, UsageExtras,
 };
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -74,55 +73,25 @@ fn token_usage_default_is_all_zero() {
 #[test]
 fn usage_extras_zero_constant_equals_default() {
     assert_eq!(UsageExtras::ZERO, UsageExtras::default());
-    assert_eq!(UsageExtras::ZERO.web_search_requests, 0);
 }
 
 #[test]
-fn usage_extras_accumulate_adds_componentwise() {
-    let mut acc = UsageExtras {
-        web_search_requests: 3,
-    };
-    let next = UsageExtras {
-        web_search_requests: 5,
-    };
+fn usage_extras_accumulate_is_noop_for_empty_metadata() {
+    let mut acc = UsageExtras::default();
+    let next = UsageExtras::ZERO;
     acc.accumulate(&next);
-    assert_eq!(acc.web_search_requests, 8);
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// Section C — web_search_cost
-// ───────────────────────────────────────────────────────────────────────────
-
-#[test]
-fn web_search_cost_scales_linearly_with_request_count() {
-    assert!((web_search_cost(0) - 0.0).abs() < f64::EPSILON);
-    let one = web_search_cost(1);
-    let three = web_search_cost(3);
-    let hundred = web_search_cost(100);
-    // 3× requests → 3× cost (linear).
-    assert!(
-        (three - one * 3.0).abs() < 1e-9,
-        "3 requests must cost 3x single; got 1={one}, 3={three}"
-    );
-    assert!(
-        (hundred - one * 100.0).abs() < 1e-9,
-        "100 requests must cost 100x single; got {hundred}"
-    );
+    assert_eq!(acc, UsageExtras::ZERO);
 }
 
 #[test]
-fn web_search_cost_matches_documented_per_request_rate() {
-    // The per-request rate is exposed as a public constant —
-    // 1 request must cost exactly that rate.
-    let one = web_search_cost(1);
-    assert!(
-        (one - WEB_SEARCH_REQUEST_USD).abs() < f64::EPSILON,
-        "1 request must cost WEB_SEARCH_REQUEST_USD ({WEB_SEARCH_REQUEST_USD}); got {one}"
-    );
+fn usage_extras_ignores_legacy_web_search_requests_json() {
+    let extras: UsageExtras =
+        serde_json::from_str(r#"{"web_search_requests":5}"#).expect("legacy extras deserialize");
+    assert_eq!(extras, UsageExtras::ZERO);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section D — get_pricing dispatch
+// Section C — get_pricing dispatch
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -265,22 +234,20 @@ fn calculate_cost_with_ttl_one_hour_costs_more_than_five_minutes() {
 }
 
 #[test]
-fn calculate_cost_with_extras_adds_web_search_charge() {
-    let usage = TokenUsage::default();
-    let no_extras = UsageExtras::ZERO;
-    let with_extras = UsageExtras {
-        web_search_requests: 5,
+fn calculate_cost_with_extras_preserves_token_cost() {
+    let usage = TokenUsage {
+        input_tokens: 100_000,
+        output_tokens: 10_000,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
     };
-    let cost_no =
-        calculate_cost_with_extras("claude-3-5-sonnet-20241022", &usage, &no_extras).expect("no");
-    let cost_yes = calculate_cost_with_extras("claude-3-5-sonnet-20241022", &usage, &with_extras)
-        .expect("yes");
-    // Difference must equal exactly 5 × WEB_SEARCH_REQUEST_USD.
-    let delta = cost_yes - cost_no;
-    let expected = 5.0 * WEB_SEARCH_REQUEST_USD;
+    let base = calculate_cost("claude-3-5-sonnet-20241022", &usage).expect("base");
+    let with_extras =
+        calculate_cost_with_extras("claude-3-5-sonnet-20241022", &usage, &UsageExtras::ZERO)
+            .expect("with extras");
     assert!(
-        (delta - expected).abs() < 1e-9,
-        "extras delta must equal 5 × per-request rate; got {delta}, expected {expected}"
+        (with_extras - base).abs() < 1e-9,
+        "extras must not change token pricing; got base={base}, with_extras={with_extras}"
     );
 }
 

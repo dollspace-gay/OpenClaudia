@@ -4,7 +4,7 @@
 //!
 //! Sprint 61 of the verification effort. Sprint 35 covered the
 //! main pricing helpers; this file pins the
-//! `calculate_cost_full` 4-axis matrix (extras × ttl × fast) +
+//! `calculate_cost_full` matrix (extras × ttl × fast) +
 //! the `has/clear_unknown_model_cost` thread-local flag dance,
 //! and exercises the `AuditLogger` sink end-to-end.
 
@@ -107,11 +107,14 @@ fn calculate_cost_full_default_args_match_calculate_cost() {
 }
 
 #[test]
-fn calculate_cost_full_with_extras_adds_web_search_charge() {
-    let usage = TokenUsage::default();
-    let extras = UsageExtras {
-        web_search_requests: 10,
+fn calculate_cost_full_with_extras_preserves_token_cost() {
+    let usage = TokenUsage {
+        input_tokens: 1_000_000,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
     };
+    let extras = UsageExtras::ZERO;
     let cost = calculate_cost_full(
         "claude-3-5-sonnet-20241022",
         &usage,
@@ -120,10 +123,12 @@ fn calculate_cost_full_with_extras_adds_web_search_charge() {
         false,
     )
     .expect("cost");
-    // 10 web-search requests at $0.01 each = $0.10.
+    let expected = get_pricing("claude-3-5-sonnet-20241022")
+        .expect("pricing")
+        .input_per_million;
     assert!(
-        (cost - 0.10).abs() < 1e-9,
-        "10 web-search requests MUST add $0.10; got {cost}"
+        (cost - expected).abs() < 1e-9,
+        "extras must not add non-token charges; got {cost}, expected {expected}"
     );
 }
 
