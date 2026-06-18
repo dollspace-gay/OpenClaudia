@@ -392,14 +392,15 @@ pub enum LspAction {
     /// `textDocument/implementation` — jump from an interface/trait to its
     /// implementations. Same position-arg shape as `GoToDefinition`.
     GoToImplementation,
-    /// `textDocument/prepareCallHierarchy` — phase 1 of the call-hierarchy
-    /// protocol. Returns the `CallHierarchyItem` at the cursor.
+    /// `textDocument/prepareCallHierarchy` — returns the `CallHierarchyItem`
+    /// at the cursor.
     PrepareCallHierarchy,
-    /// `callHierarchy/incomingCalls` — phase 2. Requires the caller to
-    /// supply a previously-obtained `CallHierarchyItem` via the
-    /// `hierarchy_item` argument (opaque JSON pass-through).
+    /// `callHierarchy/incomingCalls` — requires the caller to supply a
+    /// previously-obtained `CallHierarchyItem` via the `hierarchy_item`
+    /// argument (opaque JSON pass-through).
     IncomingCalls,
-    /// `callHierarchy/outgoingCalls` — phase 2 (the other direction).
+    /// `callHierarchy/outgoingCalls` — outgoing side of the same hierarchy
+    /// protocol, using the same `hierarchy_item` argument.
     OutgoingCalls,
 }
 
@@ -540,6 +541,40 @@ pub fn execute_lsp<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String,
         return ("Error: file_path is required".to_string(), true);
     };
 
+    let action = match action_str {
+        "goToDefinition" | "definition" => LspAction::GoToDefinition,
+        "findReferences" | "references" => LspAction::FindReferences,
+        "hover" => LspAction::Hover,
+        "documentSymbols" | "symbols" => LspAction::DocumentSymbols,
+        // crosslink #645: five-op expansion.
+        "workspaceSymbol" => LspAction::WorkspaceSymbol,
+        "goToImplementation" | "implementation" => LspAction::GoToImplementation,
+        "prepareCallHierarchy" => LspAction::PrepareCallHierarchy,
+        "incomingCalls" => LspAction::IncomingCalls,
+        "outgoingCalls" => LspAction::OutgoingCalls,
+        _ => {
+            return (
+                format!(
+                    "Unknown LSP action: {action_str}. Use: goToDefinition, findReferences, \
+                     hover, documentSymbols, workspaceSymbol, goToImplementation, \
+                     prepareCallHierarchy, incomingCalls, outgoingCalls"
+                ),
+                true,
+            )
+        }
+    };
+
+    if matches!(action, LspAction::IncomingCalls | LspAction::OutgoingCalls)
+        && !matches!(args.get("hierarchy_item"), Some(Value::Object(_)))
+    {
+        return (
+            "Error: hierarchy_item object is required for incomingCalls/outgoingCalls. \
+             Run prepareCallHierarchy first and pass one returned CallHierarchyItem."
+                .to_string(),
+            true,
+        );
+    }
+
     let line = args
         .get("line")
         .and_then(serde_json::Value::as_u64)
@@ -597,31 +632,8 @@ pub fn execute_lsp<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String,
         }
     }
 
-    let action = match action_str {
-        "goToDefinition" | "definition" => LspAction::GoToDefinition,
-        "findReferences" | "references" => LspAction::FindReferences,
-        "hover" => LspAction::Hover,
-        "documentSymbols" | "symbols" => LspAction::DocumentSymbols,
-        // crosslink #645: five-op expansion.
-        "workspaceSymbol" => LspAction::WorkspaceSymbol,
-        "goToImplementation" | "implementation" => LspAction::GoToImplementation,
-        "prepareCallHierarchy" => LspAction::PrepareCallHierarchy,
-        "incomingCalls" => LspAction::IncomingCalls,
-        "outgoingCalls" => LspAction::OutgoingCalls,
-        _ => {
-            return (
-                format!(
-                    "Unknown LSP action: {action_str}. Use: goToDefinition, findReferences, \
-                     hover, documentSymbols, workspaceSymbol, goToImplementation, \
-                     prepareCallHierarchy, incomingCalls, outgoingCalls"
-                ),
-                true,
-            )
-        }
-    };
-
     // crosslink #645: workspace/symbol takes a `query` string instead of a
-    // text-document position; the call-hierarchy phase-2 ops require a
+    // text-document position; the call-hierarchy follow-up ops require a
     // pre-fetched `hierarchy_item` (the value returned by
     // prepareCallHierarchy). Both are optional pass-through context.
     let extras = LspRequestExtras {

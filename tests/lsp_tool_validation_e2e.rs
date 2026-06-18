@@ -122,8 +122,77 @@ fn dotfile_with_no_extension_yields_no_language_server() {
     assert!(msg.contains("No language server known"));
 }
 
+#[test]
+fn unknown_action_errors_before_extension_gate() {
+    let args = args_with(&[
+        ("file_path", json!("/tmp/file.unknownext")),
+        ("action", json!("definitelyNotReal")),
+    ]);
+    let (msg, is_err) = dispatch_lsp(&args);
+    assert!(is_err);
+    assert!(msg.contains("Unknown LSP action"), "got {msg:?}");
+    assert!(
+        !msg.contains("No language server known"),
+        "action validation must run before extension gate; got {msg:?}"
+    );
+}
+
 // ───────────────────────────────────────────────────────────────────────────
-// Section C — Known extensions reach LSP-availability gate
+// Section C — Call hierarchy argument validation
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn incoming_calls_missing_hierarchy_item_errors_before_server_gate() {
+    let args = args_with(&[
+        ("file_path", json!("/tmp/nonexistent.rs")),
+        ("action", json!("incomingCalls")),
+    ]);
+    let (msg, is_err) = dispatch_lsp(&args);
+    assert!(is_err);
+    assert!(
+        msg.contains("hierarchy_item") && msg.contains("prepareCallHierarchy"),
+        "must explain required call hierarchy argument; got {msg:?}"
+    );
+    assert!(
+        !msg.contains("LSP server unavailable"),
+        "argument validation must run before server availability gate; got {msg:?}"
+    );
+}
+
+#[test]
+fn outgoing_calls_rejects_non_object_hierarchy_item() {
+    for bad in [Value::Null, json!("not-an-item"), json!([1, 2, 3])] {
+        let args = args_with(&[
+            ("file_path", json!("/tmp/nonexistent.rs")),
+            ("action", json!("outgoingCalls")),
+            ("hierarchy_item", bad),
+        ]);
+        let (msg, is_err) = dispatch_lsp(&args);
+        assert!(is_err);
+        assert!(msg.contains("hierarchy_item"), "got {msg:?}");
+    }
+}
+
+#[test]
+fn call_hierarchy_with_object_item_reaches_file_validation() {
+    let args = args_with(&[
+        ("file_path", json!("/tmp/file.unknownext")),
+        ("action", json!("incomingCalls")),
+        (
+            "hierarchy_item",
+            json!({"name": "f", "uri": "file:///tmp/file.rs"}),
+        ),
+    ]);
+    let (msg, is_err) = dispatch_lsp(&args);
+    assert!(is_err);
+    assert!(
+        msg.contains("No language server known"),
+        "valid hierarchy object should pass argument validation; got {msg:?}"
+    );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section D — Known extensions reach LSP-availability gate
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -202,7 +271,7 @@ fn ruby_extension_passes_unknown_server_gate() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section D — Default action when omitted
+// Section E — Default action when omitted
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -225,7 +294,7 @@ fn missing_action_with_known_ext_does_not_panic() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section E — line + character coercion
+// Section F — line + character coercion
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -256,7 +325,7 @@ fn negative_line_arg_treated_as_default_no_panic() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section F — Cross-validation
+// Section G — Cross-validation
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
