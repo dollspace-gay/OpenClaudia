@@ -196,6 +196,23 @@ fn edit_file_handler_declares_edit_canonical() {
 }
 
 #[test]
+fn mutation_tool_descriptions_document_successful_read_gate() {
+    for tool_name in ["write_file", "edit_file", "notebook_edit"] {
+        let desc = registered_tool_description(tool_name);
+        assert!(
+            desc.contains("read") && desc.contains("successfully"),
+            "{tool_name} registry description must document the successful read_file gate; got {desc:?}"
+        );
+
+        let row = readme_available_tool_row(tool_name);
+        assert!(
+            row.contains("successful `read_file` first"),
+            "README row for {tool_name} must document the successful read_file gate; got {row:?}"
+        );
+    }
+}
+
+#[test]
 fn web_fetch_handler_declares_webfetch_canonical_with_url_arg_key() {
     let r = registry();
     let handler = r.get("web_fetch").expect("web_fetch registered");

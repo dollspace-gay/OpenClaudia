@@ -304,12 +304,12 @@ The `keybindings:` config map customizes the legacy line-oriented REPL (`opencla
 | `kill_shells_for_agent` | Terminate all background shells owned by an agent or session |
 | `read_file` | Read file contents (supports images, PDFs, Jupyter notebooks) with optional offset/limit |
 | `grounding_context` | Hydrate selected Reality Ledger observation IDs for evidence-grounded decisions |
-| `write_file` | Create or overwrite files |
-| `edit_file` | Targeted string replacement edits (requires reading file first) |
+| `write_file` | Create files; overwrites require a successful `read_file` first |
+| `edit_file` | Targeted string replacement edits; requires a successful `read_file` first |
 | `list_files` | List directory contents |
 | `glob` | Find files by glob pattern |
 | `grep` | Search file contents by regex |
-| `notebook_edit` | Edit Jupyter notebook cells (replace, insert, delete) |
+| `notebook_edit` | Edit Jupyter notebook cells; requires a successful `read_file` first |
 | `web_fetch` | Fetch web pages as markdown |
 | `web_search` | Search the web through free DuckDuckGo/Bing browser scraping; no search API key required |
 | `web_browser` | Full headless browser for JavaScript-heavy pages (default `browser` feature) |

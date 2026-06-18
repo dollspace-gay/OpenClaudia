@@ -358,7 +358,7 @@ impl ToolHandler for WriteFileHandler {
             "type": "function",
             "function": {
                 "name": "write_file",
-                "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does.",
+                "description": "Write content to a file. Creates the file if it doesn't exist. To overwrite an existing file, first read it successfully with read_file in the same session; failed reads do not satisfy the overwrite gate.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -398,7 +398,7 @@ impl ToolHandler for EditFileHandler {
             "type": "function",
             "function": {
                 "name": "edit_file",
-                "description": "Make a targeted edit to a file by replacing old_string with new_string. The old_string must match exactly.",
+                "description": "Make a targeted edit to a file by replacing old_string with new_string. The file must first be read successfully with read_file in the same session, and old_string must match exactly.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -442,7 +442,7 @@ impl ToolHandler for NotebookEditHandler {
             "type": "function",
             "function": {
                 "name": "notebook_edit",
-                "description": "Edit a Jupyter notebook (.ipynb file). Supports replacing cell contents, inserting new cells, and deleting cells. The notebook must be read with read_file before editing. Accepts either `cell_id` (Claude Code-compatible stable ID from the notebook's cell metadata) or `cell_number` (0-indexed position). For `insert`, `cell_id` means 'insert after this cell' and omitting it inserts at the beginning.",
+                "description": "Edit a Jupyter notebook (.ipynb file). Supports replacing cell contents, inserting new cells, and deleting cells. The notebook must be read successfully with read_file in the same session before editing. Accepts either `cell_id` (Claude Code-compatible stable ID from the notebook's cell metadata) or `cell_number` (0-indexed position). For `insert`, `cell_id` means 'insert after this cell' and omitting it inserts at the beginning.",
                 "parameters": {
                     "type": "object",
                     "properties": {
