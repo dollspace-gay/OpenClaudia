@@ -149,15 +149,16 @@ fn extract_print_sse_text(json: &serde_json::Value, state: &mut PrintSseState) -
     }
 }
 
-fn extract_print_sse_line(line: &str, state: &mut PrintSseState) -> Option<String> {
-    let data = sse_data_from_line(line)?;
-    if data == "[DONE]" {
-        return None;
-    }
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(data) else {
-        return None;
+fn extract_print_sse_line(line: &str, state: &mut PrintSseState) -> anyhow::Result<Option<String>> {
+    let Some(data) = sse_data_from_line(line) else {
+        return Ok(None);
     };
-    extract_print_sse_text(&json, state)
+    if data == "[DONE]" {
+        return Ok(None);
+    }
+    let json = serde_json::from_str::<serde_json::Value>(data)
+        .map_err(|e| anyhow::anyhow!("invalid SSE data JSON: {e}"))?;
+    Ok(extract_print_sse_text(&json, state))
 }
 
 fn response_is_json(response: &reqwest::Response) -> bool {
@@ -201,7 +202,7 @@ async fn print_sse_response(response: reqwest::Response) -> anyhow::Result<()> {
         while let Some(line_end) = buffer.find('\n') {
             let line = buffer[..line_end].to_string();
             buffer = buffer[line_end + 1..].to_string();
-            if let Some(text) = extract_print_sse_line(&line, &mut state) {
+            if let Some(text) = extract_print_sse_line(&line, &mut state)? {
                 print!("{text}");
                 std::io::stdout().flush()?;
             }
@@ -209,7 +210,7 @@ async fn print_sse_response(response: reqwest::Response) -> anyhow::Result<()> {
     }
 
     if !buffer.trim().is_empty() {
-        if let Some(text) = extract_print_sse_line(&buffer, &mut state) {
+        if let Some(text) = extract_print_sse_line(&buffer, &mut state)? {
             print!("{text}");
             std::io::stdout().flush()?;
         }
@@ -347,6 +348,16 @@ mod tests {
         let mut state = PrintSseState::new();
         let json = json!({"choices": [{"delta": {"reasoning_content": "private"}}]});
         assert_eq!(extract_print_sse_text(&json, &mut state), None);
+    }
+
+    #[test]
+    fn print_sse_line_rejects_malformed_data_json() {
+        let mut state = PrintSseState::new();
+        let err = extract_print_sse_line("data: {not valid json}", &mut state).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid SSE data JSON"),
+            "malformed SSE data should be a hard print-mode error; got {err}"
+        );
     }
 
     #[test]

@@ -395,6 +395,14 @@ fn unused_loopback_port() -> u16 {
 }
 
 fn spawn_local_sse_server_rejecting_auth() -> (JoinHandle<Result<(), String>>, String) {
+    spawn_local_sse_server_rejecting_auth_with_body(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"local ok\"}}]}\n\ndata: [DONE]\n\n",
+    )
+}
+
+fn spawn_local_sse_server_rejecting_auth_with_body(
+    body: &'static str,
+) -> (JoinHandle<Result<(), String>>, String) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind local sse server");
     listener
         .set_nonblocking(true)
@@ -472,8 +480,6 @@ fn spawn_local_sse_server_rejecting_auth() -> (JoinHandle<Result<(), String>>, S
             return Err("local --print request should ask for streaming".to_string());
         }
 
-        let body =
-            "data: {\"choices\":[{\"delta\":{\"content\":\"local ok\"}}]}\n\ndata: [DONE]\n\n";
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
@@ -1347,6 +1353,42 @@ fn print_accepts_keyless_local_provider_and_sends_no_auth_header() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout), "local ok\n");
+}
+
+#[test]
+fn print_rejects_malformed_sse_data_instead_of_succeeding_empty() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    let (server, base_url) =
+        spawn_local_sse_server_rejecting_auth_with_body("data: {not valid json}\n\n");
+    write_local_provider_config_with_base_url(&cwd, &base_url);
+
+    let output = isolated_command(&cwd, &home)
+        .args(["--print", "hello"])
+        .output()
+        .expect("openclaudia --print must run");
+
+    let server_result = server.join().expect("local SSE server thread should join");
+    assert!(
+        server_result.is_ok(),
+        "local SSE server failed: {:?}",
+        server_result.err()
+    );
+    assert!(
+        !output.status.success(),
+        "print must fail when provider SSE data is malformed; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("invalid SSE data JSON"),
+        "print failure should identify malformed SSE data; got {combined:?}"
+    );
 }
 
 #[test]
