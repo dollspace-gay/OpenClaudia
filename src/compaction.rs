@@ -1157,6 +1157,7 @@ impl ContextCompactor {
             saved = analysis.current_tokens.saturating_sub(new_tokens),
             "Context compacted"
         );
+        record_compaction_summary_observation(session_id, &summary);
 
         Ok(CompactionResult {
             compacted: true,
@@ -1485,6 +1486,8 @@ impl ContextCompactor {
             });
         }
 
+        record_compaction_summary_observation(session_id, &summary);
+
         Ok(CompactionResult {
             compacted: true,
             original_tokens: analysis.current_tokens,
@@ -1517,6 +1520,43 @@ impl ContextCompactor {
     pub fn set_config(&mut self, config: CompactionConfig) {
         self.config = config;
     }
+}
+
+fn record_compaction_summary_observation(session_id: Option<&str>, summary: &str) {
+    let Some(session_id) = session_id else {
+        return;
+    };
+    let mut ledger = match crate::ledger::RealityLedger::open_project_session(session_id) {
+        Ok(ledger) => ledger,
+        Err(err) => {
+            tracing::warn!(
+                session_id,
+                error = %err,
+                "failed to open session reality ledger for compaction summary"
+            );
+            return;
+        }
+    };
+    if let Err(err) = append_compaction_summary_observation(&mut ledger, summary) {
+        tracing::warn!(
+            session_id,
+            error = %err,
+            "failed to append compaction summary to reality ledger"
+        );
+    }
+}
+
+fn append_compaction_summary_observation(
+    ledger: &mut crate::ledger::RealityLedger,
+    summary: &str,
+) -> Result<crate::ledger::ObsId, crate::ledger::LedgerError> {
+    ledger.append(
+        crate::ledger::Authority::ModelSummary,
+        crate::ledger::ObservationKind::Summary {
+            text: summary.to_string(),
+            source_obs: Vec::new(),
+        },
+    )
 }
 
 /// Archive a slice of messages into [`MemoryDb`] archival memory before they
@@ -1838,6 +1878,30 @@ mod tests {
             tool_choice: None,
             extra: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn compaction_summary_observation_is_model_summary_authority() {
+        let mut ledger = crate::ledger::RealityLedger::new();
+        let id = append_compaction_summary_observation(
+            &mut ledger,
+            "<context-summary>x</context-summary>",
+        )
+        .expect("summary observation");
+        let observation = ledger.get(id).expect("observation");
+        assert_eq!(
+            observation.authority,
+            crate::ledger::Authority::ModelSummary
+        );
+        let crate::ledger::ObservationKind::Summary { text, source_obs } = &observation.kind else {
+            panic!("expected summary observation");
+        };
+        assert_eq!(text, "<context-summary>x</context-summary>");
+        assert!(source_obs.is_empty());
+        assert!(
+            !ledger.is_authoritative(id),
+            "summary observations must not be authoritative evidence"
+        );
     }
 
     #[test]
