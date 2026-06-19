@@ -182,7 +182,7 @@ pub fn execute_web_fetch_with_config(
     app_config: Option<&AppConfig>,
 ) -> (String, bool) {
     // crosslink #675: typed accessor.
-    let url = match args.arg_str("url") {
+    let url = match args.arg_str_strict("url") {
         Ok(u) => u,
         Err(e) => return e.into_tool_error(),
     };
@@ -265,17 +265,18 @@ pub fn execute_web_fetch_with_config(
 }
 
 fn optional_web_fetch_prompt(args: &HashMap<String, Value>) -> Result<Option<&str>, String> {
-    match args.get("prompt") {
-        None => Ok(None),
-        Some(Value::String(prompt)) => {
-            let prompt = prompt.trim();
-            if prompt.is_empty() {
-                Err("web_fetch prompt must not be empty".to_string())
-            } else {
-                Ok(Some(prompt))
-            }
-        }
-        Some(_) => Err("Missing 'prompt' argument".to_string()),
+    let Some(prompt) = args
+        .arg_str_opt_strict("prompt")
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(None);
+    };
+
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        Err("web_fetch prompt must not be empty".to_string())
+    } else {
+        Ok(Some(prompt))
     }
 }
 
@@ -510,7 +511,7 @@ fn parse_domain_list(args: &HashMap<String, Value>, key: &str) -> Result<Vec<Str
 #[cfg_attr(not(feature = "browser"), allow(dead_code))]
 pub fn execute_web_search(args: &HashMap<String, Value>) -> (String, bool) {
     // crosslink #675: typed accessors.
-    let query = match args.arg_str("query") {
+    let query = match args.arg_str_strict("query") {
         Ok(q) => q,
         Err(e) => return e.into_tool_error(),
     };
@@ -586,7 +587,7 @@ fn parse_web_search_limit(value: Option<&Value>) -> Result<usize, String> {
 #[cfg(feature = "browser")]
 pub fn execute_web_browser(args: &HashMap<String, Value>) -> (String, bool) {
     // crosslink #675: typed accessor.
-    let url = match args.arg_str("url") {
+    let url = match args.arg_str_strict("url") {
         Ok(u) => u,
         Err(e) => return e.into_tool_error(),
     };
@@ -887,6 +888,21 @@ mod tests {
 
         assert!(is_err);
         assert!(msg.contains("prompt must not be empty"));
+    }
+
+    #[test]
+    fn web_fetch_prompt_rejects_wrong_json_type() {
+        let mut args = HashMap::new();
+        args.insert(
+            "url".to_string(),
+            Value::String("https://example.invalid/".to_string()),
+        );
+        args.insert("prompt".to_string(), json!(["Summarize"]));
+
+        let (msg, is_err) = execute_web_fetch_with_config(&args, None);
+
+        assert!(is_err);
+        assert_eq!(msg, "Invalid 'prompt' argument: expected string");
     }
 
     #[test]

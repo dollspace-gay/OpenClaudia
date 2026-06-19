@@ -29,7 +29,7 @@ use openclaudia::permissions::{CheckResult, PermissionManager};
 #[cfg(feature = "browser")]
 use openclaudia::web::parse_duckduckgo_results_from_html;
 use openclaudia::web::{fetch_url, fetch_with_browser, format_search_results, SearchResult};
-use serde_json::json;
+use serde_json::{json, Value};
 use tempfile::TempDir;
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -430,6 +430,34 @@ fn execute_web_search_missing_query_returns_error() {
         "expected 'Missing query' error, got: {}",
         result.content
     );
+}
+
+#[cfg(feature = "browser")]
+#[test]
+fn execute_web_search_rejects_non_string_query_before_browser_launch() {
+    use openclaudia::tools::{execute_tool, FunctionCall, ToolCall};
+
+    for (name, value) in [
+        ("number", json!(42)),
+        ("array", json!(["rust", "release"])),
+        ("object", json!({"q": "rust release"})),
+        ("null", Value::Null),
+    ] {
+        let call = ToolCall {
+            id: format!("badquery-{name}"),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "web_search".to_string(),
+                arguments: json!({
+                    "query": value,
+                })
+                .to_string(),
+            },
+        };
+        let result = execute_tool(&call);
+        assert!(result.is_error, "query case {name} should fail");
+        assert_eq!(result.content, "Invalid 'query' argument: expected string");
+    }
 }
 
 #[cfg(feature = "browser")]

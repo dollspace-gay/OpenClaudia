@@ -160,29 +160,53 @@ fn execute_web_browser_rejects_empty_url() {
 #[test]
 fn execute_web_fetch_url_as_number_returns_error() {
     let args = args_with(&[("url", json!(42))]);
-    let (_msg, is_err) = execute_web_fetch(&args);
+    let (msg, is_err) = execute_web_fetch(&args);
     assert!(is_err, "non-string url MUST be rejected");
+    assert_eq!(msg, "Invalid 'url' argument: expected string");
 }
 
 #[test]
 fn execute_web_fetch_url_as_array_returns_error() {
     let args = args_with(&[("url", json!(["x", "y"]))]);
-    let (_msg, is_err) = execute_web_fetch(&args);
+    let (msg, is_err) = execute_web_fetch(&args);
     assert!(is_err);
+    assert_eq!(msg, "Invalid 'url' argument: expected string");
 }
 
 #[test]
 fn execute_web_fetch_url_as_object_returns_error() {
     let args = args_with(&[("url", json!({"x": "y"}))]);
-    let (_msg, is_err) = execute_web_fetch(&args);
+    let (msg, is_err) = execute_web_fetch(&args);
     assert!(is_err);
+    assert_eq!(msg, "Invalid 'url' argument: expected string");
 }
 
 #[test]
 fn execute_web_fetch_url_as_null_returns_error() {
     let args = args_with(&[("url", Value::Null)]);
-    let (_msg, is_err) = execute_web_fetch(&args);
+    let (msg, is_err) = execute_web_fetch(&args);
     assert!(is_err);
+    assert_eq!(msg, "Invalid 'url' argument: expected string");
+}
+
+#[cfg(feature = "browser")]
+#[test]
+fn execute_web_browser_url_as_number_returns_error() {
+    let args = args_with(&[("url", json!(42))]);
+    let (msg, is_err) = execute_web_browser(&args);
+    assert!(is_err, "non-string browser url MUST be rejected");
+    assert_eq!(msg, "Invalid 'url' argument: expected string");
+}
+
+#[test]
+fn execute_web_fetch_prompt_as_number_returns_error() {
+    let args = args_with(&[
+        ("url", json!("https://example.invalid/")),
+        ("prompt", json!(42)),
+    ]);
+    let (msg, is_err) = execute_web_fetch(&args);
+    assert!(is_err, "non-string prompt MUST be rejected");
+    assert_eq!(msg, "Invalid 'prompt' argument: expected string");
 }
 
 // ───────────────────────────────────────────────────────────────────────────
