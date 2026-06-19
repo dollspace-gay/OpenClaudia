@@ -19,10 +19,8 @@
 //! ## What ships
 //!
 //! * Pure-data [`EnterprisePolicy`] struct + deserialiser.
-//! * `check_*` methods that return `Result<(), PolicyError>` — the
-//!   call sites in `proxy.rs` will plug into these once the policy
-//!   surface itself is reviewed (this commit lands the contract; the
-//!   wiring is the follow-up so the diff stays readable).
+//! * `check_*` methods that return `Result<(), PolicyError>`.
+//! * Proxy request gates for model allowlists and token caps.
 //!
 //! ## Why not in `config::`
 //!

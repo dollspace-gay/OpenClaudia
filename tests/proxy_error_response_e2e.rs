@@ -53,6 +53,13 @@ async fn hook_blocked_maps_to_403_forbidden() {
 }
 
 #[tokio::test]
+async fn policy_denied_maps_to_403_forbidden() {
+    let err = ProxyError::PolicyDenied("model is not allowed".to_string());
+    let (status, _body) = extract_status_and_body(err).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn provider_not_configured_maps_to_400_bad_request() {
     let err = ProxyError::ProviderNotConfigured("unknown".to_string());
     let (status, _body) = extract_status_and_body(err).await;

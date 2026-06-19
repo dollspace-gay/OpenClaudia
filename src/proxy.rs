@@ -34,6 +34,7 @@ use crate::oauth::OAuthStore;
 use crate::plugins::PluginManager;
 use crate::providers::{self, get_adapter, ApiKey, ProviderAdapter};
 use crate::rules::{extract_extensions_from_tool_input, RulesEngine};
+use crate::services::policy::PolicyError;
 use crate::session::{get_session_context, SessionManager, TokenUsage};
 use crate::vdd::{VddEngine, VddResult};
 
@@ -129,6 +130,9 @@ pub enum ProxyError {
 
     #[error("Hook blocked request: {0}")]
     HookBlocked(String),
+
+    #[error("Policy denied request: {0}")]
+    PolicyDenied(String),
 }
 
 impl IntoResponse for ProxyError {
@@ -136,7 +140,9 @@ impl IntoResponse for ProxyError {
         let (status, message) = match &self {
             Self::NoApiKey(_) => (StatusCode::UNAUTHORIZED, self.to_string()),
             Self::RequestError(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
-            Self::HookBlocked(_) => (StatusCode::FORBIDDEN, self.to_string()),
+            Self::HookBlocked(_) | Self::PolicyDenied(_) => {
+                (StatusCode::FORBIDDEN, self.to_string())
+            }
             Self::ProviderNotConfigured(_) | Self::InvalidBody(_) | Self::JsonError(_) => {
                 (StatusCode::BAD_REQUEST, self.to_string())
             }
@@ -861,9 +867,11 @@ async fn prepare_request_context(
 /// `token_warning` notification when estimated input exceeds the
 /// configured warn threshold. Extracted from `proxy_chat_completions`
 /// per crosslink #247 (SRP decomposition).
-async fn record_turn_estimate(state: &ProxyState, request: &ChatCompletionRequest) {
-    let estimated_input = crate::compaction::estimate_request_tokens(request);
-
+async fn record_turn_estimate(
+    state: &ProxyState,
+    request: &ChatCompletionRequest,
+    estimated_input: usize,
+) {
     // Break down token components
     let system_prompt_tokens: usize = request
         .messages
@@ -1429,6 +1437,65 @@ async fn record_actual_usage_for_session(state: &ProxyState, usage: TokenUsage) 
     }
 }
 
+fn proxy_policy_error(error: &PolicyError) -> ProxyError {
+    ProxyError::PolicyDenied(error.to_string())
+}
+
+fn request_output_token_budget(request: &ChatCompletionRequest) -> usize {
+    let budget = request.max_tokens.unwrap_or(crate::DEFAULT_MAX_TOKENS);
+    usize::try_from(u64::from(budget)).unwrap_or(usize::MAX)
+}
+
+fn saturating_u64_to_usize(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+fn projected_session_policy_tokens(
+    cumulative_total: u64,
+    estimated_input: usize,
+    output_budget: usize,
+) -> usize {
+    saturating_u64_to_usize(cumulative_total)
+        .saturating_add(estimated_input)
+        .saturating_add(output_budget)
+}
+
+fn enforce_model_policy(
+    state: &ProxyState,
+    request: &ChatCompletionRequest,
+) -> Result<(), ProxyError> {
+    state
+        .config
+        .policy
+        .check_model(&request.model)
+        .map_err(|error| proxy_policy_error(&error))
+}
+
+async fn enforce_token_policy(
+    state: &ProxyState,
+    request: &ChatCompletionRequest,
+    estimated_input: usize,
+) -> Result<(), ProxyError> {
+    let policy = &state.config.policy;
+    policy
+        .check_request_tokens(estimated_input)
+        .map_err(|error| proxy_policy_error(&error))?;
+
+    let cumulative_total = {
+        let sm = state.session_manager.read().await;
+        sm.current_view()
+            .map_or(0, |session| session.cumulative_usage().total())
+    };
+    let projected_session_total = projected_session_policy_tokens(
+        cumulative_total,
+        estimated_input,
+        request_output_token_budget(request),
+    );
+    policy
+        .check_session_tokens(projected_session_total)
+        .map_err(|error| proxy_policy_error(&error))
+}
+
 async fn proxy_chat_completions(
     State(state): State<ProxyState>,
     headers: HeaderMap,
@@ -1443,6 +1510,8 @@ async fn proxy_chat_completions(
         "Proxying chat completion request"
     );
 
+    enforce_model_policy(&state, &request)?;
+
     let (provider_name, provider, api_key) = resolve_provider(&state, &headers, &request.model)?;
 
     bump_session_request_count(&state).await;
@@ -1450,11 +1519,13 @@ async fn proxy_chat_completions(
     // Prepare request: run hooks, inject context, rules, MCP tools, VDD
     prepare_request_context(&mut request, &state).await?;
     compact_request_context(&mut request, &state).await;
+    let estimated_input = crate::compaction::estimate_request_tokens(&request);
+    enforce_token_policy(&state, &request, estimated_input).await?;
 
     // Pre-request token estimation and tracking
     let token_tracking_enabled = state.config.session.token_tracking.enabled;
     if token_tracking_enabled {
-        record_turn_estimate(&state, &request).await;
+        record_turn_estimate(&state, &request, estimated_input).await;
     }
 
     let is_stream = request.stream.unwrap_or(false);
@@ -2641,6 +2712,26 @@ mod tests {
         }
     }
 
+    fn test_chat_request(model: &str, max_tokens: Option<u32>) -> ChatCompletionRequest {
+        ChatCompletionRequest {
+            model: model.to_string(),
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: MessageContent::Text("hello".to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                extra: std::collections::HashMap::new(),
+            }],
+            temperature: None,
+            max_tokens,
+            stream: None,
+            tools: None,
+            tool_choice: None,
+            extra: std::collections::HashMap::new(),
+        }
+    }
+
     fn model_ids(response: &Value) -> Vec<String> {
         response["data"]
             .as_array()
@@ -3147,6 +3238,109 @@ mod tests {
         let err = ProxyError::HookBlocked("dangerous tool".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// Spec — enterprise policy denial maps to 403 Forbidden.
+    #[test]
+    fn proxy_error_policy_denied_is_403() {
+        let err = ProxyError::PolicyDenied("model denied".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn enforce_model_policy_rejects_unlisted_model() {
+        let mut config = minimal_config("anthropic");
+        config
+            .policy
+            .model_allowlist
+            .insert("claude-opus-4-7".to_string());
+        let state = test_proxy_state(config);
+        let request = test_chat_request("not-allowed", Some(64));
+
+        let err = enforce_model_policy(&state, &request).expect_err("model must be denied");
+
+        assert!(matches!(err, ProxyError::PolicyDenied(_)));
+        assert!(
+            err.to_string().contains("not-allowed"),
+            "denial should name the rejected model"
+        );
+    }
+
+    #[tokio::test]
+    async fn enforce_token_policy_rejects_request_cap() {
+        let mut config = minimal_config("anthropic");
+        config.policy.max_request_tokens = Some(10);
+        let state = test_proxy_state(config);
+        let request = test_chat_request("claude-opus-4-7", Some(64));
+
+        let err = enforce_token_policy(&state, &request, 11)
+            .await
+            .expect_err("request estimate over cap must be denied");
+
+        assert!(matches!(err, ProxyError::PolicyDenied(_)));
+        assert!(
+            err.to_string().contains("per-request"),
+            "denial should identify the request cap"
+        );
+    }
+
+    #[tokio::test]
+    async fn enforce_token_policy_rejects_projected_session_cap() {
+        let mut config = minimal_config("anthropic");
+        config.policy.max_session_tokens = Some(100);
+        let state = test_proxy_state(config);
+        {
+            let mut sm = state.session_manager.write().await;
+            sm.get_or_create_session();
+            let session = sm
+                .get_session_mut()
+                .expect("get_or_create_session must create a mutable session");
+            session.record_actual_usage(TokenUsage {
+                input_tokens: 40,
+                output_tokens: 10,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+            });
+            drop(sm);
+        }
+        let request = test_chat_request("claude-opus-4-7", Some(25));
+
+        let err = enforce_token_policy(&state, &request, 26)
+            .await
+            .expect_err("projected session total over cap must be denied");
+
+        assert!(matches!(err, ProxyError::PolicyDenied(_)));
+        assert!(
+            err.to_string().contains("per-session"),
+            "denial should identify the session cap"
+        );
+    }
+
+    #[tokio::test]
+    async fn enforce_token_policy_allows_projected_session_exactly_at_cap() {
+        let mut config = minimal_config("anthropic");
+        config.policy.max_session_tokens = Some(100);
+        let state = test_proxy_state(config);
+        {
+            let mut sm = state.session_manager.write().await;
+            sm.get_or_create_session();
+            let session = sm
+                .get_session_mut()
+                .expect("get_or_create_session must create a mutable session");
+            session.record_actual_usage(TokenUsage {
+                input_tokens: 40,
+                output_tokens: 10,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+            });
+            drop(sm);
+        }
+        let request = test_chat_request("claude-opus-4-7", Some(25));
+
+        enforce_token_policy(&state, &request, 25)
+            .await
+            .expect("exact session cap boundary must be allowed");
     }
 
     fn test_vdd_finding(status: crate::vdd::FindingStatus) -> crate::vdd::Finding {
