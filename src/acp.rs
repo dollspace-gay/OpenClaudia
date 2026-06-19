@@ -903,6 +903,41 @@ impl AcpServer {
         );
     }
 
+    fn required_string_param<'a>(
+        params: &'a Value,
+        key: &str,
+        missing_message: &str,
+    ) -> Result<&'a str, String> {
+        match params.get(key) {
+            Some(Value::String(value)) => Ok(value.as_str()),
+            Some(_) => Err(format!("Invalid '{key}' parameter: expected string")),
+            None => Err(missing_message.to_string()),
+        }
+    }
+
+    fn required_alias_string_param<'a>(
+        params: &'a Value,
+        primary: &str,
+        alias: &str,
+        missing_message: &str,
+    ) -> Result<&'a str, String> {
+        if let Some(value) = params.get(primary) {
+            return match value {
+                Value::String(value) => Ok(value.as_str()),
+                _ => Err(format!("Invalid '{primary}' parameter: expected string")),
+            };
+        }
+
+        if let Some(value) = params.get(alias) {
+            return match value {
+                Value::String(value) => Ok(value.as_str()),
+                _ => Err(format!("Invalid '{alias}' parameter: expected string")),
+            };
+        }
+
+        Err(missing_message.to_string())
+    }
+
     // ========================================================================
     // Message routing
     // ========================================================================
@@ -1032,12 +1067,19 @@ impl AcpServer {
     fn handle_session_load(&mut self, id: Option<Value>, params: &Value) {
         let Some(id) = id else { return };
 
-        let acp_session_id = if let Some(sid) = params.get("sessionId").and_then(|v| v.as_str()) {
-            sid.to_string()
-        } else {
-            self.send_error(id, INVALID_PARAMS, "Missing sessionId");
+        let acp_session_id =
+            match Self::required_string_param(params, "sessionId", "Missing sessionId") {
+                Ok(sid) => sid.to_string(),
+                Err(message) => {
+                    self.send_error(id, INVALID_PARAMS, &message);
+                    return;
+                }
+            };
+
+        if acp_session_id.is_empty() {
+            self.send_error(id, INVALID_PARAMS, "sessionId must not be empty");
             return;
-        };
+        }
 
         // Check if we know this ACP session
         if let Some(oc_id) = self.session_map.get(&acp_session_id) {
@@ -1097,13 +1139,13 @@ impl AcpServer {
     fn handle_session_set_mode(&mut self, id: Option<Value>, params: &Value) {
         let Some(id) = id else { return };
 
-        let Some(mode) = params
-            .get("mode")
-            .or_else(|| params.get("modeId"))
-            .and_then(|v| v.as_str())
-        else {
-            self.send_error(id, INVALID_PARAMS, "Missing mode");
-            return;
+        let mode = match Self::required_alias_string_param(params, "mode", "modeId", "Missing mode")
+        {
+            Ok(mode) => mode,
+            Err(message) => {
+                self.send_error(id, INVALID_PARAMS, &message);
+                return;
+            }
         };
 
         let active_mode = match mode {
@@ -1142,32 +1184,35 @@ impl AcpServer {
         let Some(id) = id else { return };
 
         let uses_v1_shape = params.get("configId").is_some();
-        let config_id = if let Some(config_id) = params
-            .get("configId")
-            .or_else(|| params.get("key"))
-            .and_then(|v| v.as_str())
-        {
-            config_id.to_string()
-        } else {
-            self.send_error(id, INVALID_PARAMS, "Missing configId");
-            return;
+        let config_id = match Self::required_alias_string_param(
+            params,
+            "configId",
+            "key",
+            "Missing configId",
+        ) {
+            Ok(config_id) => config_id.to_string(),
+            Err(message) => {
+                self.send_error(id, INVALID_PARAMS, &message);
+                return;
+            }
         };
 
-        if uses_v1_shape
-            && params
-                .get("sessionId")
-                .and_then(serde_json::Value::as_str)
-                .is_none()
-        {
-            self.send_error(id, INVALID_PARAMS, "Missing sessionId");
-            return;
+        if uses_v1_shape {
+            match Self::required_string_param(params, "sessionId", "Missing sessionId") {
+                Ok(_) => {}
+                Err(message) => {
+                    self.send_error(id, INVALID_PARAMS, &message);
+                    return;
+                }
+            }
         }
 
-        let value = if let Some(v) = params.get("value").and_then(|v| v.as_str()) {
-            v.to_string()
-        } else {
-            self.send_error(id, INVALID_PARAMS, "Missing string value");
-            return;
+        let value = match Self::required_string_param(params, "value", "Missing string value") {
+            Ok(value) => value.to_string(),
+            Err(message) => {
+                self.send_error(id, INVALID_PARAMS, &message);
+                return;
+            }
         };
 
         let apply_result = match config_id.as_str() {
@@ -1244,18 +1289,26 @@ impl AcpServer {
     async fn handle_session_prompt(&mut self, id: Option<Value>, params: Value) {
         let Some(id) = id else { return };
 
-        let acp_session_id = if let Some(sid) = params.get("sessionId").and_then(|v| v.as_str()) {
-            sid.to_string()
-        } else {
-            self.send_error(id, INVALID_PARAMS, "Missing sessionId");
-            return;
-        };
+        let acp_session_id =
+            match Self::required_string_param(&params, "sessionId", "Missing sessionId") {
+                Ok(sid) => sid.to_string(),
+                Err(message) => {
+                    self.send_error(id, INVALID_PARAMS, &message);
+                    return;
+                }
+            };
 
-        let prompt = if let Some(p) = params.get("prompt").and_then(|v| v.as_str()) {
-            p.to_string()
-        } else {
-            self.send_error(id, INVALID_PARAMS, "Missing prompt");
+        if acp_session_id.is_empty() {
+            self.send_error(id, INVALID_PARAMS, "sessionId must not be empty");
             return;
+        }
+
+        let prompt = match Self::required_string_param(&params, "prompt", "Missing prompt") {
+            Ok(prompt) => prompt.to_string(),
+            Err(message) => {
+                self.send_error(id, INVALID_PARAMS, &message);
+                return;
+            }
         };
 
         // Reset cancel flag
@@ -3953,6 +4006,17 @@ providers:
         serde_json::from_str(&line).expect("response must be JSON")
     }
 
+    fn assert_invalid_params(response: &Value, expected_message: &str) {
+        assert_eq!(response["error"]["code"], INVALID_PARAMS);
+        let message = response["error"]["message"]
+            .as_str()
+            .expect("error message must be a string");
+        assert!(
+            message.contains(expected_message),
+            "expected {expected_message:?} in {message:?}"
+        );
+    }
+
     fn assert_no_client_request(rx: &mut mpsc::UnboundedReceiver<String>, context: &str) {
         assert!(
             rx.try_recv().is_err(),
@@ -4355,6 +4419,64 @@ providers:
     }
 
     #[test]
+    fn session_load_rejects_invalid_session_id_before_creating_session() {
+        let (mut server, mut rx, _tmp) = test_server();
+
+        for (id, params, expected) in [
+            (
+                json!(1),
+                json!({"sessionId": 42}),
+                "Invalid 'sessionId' parameter: expected string",
+            ),
+            (
+                json!(2),
+                json!({"sessionId": ""}),
+                "sessionId must not be empty",
+            ),
+        ] {
+            server.handle_session_load(Some(id), &params);
+            let response = next_response(&mut rx);
+
+            assert_invalid_params(&response, expected);
+            assert!(
+                server.session_map.is_empty(),
+                "invalid session/load must not create an ACP session mapping"
+            );
+            assert!(
+                server.session_manager.get_session().is_none(),
+                "invalid session/load must not create an OpenClaudia session"
+            );
+        }
+    }
+
+    #[test]
+    fn session_set_mode_rejects_wrong_type_mode_without_mutation() {
+        let (mut server, mut rx, _tmp) = test_server();
+
+        for (id, params, expected) in [
+            (
+                json!(1),
+                json!({"mode": ["coding"]}),
+                "Invalid 'mode' parameter: expected string",
+            ),
+            (
+                json!(2),
+                json!({"modeId": false}),
+                "Invalid 'modeId' parameter: expected string",
+            ),
+        ] {
+            server.handle_session_set_mode(Some(id), &params);
+            let response = next_response(&mut rx);
+
+            assert_invalid_params(&response, expected);
+            assert!(
+                server.session_manager.get_session().is_none(),
+                "invalid session/set_mode must not create a session"
+            );
+        }
+    }
+
+    #[test]
     fn session_set_mode_rejects_unknown_modes_without_mutation() {
         let (mut server, mut rx, _tmp) = test_server();
         server.handle_session_new(Some(json!(1)), Value::Null);
@@ -4485,6 +4607,48 @@ providers:
     }
 
     #[test]
+    fn session_set_config_option_rejects_wrong_type_fields_without_mutation() {
+        let (mut server, mut rx, _tmp) = test_server();
+
+        for (id, params, expected) in [
+            (
+                json!(1),
+                json!({"sessionId": "s", "configId": 7, "value": "coding"}),
+                "Invalid 'configId' parameter: expected string",
+            ),
+            (
+                json!(2),
+                json!({"sessionId": ["s"], "configId": "mode", "value": "coding"}),
+                "Invalid 'sessionId' parameter: expected string",
+            ),
+            (
+                json!(3),
+                json!({"sessionId": "s", "configId": "mode", "value": 7}),
+                "Invalid 'value' parameter: expected string",
+            ),
+            (
+                json!(4),
+                json!({"key": {"id": "mode"}, "value": "coding"}),
+                "Invalid 'key' parameter: expected string",
+            ),
+        ] {
+            server.handle_session_set_config_option(Some(id), &params);
+            let response = next_response(&mut rx);
+
+            assert_invalid_params(&response, expected);
+            assert!(
+                server.config_options.is_empty(),
+                "invalid session/set_config_option must not persist config options"
+            );
+            assert!(
+                server.session_manager.get_session().is_none(),
+                "invalid session/set_config_option must not create a session"
+            );
+            assert_eq!(server.model, "local-model");
+        }
+    }
+
+    #[test]
     fn session_set_config_option_accepts_legacy_key_alias_for_mode() {
         let (mut server, mut rx, _tmp) = test_server();
 
@@ -4509,6 +4673,43 @@ providers:
                 .mode,
             SessionMode::Coding
         );
+    }
+
+    #[tokio::test]
+    async fn session_prompt_rejects_invalid_string_fields_before_prompt_loop() {
+        for (id, params, expected) in [
+            (
+                json!(1),
+                json!({"sessionId": 42, "prompt": "hello"}),
+                "Invalid 'sessionId' parameter: expected string",
+            ),
+            (
+                json!(2),
+                json!({"sessionId": "", "prompt": "hello"}),
+                "sessionId must not be empty",
+            ),
+            (
+                json!(3),
+                json!({"sessionId": "s", "prompt": ["hello"]}),
+                "Invalid 'prompt' parameter: expected string",
+            ),
+        ] {
+            let (mut server, mut rx, _tmp) = test_server();
+
+            server.handle_session_prompt(Some(id), params).await;
+            let response = next_response(&mut rx);
+
+            assert_invalid_params(&response, expected);
+            assert!(
+                server.messages.is_empty(),
+                "invalid session/prompt must not mutate provider chat history"
+            );
+            assert!(
+                server.session_manager.get_session().is_none(),
+                "invalid session/prompt must not create a session"
+            );
+            assert_no_client_request(&mut rx, "invalid session/prompt params");
+        }
     }
 }
 
