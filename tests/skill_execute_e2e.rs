@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section A — Missing `name` argument
+// Section A — Missing / wrong-type `name` argument
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -31,36 +31,42 @@ fn missing_name_argument_returns_error_tuple() {
 }
 
 #[test]
-fn name_with_wrong_type_treated_as_missing() {
-    // PINS DOC: args.get("name").and_then(as_str) → None when type wrong.
+fn name_with_wrong_type_returns_validation_error() {
     let mut args: HashMap<String, Value> = HashMap::new();
     args.insert("name".to_string(), json!(42));
-    let (_text, is_err) = execute_skill(&args);
+    let (text, is_err) = execute_skill(&args);
     assert!(is_err, "non-string name MUST be error");
+    assert!(
+        text.contains("Invalid 'name' argument: expected string"),
+        "wrong-type name MUST be rejected clearly; got {text:?}"
+    );
 }
 
 #[test]
-fn name_as_array_treated_as_missing() {
+fn name_as_array_returns_validation_error() {
     let mut args: HashMap<String, Value> = HashMap::new();
     args.insert("name".to_string(), json!(["multi", "value"]));
-    let (_text, is_err) = execute_skill(&args);
+    let (text, is_err) = execute_skill(&args);
     assert!(is_err);
+    assert!(text.contains("Invalid 'name' argument: expected string"));
 }
 
 #[test]
-fn name_as_object_treated_as_missing() {
+fn name_as_object_returns_validation_error() {
     let mut args: HashMap<String, Value> = HashMap::new();
     args.insert("name".to_string(), json!({"nested": "value"}));
-    let (_text, is_err) = execute_skill(&args);
+    let (text, is_err) = execute_skill(&args);
     assert!(is_err);
+    assert!(text.contains("Invalid 'name' argument: expected string"));
 }
 
 #[test]
-fn name_as_null_treated_as_missing() {
+fn name_as_null_returns_validation_error() {
     let mut args: HashMap<String, Value> = HashMap::new();
     args.insert("name".to_string(), Value::Null);
-    let (_text, is_err) = execute_skill(&args);
+    let (text, is_err) = execute_skill(&args);
     assert!(is_err);
+    assert!(text.contains("Invalid 'name' argument: expected string"));
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -184,6 +190,11 @@ fn return_tuple_text_is_non_empty_for_every_error_path() {
         {
             let mut m = HashMap::new();
             m.insert("name".to_string(), json!(""));
+            m
+        },
+        {
+            let mut m = HashMap::new();
+            m.insert("name".to_string(), json!(42));
             m
         },
         {

@@ -29,6 +29,7 @@ use std::collections::HashMap;
 use std::hash::BuildHasher;
 
 use crate::skills;
+use crate::tools::args::ToolArgError;
 
 /// Open-tag emitted before the skill body.
 pub(crate) const ENVELOPE_OPEN: &str = "<skill";
@@ -83,8 +84,16 @@ fn xml_attr_escape(s: &str) -> String {
 /// Returns `(text, is_error)`.
 #[must_use]
 pub fn execute_skill<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String, bool) {
-    let Some(name) = args.get("name").and_then(Value::as_str) else {
-        return ("skill: missing required argument `name`".to_string(), true);
+    let name = match args.get("name") {
+        None => return ("skill: missing required argument `name`".to_string(), true),
+        Some(Value::String(name)) => name.as_str(),
+        Some(_) => {
+            return ToolArgError::WrongType {
+                key: "name",
+                expected: "string",
+            }
+            .into_tool_error();
+        }
     };
 
     let trimmed = name.trim();
@@ -121,6 +130,15 @@ mod tests {
         let (text, is_err) = execute_skill(&args);
         assert!(is_err);
         assert!(text.contains("missing required argument"));
+    }
+
+    #[test]
+    fn wrong_type_name_arg_errors() {
+        let mut args = HashMap::new();
+        args.insert("name".to_string(), json!(42));
+        let (text, is_err) = execute_skill(&args);
+        assert!(is_err);
+        assert!(text.contains("Invalid 'name' argument: expected string"));
     }
 
     #[test]

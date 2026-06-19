@@ -68,27 +68,30 @@ fn missing_name_arg_returns_documented_error() {
 }
 
 #[test]
-fn name_arg_as_number_treated_as_missing() {
+fn name_arg_as_number_returns_validation_error() {
     let args = args_with(&[("name", json!(42))]);
     let (msg, is_err) = dispatch_skill(&args);
     assert!(is_err);
-    assert!(msg.contains("missing required argument"));
+    assert!(
+        msg.contains("Invalid 'name' argument: expected string"),
+        "wrong-type name MUST be rejected clearly; got {msg:?}"
+    );
 }
 
 #[test]
-fn name_arg_as_array_treated_as_missing() {
+fn name_arg_as_array_returns_validation_error() {
     let args = args_with(&[("name", json!(["x"]))]);
     let (msg, is_err) = dispatch_skill(&args);
     assert!(is_err);
-    assert!(msg.contains("missing required argument"));
+    assert!(msg.contains("Invalid 'name' argument: expected string"));
 }
 
 #[test]
-fn name_arg_as_null_treated_as_missing() {
+fn name_arg_as_null_returns_validation_error() {
     let args = args_with(&[("name", Value::Null)]);
     let (msg, is_err) = dispatch_skill(&args);
     assert!(is_err);
-    assert!(msg.contains("missing required argument"));
+    assert!(msg.contains("Invalid 'name' argument: expected string"));
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -255,6 +258,7 @@ fn skill_dispatch_never_panics_on_arbitrary_extra_args() {
 fn skill_dispatch_return_tuple_text_always_non_empty_for_every_error_path() {
     let cases: Vec<(&str, HashMap<String, Value>)> = vec![
         ("missing", HashMap::new()),
+        ("wrong-type", args_with(&[("name", json!(42))])),
         ("empty", args_with(&[("name", json!(""))])),
         ("unknown", args_with(&[("name", json!("xyz"))])),
     ];
