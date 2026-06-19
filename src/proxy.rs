@@ -34,7 +34,9 @@ use crate::oauth::OAuthStore;
 use crate::plugins::PluginManager;
 use crate::providers::{self, get_adapter, ApiKey, ProviderAdapter};
 use crate::rules::{extract_extensions_from_tool_input, RulesEngine};
-use crate::services::policy::PolicyError;
+use crate::services::policy::{
+    request_output_token_budget, ProviderRequestPolicy, ProviderRequestPolicyInput,
+};
 use crate::session::{get_session_context, SessionManager, TokenUsage};
 use crate::vdd::{VddEngine, VddResult};
 
@@ -1437,37 +1439,21 @@ async fn record_actual_usage_for_session(state: &ProxyState, usage: TokenUsage) 
     }
 }
 
-fn proxy_policy_error(error: &PolicyError) -> ProxyError {
+fn proxy_policy_error(error: &crate::services::policy::PolicyError) -> ProxyError {
     ProxyError::PolicyDenied(error.to_string())
-}
-
-fn request_output_token_budget(request: &ChatCompletionRequest) -> usize {
-    let budget = request.max_tokens.unwrap_or(crate::DEFAULT_MAX_TOKENS);
-    usize::try_from(u64::from(budget)).unwrap_or(usize::MAX)
-}
-
-fn saturating_u64_to_usize(value: u64) -> usize {
-    usize::try_from(value).unwrap_or(usize::MAX)
-}
-
-fn projected_session_policy_tokens(
-    cumulative_total: u64,
-    estimated_input: usize,
-    output_budget: usize,
-) -> usize {
-    saturating_u64_to_usize(cumulative_total)
-        .saturating_add(estimated_input)
-        .saturating_add(output_budget)
 }
 
 fn enforce_model_policy(
     state: &ProxyState,
     request: &ChatCompletionRequest,
 ) -> Result<(), ProxyError> {
-    state
-        .config
-        .policy
-        .check_model(&request.model)
+    ProviderRequestPolicy::new(&state.config.policy)
+        .check(ProviderRequestPolicyInput {
+            model: &request.model,
+            estimated_input_tokens: 0,
+            output_token_budget: 0,
+            cumulative_session_tokens: 0,
+        })
         .map_err(|error| proxy_policy_error(&error))
 }
 
@@ -1476,23 +1462,18 @@ async fn enforce_token_policy(
     request: &ChatCompletionRequest,
     estimated_input: usize,
 ) -> Result<(), ProxyError> {
-    let policy = &state.config.policy;
-    policy
-        .check_request_tokens(estimated_input)
-        .map_err(|error| proxy_policy_error(&error))?;
-
     let cumulative_total = {
         let sm = state.session_manager.read().await;
         sm.current_view()
             .map_or(0, |session| session.cumulative_usage().total())
     };
-    let projected_session_total = projected_session_policy_tokens(
-        cumulative_total,
-        estimated_input,
-        request_output_token_budget(request),
-    );
-    policy
-        .check_session_tokens(projected_session_total)
+    ProviderRequestPolicy::new(&state.config.policy)
+        .check(ProviderRequestPolicyInput {
+            model: &request.model,
+            estimated_input_tokens: estimated_input,
+            output_token_budget: request_output_token_budget(request.max_tokens),
+            cumulative_session_tokens: cumulative_total,
+        })
         .map_err(|error| proxy_policy_error(&error))
 }
 

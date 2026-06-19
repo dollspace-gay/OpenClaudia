@@ -186,7 +186,9 @@ pub fn build_openai_request(model: &str, messages: &[Value], effort_level: &str)
     req
 }
 
-fn build_chat_completion_request(
+/// Build the canonical chat-completions request used for policy accounting
+/// before provider-specific adapter transformation.
+pub fn build_chat_completion_request(
     model: &str,
     messages: &[Value],
 ) -> Result<proxy::ChatCompletionRequest, String> {
@@ -1852,6 +1854,7 @@ async fn execute_single_tool(
     tool_call: &ToolCall,
     memory_db: Option<Arc<MemoryDb>>,
     permission: ToolPermissionDispatch,
+    policy_enforcer: Option<Arc<PolicyEnforcer>>,
     task_mgr: Arc<Mutex<crate::session::TaskManager>>,
     session_id: Option<&str>,
     hook_context: Option<(&crate::hooks::HookEngine, Value)>,
@@ -1862,14 +1865,10 @@ async fn execute_single_tool(
     let mem_db = memory_db;
     let perm_mgr = permission.mgr;
     let permission_already_checked_for_blocking = permission.already_checked;
-    let session_for_task = session_id.map(str::to_string);
-    let session_for_ledger = session_for_task.clone();
+    let session_for_blocking = session_id.map(str::to_string);
+    let policy_for_blocking = policy_enforcer;
     let task_mgr_for_blocking = task_mgr;
     let result = tokio::task::spawn_blocking(move || {
-        let _session_guard = session_for_task.map(tools::SessionIdGuard::set);
-        let _ledger_guard = session_for_ledger
-            .as_deref()
-            .and_then(crate::grounded_loop::install_active_project_ledger_for_session);
         // Lock the TaskManager only inside the blocking thread so we
         // don't hold the mutex across `.await`. Failure-mode parity with
         // the legacy "no session" branch: poisoned mutex → recover the
@@ -1878,22 +1877,18 @@ async fn execute_single_tool(
         let mut task_guard = task_mgr_for_blocking
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if permission_already_checked_for_blocking {
-            tools::execute_tool_with_tasks_unchecked(
-                &tool_call_clone,
-                mem_db.as_deref(),
-                None,
-                Some(&mut *task_guard),
-            )
-        } else {
-            tools::execute_tool_with_tasks(
-                &tool_call_clone,
-                mem_db.as_deref(),
-                None,
-                Some(&mut *task_guard),
-                perm_mgr.as_deref(),
-            )
-        }
+        crate::services::tool_executor::ToolExecutor::execute(
+            crate::services::tool_executor::ToolExecutorRequest {
+                tool_call: &tool_call_clone,
+                memory_db: mem_db.as_deref(),
+                app_config: None,
+                task_mgr: Some(&mut *task_guard),
+                permission_mgr: perm_mgr.as_deref(),
+                permission_already_checked: permission_already_checked_for_blocking,
+                session_id: session_for_blocking.as_deref(),
+                policy_enforcer: policy_for_blocking.as_deref(),
+            },
+        )
     })
     .await
     .unwrap_or_else(|e| tools::ToolResult {
@@ -2148,6 +2143,18 @@ async fn execute_tool_calls_for_tui(
             continue;
         }
 
+        let tool_policy = crate::services::policy::ToolExecutionPolicy::new(
+            policy_enforcer.as_deref(),
+            session_id,
+        );
+        if let Err(err) = tool_policy.check_tool(tool_name) {
+            let result_json =
+                policy_denied_tool_result(tool_name, &tool_call.id, &err, session_id, tx);
+            observe_tool_result_json(session_id, tool_name, &result_json);
+            results.push(result_json);
+            continue;
+        }
+
         // Permission check for write/destructive tools
         let mut permission_already_checked = false;
         if tool_needs_permission(tool_name) {
@@ -2177,16 +2184,6 @@ async fn execute_tool_calls_for_tui(
             }
         }
 
-        if let (Some(enforcer), Some(session_id)) = (policy_enforcer.as_deref(), session_id) {
-            if let Err(err) = enforcer.check_and_record_tool(session_id, tool_name) {
-                let result_json =
-                    policy_denied_tool_result(tool_name, &tool_call.id, &err, Some(session_id), tx);
-                observe_tool_result_json(Some(session_id), tool_name, &result_json);
-                results.push(result_json);
-                continue;
-            }
-        }
-
         let args_desc = describe_tool_call(tool_name, &tool_args);
         let hook_context = hook_engine
             .as_ref()
@@ -2206,6 +2203,7 @@ async fn execute_tool_calls_for_tui(
                 mgr: permission_mgr.clone(),
                 already_checked: permission_already_checked,
             },
+            policy_enforcer.clone(),
             task_mgr.clone(),
             session_id,
             hook_context,

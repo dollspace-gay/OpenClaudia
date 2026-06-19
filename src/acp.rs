@@ -154,6 +154,8 @@ pub struct AcpServer {
     /// `execute_tool_via_openclaudia` consults this gate — closes
     /// crosslink #505 for the ACP path.
     permission_mgr: crate::permissions::PermissionManager,
+    /// Session-scoped enterprise policy enforcer for model/token/tool caps.
+    policy_enforcer: Arc<crate::services::policy::PolicyEnforcer>,
     /// Request ID counter for server→client requests
     next_request_id: AtomicU64,
     /// Pending responses for server→client requests
@@ -723,6 +725,27 @@ impl AcpServer {
             .map_or(SessionMode::Initializer, |session| session.mode)
     }
 
+    fn cumulative_policy_tokens(&self) -> u64 {
+        self.session_manager
+            .get_session()
+            .map_or(0, |session| session.cumulative_usage.total())
+    }
+
+    fn check_provider_request_policy(
+        &self,
+        request: &crate::proxy::ChatCompletionRequest,
+    ) -> Result<(), crate::services::policy::PolicyError> {
+        let estimated_input = crate::compaction::estimate_request_tokens(request);
+        crate::services::policy::ProviderRequestPolicy::new(self.policy_enforcer.policy()).check(
+            crate::services::policy::ProviderRequestPolicyInput::new(
+                &request.model,
+                estimated_input,
+                request.max_tokens,
+                self.cumulative_policy_tokens(),
+            ),
+        )
+    }
+
     fn acp_config_options(&self) -> Vec<Value> {
         acp_session_config_options(
             &self.config.proxy.target,
@@ -781,6 +804,9 @@ impl AcpServer {
             true,
             config.permissions.default_allow.clone(),
         );
+        let policy_enforcer = Arc::new(crate::services::policy::PolicyEnforcer::new(
+            config.policy.clone(),
+        ));
 
         Self {
             config,
@@ -794,6 +820,7 @@ impl AcpServer {
             api_key,
             claude_code_token,
             permission_mgr,
+            policy_enforcer,
             next_request_id: AtomicU64::new(1),
             pending_responses: Arc::new(Mutex::new(HashMap::new())),
             cancel_flag: Arc::new(AtomicBool::new(false)),
@@ -1466,6 +1493,10 @@ impl AcpServer {
                 tool_choice: None,
                 extra: std::collections::HashMap::new(),
             };
+            if let Err(e) = self.check_provider_request_policy(&chat_request) {
+                return self
+                    .fail_prompt_with_update(acp_session_id, &format!("Blocked by policy: {e}"));
+            }
 
             // Transform for provider
             let mut transformed = match adapter.transform_request_with_thinking(
@@ -1945,6 +1976,18 @@ impl AcpServer {
             Err(result) => return result,
         };
 
+        // ── Enterprise policy gate ─────────────────────────────────────
+        let tool_policy = crate::services::policy::ToolExecutionPolicy::new(
+            Some(self.policy_enforcer.as_ref()),
+            Some(session_id),
+        );
+        if let Err(e) = tool_policy.check_tool(tool_name) {
+            return AcpToolResult {
+                content: format!("Blocked by policy: {e}"),
+                is_error: true,
+            };
+        }
+
         // ── PreToolUse gate ─────────────────────────────────────────────
         if let Some(blocked) = pre_tool_use_gate(&self.hook_engine, tool_name, &tool_input).await {
             return blocked;
@@ -1953,6 +1996,13 @@ impl AcpServer {
         // ── Headless permission gate ───────────────────────────────────
         if let Some(blocked) = acp_permission_gate(&self.permission_mgr, tool_name, &tool_input) {
             return blocked;
+        }
+
+        if let Err(e) = tool_policy.check_and_record_tool(tool_name) {
+            return AcpToolResult {
+                content: format!("Blocked by policy: {e}"),
+                is_error: true,
+            };
         }
 
         let result = match tool_name {
@@ -2018,23 +2068,18 @@ impl AcpServer {
             },
         };
 
-        let _session_guard = crate::tools::SessionIdGuard::set(session_id);
-        let _ledger_guard = match crate::ledger::RealityLedger::open_project_session(session_id) {
-            Ok(ledger) => Some(crate::ledger::install_active_ledger_for_session(
-                session_id.to_string(),
-                Arc::new(std::sync::Mutex::new(ledger)),
-            )),
-            Err(err) => {
-                tracing::warn!(
-                    session_id,
-                    error = %err,
-                    "failed to open session reality ledger for ACP local tool"
-                );
-                None
-            }
-        };
-
-        let result = crate::tools::execute_tool_with_memory(&tc, None, Some(&self.permission_mgr));
+        let result = crate::services::tool_executor::ToolExecutor::execute(
+            crate::services::tool_executor::ToolExecutorRequest {
+                tool_call: &tc,
+                memory_db: None,
+                app_config: None,
+                task_mgr: None,
+                permission_mgr: Some(&self.permission_mgr),
+                permission_already_checked: false,
+                session_id: Some(session_id),
+                policy_enforcer: None,
+            },
+        );
         AcpToolResult {
             content: result.content,
             is_error: result.is_error,
@@ -3990,6 +4035,9 @@ providers:
             api_key: None,
             claude_code_token: None,
             permission_mgr: PermissionManager::unrestricted(),
+            policy_enforcer: Arc::new(crate::services::policy::PolicyEnforcer::new(
+                crate::services::policy::EnterprisePolicy::default(),
+            )),
             next_request_id: AtomicU64::new(1),
             pending_responses: Arc::new(Mutex::new(HashMap::new())),
             cancel_flag: Arc::new(AtomicBool::new(false)),

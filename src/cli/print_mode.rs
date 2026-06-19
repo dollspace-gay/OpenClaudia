@@ -63,12 +63,25 @@ fn load_print_config(
 
 fn build_print_request(
     adapter: &dyn ProviderAdapter,
-    model: &str,
-    prompt: String,
+    request: &openclaudia::proxy::ChatCompletionRequest,
     thinking: &openclaudia::config::ThinkingConfig,
     claude_code_token: Option<&str>,
 ) -> Result<serde_json::Value, String> {
-    let request = openclaudia::proxy::ChatCompletionRequest {
+    let mut body = adapter
+        .transform_request_with_thinking(request, thinking)
+        .map_err(|e| format!("request transform error: {e}"))?;
+    if claude_code_token.is_some() {
+        openclaudia::claude_credentials::inject_system_prompt(&mut body);
+    }
+    Ok(body)
+}
+
+fn build_print_chat_request(
+    adapter: &dyn ProviderAdapter,
+    model: &str,
+    prompt: String,
+) -> openclaudia::proxy::ChatCompletionRequest {
+    openclaudia::proxy::ChatCompletionRequest {
         model: model.to_string(),
         messages: vec![openclaudia::proxy::ChatMessage {
             role: "user".to_string(),
@@ -84,15 +97,24 @@ fn build_print_request(
         tools: None,
         tool_choice: None,
         extra: std::collections::HashMap::new(),
-    };
-
-    let mut body = adapter
-        .transform_request_with_thinking(&request, thinking)
-        .map_err(|e| format!("request transform error: {e}"))?;
-    if claude_code_token.is_some() {
-        openclaudia::claude_credentials::inject_system_prompt(&mut body);
     }
-    Ok(body)
+}
+
+fn enforce_print_request_policy(
+    config: &openclaudia::config::AppConfig,
+    request: &openclaudia::proxy::ChatCompletionRequest,
+) -> anyhow::Result<()> {
+    let estimated_input = openclaudia::compaction::estimate_request_tokens(request);
+    openclaudia::services::policy::ProviderRequestPolicy::new(&config.policy)
+        .check(
+            openclaudia::services::policy::ProviderRequestPolicyInput::new(
+                &request.model,
+                estimated_input,
+                request.max_tokens,
+                0,
+            ),
+        )
+        .map_err(|e| anyhow::anyhow!("Blocked by policy: {e}"))
 }
 
 fn resolve_print_endpoint(
@@ -262,10 +284,11 @@ pub async fn cmd_print(options: PrintOptions) -> anyhow::Result<()> {
         &config.proxy.target,
     );
     let adapter = openclaudia::providers::get_adapter(&config.proxy.target)?;
+    let chat_request = build_print_chat_request(adapter, &model, options.prompt);
+    enforce_print_request_policy(&config, &chat_request)?;
     let request_body = build_print_request(
         adapter,
-        &model,
-        options.prompt,
+        &chat_request,
         &provider.thinking,
         claude_code_token.as_deref(),
     )
@@ -307,6 +330,26 @@ pub async fn cmd_print(options: PrintOptions) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::{HashMap, HashSet};
+
+    fn test_config_with_policy(
+        policy: openclaudia::services::policy::EnterprisePolicy,
+    ) -> openclaudia::config::AppConfig {
+        openclaudia::config::AppConfig {
+            proxy: openclaudia::config::ProxyConfig::default(),
+            providers: HashMap::new(),
+            hooks: openclaudia::config::HooksConfig::default(),
+            session: openclaudia::config::SessionConfig::default(),
+            keybindings: openclaudia::config::KeybindingsConfig::default(),
+            vdd: openclaudia::config::VddConfig::default(),
+            guardrails: openclaudia::config::GuardrailsConfig::default(),
+            permissions: openclaudia::config::PermissionsConfig::default(),
+            memory: openclaudia::config::MemoryConfig::default(),
+            web_fetch: openclaudia::config::WebFetchConfig::default(),
+            policy,
+            managed_settings_path: None,
+        }
+    }
 
     #[test]
     fn print_sse_extracts_openai_text_delta() {
@@ -368,12 +411,46 @@ mod tests {
     }
 
     #[test]
+    fn print_policy_rejects_unlisted_model_before_request_send() {
+        let config = test_config_with_policy(openclaudia::services::policy::EnterprisePolicy {
+            model_allowlist: HashSet::from(["allowed-model".to_string()]),
+            ..Default::default()
+        });
+        let request = build_print_chat_request(
+            openclaudia::providers::get_adapter("openai").expect("adapter"),
+            "blocked-model",
+            "hello".to_string(),
+        );
+
+        let err = enforce_print_request_policy(&config, &request).unwrap_err();
+        assert!(err.to_string().contains("Blocked by policy"));
+        assert!(err.to_string().contains("blocked-model"));
+    }
+
+    #[test]
+    fn print_policy_rejects_request_token_cap_before_request_send() {
+        let config = test_config_with_policy(openclaudia::services::policy::EnterprisePolicy {
+            max_request_tokens: Some(1),
+            ..Default::default()
+        });
+        let request = build_print_chat_request(
+            openclaudia::providers::get_adapter("openai").expect("adapter"),
+            "any-model",
+            "this prompt is intentionally longer than one estimated token".to_string(),
+        );
+
+        let err = enforce_print_request_policy(&config, &request).unwrap_err();
+        assert!(err.to_string().contains("Blocked by policy"));
+        assert!(err.to_string().contains("request exceeds policy token cap"));
+    }
+
+    #[test]
     fn print_request_has_no_tools_and_streams_non_google() {
         let adapter = openclaudia::providers::get_adapter("openai").unwrap();
+        let request = build_print_chat_request(adapter, "gpt-5.5", "hi".to_string());
         let body = build_print_request(
             adapter,
-            "gpt-5.5",
-            "hi".to_string(),
+            &request,
             &openclaudia::config::ThinkingConfig::default(),
             None,
         )
@@ -390,8 +467,8 @@ mod tests {
             ..Default::default()
         };
 
-        let body =
-            build_print_request(adapter, "gpt-5.5", "hi".to_string(), &thinking, None).unwrap();
+        let request = build_print_chat_request(adapter, "gpt-5.5", "hi".to_string());
+        let body = build_print_request(adapter, &request, &thinking, None).unwrap();
 
         assert_eq!(body["reasoning_effort"], "xhigh");
     }
@@ -404,14 +481,8 @@ mod tests {
             ..openclaudia::config::ThinkingConfig::default()
         };
 
-        let body = build_print_request(
-            adapter,
-            "gemini-3.5-flash",
-            "hi".to_string(),
-            &thinking,
-            None,
-        )
-        .unwrap();
+        let request = build_print_chat_request(adapter, "gemini-3.5-flash", "hi".to_string());
+        let body = build_print_request(adapter, &request, &thinking, None).unwrap();
 
         assert_eq!(
             body["generationConfig"]["thinkingConfig"]["thinkingBudget"],

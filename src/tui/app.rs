@@ -842,6 +842,21 @@ pub enum ActiveOverlay {
 impl App {
     #[must_use]
     pub fn new(model: &str, provider: &str) -> Self {
+        Self::new_with_policy(
+            model,
+            provider,
+            std::sync::Arc::new(crate::services::policy::PolicyEnforcer::new(
+                crate::services::policy::EnterprisePolicy::default(),
+            )),
+        )
+    }
+
+    #[must_use]
+    pub fn new_with_policy(
+        model: &str,
+        provider: &str,
+        policy_enforcer: std::sync::Arc<crate::services::policy::PolicyEnforcer>,
+    ) -> Self {
         Self {
             messages: MessageList::new(),
             input: TextInput::new(),
@@ -867,11 +882,7 @@ impl App {
             pending_permission: None,
             pending_user_question: None,
             hook_engine: None,
-            policy_enforcer: std::sync::Arc::new(crate::services::policy::PolicyEnforcer::new(
-                crate::config::load_config()
-                    .map(|config| config.policy)
-                    .unwrap_or_default(),
-            )),
+            policy_enforcer,
             task_mgr: std::sync::Arc::new(
                 std::sync::Mutex::new(crate::session::TaskManager::new()),
             ),
@@ -3233,6 +3244,44 @@ fn validate_final_response_for_history(session_id: &str, content: &str) -> bool 
     }
 }
 
+fn check_provider_request_policy_for_messages(
+    policy_enforcer: &crate::services::policy::PolicyEnforcer,
+    model: &str,
+    messages: &[serde_json::Value],
+    tx: &std::sync::mpsc::Sender<super::events::AppEvent>,
+    session_id: &str,
+) -> bool {
+    let request = match crate::pipeline::build_chat_completion_request(model, messages) {
+        Ok(request) => request,
+        Err(e) => {
+            send_or_warn(
+                tx,
+                super::events::AppEvent::ApiError(format!("Request build error: {e}")),
+                session_id,
+            );
+            return false;
+        }
+    };
+    let estimated_input = crate::compaction::estimate_request_tokens(&request);
+    let gate = crate::services::policy::ProviderRequestPolicy::new(policy_enforcer.policy());
+    match gate.check(crate::services::policy::ProviderRequestPolicyInput::new(
+        &request.model,
+        estimated_input,
+        request.max_tokens,
+        0,
+    )) {
+        Ok(()) => true,
+        Err(err) => {
+            send_or_warn(
+                tx,
+                super::events::AppEvent::ApiError(format!("Blocked by policy: {err}")),
+                session_id,
+            );
+            false
+        }
+    }
+}
+
 /// Run the pre-turn `UserPromptSubmit` hook. Returns `false` and sends an
 /// `ApiError` event if the hook denies the request; injects any system
 /// messages from hook outputs and returns `true` on success.
@@ -3579,6 +3628,15 @@ async fn run_agentic_loop(ctx: &AgenticCtx<'_>, session_messages: &mut Vec<serde
                 break;
             }
         };
+        if !check_provider_request_policy_for_messages(
+            &ctx.policy_enforcer,
+            ctx.model,
+            &request_messages,
+            ctx.tx,
+            ctx.session_id,
+        ) {
+            break;
+        }
         let body = match crate::pipeline::build_request(
             ctx.provider,
             ctx.model,
@@ -3695,6 +3753,15 @@ async fn run_api_turn_async(p: ApiTurnParams) {
                 return;
             }
         };
+    if !check_provider_request_policy_for_messages(
+        &policy_enforcer,
+        &model,
+        &request_messages,
+        &tx,
+        &session_id,
+    ) {
+        return;
+    }
     let request_body = match crate::pipeline::build_request(
         &provider,
         &model,

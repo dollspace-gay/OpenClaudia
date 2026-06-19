@@ -1452,6 +1452,7 @@ async fn run_subagent_inner(
         true,
         app_config.permissions.default_allow.clone(),
     );
+    let policy_enforcer = crate::services::policy::PolicyEnforcer::new(app_config.policy.clone());
 
     loop {
         turns = BACKGROUND_AGENTS.increment_turns(&agent_id);
@@ -1515,6 +1516,34 @@ async fn run_subagent_inner(
             "tools": filtered_tools,
             "max_tokens": SUBAGENT_MAX_TOKENS
         });
+        let typed_request = match build_chat_completion_request(&request_body) {
+            Ok(request) => request,
+            Err(e) => {
+                BACKGROUND_AGENTS.fail(&agent_id, e.clone());
+                store_transcript(&agent_id, messages, config.agent_type);
+                return SubagentResult {
+                    agent_id,
+                    success: false,
+                    output: e,
+                    turns_used: turns,
+                    is_background: config.run_in_background,
+                    worktree: worktree.clone(),
+                };
+            }
+        };
+        if let Err(e) = check_provider_request_policy(&app_config, &typed_request) {
+            let message = format!("Blocked by policy: {e}");
+            BACKGROUND_AGENTS.fail(&agent_id, message.clone());
+            store_transcript(&agent_id, messages, config.agent_type);
+            return SubagentResult {
+                agent_id,
+                success: false,
+                output: message,
+                turns_used: turns,
+                is_background: config.run_in_background,
+                worktree: worktree.clone(),
+            };
+        }
 
         // Make the API call — provider is plumbed through so the
         // ProviderAdapter trait (canonical implementation in
@@ -1646,23 +1675,18 @@ async fn run_subagent_inner(
             // list lives in its own bucket. Claude Code uses the
             // `agentId ?? sessionId` fallback; here agent_id is always
             // present. Closes crosslink #518 for subagents.
-            let _session_guard = crate::tools::SessionIdGuard::set(&agent_id);
-            let _ledger_guard = match crate::ledger::RealityLedger::open_project_session(&agent_id)
-            {
-                Ok(ledger) => Some(crate::ledger::install_active_ledger_for_session(
-                    agent_id.clone(),
-                    Arc::new(Mutex::new(ledger)),
-                )),
-                Err(err) => {
-                    tracing::warn!(
-                        agent_id,
-                        error = %err,
-                        "failed to open session reality ledger for subagent tool"
-                    );
-                    None
-                }
-            };
-            let result = crate::tools::execute_tool_with_memory(&tc, None, Some(&permission_mgr));
+            let result = crate::services::tool_executor::ToolExecutor::execute(
+                crate::services::tool_executor::ToolExecutorRequest {
+                    tool_call: &tc,
+                    memory_db: None,
+                    app_config: None,
+                    task_mgr: None,
+                    permission_mgr: Some(&permission_mgr),
+                    permission_already_checked: false,
+                    session_id: Some(&agent_id),
+                    policy_enforcer: Some(&policy_enforcer),
+                },
+            );
             observe_subagent_tool_result(&agent_id, &tc.function.name, &result);
 
             messages.push(json!({
@@ -1759,6 +1783,21 @@ fn build_chat_completion_request(
 ) -> Result<crate::proxy::ChatCompletionRequest, String> {
     serde_json::from_value::<crate::proxy::ChatCompletionRequest>(request_body.clone())
         .map_err(|e| format!("Failed to materialize ChatCompletionRequest: {e}"))
+}
+
+fn check_provider_request_policy(
+    app_config: &AppConfig,
+    request: &crate::proxy::ChatCompletionRequest,
+) -> Result<(), crate::services::policy::PolicyError> {
+    let estimated_input = crate::compaction::estimate_request_tokens(request);
+    crate::services::policy::ProviderRequestPolicy::new(&app_config.policy).check(
+        crate::services::policy::ProviderRequestPolicyInput::new(
+            &request.model,
+            estimated_input,
+            request.max_tokens,
+            0,
+        ),
+    )
 }
 
 /// Make an API call to the LLM provider.

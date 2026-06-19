@@ -107,6 +107,138 @@ pub enum PolicyDecision {
     Deny,
 }
 
+/// Input required to check an outbound provider request against the
+/// enterprise request policy.
+#[derive(Debug, Clone, Copy)]
+pub struct ProviderRequestPolicyInput<'a> {
+    /// Model that will be sent to the provider.
+    pub model: &'a str,
+    /// Estimated input/context tokens for this request.
+    pub estimated_input_tokens: usize,
+    /// Maximum output token budget requested from the provider.
+    pub output_token_budget: usize,
+    /// Cumulative tokens already recorded for the current session.
+    pub cumulative_session_tokens: u64,
+}
+
+impl<'a> ProviderRequestPolicyInput<'a> {
+    /// Build input for request paths that use OpenClaudia's default output
+    /// token budget when no explicit `max_tokens` is present.
+    #[must_use]
+    pub fn new(
+        model: &'a str,
+        estimated_input_tokens: usize,
+        max_tokens: Option<u32>,
+        cumulative_session_tokens: u64,
+    ) -> Self {
+        Self {
+            model,
+            estimated_input_tokens,
+            output_token_budget: request_output_token_budget(max_tokens),
+            cumulative_session_tokens,
+        }
+    }
+}
+
+/// Shared request policy gate for provider-bound calls.
+pub struct ProviderRequestPolicy<'a> {
+    policy: &'a EnterprisePolicy,
+}
+
+impl<'a> ProviderRequestPolicy<'a> {
+    /// Create a request policy gate from a read-only policy snapshot.
+    #[must_use]
+    pub const fn new(policy: &'a EnterprisePolicy) -> Self {
+        Self { policy }
+    }
+
+    /// Check model allowlist, per-request token cap, and projected
+    /// per-session token cap using the same ordering for every entrypoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first policy error encountered.
+    pub fn check(&self, input: ProviderRequestPolicyInput<'_>) -> Result<(), PolicyError> {
+        self.policy.check_model(input.model)?;
+        self.policy
+            .check_request_tokens(input.estimated_input_tokens)?;
+        self.policy
+            .check_session_tokens(projected_session_policy_tokens(
+                input.cumulative_session_tokens,
+                input.estimated_input_tokens,
+                input.output_token_budget,
+            ))
+    }
+}
+
+/// Shared tool policy gate for paths that already own a policy enforcer and
+/// session id.
+pub struct ToolExecutionPolicy<'a> {
+    enforcer: Option<&'a PolicyEnforcer>,
+    session_id: Option<&'a str>,
+}
+
+impl<'a> ToolExecutionPolicy<'a> {
+    /// Build a tool policy gate. Passing `None` for either value keeps the
+    /// historical no-policy behavior for legacy/library callers that have not
+    /// been wired to a session-scoped policy enforcer yet.
+    #[must_use]
+    pub const fn new(enforcer: Option<&'a PolicyEnforcer>, session_id: Option<&'a str>) -> Self {
+        Self {
+            enforcer,
+            session_id,
+        }
+    }
+
+    /// Dry-run check for a tool invocation when both policy state and a
+    /// session id are available. Otherwise this is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PolicyError::ToolCapExceeded`] when the configured cap has
+    /// already been consumed for the session.
+    pub fn check_tool(&self, tool: &str) -> Result<(), PolicyError> {
+        if let (Some(enforcer), Some(session_id)) = (self.enforcer, self.session_id) {
+            enforcer.check_tool(session_id, tool)?;
+        }
+        Ok(())
+    }
+
+    /// Check and record a tool invocation when both policy state and a session
+    /// id are available. Otherwise this is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PolicyError::ToolCapExceeded`] when the configured cap has
+    /// already been consumed for the session.
+    pub fn check_and_record_tool(&self, tool: &str) -> Result<(), PolicyError> {
+        if let (Some(enforcer), Some(session_id)) = (self.enforcer, self.session_id) {
+            enforcer.check_and_record_tool(session_id, tool)?;
+        }
+        Ok(())
+    }
+}
+
+/// Convert an optional request output cap into policy accounting units.
+#[must_use]
+pub fn request_output_token_budget(max_tokens: Option<u32>) -> usize {
+    let budget = max_tokens.unwrap_or(crate::DEFAULT_MAX_TOKENS);
+    usize::try_from(u64::from(budget)).unwrap_or(usize::MAX)
+}
+
+/// Saturating session projection used by every provider request policy gate.
+#[must_use]
+pub fn projected_session_policy_tokens(
+    cumulative_total: u64,
+    estimated_input: usize,
+    output_budget: usize,
+) -> usize {
+    usize::try_from(cumulative_total)
+        .unwrap_or(usize::MAX)
+        .saturating_add(estimated_input)
+        .saturating_add(output_budget)
+}
+
 /// Mutable counter store for per-session per-tool usage.
 ///
 /// Lives behind a `Mutex` so concurrent request handlers share one
@@ -259,13 +391,12 @@ impl PolicyEnforcer {
         self.counters.increment(session_id, tool);
     }
 
-    /// Combined check + record. Used when a caller does not care about
-    /// the dry-run distinction.
+    /// Dry-run check for a tool invocation without consuming the cap.
     ///
     /// # Errors
     ///
-    /// Returns [`PolicyError::ToolCapExceeded`] when the cap is hit.
-    pub fn check_and_record_tool(&self, session_id: &str, tool: &str) -> Result<(), PolicyError> {
+    /// Returns [`PolicyError::ToolCapExceeded`] when the cap is already hit.
+    pub fn check_tool(&self, session_id: &str, tool: &str) -> Result<(), PolicyError> {
         let consumed = self.counters.count(session_id, tool);
         if let Some(&cap) = self.policy.tool_caps.get(tool) {
             if consumed >= cap {
@@ -276,6 +407,17 @@ impl PolicyEnforcer {
                 });
             }
         }
+        Ok(())
+    }
+
+    /// Combined check + record. Used when a caller does not care about
+    /// the dry-run distinction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PolicyError::ToolCapExceeded`] when the cap is hit.
+    pub fn check_and_record_tool(&self, session_id: &str, tool: &str) -> Result<(), PolicyError> {
+        self.check_tool(session_id, tool)?;
         self.counters.increment(session_id, tool);
         Ok(())
     }
@@ -420,5 +562,113 @@ model_allowlist:
         assert_eq!(p.max_session_tokens, Some(100_000));
         assert_eq!(p.tool_caps.get("bash"), Some(&20));
         assert!(p.model_allowlist.contains("gpt-4"));
+    }
+
+    #[test]
+    fn provider_request_policy_checks_model_and_token_projection() {
+        let mut policy = EnterprisePolicy {
+            max_request_tokens: Some(100),
+            max_session_tokens: Some(150),
+            ..Default::default()
+        };
+        policy.model_allowlist.insert("allowed-model".to_string());
+        let gate = ProviderRequestPolicy::new(&policy);
+
+        gate.check(ProviderRequestPolicyInput {
+            model: "allowed-model",
+            estimated_input_tokens: 40,
+            output_token_budget: 50,
+            cumulative_session_tokens: 60,
+        })
+        .expect("60 + 40 + 50 should be accepted at the cap");
+
+        let denied_model = gate
+            .check(ProviderRequestPolicyInput::new(
+                "denied-model",
+                40,
+                Some(50),
+                60,
+            ))
+            .unwrap_err();
+        assert!(matches!(denied_model, PolicyError::ModelDenied { .. }));
+
+        let denied_request = gate
+            .check(ProviderRequestPolicyInput::new(
+                "allowed-model",
+                101,
+                Some(0),
+                0,
+            ))
+            .unwrap_err();
+        assert!(matches!(
+            denied_request,
+            PolicyError::TokenCapExceeded {
+                scope: "request",
+                ..
+            }
+        ));
+
+        let denied_session = gate
+            .check(ProviderRequestPolicyInput::new(
+                "allowed-model",
+                50,
+                Some(50),
+                51,
+            ))
+            .unwrap_err();
+        assert!(matches!(
+            denied_session,
+            PolicyError::TokenCapExceeded {
+                scope: "session",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn tool_execution_policy_noops_without_policy_state() {
+        let gate = ToolExecutionPolicy::new(None, Some("session"));
+        assert!(gate.check_and_record_tool("bash").is_ok());
+
+        let mut caps = ToolCaps::new();
+        caps.insert("bash".to_string(), 0);
+        let enforcer = PolicyEnforcer::new(EnterprisePolicy {
+            tool_caps: caps,
+            ..Default::default()
+        });
+        let gate = ToolExecutionPolicy::new(Some(&enforcer), None);
+        assert!(gate.check_and_record_tool("bash").is_ok());
+    }
+
+    #[test]
+    fn tool_execution_policy_enforces_when_session_and_enforcer_exist() {
+        let mut caps = ToolCaps::new();
+        caps.insert("bash".to_string(), 1);
+        let enforcer = PolicyEnforcer::new(EnterprisePolicy {
+            tool_caps: caps,
+            ..Default::default()
+        });
+        let gate = ToolExecutionPolicy::new(Some(&enforcer), Some("s1"));
+
+        assert!(gate.check_and_record_tool("bash").is_ok());
+        let err = gate.check_and_record_tool("bash").unwrap_err();
+        assert!(matches!(err, PolicyError::ToolCapExceeded { .. }));
+    }
+
+    #[test]
+    fn tool_execution_policy_dry_run_does_not_consume_cap() {
+        let mut caps = ToolCaps::new();
+        caps.insert("bash".to_string(), 1);
+        let enforcer = PolicyEnforcer::new(EnterprisePolicy {
+            tool_caps: caps,
+            ..Default::default()
+        });
+        let gate = ToolExecutionPolicy::new(Some(&enforcer), Some("s1"));
+
+        assert!(gate.check_tool("bash").is_ok());
+        assert!(gate.check_tool("bash").is_ok());
+        assert!(gate.check_and_record_tool("bash").is_ok());
+        let err = gate.check_tool("bash").unwrap_err();
+        assert!(matches!(err, PolicyError::ToolCapExceeded { .. }));
     }
 }

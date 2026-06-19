@@ -62,19 +62,21 @@ fn execute_tool_with_memory_after_permission(
     memory_db: Option<&memory::MemoryDb>,
     permission_mgr: &PermissionManager,
     permission_already_checked: bool,
-) -> tools::ToolResult {
-    if permission_already_checked {
-        let bypass_mgr = PermissionManager::unrestricted();
-        tools::execute_tool_with_memory(tool_call, memory_db, Some(&bypass_mgr))
-    } else {
-        tools::execute_tool_with_memory(tool_call, memory_db, Some(permission_mgr))
-    }
-}
-
-fn install_cli_active_ledger(
     session_id: &str,
-) -> Option<openclaudia::ledger::ActiveRealityLedgerGuard> {
-    openclaudia::grounded_loop::install_active_project_ledger_for_session(session_id)
+    policy_enforcer: Option<&openclaudia::services::policy::PolicyEnforcer>,
+) -> tools::ToolResult {
+    openclaudia::services::tool_executor::ToolExecutor::execute(
+        openclaudia::services::tool_executor::ToolExecutorRequest {
+            tool_call,
+            memory_db,
+            app_config: None,
+            task_mgr: None,
+            permission_mgr: Some(permission_mgr),
+            permission_already_checked,
+            session_id: Some(session_id),
+            policy_enforcer,
+        },
+    )
 }
 
 fn observe_cli_model_visible_tool_result(
@@ -166,6 +168,7 @@ pub struct ChatRepl {
     api_key: Option<openclaudia::providers::ApiKey>,
     claude_code_token: Option<String>,
     permission_mgr: PermissionManager,
+    policy_enforcer: std::sync::Arc<openclaudia::services::policy::PolicyEnforcer>,
     vdd_engine: Option<vdd::VddEngine>,
     history_path: std::path::PathBuf,
     // ── Per-session mutable state ──
@@ -313,6 +316,25 @@ fn final_response_requires_grounding(content: &str, cancelled: bool) -> bool {
     !cancelled && !content.trim().is_empty()
 }
 
+fn check_provider_request_policy(
+    policy_enforcer: &openclaudia::services::policy::PolicyEnforcer,
+    model: &str,
+    messages: &[serde_json::Value],
+) -> Result<(), String> {
+    let request = openclaudia::pipeline::build_chat_completion_request(model, messages)?;
+    let estimated_input = openclaudia::compaction::estimate_request_tokens(&request);
+    openclaudia::services::policy::ProviderRequestPolicy::new(policy_enforcer.policy())
+        .check(
+            openclaudia::services::policy::ProviderRequestPolicyInput::new(
+                &request.model,
+                estimated_input,
+                request.max_tokens,
+                0,
+            ),
+        )
+        .map_err(|e| format!("Blocked by policy: {e}"))
+}
+
 fn load_repl_config(
     model_override: Option<&str>,
     target_override: Option<&str>,
@@ -430,6 +452,9 @@ impl ChatRepl {
         let audit_logger = openclaudia::session::AuditLogger::new(&chat_session.id)?;
         let memory_db: Option<memory::MemoryDb> = init_memory_with_banner();
         let permission_mgr = init_permission_manager(&config, args.dangerously_skip_permissions);
+        let policy_enforcer = std::sync::Arc::new(
+            openclaudia::services::policy::PolicyEnforcer::new(config.policy.clone()),
+        );
         let vdd_engine: Option<vdd::VddEngine> = init_vdd_engine_if_enabled(&config);
 
         Ok(Self {
@@ -444,6 +469,7 @@ impl ChatRepl {
             api_key,
             claude_code_token,
             permission_mgr,
+            policy_enforcer,
             vdd_engine,
             history_path,
             model,
@@ -633,6 +659,14 @@ impl ChatRepl {
                 return Ok(Some(false));
             }
         };
+        if let Err(err) =
+            check_provider_request_policy(&self.policy_enforcer, &self.model, &request_messages)
+        {
+            self.clear_transient_prompt_options();
+            tracing::warn!(error = %err, "Enterprise policy blocked chat request");
+            eprintln!("\n\x1b[31m{err}\x1b[0m");
+            return Ok(Some(false));
+        }
 
         let request_body = match build_chat_request_body(
             &self.config.proxy.target,
@@ -1227,9 +1261,43 @@ impl ChatRepl {
         )
     }
 
+    fn followup_request_policy_allows(&self, context: &'static str) -> bool {
+        let request_messages = match self.request_messages_with_grounding() {
+            Ok(messages) => messages,
+            Err(e) => {
+                tracing::error!(error = %e, context, "Failed to build grounded follow-up request");
+                eprintln!("\n\x1b[31mRequest build error: {e}\x1b[0m");
+                return false;
+            }
+        };
+        match check_provider_request_policy(&self.policy_enforcer, &self.model, &request_messages) {
+            Ok(()) => true,
+            Err(err) => {
+                tracing::warn!(error = %err, context, "Enterprise policy blocked follow-up request");
+                eprintln!("\n\x1b[31m{err}\x1b[0m");
+                false
+            }
+        }
+    }
+
     fn current_grounding_system_content(&self) -> Option<String> {
         self.current_task_obs
             .and_then(|task_obs| cli_grounding_system_content(&self.chat_session.id, task_obs))
+    }
+
+    fn policy_denied_tool_result(&self, tool_call: &tools::ToolCall) -> Option<tools::ToolResult> {
+        let tool_policy = openclaudia::services::policy::ToolExecutionPolicy::new(
+            Some(self.policy_enforcer.as_ref()),
+            Some(&self.chat_session.id),
+        );
+        tool_policy
+            .check_tool(&tool_call.function.name)
+            .err()
+            .map(|err| tools::ToolResult {
+                tool_call_id: tool_call.id.clone(),
+                content: format!("Blocked by policy: {err}"),
+                is_error: true,
+            })
     }
 
     fn final_response_allowed(&self, content: &str, cancelled: bool) -> bool {
@@ -1618,6 +1686,9 @@ impl ChatRepl {
                 state.tool_calls.len(),
                 if state.tool_calls.len() == 1 { "" } else { "s" }
             );
+            if !self.followup_request_policy_allows("gemini follow-up") {
+                break;
+            }
             match self
                 .gemini_send_followup(&state.contents, request_body, transport)
                 .await
@@ -1851,6 +1922,16 @@ impl ChatRepl {
                 return Err(gemini_tool_error_response(tool_call, &msg));
             }
         };
+        if let Some(result) = self.policy_denied_tool_result(tool_call) {
+            push_observed_cli_tool_result_message(
+                &mut self.chat_session,
+                tool_call,
+                &result.tool_call_id,
+                &result.content,
+                true,
+            );
+            return Err(gemini_tool_error_response(tool_call, &result.content));
+        }
         let result = if self.dangerously_skip_permissions {
             check_tool_unrestricted(&tool_call.function.name, &tool_args_val)
         } else {
@@ -1901,13 +1982,13 @@ impl ChatRepl {
             tracing::error!("Security audit failed for tool_call: {e}");
         }
 
-        let _session_guard = tools::SessionIdGuard::set(&self.chat_session.id);
-        let _ledger_guard = install_cli_active_ledger(&self.chat_session.id);
         let result = execute_tool_with_memory_after_permission(
             tool_call,
             memory_db,
             &self.permission_mgr,
             permission_already_checked,
+            &self.chat_session.id,
+            Some(self.policy_enforcer.as_ref()),
         );
         Self::auto_learn_observe(auto_learner, tool_call, &result);
         result
@@ -2493,6 +2574,9 @@ impl ChatRepl {
                 }
             };
             full_content = String::new();
+            if !self.followup_request_policy_allows("anthropic follow-up") {
+                break;
+            }
             if !self
                 .send_anthropic_followup(
                     followup_req,
@@ -2667,6 +2751,16 @@ impl ChatRepl {
                 return None;
             }
         };
+        if let Some(result) = self.policy_denied_tool_result(tool_call) {
+            push_observed_cli_tool_result_message(
+                &mut self.chat_session,
+                tool_call,
+                &result.tool_call_id,
+                &result.content,
+                true,
+            );
+            return None;
+        }
         let result = if self.dangerously_skip_permissions {
             check_tool_unrestricted(&tool_call.function.name, &tool_args_val)
         } else {
@@ -2717,13 +2811,13 @@ impl ChatRepl {
             // session itself is not corrupted by an audit-write failure).
             tracing::error!("Security audit failed for tool_call: {e}");
         }
-        let _session_guard = tools::SessionIdGuard::set(&self.chat_session.id);
-        let _ledger_guard = install_cli_active_ledger(&self.chat_session.id);
         let result = execute_tool_with_memory_after_permission(
             tool_call,
             memory_db,
             &self.permission_mgr,
             permission_already_checked,
+            &self.chat_session.id,
+            Some(self.policy_enforcer.as_ref()),
         );
         Self::auto_learn_observe(auto_learner, tool_call, &result);
         result
@@ -2870,6 +2964,9 @@ impl ChatRepl {
                     break;
                 }
             };
+            if !self.followup_request_policy_allows("anthropic XML follow-up") {
+                break;
+            }
             let next = self.send_xml_followup_stream(followup_req, transport).await;
             match next {
                 Some(content) => {
@@ -3006,6 +3103,7 @@ impl ChatRepl {
             memory_db,
             Some(&self.permission_mgr),
             Some(&self.chat_session.id),
+            Some(self.policy_enforcer.as_ref()),
         );
         let results_xml = tool_intercept::format_execution_results_xml(&results);
         push_chat_session_message_and_persist(
@@ -3167,6 +3265,9 @@ impl ChatRepl {
             };
             state.current_content.clear();
             state.current_reasoning_content.clear();
+            if !self.followup_request_policy_allows("openai follow-up") {
+                break;
+            }
             self.stream_openai_followup(
                 request_body,
                 transport,
@@ -3510,13 +3611,13 @@ impl ChatRepl {
         permission_already_checked: bool,
     ) -> tools::ToolResult {
         println!("\n\x1b[36m⚡ Running {}...\x1b[0m", tool_call.function.name);
-        let _session_guard = tools::SessionIdGuard::set(&self.chat_session.id);
-        let _ledger_guard = install_cli_active_ledger(&self.chat_session.id);
         let result = execute_tool_with_memory_after_permission(
             tool_call,
             memory_db,
             &self.permission_mgr,
             permission_already_checked,
+            &self.chat_session.id,
+            Some(self.policy_enforcer.as_ref()),
         );
         Self::auto_learn_observe(auto_learner, tool_call, &result);
         result

@@ -1032,7 +1032,7 @@ pub fn execute_intercepted_tools(
     memory_db: Option<&crate::memory::MemoryDb>,
     permission_mgr: Option<&crate::permissions::PermissionManager>,
 ) -> Vec<ToolExecutionResult> {
-    execute_intercepted_tools_for_session(tools, memory_db, permission_mgr, None)
+    execute_intercepted_tools_for_session(tools, memory_db, permission_mgr, None, None)
 }
 
 /// Execute intercepted tool calls locally with an optional session ledger.
@@ -1046,18 +1046,25 @@ pub fn execute_intercepted_tools_for_session(
     memory_db: Option<&crate::memory::MemoryDb>,
     permission_mgr: Option<&crate::permissions::PermissionManager>,
     session_id: Option<&str>,
+    policy_enforcer: Option<&crate::services::policy::PolicyEnforcer>,
 ) -> Vec<ToolExecutionResult> {
     let mut results = Vec::new();
 
     for tool in tools {
         let tool_call = tool.to_tool_call();
-
         println!("\n\x1b[36m⚡ Running {} locally...\x1b[0m", tool.name);
-
-        let _session_guard = session_id.map(crate::tools::SessionIdGuard::set);
-        let _ledger_guard =
-            session_id.and_then(crate::grounded_loop::install_active_project_ledger_for_session);
-        let result = crate::tools::execute_tool_with_memory(&tool_call, memory_db, permission_mgr);
+        let result = crate::services::tool_executor::ToolExecutor::execute(
+            crate::services::tool_executor::ToolExecutorRequest {
+                tool_call: &tool_call,
+                memory_db,
+                app_config: None,
+                task_mgr: None,
+                permission_mgr,
+                permission_already_checked: false,
+                session_id,
+                policy_enforcer,
+            },
+        );
         if let Some(session_id) = session_id {
             crate::grounded_loop::observe_tool_result_for_session(
                 session_id,
@@ -1222,7 +1229,8 @@ mod tests {
             id: "xml_call_list".to_string(),
         };
 
-        let results = execute_intercepted_tools_for_session(&[tool], None, None, Some(session_id));
+        let results =
+            execute_intercepted_tools_for_session(&[tool], None, None, Some(session_id), None);
 
         assert_eq!(results.len(), 1);
         assert!(
@@ -1246,6 +1254,47 @@ mod tests {
         assert_eq!(tool, "list_files");
         assert_eq!(result["tool_call_id"], "xml_call_list");
         assert_eq!(result["is_error"], false);
+    }
+
+    #[test]
+    fn execute_intercepted_tools_for_session_enforces_policy_before_dispatch() {
+        let session_id = "xmltoolpolicy";
+        let mut caps = crate::services::policy::ToolCaps::new();
+        caps.insert("bash".to_string(), 0);
+        let enforcer = crate::services::policy::PolicyEnforcer::new(
+            crate::services::policy::EnterprisePolicy {
+                tool_caps: caps,
+                ..Default::default()
+            },
+        );
+        let mut parameters = HashMap::new();
+        parameters.insert(
+            "command".to_string(),
+            "printf intercepted-policy-should-not-run".to_string(),
+        );
+        let tool = InterceptedToolCall {
+            name: "bash".to_string(),
+            parameters,
+            id: "xml_call_policy".to_string(),
+        };
+
+        let results = execute_intercepted_tools_for_session(
+            &[tool],
+            None,
+            None,
+            Some(session_id),
+            Some(&enforcer),
+        );
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_error);
+        assert!(results[0].content.contains("Blocked by policy"));
+        assert!(
+            !results[0]
+                .content
+                .contains("intercepted-policy-should-not-run"),
+            "policy-denied intercepted tool must not execute"
+        );
     }
 
     #[test]

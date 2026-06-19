@@ -588,7 +588,10 @@ async fn tui_launch(options: TuiLaunchOptions<'_>) -> anyhow::Result<()> {
         }
     };
 
-    let mut app = tui::app::App::new(model, &config.proxy.target);
+    let policy_enforcer = std::sync::Arc::new(openclaudia::services::policy::PolicyEnforcer::new(
+        config.policy.clone(),
+    ));
+    let mut app = tui::app::App::new_with_policy(model, &config.proxy.target, policy_enforcer);
     app.set_api_config(
         endpoint,
         headers,

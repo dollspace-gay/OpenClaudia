@@ -25,6 +25,7 @@ pub mod lsp_pool;
 pub mod mcp_registry;
 pub mod policy;
 pub mod rate_limit_mock;
+pub mod tool_executor;
 
 pub use analytics::{AnalyticsEvent, AnalyticsSink, NoopAnalytics, TracingAnalytics};
 pub use auto_compactor::{AutoCompactPolicy, AutoCompactor};
@@ -39,8 +40,12 @@ pub use lsp_diagnostics::{
 };
 pub use lsp_pool::{ChildHandle, LspServerManager, LspSpawner};
 pub use mcp_registry::{McpRegistration, McpServerSpec, PluginMcpRegistry};
-pub use policy::{EnterprisePolicy, PolicyDecision, PolicyError};
+pub use policy::{
+    EnterprisePolicy, PolicyDecision, PolicyError, ProviderRequestPolicy,
+    ProviderRequestPolicyInput, ToolExecutionPolicy,
+};
 pub use rate_limit_mock::{MockRateLimit, RateLimitMock};
+pub use tool_executor::{ToolExecutor, ToolExecutorRequest};
 
 use std::sync::{Arc, RwLock};
 
