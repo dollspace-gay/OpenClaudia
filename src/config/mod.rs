@@ -342,9 +342,16 @@ impl AppConfig {
 
     #[must_use]
     pub fn get_provider(&self, name: &str) -> Option<&ProviderConfig> {
-        self.providers
-            .get(name)
-            .or_else(|| canonical_provider_config_key(name).and_then(|key| self.providers.get(key)))
+        if let Some(provider) = self.providers.get(name) {
+            return Some(provider);
+        }
+
+        let lowercase_key = name.trim().to_ascii_lowercase();
+        if let Some(provider) = self.providers.get(&lowercase_key) {
+            return Some(provider);
+        }
+
+        canonical_provider_config_key(name).and_then(|key| self.providers.get(key))
     }
 }
 
@@ -535,6 +542,66 @@ mod tests {
                 .map(ApiKey::as_str),
             Some("alias-0000000000")
         );
+    }
+
+    #[test]
+    fn app_config_get_provider_prefers_lowercase_config_key_before_alias_fallback() {
+        let mut providers = HashMap::new();
+        for (name, base_url) in [
+            ("local", "http://generic-local.example/v1"),
+            ("lmstudio", "http://lmstudio.example/v1"),
+            ("localai", "http://localai.example/v1"),
+            (
+                "text-generation-webui",
+                "http://text-generation-webui.example/v1",
+            ),
+        ] {
+            providers.insert(
+                name.to_string(),
+                ProviderConfig {
+                    api_key: None,
+                    base_url: base_url.to_string(),
+                    model: None,
+                    headers: HashMap::new(),
+                    thinking: ThinkingConfig::default(),
+                },
+            );
+        }
+
+        let config = AppConfig {
+            proxy: ProxyConfig {
+                target: "local".to_string(),
+                ..Default::default()
+            },
+            providers,
+            hooks: HooksConfig::default(),
+            session: SessionConfig::default(),
+            keybindings: KeybindingsConfig::default(),
+            vdd: VddConfig::default(),
+            guardrails: GuardrailsConfig::default(),
+            permissions: PermissionsConfig::default(),
+            memory: MemoryConfig::default(),
+            web_fetch: WebFetchConfig::default(),
+            policy: crate::services::policy::EnterprisePolicy::default(),
+            managed_settings_path: None,
+        };
+
+        for (target, expected_url) in [
+            ("LMStudio", "http://lmstudio.example/v1"),
+            ("LOCALAI", "http://localai.example/v1"),
+            (
+                "Text-Generation-WebUI",
+                "http://text-generation-webui.example/v1",
+            ),
+        ] {
+            assert_eq!(
+                config
+                    .get_provider(target)
+                    .map(|provider| provider.base_url.as_str()),
+                Some(expected_url),
+                "mixed-case target {target} must use its configured provider key before falling back to generic local"
+            );
+        }
     }
 
     #[test]

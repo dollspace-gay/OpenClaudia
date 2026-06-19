@@ -247,6 +247,28 @@ providers:
     .expect("config file");
 }
 
+fn write_lmstudio_provider_config_with_base_url(cwd: &tempfile::TempDir, base_url: &str) {
+    let config_dir = cwd.path().join(".openclaudia");
+    fs::create_dir_all(&config_dir).expect("config dir");
+    fs::write(
+        config_dir.join("config.yaml"),
+        format!(
+            r#"
+proxy:
+  port: 8080
+  host: "127.0.0.1"
+  target: local
+providers:
+  local:
+    base_url: http://127.0.0.1:1
+  lmstudio:
+    base_url: {base_url}
+"#,
+        ),
+    )
+    .expect("config file");
+}
+
 fn write_local_provider_config_with_stop_hook(cwd: &tempfile::TempDir, base_url: &str) {
     let config_dir = cwd.path().join(".openclaudia");
     fs::create_dir_all(&config_dir).expect("config dir");
@@ -1407,6 +1429,33 @@ fn print_accepts_keyless_local_provider_and_sends_no_auth_header() {
     assert!(
         output.status.success(),
         "print should succeed for keyless local provider; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "local ok\n");
+}
+
+#[test]
+fn print_mixed_case_lmstudio_target_uses_lmstudio_config() {
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    let (server, base_url) = spawn_local_sse_server_rejecting_auth();
+    write_lmstudio_provider_config_with_base_url(&cwd, &base_url);
+
+    let output = isolated_command(&cwd, &home)
+        .args(["--target", "LMStudio", "--print", "hello"])
+        .output()
+        .expect("openclaudia --print must run");
+
+    let server_result = server.join().expect("local SSE server thread should join");
+    assert!(
+        server_result.is_ok(),
+        "LMStudio SSE server failed, which usually means --target LMStudio used the wrong provider config: {:?}",
+        server_result.err()
+    );
+    assert!(
+        output.status.success(),
+        "print should succeed for mixed-case LMStudio using providers.lmstudio; stdout={:?} stderr={:?}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
