@@ -14,6 +14,7 @@
 use openclaudia::tools::registry::{registry, ToolContext};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use tempfile::TempDir;
 
 fn dispatch(name: &str, args: &HashMap<String, Value>) -> (String, bool) {
     let mut ctx = ToolContext {
@@ -60,19 +61,22 @@ fn enter_worktree_with_empty_branch_returns_required_error() {
 }
 
 #[test]
-fn enter_worktree_branch_as_number_treated_as_empty() {
+fn enter_worktree_branch_as_number_returns_validation_error() {
     let args = args_with(&[("branch", json!(42))]);
     let (msg, is_err) = dispatch("enter_worktree", &args);
     assert!(is_err);
-    assert!(msg.contains("branch name is required"));
+    assert!(
+        msg.contains("Invalid 'branch' argument: expected string"),
+        "wrong-type branch MUST be rejected clearly; got {msg:?}"
+    );
 }
 
 #[test]
-fn enter_worktree_branch_as_null_treated_as_empty() {
+fn enter_worktree_branch_as_null_returns_validation_error() {
     let args = args_with(&[("branch", Value::Null)]);
     let (msg, is_err) = dispatch("enter_worktree", &args);
     assert!(is_err);
-    assert!(msg.contains("branch name is required"));
+    assert!(msg.contains("Invalid 'branch' argument: expected string"));
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -296,9 +300,58 @@ fn exit_worktree_with_no_args_never_panics() {
 }
 
 #[test]
+fn exit_worktree_path_as_number_returns_validation_error() {
+    let args = args_with(&[("path", json!(42))]);
+    let (msg, is_err) = dispatch("exit_worktree", &args);
+    assert!(is_err);
+    assert!(
+        msg.contains("Invalid 'path' argument: expected string"),
+        "wrong-type path MUST be rejected clearly; got {msg:?}"
+    );
+}
+
+#[test]
+fn exit_worktree_path_as_null_returns_validation_error() {
+    let args = args_with(&[("path", Value::Null)]);
+    let (msg, is_err) = dispatch("exit_worktree", &args);
+    assert!(is_err);
+    assert!(msg.contains("Invalid 'path' argument: expected string"));
+}
+
+#[test]
 fn exit_worktree_with_arbitrary_args_never_panics() {
     let args = args_with(&[("worktree", json!("ignored")), ("path", json!("/x"))]);
     let (_msg, _is_err) = dispatch("exit_worktree", &args);
+}
+
+#[test]
+fn exit_worktree_apply_changes_wrong_type_returns_validation_error() {
+    let dir = TempDir::new().expect("tempdir");
+    let args = args_with(&[
+        ("path", json!(dir.path().to_string_lossy().to_string())),
+        ("apply_changes", json!("true")),
+    ]);
+    let (msg, is_err) = dispatch("exit_worktree", &args);
+    assert!(is_err);
+    assert!(
+        msg.contains("Invalid 'apply_changes' argument: expected boolean"),
+        "wrong-type apply_changes MUST be rejected before git checks; got {msg:?}"
+    );
+}
+
+#[test]
+fn exit_worktree_discard_changes_wrong_type_returns_validation_error() {
+    let dir = TempDir::new().expect("tempdir");
+    let args = args_with(&[
+        ("path", json!(dir.path().to_string_lossy().to_string())),
+        ("discard_changes", json!(["yes"])),
+    ]);
+    let (msg, is_err) = dispatch("exit_worktree", &args);
+    assert!(is_err);
+    assert!(
+        msg.contains("Invalid 'discard_changes' argument: expected boolean"),
+        "wrong-type discard_changes MUST be rejected before git checks; got {msg:?}"
+    );
 }
 
 #[test]

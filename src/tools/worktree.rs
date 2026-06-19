@@ -29,6 +29,7 @@
 //! file / lsp tool calls) is tracked separately — see the follow-up issue
 //! filed against #345.
 
+use crate::tools::args::ToolArgError;
 use crate::tools::args::ToolArgs as _;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -321,11 +322,17 @@ fn git_in(cwd: &Path, args: &[&str]) -> Result<std::process::Output, String> {
 pub fn execute_enter_worktree<S: std::hash::BuildHasher>(
     args: &HashMap<String, Value, S>,
 ) -> (String, bool) {
-    let branch = args
-        .get("branch")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let branch = match args.get("branch") {
+        None => "",
+        Some(Value::String(branch)) => branch,
+        Some(_) => {
+            return ToolArgError::WrongType {
+                key: "branch",
+                expected: "string",
+            }
+            .into_tool_error();
+        }
+    };
 
     if branch.is_empty() {
         return ("Error: branch name is required".to_string(), true);
@@ -334,7 +341,7 @@ pub fn execute_enter_worktree<S: std::hash::BuildHasher>(
     // Crosslink #408: validate the branch name BEFORE any other git call.
     // This rejects shell-metacharacters, control chars, option-injection
     // prefixes, and forwards remaining rules to `git check-ref-format`.
-    if let Err(e) = validate_branch_name(&branch) {
+    if let Err(e) = validate_branch_name(branch) {
         return (format!("Error: {e}"), true);
     }
 
@@ -353,7 +360,7 @@ pub fn execute_enter_worktree<S: std::hash::BuildHasher>(
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map_or_else(|| cwd.clone(), |s| PathBuf::from(s.trim()));
 
-    let worktree_dir = git_root.join(".worktrees").join(&branch);
+    let worktree_dir = git_root.join(".worktrees").join(branch);
 
     // Crosslink #624: duplicate-session guard. If this exact worktree path
     // is already tracked as active (by canonical equality), return a no-op
@@ -376,7 +383,7 @@ pub fn execute_enter_worktree<S: std::hash::BuildHasher>(
     }
 
     let base_branch = get_current_branch_at(&cwd).unwrap_or_else(|| "HEAD".to_string());
-    create_worktree_on_disk(&cwd, &worktree_dir, &branch, &base_branch)
+    create_worktree_on_disk(&cwd, &worktree_dir, branch, &base_branch)
 }
 
 /// Run `git worktree add` (with the existing-branch retry path) and surface
@@ -509,7 +516,17 @@ fn worktree_has_uncommitted_changes(worktree_path: &Path) -> Result<bool, String
 fn validate_exit_request<S: std::hash::BuildHasher>(
     args: &HashMap<String, Value, S>,
 ) -> Result<ExitContext, (String, bool)> {
-    let path_arg = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+    let path_arg = match args.get("path") {
+        None => "",
+        Some(Value::String(path)) => path,
+        Some(_) => {
+            return Err(ToolArgError::WrongType {
+                key: "path",
+                expected: "string",
+            }
+            .into_tool_error());
+        }
+    };
     if path_arg.is_empty() {
         return Err((
             "Error: 'path' is required — exit_worktree no longer reads the \
@@ -958,6 +975,15 @@ mod tests {
     }
 
     #[test]
+    fn enter_worktree_rejects_wrong_type_branch() {
+        let mut args = HashMap::new();
+        args.insert("branch".to_string(), serde_json::json!(42));
+        let (msg, is_err) = execute_enter_worktree(&args);
+        assert!(is_err);
+        assert!(msg.contains("Invalid 'branch' argument: expected string"));
+    }
+
+    #[test]
     fn test_list_worktrees() {
         let _lock = cwd_lock();
         let (msg, is_err) = execute_list_worktrees();
@@ -1029,6 +1055,15 @@ mod tests {
             msg.contains("'path' is required"),
             "error message must mention required path; got: {msg}"
         );
+    }
+
+    #[test]
+    fn exit_worktree_rejects_wrong_type_path() {
+        let mut args = HashMap::new();
+        args.insert("path".to_string(), serde_json::json!(42));
+        let (msg, is_err) = execute_exit_worktree(&args);
+        assert!(is_err);
+        assert!(msg.contains("Invalid 'path' argument: expected string"));
     }
 
     #[test]
