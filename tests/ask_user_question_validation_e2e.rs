@@ -5,9 +5,9 @@
 //! Sprint 137 of the verification effort. Sprint 82 covered
 //! tool control signals; this file pins the validation
 //! arms invoked through the registry dispatch path:
-//! missing `questions` arg, 0/5+ questions, duplicate
+//! missing/wrong-type `questions` arg, 0/5+ questions, duplicate
 //! question text, duplicate option labels, missing
-//! required option fields, oversize headers.
+//! or wrong-type required fields, oversize headers.
 
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::expect_used)]
@@ -49,24 +49,27 @@ fn missing_questions_arg_returns_error() {
 }
 
 #[test]
-fn questions_arg_as_string_treated_as_missing() {
+fn questions_arg_as_string_returns_validation_error() {
     let args = args_with_questions(json!("not an array"));
-    let (_msg, is_err) = dispatch_ask_user(&args);
+    let (msg, is_err) = dispatch_ask_user(&args);
     assert!(is_err);
+    assert_eq!(msg, "Invalid 'questions' argument: expected array");
 }
 
 #[test]
-fn questions_arg_as_object_treated_as_missing() {
+fn questions_arg_as_object_returns_validation_error() {
     let args = args_with_questions(json!({"key": "value"}));
-    let (_msg, is_err) = dispatch_ask_user(&args);
+    let (msg, is_err) = dispatch_ask_user(&args);
     assert!(is_err);
+    assert_eq!(msg, "Invalid 'questions' argument: expected array");
 }
 
 #[test]
-fn questions_arg_as_null_treated_as_missing() {
+fn questions_arg_as_null_returns_validation_error() {
     let args = args_with_questions(Value::Null);
-    let (_msg, is_err) = dispatch_ask_user(&args);
+    let (msg, is_err) = dispatch_ask_user(&args);
     assert!(is_err);
+    assert_eq!(msg, "Invalid 'questions' argument: expected array");
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -128,6 +131,21 @@ fn question_missing_question_field_returns_error() {
 }
 
 #[test]
+fn question_wrong_type_question_field_returns_error() {
+    let args = args_with_questions(json!([{
+        "question": 42,
+        "header": "Q1",
+        "options": [
+            {"label": "A", "description": "a"},
+            {"label": "B", "description": "b"},
+        ]
+    }]));
+    let (msg, is_err) = dispatch_ask_user(&args);
+    assert!(is_err);
+    assert_eq!(msg, "Question 0 'question' must be a string");
+}
+
+#[test]
 fn question_missing_header_field_returns_error() {
     let args = args_with_questions(json!([{
         "question": "Pick?",
@@ -142,6 +160,33 @@ fn question_missing_header_field_returns_error() {
         msg.contains("'header'") || msg.contains("header"),
         "MUST mention missing 'header'; got {msg:?}"
     );
+}
+
+#[test]
+fn question_wrong_type_header_field_returns_error() {
+    let args = args_with_questions(json!([{
+        "question": "Pick?",
+        "header": ["Q1"],
+        "options": [
+            {"label": "A", "description": "a"},
+            {"label": "B", "description": "b"},
+        ]
+    }]));
+    let (msg, is_err) = dispatch_ask_user(&args);
+    assert!(is_err);
+    assert_eq!(msg, "Question 0 'header' must be a string");
+}
+
+#[test]
+fn question_wrong_type_options_field_returns_error() {
+    let args = args_with_questions(json!([{
+        "question": "Pick?",
+        "header": "Q1",
+        "options": "A or B"
+    }]));
+    let (msg, is_err) = dispatch_ask_user(&args);
+    assert!(is_err);
+    assert_eq!(msg, "Question 0 'options' must be an array");
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -241,6 +286,21 @@ fn option_missing_label_returns_error() {
 }
 
 #[test]
+fn option_wrong_type_label_returns_error() {
+    let args = args_with_questions(json!([{
+        "question": "Pick?",
+        "header": "Pick",
+        "options": [
+            {"label": 42, "description": "a"},
+            {"label": "B", "description": "b"},
+        ]
+    }]));
+    let (msg, is_err) = dispatch_ask_user(&args);
+    assert!(is_err);
+    assert_eq!(msg, "Question 0 option 0 'label' must be a string");
+}
+
+#[test]
 fn option_missing_description_returns_error() {
     let args = args_with_questions(json!([{
         "question": "Pick?",
@@ -256,6 +316,21 @@ fn option_missing_description_returns_error() {
         msg.contains("'description'") || msg.contains("description"),
         "MUST mention missing description; got {msg:?}"
     );
+}
+
+#[test]
+fn option_wrong_type_description_returns_error() {
+    let args = args_with_questions(json!([{
+        "question": "Pick?",
+        "header": "Pick",
+        "options": [
+            {"label": "A", "description": null},
+            {"label": "B", "description": "b"},
+        ]
+    }]));
+    let (msg, is_err) = dispatch_ask_user(&args);
+    assert!(is_err);
+    assert_eq!(msg, "Question 0 option 0 'description' must be a string");
 }
 
 #[test]

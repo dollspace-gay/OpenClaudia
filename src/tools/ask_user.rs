@@ -12,14 +12,28 @@ const HEADER_CHIP_WIDTH: usize = 12;
 /// Pull the `questions` array out of the raw tool arguments and apply the
 /// outer 1-4 count bound.  Returns the borrowed slice on success.
 fn parse_args(args: &HashMap<String, Value>) -> Result<&[Value], String> {
-    let questions = args
-        .get("questions")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| "Missing 'questions' argument".to_string())?;
+    let questions = match args.get("questions") {
+        None => return Err("Missing 'questions' argument".to_string()),
+        Some(Value::Array(questions)) => questions,
+        Some(_) => return Err("Invalid 'questions' argument: expected array".to_string()),
+    };
     if questions.is_empty() || questions.len() > 4 {
         return Err("Must provide 1-4 questions".to_string());
     }
     Ok(questions.as_slice())
+}
+
+fn required_string_field<'a>(
+    value: &'a Value,
+    field: &'static str,
+    missing_msg: impl FnOnce() -> String,
+    wrong_type_msg: impl FnOnce() -> String,
+) -> Result<&'a str, String> {
+    match value.get(field) {
+        None => Err(missing_msg()),
+        Some(Value::String(text)) => Ok(text),
+        Some(_) => Err(wrong_type_msg()),
+    }
 }
 
 /// Validate the shape of a single option object.  Index `i` and `j` are
@@ -30,18 +44,23 @@ fn validate_option(
     opt: &Value,
     seen: &mut HashSet<String>,
 ) -> Result<(), String> {
-    let label = opt
-        .get("label")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| format!("Question {i} option {j} missing 'label'"))?;
+    let label = required_string_field(
+        opt,
+        "label",
+        || format!("Question {i} option {j} missing 'label'"),
+        || format!("Question {i} option {j} 'label' must be a string"),
+    )?;
     if !seen.insert(label.to_string()) {
         return Err(format!(
             "Question {i} option labels must be unique; '{label}' appears more than once"
         ));
     }
-    if opt.get("description").and_then(|v| v.as_str()).is_none() {
-        return Err(format!("Question {i} option {j} missing 'description'"));
-    }
+    let _description = required_string_field(
+        opt,
+        "description",
+        || format!("Question {i} option {j} missing 'description'"),
+        || format!("Question {i} option {j} 'description' must be a string"),
+    )?;
     // `preview` is optional (CC parity).  When present it must be a string —
     // fail loudly rather than silently dropping it.
     if let Some(v) = opt.get("preview") {
@@ -58,15 +77,19 @@ fn validate_option(
 /// enforce cross-question uniqueness — that belongs in
 /// [`validate_question_set`].
 fn validate_question(i: usize, q: &Value) -> Result<&str, String> {
-    let question_text = q
-        .get("question")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| format!("Question {i} missing 'question' field"))?;
+    let question_text = required_string_field(
+        q,
+        "question",
+        || format!("Question {i} missing 'question' field"),
+        || format!("Question {i} 'question' must be a string"),
+    )?;
 
-    let header = q
-        .get("header")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| format!("Question {i} missing 'header' field"))?;
+    let header = required_string_field(
+        q,
+        "header",
+        || format!("Question {i} missing 'header' field"),
+        || format!("Question {i} 'header' must be a string"),
+    )?;
     // CC uses `.length`, which for ASCII matches byte count.  For multi-byte
     // UTF-8 we use chars().count() so a header like "日本語" (3 chars, 9
     // bytes) fits the same way users expect in CC.
@@ -87,10 +110,11 @@ fn validate_question(i: usize, q: &Value) -> Result<&str, String> {
         }
     }
 
-    let opts = q
-        .get("options")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| format!("Question {i} missing 'options' field"))?;
+    let opts = match q.get("options") {
+        None => return Err(format!("Question {i} missing 'options' field")),
+        Some(Value::Array(opts)) => opts,
+        Some(_) => return Err(format!("Question {i} 'options' must be an array")),
+    };
     if opts.len() < 2 || opts.len() > 4 {
         return Err(format!(
             "Question {} must have 2-4 options, got {}",
