@@ -122,6 +122,12 @@ pub fn validate_final_answer(
         ));
     }
 
+    validate_command_claims(
+        summary,
+        &hydrated_evidence,
+        summary_claims_verification_success(summary),
+    )?;
+
     let file_claims = extract_file_claims(summary);
     for claim in file_claims {
         let backed_by_file_observation = hydrated_evidence.iter().any(|obs| {
@@ -279,6 +285,82 @@ fn is_test_command_text(command: &str) -> bool {
         "ctest",
     ];
     NEEDLES.iter().any(|needle| command.contains(needle))
+}
+
+fn validate_command_claims(
+    summary: &str,
+    evidence: &[&crate::ledger::Observation],
+    require_success: bool,
+) -> Result<(), Denial> {
+    for command in extract_command_claims(summary) {
+        let backed_by_command_observation = evidence
+            .iter()
+            .any(|obs| command_observation_matches_claim(obs, command, require_success));
+        if !backed_by_command_observation {
+            let requirement = if require_success {
+                "matching successful command observation"
+            } else {
+                "matching command observation"
+            };
+            return Err(Denial::new(format!(
+                "final command claim requires {requirement}: {command}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn extract_command_claims(summary: &str) -> Vec<&'static str> {
+    const COMMANDS: &[&str] = &[
+        "cargo fmt --check",
+        "cargo nextest",
+        "cargo clippy",
+        "cargo check",
+        "cargo test",
+        "npm run test",
+        "npm test",
+        "pnpm run test",
+        "pnpm test",
+        "yarn run test",
+        "yarn test",
+        "bun test",
+        "python -m pytest",
+        "pytest",
+        "go test",
+        "zig test",
+        "swift test",
+        "mvn test",
+        "gradle test",
+        "make test",
+        "ctest",
+    ];
+    let lower = summary.to_ascii_lowercase();
+    let mut claims = Vec::new();
+    for command in COMMANDS {
+        if lower.contains(command) && !claims.iter().any(|existing| command.starts_with(existing)) {
+            claims.push(*command);
+        }
+    }
+    claims
+}
+
+fn command_observation_matches_claim(
+    observation: &crate::ledger::Observation,
+    claimed_command: &str,
+    require_success: bool,
+) -> bool {
+    let ObservationKind::CommandRun {
+        argv, exit_code, ..
+    } = &observation.kind
+    else {
+        return false;
+    };
+    if require_success && *exit_code != 0 {
+        return false;
+    }
+    argv.join(" ")
+        .to_ascii_lowercase()
+        .contains(claimed_command)
 }
 
 fn has_recent_negation(tokens: &[String], idx: usize) -> bool {
@@ -558,6 +640,102 @@ mod tests {
             denial.reason(),
             "final successful verification claims require a successful command observation"
         );
+    }
+
+    #[test]
+    fn final_named_command_claim_requires_matching_command_observation() {
+        let mut ledger = RealityLedger::new();
+        let command = ledger
+            .observe_command_run("/tmp", vec!["cargo".into(), "check".into()], 0, "", "")
+            .expect("command");
+        let verification = ledger
+            .append(
+                Authority::Verifier,
+                ObservationKind::Verification {
+                    passed: true,
+                    command: Some("cargo check".to_string()),
+                    findings: Vec::new(),
+                },
+            )
+            .expect("verification");
+        let summary = format!("cargo clippy passed cleanly [{command}] [{verification}].");
+
+        let denial = validate_cited_final_answer(&summary, &ledger).expect_err("denied");
+
+        assert_eq!(
+            denial.reason(),
+            "final command claim requires matching successful command observation: cargo clippy"
+        );
+    }
+
+    #[test]
+    fn final_named_command_success_rejects_failed_match_even_with_other_success() {
+        let mut ledger = RealityLedger::new();
+        let failed_clippy = ledger
+            .observe_command_run(
+                "/tmp",
+                vec!["cargo".into(), "clippy".into()],
+                1,
+                "",
+                "clippy failed",
+            )
+            .expect("failed clippy");
+        let successful_check = ledger
+            .observe_command_run("/tmp", vec!["cargo".into(), "check".into()], 0, "", "")
+            .expect("successful check");
+        let verification = ledger
+            .append(
+                Authority::Verifier,
+                ObservationKind::Verification {
+                    passed: true,
+                    command: Some("cargo check".to_string()),
+                    findings: Vec::new(),
+                },
+            )
+            .expect("verification");
+        let summary = format!(
+            "cargo clippy passed cleanly [{failed_clippy}] [{successful_check}] [{verification}]."
+        );
+
+        let denial = validate_cited_final_answer(&summary, &ledger).expect_err("denied");
+
+        assert_eq!(
+            denial.reason(),
+            "final command claim requires matching successful command observation: cargo clippy"
+        );
+    }
+
+    #[test]
+    fn final_named_command_claim_accepts_matching_command_observation() {
+        let mut ledger = RealityLedger::new();
+        let command = ledger
+            .observe_command_run(
+                "/tmp",
+                vec![
+                    "cargo".into(),
+                    "clippy".into(),
+                    "--all-targets".into(),
+                    "--all-features".into(),
+                ],
+                0,
+                "",
+                "",
+            )
+            .expect("command");
+        let verification = ledger
+            .append(
+                Authority::Verifier,
+                ObservationKind::Verification {
+                    passed: true,
+                    command: Some("cargo clippy --all-targets --all-features".to_string()),
+                    findings: Vec::new(),
+                },
+            )
+            .expect("verification");
+        let summary = format!("cargo clippy passed cleanly [{command}] [{verification}].");
+
+        validate_cited_final_answer(&summary, &ledger)
+            .expect("matching command observation grounds named command claim");
     }
 
     #[test]
