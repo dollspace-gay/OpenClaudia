@@ -533,6 +533,46 @@ fn tool_search_max_results_schema_advertises_bounds() {
 }
 
 #[test]
+fn grounding_context_schema_advertises_id_and_stale_contract() {
+    let def = registry()
+        .get("grounding_context")
+        .expect("grounding_context registered")
+        .definition();
+    let ids_schema = def
+        .pointer("/function/parameters/properties/ids")
+        .expect("grounding_context ids schema");
+    let include_stale_schema = def
+        .pointer("/function/parameters/properties/include_stale")
+        .expect("grounding_context include_stale schema");
+
+    assert_eq!(
+        ids_schema.get("type").and_then(Value::as_str),
+        Some("array"),
+        "grounding_context ids schema must advertise an array"
+    );
+    assert_eq!(
+        ids_schema.pointer("/items/type").and_then(Value::as_str),
+        Some("string"),
+        "grounding_context ids schema must advertise string observation IDs"
+    );
+    assert_eq!(
+        ids_schema.get("minItems").and_then(Value::as_u64),
+        Some(1),
+        "grounding_context ids schema must advertise the enforced lower bound"
+    );
+    assert_eq!(
+        ids_schema.get("maxItems").and_then(Value::as_u64),
+        Some(16),
+        "grounding_context ids schema must advertise the enforced ceiling"
+    );
+    assert_eq!(
+        include_stale_schema.get("type").and_then(Value::as_str),
+        Some("boolean"),
+        "grounding_context include_stale schema must match runtime boolean validation"
+    );
+}
+
+#[test]
 fn file_tool_path_descriptions_match_relative_path_support() {
     for (tool_name, path_property) in [
         ("read_file", "path"),

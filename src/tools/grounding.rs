@@ -10,10 +10,10 @@ pub fn execute_grounding_context(args: &HashMap<String, Value>) -> (String, bool
         Ok(ids) => ids,
         Err(err) => return (err, true),
     };
-    let include_stale = args
-        .get("include_stale")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let include_stale = match parse_include_stale(args) {
+        Ok(include_stale) => include_stale,
+        Err(err) => return (err, true),
+    };
 
     let session_key = super::todo::current_session_key();
     let ledger = if let Some(shared) = crate::ledger::active_ledger_for_session(&session_key) {
@@ -83,6 +83,14 @@ fn parse_obs_ids(args: &HashMap<String, Value>) -> Result<Vec<ObsId>, String> {
         }
     }
     Ok(ids)
+}
+
+fn parse_include_stale(args: &HashMap<String, Value>) -> Result<bool, String> {
+    args.get("include_stale").map_or(Ok(false), |value| {
+        value
+            .as_bool()
+            .ok_or_else(|| "'include_stale' must be a boolean".to_string())
+    })
 }
 
 fn hydrate_from_ledger(
@@ -331,6 +339,21 @@ mod tests {
         assert!(
             !ledger_path.exists(),
             "grounding_context must not create a ledger while hydrating evidence"
+        );
+    }
+
+    #[test]
+    fn grounding_context_rejects_non_boolean_include_stale() {
+        let args = HashMap::from([
+            ("ids".to_string(), json!([ObsId::new().to_string()])),
+            ("include_stale".to_string(), json!("true")),
+        ]);
+        let (content, is_error) = execute_grounding_context(&args);
+
+        assert!(is_error, "{content}");
+        assert!(
+            content.contains("'include_stale' must be a boolean"),
+            "unexpected error: {content}"
         );
     }
 }
