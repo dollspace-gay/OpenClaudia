@@ -18,6 +18,7 @@
 //! | [`ToolArgs::arg_str_strict`]         | required string, reject wrong type        |
 //! | [`ToolArgs::arg_string`]             | same, owned `String`                      |
 //! | [`ToolArgs::arg_str_opt`]            | optional string, no error                 |
+//! | [`ToolArgs::arg_str_opt_strict`]     | optional string, reject wrong type        |
 //! | [`ToolArgs::arg_str_or_strict`]      | optional string default, reject wrong type|
 //! | [`ToolArgs::arg_bool_or_strict`]     | optional bool, reject wrong type          |
 //!
@@ -287,6 +288,15 @@ pub trait ToolArgs {
     /// drop-in replacement for `args.get(k).and_then(|v| v.as_str())`.
     fn arg_str_opt(&self, key: &str) -> Option<&str>;
 
+    /// Optional string argument. `None` when absent, but present non-string
+    /// values produce a type-specific validation error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ToolArgError::WrongType`] when `key` is present but not a
+    /// JSON string.
+    fn arg_str_opt_strict(&self, key: &'static str) -> Result<Option<&str>, ToolArgError>;
+
     /// Optional string argument with a fallback default for absent values,
     /// while rejecting present non-string values.
     ///
@@ -330,6 +340,17 @@ impl<S: BuildHasher> ToolArgs for HashMap<String, Value, S> {
 
     fn arg_str_opt(&self, key: &str) -> Option<&str> {
         self.get(key).and_then(Value::as_str)
+    }
+
+    fn arg_str_opt_strict(&self, key: &'static str) -> Result<Option<&str>, ToolArgError> {
+        match self.get(key) {
+            None => Ok(None),
+            Some(Value::String(value)) => Ok(Some(value.as_str())),
+            Some(_) => Err(ToolArgError::WrongType {
+                key,
+                expected: "string",
+            }),
+        }
     }
 
     fn arg_str_or_strict<'a>(
@@ -461,6 +482,34 @@ mod tests {
         let m = make();
         assert_eq!(m.arg_str_opt("absent"), None);
         assert_eq!(m.arg_str_opt("count"), None, "number must not coerce");
+    }
+
+    // ── arg_str_opt_strict ─────────────────────────────────────────────
+
+    #[test]
+    fn arg_str_opt_strict_returns_some_for_string_value() {
+        let m = make();
+        assert_eq!(m.arg_str_opt_strict("name").unwrap(), Some("alice"));
+    }
+
+    #[test]
+    fn arg_str_opt_strict_returns_none_when_missing() {
+        let m = make();
+        assert_eq!(m.arg_str_opt_strict("absent").unwrap(), None);
+    }
+
+    #[test]
+    fn arg_str_opt_strict_errors_when_present_with_wrong_type() {
+        let m = make();
+        let err = m.arg_str_opt_strict("count").unwrap_err();
+        assert_eq!(
+            err,
+            ToolArgError::WrongType {
+                key: "count",
+                expected: "string",
+            }
+        );
+        assert_eq!(err.to_string(), "Invalid 'count' argument: expected string");
     }
 
     // ── arg_str_or_strict ──────────────────────────────────────────────

@@ -1943,22 +1943,25 @@ pub fn execute_task_tool<S: BuildHasher>(
     args: &HashMap<String, Value, S>,
     app_config: &AppConfig,
 ) -> (String, bool) {
-    let Some(description) = args.get("description").and_then(|v| v.as_str()) else {
-        return ("Missing 'description' argument".to_string(), true);
+    let description = match args.arg_str_strict("description") {
+        Ok(description) => description,
+        Err(err) => return err.into_tool_error(),
     };
 
-    let Some(prompt) = args.get("prompt").and_then(|v| v.as_str()) else {
-        return ("Missing 'prompt' argument".to_string(), true);
+    let prompt = match args.arg_str_strict("prompt") {
+        Ok(prompt) => prompt,
+        Err(err) => return err.into_tool_error(),
     };
 
     // Handle resume: if resume ID is provided, load previous transcript
-    let resume_id = args
-        .get("resume")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let resume_id = match args.arg_str_opt_strict("resume") {
+        Ok(resume) => resume.map(String::from),
+        Err(err) => return err.into_tool_error(),
+    };
 
-    let Some(subagent_type_str) = args.get("subagent_type").and_then(|v| v.as_str()) else {
-        return ("Missing 'subagent_type' argument".to_string(), true);
+    let subagent_type_str = match args.arg_str_strict("subagent_type") {
+        Ok(subagent_type) => subagent_type,
+        Err(err) => return err.into_tool_error(),
     };
 
     let Some(agent_type) = AgentType::parse_task_type(subagent_type_str) else {
@@ -1977,15 +1980,15 @@ pub fn execute_task_tool<S: BuildHasher>(
     };
 
     // Resolve model: map friendly names to actual model IDs
-    let model_override = args
-        .get("model")
-        .and_then(|v| v.as_str())
-        .map(|m| resolve_model_name(m, &app_config.proxy.target));
+    let model_override = match args.arg_str_opt_strict("model") {
+        Ok(model) => model.map(|m| resolve_model_name(m, &app_config.proxy.target)),
+        Err(err) => return err.into_tool_error(),
+    };
 
-    let isolation = args
-        .get("isolation")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let isolation = match args.arg_str_opt_strict("isolation") {
+        Ok(isolation) => isolation.map(String::from),
+        Err(err) => return err.into_tool_error(),
+    };
 
     let config = SubagentConfig {
         agent_type,
@@ -2141,23 +2144,27 @@ fn dispatch_subagent_sync(
 pub fn execute_agent_output_tool<S: BuildHasher>(
     args: &HashMap<String, Value, S>,
 ) -> (String, bool) {
-    let Some(agent_id) = args.get("agent_id").and_then(|v| v.as_str()) else {
-        // List all agents if no ID provided
-        let agents = BACKGROUND_AGENTS.list();
-        if agents.is_empty() {
-            return ("No background agents running.".to_string(), false);
+    let agent_id = match args.arg_str_opt_strict("agent_id") {
+        Ok(Some(agent_id)) => agent_id,
+        Ok(None) => {
+            // List all agents if no ID provided
+            let agents = BACKGROUND_AGENTS.list();
+            if agents.is_empty() {
+                return ("No background agents running.".to_string(), false);
+            }
+            let mut result = format!("Background agents ({}):\n", agents.len());
+            for (id, agent_type, task, finished) in agents {
+                let status = if finished { "finished" } else { "running" };
+                let task_preview = if task.len() > 50 {
+                    format!("{}...", safe_truncate(&task, 50))
+                } else {
+                    task
+                };
+                let _ = writeln!(result, "  {id} [{agent_type:?}] [{status}]: {task_preview}");
+            }
+            return (result, false);
         }
-        let mut result = format!("Background agents ({}):\n", agents.len());
-        for (id, agent_type, task, finished) in agents {
-            let status = if finished { "finished" } else { "running" };
-            let task_preview = if task.len() > 50 {
-                format!("{}...", safe_truncate(&task, 50))
-            } else {
-                task
-            };
-            let _ = writeln!(result, "  {id} [{agent_type:?}] [{status}]: {task_preview}");
-        }
-        return (result, false);
+        Err(err) => return err.into_tool_error(),
     };
 
     let block = match args.arg_bool_or_strict("block", false) {
@@ -2266,13 +2273,14 @@ pub fn execute_agent_output_tool<S: BuildHasher>(
 
 /// Execute the `TaskStop` tool.
 pub fn execute_task_stop_tool<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String, bool) {
-    let Some(agent_id) = args.get("agent_id").and_then(|v| v.as_str()) else {
-        return ("Missing 'agent_id' argument".to_string(), true);
+    let agent_id = match args.arg_str_strict("agent_id") {
+        Ok(agent_id) => agent_id,
+        Err(err) => return err.into_tool_error(),
     };
-    let reason = args
-        .get("reason")
-        .and_then(|v| v.as_str())
-        .unwrap_or("stopped by task_stop");
+    let reason = match args.arg_str_opt_strict("reason") {
+        Ok(reason) => reason.unwrap_or("stopped by task_stop"),
+        Err(err) => return err.into_tool_error(),
+    };
 
     BACKGROUND_AGENTS
         .stop(agent_id, reason)
@@ -2968,6 +2976,58 @@ mod tests {
     }
 
     #[test]
+    fn task_tool_rejects_non_string_required_arguments() {
+        let app_config = issue719_app_config();
+
+        for (field, expected) in [
+            (
+                "description",
+                "Invalid 'description' argument: expected string",
+            ),
+            ("prompt", "Invalid 'prompt' argument: expected string"),
+            (
+                "subagent_type",
+                "Invalid 'subagent_type' argument: expected string",
+            ),
+        ] {
+            let mut args = HashMap::from([
+                ("description".to_string(), json!("scan repo")),
+                ("prompt".to_string(), json!("scan the repository")),
+                ("subagent_type".to_string(), json!("explore")),
+            ]);
+            args.insert(field.to_string(), json!(42));
+
+            let (msg, is_err) = execute_task_tool(&args, &app_config);
+
+            assert!(is_err, "{field} must reject non-string values: {msg}");
+            assert!(msg.contains(expected), "unexpected error: {msg}");
+        }
+    }
+
+    #[test]
+    fn task_tool_rejects_non_string_optional_arguments() {
+        let app_config = issue719_app_config();
+
+        for (field, expected) in [
+            ("resume", "Invalid 'resume' argument: expected string"),
+            ("model", "Invalid 'model' argument: expected string"),
+            ("isolation", "Invalid 'isolation' argument: expected string"),
+        ] {
+            let mut args = HashMap::from([
+                ("description".to_string(), json!("scan repo")),
+                ("prompt".to_string(), json!("scan the repository")),
+                ("subagent_type".to_string(), json!("explore")),
+            ]);
+            args.insert(field.to_string(), json!(42));
+
+            let (msg, is_err) = execute_task_tool(&args, &app_config);
+
+            assert!(is_err, "{field} must reject non-string values: {msg}");
+            assert!(msg.contains(expected), "unexpected error: {msg}");
+        }
+    }
+
+    #[test]
     fn agent_output_rejects_non_boolean_block() {
         let args = HashMap::from([
             ("agent_id".to_string(), json!("missing-agent")),
@@ -2979,6 +3039,19 @@ mod tests {
         assert!(is_err, "non-boolean block must error: {msg}");
         assert!(
             msg.contains("Invalid 'block' argument: expected boolean"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn agent_output_rejects_non_string_agent_id_when_present() {
+        let args = HashMap::from([("agent_id".to_string(), json!(42))]);
+
+        let (msg, is_err) = execute_agent_output_tool(&args);
+
+        assert!(is_err, "non-string agent_id must error: {msg}");
+        assert!(
+            msg.contains("Invalid 'agent_id' argument: expected string"),
             "unexpected error: {msg}"
         );
     }
@@ -3306,6 +3379,37 @@ mod tests {
         assert_eq!(
             agent.error.lock().unwrap().as_deref(),
             Some("user cancelled")
+        );
+        let _ = BACKGROUND_AGENTS.remove(&id);
+    }
+
+    #[test]
+    fn task_stop_rejects_non_string_agent_id() {
+        let args = HashMap::from([("agent_id".to_string(), json!(42))]);
+
+        let (msg, is_err) = execute_task_stop_tool(&args);
+
+        assert!(is_err, "non-string agent_id must error: {msg}");
+        assert!(
+            msg.contains("Invalid 'agent_id' argument: expected string"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn task_stop_rejects_non_string_reason() {
+        let id = BACKGROUND_AGENTS.register(AgentType::Plan, "reason type check");
+        let args = HashMap::from([
+            ("agent_id".to_string(), json!(id)),
+            ("reason".to_string(), json!(42)),
+        ]);
+
+        let (msg, is_err) = execute_task_stop_tool(&args);
+
+        assert!(is_err, "non-string reason must error: {msg}");
+        assert!(
+            msg.contains("Invalid 'reason' argument: expected string"),
+            "unexpected error: {msg}"
         );
         let _ = BACKGROUND_AGENTS.remove(&id);
     }
