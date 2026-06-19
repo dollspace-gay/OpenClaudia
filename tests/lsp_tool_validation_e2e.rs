@@ -37,7 +37,7 @@ fn args_with(entries: &[(&str, Value)]) -> HashMap<String, Value> {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section A — Missing file_path arg
+// Section A — Missing/wrong-type file_path arg
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -51,27 +51,27 @@ fn missing_file_path_arg_returns_error() {
 }
 
 #[test]
-fn file_path_arg_as_number_treated_as_missing() {
+fn file_path_arg_as_number_returns_validation_error() {
     let args = args_with(&[("file_path", json!(42))]);
     let (msg, is_err) = dispatch_lsp(&args);
     assert!(is_err);
-    assert!(msg.contains("file_path"));
+    assert_eq!(msg, "Invalid 'file_path' argument: expected string");
 }
 
 #[test]
-fn file_path_arg_as_array_treated_as_missing() {
+fn file_path_arg_as_array_returns_validation_error() {
     let args = args_with(&[("file_path", json!(["a", "b"]))]);
     let (msg, is_err) = dispatch_lsp(&args);
     assert!(is_err);
-    assert!(msg.contains("file_path"));
+    assert_eq!(msg, "Invalid 'file_path' argument: expected string");
 }
 
 #[test]
-fn file_path_arg_as_null_treated_as_missing() {
+fn file_path_arg_as_null_returns_validation_error() {
     let args = args_with(&[("file_path", Value::Null)]);
     let (msg, is_err) = dispatch_lsp(&args);
     assert!(is_err);
-    assert!(msg.contains("file_path"));
+    assert_eq!(msg, "Invalid 'file_path' argument: expected string");
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -178,7 +178,7 @@ fn outgoing_calls_rejects_non_object_hierarchy_item() {
         ]);
         let (msg, is_err) = dispatch_lsp(&args);
         assert!(is_err);
-        assert!(msg.contains("hierarchy_item"), "got {msg:?}");
+        assert_eq!(msg, "Invalid 'hierarchy_item' argument: expected object");
     }
 }
 
@@ -334,7 +334,35 @@ fn action_arg_as_number_returns_validation_error() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section F — line + character coercion
+// Section F — Optional query validation
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn query_arg_as_number_returns_validation_error_before_extension_gate() {
+    let args = args_with(&[
+        ("file_path", json!("/x.unknownext")),
+        ("action", json!("workspaceSymbol")),
+        ("query", json!(42)),
+    ]);
+    let (msg, is_err) = dispatch_lsp(&args);
+    assert!(is_err);
+    assert_eq!(msg, "Invalid 'query' argument: expected string");
+}
+
+#[test]
+fn query_arg_as_object_returns_validation_error_for_non_workspace_action() {
+    let args = args_with(&[
+        ("file_path", json!("/x.unknownext")),
+        ("action", json!("hover")),
+        ("query", json!({"symbol": "main"})),
+    ]);
+    let (msg, is_err) = dispatch_lsp(&args);
+    assert!(is_err);
+    assert_eq!(msg, "Invalid 'query' argument: expected string");
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Section G — line + character coercion
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -391,7 +419,7 @@ fn negative_line_arg_returns_validation_error() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Section G — Cross-validation
+// Section H — Cross-validation
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]

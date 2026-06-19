@@ -660,8 +660,9 @@ fn detect_language_server(file_path: &str) -> Option<(&'static str, Vec<&'static
 /// Execute an LSP action
 #[must_use]
 pub fn execute_lsp<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String, bool) {
-    let Some(file_path) = args.get("file_path").and_then(|v| v.as_str()) else {
-        return ("Error: file_path is required".to_string(), true);
+    let file_path = match parse_lsp_file_path_arg(args.get("file_path")) {
+        Ok(file_path) => file_path,
+        Err(msg) => return (msg, true),
     };
 
     let action = match parse_lsp_action_arg(args.get("action")) {
@@ -669,16 +670,10 @@ pub fn execute_lsp<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String,
         Err(msg) => return (msg, true),
     };
 
-    if matches!(action, LspAction::IncomingCalls | LspAction::OutgoingCalls)
-        && !matches!(args.get("hierarchy_item"), Some(Value::Object(_)))
-    {
-        return (
-            "Error: hierarchy_item object is required for incomingCalls/outgoingCalls. \
-             Run prepareCallHierarchy first and pass one returned CallHierarchyItem."
-                .to_string(),
-            true,
-        );
-    }
+    let hierarchy_item = match parse_lsp_hierarchy_item_arg(action, args.get("hierarchy_item")) {
+        Ok(hierarchy_item) => hierarchy_item,
+        Err(msg) => return (msg, true),
+    };
 
     let line = match parse_lsp_line_arg(args.get("line")) {
         Ok(line) => line,
@@ -686,6 +681,10 @@ pub fn execute_lsp<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String,
     };
     let character = match parse_lsp_character_arg(args.get("character")) {
         Ok(character) => character,
+        Err(msg) => return (msg, true),
+    };
+    let query = match parse_lsp_query_arg(args.get("query")) {
+        Ok(query) => query,
         Err(msg) => return (msg, true),
     };
 
@@ -742,11 +741,8 @@ pub fn execute_lsp<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String,
     // pre-fetched `hierarchy_item` (the value returned by
     // prepareCallHierarchy). Both are optional pass-through context.
     let extras = LspRequestExtras {
-        query: args
-            .get("query")
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        hierarchy_item: args.get("hierarchy_item").cloned(),
+        query,
+        hierarchy_item,
     };
 
     // Run the server, send initialize + request, get response
@@ -764,6 +760,14 @@ pub fn execute_lsp<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String,
             false,
         ),
         Err(e) => (format!("LSP error: {e}"), true),
+    }
+}
+
+fn parse_lsp_file_path_arg(value: Option<&Value>) -> Result<&str, String> {
+    match value {
+        None => Err("Error: file_path is required".to_string()),
+        Some(Value::String(file_path)) => Ok(file_path),
+        Some(_) => Err("Invalid 'file_path' argument: expected string".to_string()),
     }
 }
 
@@ -791,6 +795,30 @@ fn parse_lsp_action_arg(value: Option<&Value>) -> Result<LspAction, String> {
              hover, documentSymbols, workspaceSymbol, goToImplementation, \
              prepareCallHierarchy, incomingCalls, outgoingCalls"
         )),
+    }
+}
+
+fn parse_lsp_hierarchy_item_arg(
+    action: LspAction,
+    value: Option<&Value>,
+) -> Result<Option<Value>, String> {
+    match value {
+        Some(Value::Object(_)) => Ok(value.cloned()),
+        Some(_) => Err("Invalid 'hierarchy_item' argument: expected object".to_string()),
+        None if matches!(action, LspAction::IncomingCalls | LspAction::OutgoingCalls) => Err(
+            "Error: hierarchy_item object is required for incomingCalls/outgoingCalls. \
+                 Run prepareCallHierarchy first and pass one returned CallHierarchyItem."
+                .to_string(),
+        ),
+        None => Ok(None),
+    }
+}
+
+fn parse_lsp_query_arg(value: Option<&Value>) -> Result<Option<String>, String> {
+    match value {
+        None => Ok(None),
+        Some(Value::String(query)) => Ok(Some(query.clone())),
+        Some(_) => Err("Invalid 'query' argument: expected string".to_string()),
     }
 }
 
