@@ -2017,6 +2017,54 @@ fn auth_logout_removes_native_session_store_without_deleting_shared_credentials(
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn auth_logout_removes_broken_native_oauth_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let home = tempfile::tempdir().expect("home tempdir");
+    let xdg_data = home.path().join(".local/share");
+    let store_dir = xdg_data.join("openclaudia");
+    fs::create_dir_all(&store_dir).expect("oauth store dir");
+    let native_store = store_dir.join("oauth_sessions.json");
+    symlink(store_dir.join("missing-target.json"), &native_store).expect("broken oauth symlink");
+    assert!(
+        !native_store.exists(),
+        "fixture should be a broken symlink so Path::exists would miss it"
+    );
+    assert!(
+        native_store.symlink_metadata().is_ok(),
+        "broken symlink fixture should exist as a path entry"
+    );
+
+    let output = isolated_command(&cwd, &home)
+        .args(["auth", "--logout"])
+        .output()
+        .expect("openclaudia auth --logout must run");
+
+    assert!(
+        output.status.success(),
+        "auth --logout should remove a broken native OAuth symlink; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("Native OAuth sessions cleared")
+            && combined.contains("Shared Claude credentials were not deleted"),
+        "logout output should report the native cache cleanup; got {combined:?}"
+    );
+    assert!(
+        native_store.symlink_metadata().is_err(),
+        "auth --logout must remove the broken native OAuth symlink itself"
+    );
+}
+
 #[test]
 fn start_rejects_model_flag_instead_of_ignoring_it() {
     let cwd = tempfile::tempdir().expect("cwd tempdir");

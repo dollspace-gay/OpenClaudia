@@ -35,6 +35,14 @@ fn native_oauth_session_store_path() -> Option<PathBuf> {
     dirs::data_local_dir().map(|d| d.join("openclaudia").join("oauth_sessions.json"))
 }
 
+fn native_oauth_session_store_path_exists(path: &Path) -> Result<bool, String> {
+    match path.symlink_metadata() {
+        Ok(_) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(format!("failed to inspect {}: {err}", path.display())),
+    }
+}
+
 fn native_oauth_session_store_status() -> NativeOAuthSessionStoreStatus {
     let Some(path) = native_oauth_session_store_path() else {
         return NativeOAuthSessionStoreStatus::Missing;
@@ -183,8 +191,15 @@ pub async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
         let persist_path = native_oauth_session_store_path();
 
         if let Some(path) = persist_path {
-            if path.exists() {
-                std::fs::remove_file(&path)?;
+            if native_oauth_session_store_path_exists(&path)
+                .map_err(|e| anyhow::anyhow!("could not inspect native OAuth session store: {e}"))?
+            {
+                std::fs::remove_file(&path).map_err(|e| {
+                    anyhow::anyhow!(
+                        "could not remove native OAuth session store {}: {e}",
+                        path.display()
+                    )
+                })?;
                 println!("Native OAuth sessions cleared.");
             } else {
                 println!("No native OAuth sessions to clear.");
