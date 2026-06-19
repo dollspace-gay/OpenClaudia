@@ -290,7 +290,9 @@ pub async fn cmd_auth(status: bool, logout: bool) -> anyhow::Result<()> {
 
     let session_id = session.id.clone();
     let auth_mode = session.auth_mode.clone();
-    store.store_session(session);
+    store
+        .try_store_session(session)
+        .map_err(|e| anyhow::anyhow!("failed to save native OAuth session: {e:#}"))?;
 
     println!("\nAuthentication successful!");
     println!("  Session ID: {}", safe_truncate(&session_id, 8));
@@ -345,5 +347,29 @@ mod tests {
                 "auth opener must resolve platform command with {resolver}"
             );
         }
+    }
+
+    #[test]
+    fn auth_success_message_depends_on_fallible_session_persist() {
+        let source = include_str!("auth.rs");
+        let cfg_test = source
+            .find("#[cfg(test)]")
+            .expect("test marker must be present");
+        let production = &source[..cfg_test];
+        let persist_call = production
+            .find(".try_store_session(session)")
+            .expect("auth must use the fallible OAuth session persist path");
+        let success_message = production
+            .find("Your session has been saved")
+            .expect("auth success message must be present");
+
+        assert!(
+            persist_call < success_message,
+            "auth must persist the OAuth session before claiming it was saved"
+        );
+        assert!(
+            !production.contains("store.store_session(session);"),
+            "auth must not use the best-effort OAuth session persist wrapper"
+        );
     }
 }

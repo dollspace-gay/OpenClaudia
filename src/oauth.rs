@@ -621,8 +621,19 @@ impl OAuthStore {
         challenges.remove(state)
     }
 
-    /// Store new OAuth session
-    pub fn store_session(&self, session: OAuthSession) {
+    /// Store new OAuth session and report persistence failures to the caller.
+    ///
+    /// The session is inserted into the in-memory map before the disk write so
+    /// long-running proxy/server processes can still use freshly-authenticated
+    /// credentials in this process. Callers that make a user-facing durability
+    /// claim, such as `openclaudia auth`, must use this fallible variant and
+    /// only report success after it returns `Ok(())`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session cannot be durably persisted to disk.
+    /// The session still remains available from this store's in-memory map.
+    pub fn try_store_session(&self, session: OAuthSession) -> Result<()> {
         let id = session.id.clone();
         {
             let mut sessions = self
@@ -631,8 +642,21 @@ impl OAuthStore {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             sessions.insert(id.clone(), session);
         }
-        self.persist_to_disk();
+        self.persist_to_disk()?;
         info!("OAuth session stored: {}", id);
+        Ok(())
+    }
+
+    /// Store new OAuth session.
+    ///
+    /// Compatibility wrapper for non-CLI callers that already tolerate a
+    /// process-local session when persistence is unavailable. Use
+    /// [`Self::try_store_session`] when the caller needs to surface disk write
+    /// failures to a human.
+    pub fn store_session(&self, session: OAuthSession) {
+        if let Err(e) = self.try_store_session(session) {
+            error!("Failed to persist OAuth session: {e:#}");
+        }
     }
 
     /// Retrieve session by ID
@@ -676,6 +700,14 @@ impl OAuthStore {
         }
     }
 
+    fn replace_sessions_in_memory(&self, sessions: HashMap<String, OAuthSession>) {
+        let mut guard = self
+            .sessions
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *guard = sessions;
+    }
+
     /// Persist sessions to disk with restrictive file permissions.
     ///
     /// # Security (crosslink #801)
@@ -700,14 +732,20 @@ impl OAuthStore {
     /// portable way to atomically create-with-mode, and persisting plaintext
     /// OAuth tokens to a world-readable file would be worse than losing the
     /// session on shutdown.
-    fn persist_to_disk(&self) {
+    #[allow(clippy::too_many_lines)]
+    fn persist_to_disk(&self) -> Result<()> {
         let Some(path) = &self.persist_path else {
-            return;
+            return Ok(());
         };
 
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create OAuth session directory {}",
+                    parent.display()
+                )
+            })?;
         }
 
         let local_sessions = self
@@ -720,7 +758,9 @@ impl OAuthStore {
             Ok(lock) => lock,
             Err(e) => {
                 error!("Failed to lock OAuth sessions for persist: {e:#}");
-                return;
+                return Err(e).with_context(|| {
+                    format!("failed to lock OAuth session file {}", path.display())
+                });
             }
         };
 
@@ -731,7 +771,7 @@ impl OAuthStore {
             Ok(j) => j,
             Err(e) => {
                 error!("Failed to serialize OAuth sessions: {}", e);
-                return;
+                return Err(e).context("failed to serialize OAuth sessions");
             }
         };
 
@@ -758,7 +798,12 @@ impl OAuthStore {
                         tmp_path.display(),
                         e
                     );
-                    return;
+                    return Err(e).with_context(|| {
+                        format!(
+                            "failed to create OAuth temp file {} (mode 0600, exclusive)",
+                            tmp_path.display()
+                        )
+                    });
                 }
             };
 
@@ -766,13 +811,17 @@ impl OAuthStore {
                 error!("Failed to write OAuth temp file: {}", e);
                 drop(file);
                 let _ = fs::remove_file(&tmp_path);
-                return;
+                return Err(e).with_context(|| {
+                    format!("failed to write OAuth temp file {}", tmp_path.display())
+                });
             }
             if let Err(e) = file.sync_all() {
                 error!("Failed to fsync OAuth temp file: {}", e);
                 drop(file);
                 let _ = fs::remove_file(&tmp_path);
-                return;
+                return Err(e).with_context(|| {
+                    format!("failed to fsync OAuth temp file {}", tmp_path.display())
+                });
             }
             drop(file);
 
@@ -781,7 +830,13 @@ impl OAuthStore {
             if let Err(e) = fs::rename(&tmp_path, path) {
                 error!("Failed to rename OAuth temp file: {}", e);
                 let _ = fs::remove_file(&tmp_path);
-                return;
+                return Err(e).with_context(|| {
+                    format!(
+                        "failed to move OAuth temp file {} into {}",
+                        tmp_path.display(),
+                        path.display()
+                    )
+                });
             }
 
             // Defense-in-depth: re-assert 0o600 on the destination in case
@@ -793,6 +848,12 @@ impl OAuthStore {
                     perms.set_mode(0o600);
                     if let Err(e) = fs::set_permissions(path, perms) {
                         error!("Failed to enforce 0o600 on OAuth session file: {}", e);
+                        return Err(e).with_context(|| {
+                            format!(
+                                "failed to enforce 0o600 on OAuth session file {}",
+                                path.display()
+                            )
+                        });
                     }
                 }
             }
@@ -806,14 +867,14 @@ impl OAuthStore {
                  atomically create the file with owner-only permissions. OAuth sessions will \
                  not survive process restart on this platform."
             );
-            return;
+            anyhow::bail!(
+                "refusing to persist OAuth sessions on non-Unix target: no portable way to \
+                 atomically create the file with owner-only permissions"
+            );
         }
 
-        let mut sessions = self
-            .sessions
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *sessions = merged_sessions;
+        self.replace_sessions_in_memory(merged_sessions);
+        Ok(())
     }
 }
 
@@ -1448,6 +1509,32 @@ mod tests {
         );
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    /// Binary-facing contract: callers that promise "session saved" must be
+    /// able to distinguish durable persistence from process-local storage.
+    #[cfg(unix)]
+    #[test]
+    fn try_store_session_reports_persistence_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blocked_parent = tmp.path().join("not-a-directory");
+        fs::write(&blocked_parent, b"file blocks directory creation").unwrap();
+        let path = blocked_parent.join("oauth_sessions.json");
+        let store = OAuthStore::with_persist_path(path);
+
+        let err = store
+            .try_store_session(make_session("delta-token-marker"))
+            .expect_err("try_store_session must report disk persistence failure");
+        let message = format!("{err:#}");
+
+        assert!(
+            message.contains("failed to create OAuth session directory"),
+            "unexpected persistence error: {message}"
+        );
+        assert!(
+            store.get_session("session-delta-token-marker").is_some(),
+            "failed persistence should still leave the current process with the session"
+        );
     }
 
     /// FORENSIC EVIDENCE #5: two independent store instances writing the
