@@ -96,15 +96,21 @@ fn todo_write_todos_as_null_returns_documented_error() {
     let (msg, is_err) = dispatch("todo_write", &args);
     assert!(is_err);
     // null is NOT an array → surface "must be an array".
-    assert!(
-        msg.contains("'todos' must be an array") || msg.contains("Missing 'todos' argument"),
-        "MUST surface either array-type or missing; got {msg:?}"
-    );
+    assert_eq!(msg, "'todos' must be an array");
 }
 
 // ───────────────────────────────────────────────────────────────────────────
 // Section B — Per-item field validation
 // ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn todo_item_as_string_returns_indexed_object_error() {
+    let _l = todo_lock();
+    let args = args_with(&[("todos", json!(["not an object"]))]);
+    let (msg, is_err) = dispatch("todo_write", &args);
+    assert!(is_err);
+    assert_eq!(msg, "Todo 0 must be an object");
+}
 
 #[test]
 fn todo_item_missing_content_field_returns_indexed_error() {
@@ -122,6 +128,22 @@ fn todo_item_missing_content_field_returns_indexed_error() {
         msg.contains("Todo 0 missing 'content' field"),
         "MUST surface indexed missing-content; got {msg:?}"
     );
+}
+
+#[test]
+fn todo_item_wrong_type_content_field_returns_indexed_error() {
+    let _l = todo_lock();
+    let args = args_with(&[(
+        "todos",
+        json!([{
+            "content": 42,
+            "status": "pending",
+            "activeForm": "Doing"
+        }]),
+    )]);
+    let (msg, is_err) = dispatch("todo_write", &args);
+    assert!(is_err);
+    assert_eq!(msg, "Todo 0 'content' must be a string");
 }
 
 #[test]
@@ -143,6 +165,25 @@ fn todo_item_missing_status_field_returns_indexed_error() {
 }
 
 #[test]
+fn todo_item_wrong_type_status_field_returns_indexed_error() {
+    let _l = todo_lock();
+    let args = args_with(&[(
+        "todos",
+        json!([{
+            "content": "test task",
+            "status": ["pending"],
+            "activeForm": "Testing"
+        }]),
+    )]);
+    let (msg, is_err) = dispatch("todo_write", &args);
+    assert!(is_err);
+    assert_eq!(
+        msg,
+        "Todo 0 'status' must be a string. Must be: pending, in_progress, completed"
+    );
+}
+
+#[test]
 fn todo_item_missing_active_form_field_returns_indexed_error() {
     let _l = todo_lock();
     let args = args_with(&[(
@@ -158,6 +199,22 @@ fn todo_item_missing_active_form_field_returns_indexed_error() {
         msg.contains("Todo 0 missing 'activeForm' field"),
         "MUST surface indexed missing-activeForm; got {msg:?}"
     );
+}
+
+#[test]
+fn todo_item_wrong_type_active_form_field_returns_indexed_error() {
+    let _l = todo_lock();
+    let args = args_with(&[(
+        "todos",
+        json!([{
+            "content": "test",
+            "status": "pending",
+            "activeForm": null
+        }]),
+    )]);
+    let (msg, is_err) = dispatch("todo_write", &args);
+    assert!(is_err);
+    assert_eq!(msg, "Todo 0 'activeForm' must be a string");
 }
 
 #[test]

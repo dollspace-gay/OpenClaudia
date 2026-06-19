@@ -36,6 +36,17 @@ pub enum TodoStatus {
 }
 
 impl TodoStatus {
+    const VALID_VALUES: &'static str = "pending, in_progress, completed";
+
+    fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "pending" => Some(Self::Pending),
+            "in_progress" => Some(Self::InProgress),
+            "completed" => Some(Self::Completed),
+            _ => None,
+        }
+    }
+
     /// Short single-character icon used by `execute_todo_read` to render
     /// the status alongside the content. Moved here from a stringly-typed
     /// `match` over the underlying `&str` so adding a new state is a
@@ -128,6 +139,48 @@ fn todo_lists_guard(operation: &'static str) -> Result<MutexGuard<'static, TodoL
     })
 }
 
+const fn todo_validation_error(message: String) -> (String, bool) {
+    (message, true)
+}
+
+fn required_todo_string_field<'a>(
+    i: usize,
+    item: &'a Value,
+    field: &'static str,
+) -> Result<&'a str, (String, bool)> {
+    match item.get(field) {
+        None => Err(todo_validation_error(format!(
+            "Todo {i} missing '{field}' field"
+        ))),
+        Some(Value::String(value)) => Ok(value),
+        Some(_) => Err(todo_validation_error(format!(
+            "Todo {i} '{field}' must be a string"
+        ))),
+    }
+}
+
+fn parse_todo_status(i: usize, item: &Value) -> Result<TodoStatus, (String, bool)> {
+    let Some(raw) = item.get("status") else {
+        return Err(todo_validation_error(format!(
+            "Todo {i} missing 'status' field"
+        )));
+    };
+
+    let Some(status) = raw.as_str() else {
+        return Err(todo_validation_error(format!(
+            "Todo {i} 'status' must be a string. Must be: {}",
+            TodoStatus::VALID_VALUES
+        )));
+    };
+
+    TodoStatus::from_wire(status).ok_or_else(|| {
+        todo_validation_error(format!(
+            "Todo {i} has invalid status '{status}'. Must be: {}",
+            TodoStatus::VALID_VALUES
+        ))
+    })
+}
+
 /// Write/update the todo list
 /// Parse and validate a single `todos[i]` JSON object into a [`TodoItem`].
 ///
@@ -135,39 +188,22 @@ fn todo_lists_guard(operation: &'static str) -> Result<MutexGuard<'static, TodoL
 /// tuple matching the entry-point return shape so the caller can bubble
 /// it back to the model without restringing. crosslink #973 / #979.
 fn parse_todo_item(i: usize, item: &Value) -> Result<TodoItem, (String, bool)> {
-    let content = match item.get("content").and_then(|v| v.as_str()) {
-        Some(c) if c.len() > TODO_CONTENT_MAX_BYTES => {
-            return Err((
-                format!(
-                    "Todo {i} content exceeds maximum length of {TODO_CONTENT_MAX_BYTES} bytes"
-                ),
-                true,
-            ));
-        }
-        Some(c) => c.to_string(),
-        None => return Err((format!("Todo {i} missing 'content' field"), true)),
-    };
+    if !item.is_object() {
+        return Err(todo_validation_error(format!("Todo {i} must be an object")));
+    }
 
-    let Some(raw) = item.get("status") else {
-        return Err((format!("Todo {i} missing 'status' field"), true));
-    };
-    let status: TodoStatus = serde_json::from_value(raw.clone()).map_err(|_| {
-        let displayed = raw.as_str().unwrap_or("<non-string>");
-        (
-            format!(
-                "Todo {i} has invalid status '{displayed}'. Must be: pending, in_progress, completed"
-            ),
-            true,
-        )
-    })?;
+    let content = required_todo_string_field(i, item, "content")?;
+    if content.len() > TODO_CONTENT_MAX_BYTES {
+        return Err(todo_validation_error(format!(
+            "Todo {i} content exceeds maximum length of {TODO_CONTENT_MAX_BYTES} bytes"
+        )));
+    }
 
-    let active_form = match item.get("activeForm").and_then(|v| v.as_str()) {
-        Some(a) => a.to_string(),
-        None => return Err((format!("Todo {i} missing 'activeForm' field"), true)),
-    };
+    let status = parse_todo_status(i, item)?;
+    let active_form = required_todo_string_field(i, item, "activeForm")?.to_string();
 
     Ok(TodoItem {
-        content,
+        content: content.to_string(),
         status,
         active_form,
     })
