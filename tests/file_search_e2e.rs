@@ -226,6 +226,13 @@ fn glob_missing_pattern_arg_errors() {
     );
 }
 
+#[test]
+fn glob_non_string_pattern_arg_errors_before_search() {
+    let (msg, is_err) = glob(&json!({"pattern": 42}));
+    assert!(is_err, "non-string pattern must error");
+    assert_eq!(msg, "Invalid 'pattern' argument: expected string");
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Section C — grep
 // ───────────────────────────────────────────────────────────────────────────
@@ -332,6 +339,13 @@ fn grep_missing_pattern_arg_errors() {
         msg.to_lowercase().contains("pattern"),
         "msg must mention 'pattern'; got {msg:?}"
     );
+}
+
+#[test]
+fn grep_non_string_pattern_arg_errors_before_search() {
+    let (msg, is_err) = grep(&json!({"pattern": ["needle"]}));
+    assert!(is_err, "non-string pattern must error");
+    assert_eq!(msg, "Invalid 'pattern' argument: expected string");
 }
 
 #[test]

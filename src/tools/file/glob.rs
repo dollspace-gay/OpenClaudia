@@ -56,9 +56,9 @@ const SKIP_DIRS: &[&str] = &[
 /// Returns `(stdout, is_error)`. Errors include: missing pattern, invalid
 /// pattern (uncompilable as regex), invalid `path` (jail violation).
 pub fn execute_glob(args: &HashMap<String, Value>) -> (String, bool) {
-    let pattern = match args.arg_str("pattern") {
+    let pattern = match args.arg_str_strict("pattern") {
         Ok(p) => p,
-        Err(e) => return (e.to_string(), true),
+        Err(e) => return e.into_tool_error(),
     };
 
     let raw_path = match args.arg_str_or_strict("path", ".") {
@@ -309,6 +309,17 @@ mod tests {
         let (out, err) = execute_glob(&args);
         assert!(err, "missing pattern must be an error: {out}");
         assert!(out.contains("pattern"), "error must name the arg: {out}");
+    }
+
+    #[test]
+    fn glob_rejects_non_string_pattern() {
+        let mut args = HashMap::new();
+        args.insert("pattern".to_string(), json!(42));
+
+        let (out, err) = execute_glob(&args);
+
+        assert!(err, "non-string pattern must be an error: {out}");
+        assert_eq!(out, "Invalid 'pattern' argument: expected string");
     }
 
     #[test]
