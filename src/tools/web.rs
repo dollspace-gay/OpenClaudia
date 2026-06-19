@@ -479,18 +479,24 @@ fn domain_matches(host: &str, needle: &str) -> bool {
 }
 
 /// Extract the `allowed_domains` / `blocked_domains` JSON-array args
-/// as owned `Vec<String>`s. Non-string entries are silently dropped,
-/// which matches Claude Code's Zod schema behavior (strict parse).
+/// as owned `Vec<String>`s.
 #[cfg_attr(not(feature = "browser"), allow(dead_code))]
-fn domain_list(args: &HashMap<String, Value>, key: &str) -> Vec<String> {
-    // crosslink #675: typed accessor.
-    args.arg_array(key)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
+fn parse_domain_list(args: &HashMap<String, Value>, key: &str) -> Result<Vec<String>, String> {
+    let Some(value) = args.get(key) else {
+        return Ok(Vec::new());
+    };
+    let Some(items) = value.as_array() else {
+        return Err(format!("web_search {key} must be an array of strings."));
+    };
+
+    let mut domains = Vec::with_capacity(items.len());
+    for (idx, item) in items.iter().enumerate() {
+        let Some(domain) = item.as_str() else {
+            return Err(format!("web_search {key}[{idx}] must be a string."));
+        };
+        domains.push(domain.to_string());
+    }
+    Ok(domains)
 }
 
 /// Search the web using browser-backed DuckDuckGo/Bing when compiled
@@ -517,8 +523,14 @@ pub fn execute_web_search(args: &HashMap<String, Value>) -> (String, bool) {
         Err(e) => return (e, true),
     };
 
-    let allowed = domain_list(args, "allowed_domains");
-    let blocked = domain_list(args, "blocked_domains");
+    let allowed = match parse_domain_list(args, "allowed_domains") {
+        Ok(domains) => domains,
+        Err(e) => return (e, true),
+    };
+    let blocked = match parse_domain_list(args, "blocked_domains") {
+        Ok(domains) => domains,
+        Err(e) => return (e, true),
+    };
 
     let result = web::search_web(query, limit);
 

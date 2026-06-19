@@ -19,7 +19,6 @@
 //! | [`ToolArgs::arg_str_opt`]            | optional string, no error                 |
 //! | [`ToolArgs::arg_str_or`]             | string with default                       |
 //! | [`ToolArgs::arg_bool_or`]            | bool with default                         |
-//! | [`ToolArgs::arg_array`]              | optional JSON array borrow                |
 //!
 //! `ToolArgError`'s `Display` produces the canonical phrasing
 //! `Missing 'KEY' argument`, matching the prevalent style in the codebase
@@ -273,11 +272,6 @@ pub trait ToolArgs {
     /// Boolean argument with a fallback default. Used by bash
     /// (`run_in_background`), worktree (`apply_changes`).
     fn arg_bool_or(&self, key: &str, default: bool) -> bool;
-
-    /// Optional JSON-array borrow. Drop-in replacement for
-    /// `args.get(k).and_then(|v| v.as_array())`.
-    #[cfg_attr(not(feature = "browser"), allow(dead_code))]
-    fn arg_array(&self, key: &str) -> Option<&Vec<Value>>;
 }
 
 impl<S: BuildHasher> ToolArgs for HashMap<String, Value, S> {
@@ -297,11 +291,6 @@ impl<S: BuildHasher> ToolArgs for HashMap<String, Value, S> {
 
     fn arg_bool_or(&self, key: &str, default: bool) -> bool {
         self.get(key).and_then(Value::as_bool).unwrap_or(default)
-    }
-
-    #[cfg_attr(not(feature = "browser"), allow(dead_code))]
-    fn arg_array(&self, key: &str) -> Option<&Vec<Value>> {
-        self.get(key).and_then(Value::as_array)
     }
 }
 
@@ -425,26 +414,6 @@ mod tests {
         // A string "true" is NOT coerced — match prior `as_bool` behaviour.
         let m = make();
         assert!(!m.arg_bool_or("name", false));
-    }
-
-    // ── arg_array ───────────────────────────────────────────────────────
-
-    #[test]
-    fn arg_array_returns_some_for_array_value() {
-        let m = make();
-        let arr = m.arg_array("items").expect("array present");
-        assert_eq!(arr.len(), 2);
-        assert_eq!(arr[0], json!("a"));
-    }
-
-    #[test]
-    fn arg_array_returns_none_for_missing_or_wrong_type() {
-        let m = make();
-        assert!(m.arg_array("absent").is_none());
-        assert!(
-            m.arg_array("name").is_none(),
-            "string must not look like an array"
-        );
     }
 
     // ── BuildHasher compatibility ──────────────────────────────────────

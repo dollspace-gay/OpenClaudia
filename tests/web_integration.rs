@@ -467,6 +467,47 @@ fn execute_web_search_rejects_invalid_limit_before_browser_launch() {
     }
 }
 
+#[cfg(feature = "browser")]
+#[test]
+fn execute_web_search_rejects_invalid_domain_filters_before_browser_launch() {
+    use openclaudia::tools::{execute_tool, FunctionCall, ToolCall};
+
+    for (name, field, value, expected) in [
+        (
+            "allowed_non_array",
+            "allowed_domains",
+            json!("docs.rs"),
+            "web_search allowed_domains must be an array of strings",
+        ),
+        (
+            "blocked_non_string_item",
+            "blocked_domains",
+            json!(["example.com", 42]),
+            "web_search blocked_domains[1] must be a string",
+        ),
+    ] {
+        let call = ToolCall {
+            id: format!("baddomains-{name}"),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "web_search".to_string(),
+                arguments: json!({
+                    "query": "rust release",
+                    field: value,
+                })
+                .to_string(),
+            },
+        };
+        let result = execute_tool(&call);
+        assert!(result.is_error, "domain filter case {name} should fail");
+        assert!(
+            result.content.contains(expected),
+            "invalid domain filter should fail before search backend launch; got: {}",
+            result.content
+        );
+    }
+}
+
 // ===========================================================================
 // Spec §2 — `web_search` domain filtering (post-hoc, not server-side)
 //
