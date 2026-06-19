@@ -8,7 +8,7 @@
 //! - Background execution with async tracking
 
 use crate::config::AppConfig;
-use crate::tools::{safe_truncate, ToolCall};
+use crate::tools::{args::ToolArgs as _, safe_truncate, ToolCall};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -1971,10 +1971,10 @@ pub fn execute_task_tool<S: BuildHasher>(
         );
     };
 
-    let run_in_background = args
-        .get("run_in_background")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
+    let run_in_background = match args.arg_bool_or_strict("run_in_background", false) {
+        Ok(value) => value,
+        Err(err) => return err.into_tool_error(),
+    };
 
     // Resolve model: map friendly names to actual model IDs
     let model_override = args
@@ -2160,10 +2160,10 @@ pub fn execute_agent_output_tool<S: BuildHasher>(
         return (result, false);
     };
 
-    let block = args
-        .get("block")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
+    let block = match args.arg_bool_or_strict("block", false) {
+        Ok(value) => value,
+        Err(err) => return err.into_tool_error(),
+    };
 
     let Some(agent) = BACKGROUND_AGENTS.get(agent_id) else {
         return (format!("Agent '{agent_id}' not found"), true);
@@ -2946,6 +2946,41 @@ mod tests {
         assert!(!agent.finished.load(Ordering::SeqCst));
         assert!(agent.error.lock().unwrap().is_none());
         assert!(agent.result.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn task_tool_rejects_non_boolean_run_in_background() {
+        let app_config = issue719_app_config();
+        let args = HashMap::from([
+            ("description".to_string(), json!("scan repo")),
+            ("prompt".to_string(), json!("scan the repository")),
+            ("subagent_type".to_string(), json!("explore")),
+            ("run_in_background".to_string(), json!("true")),
+        ]);
+
+        let (msg, is_err) = execute_task_tool(&args, &app_config);
+
+        assert!(is_err, "non-boolean run_in_background must error: {msg}");
+        assert!(
+            msg.contains("Invalid 'run_in_background' argument: expected boolean"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn agent_output_rejects_non_boolean_block() {
+        let args = HashMap::from([
+            ("agent_id".to_string(), json!("missing-agent")),
+            ("block".to_string(), json!("true")),
+        ]);
+
+        let (msg, is_err) = execute_agent_output_tool(&args);
+
+        assert!(is_err, "non-boolean block must error: {msg}");
+        assert!(
+            msg.contains("Invalid 'block' argument: expected boolean"),
+            "unexpected error: {msg}"
+        );
     }
 
     // ── Spec #527 behavior 2: resume loads transcript and appends new prompt ──

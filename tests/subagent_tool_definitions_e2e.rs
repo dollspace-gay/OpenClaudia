@@ -179,6 +179,13 @@ fn agent_output_tool_parameters_required_includes_agent_id() {
 }
 
 #[test]
+fn agent_output_tool_has_block_boolean_field() {
+    let def = get_agent_output_tool_definition();
+    let prop = &def["function"]["parameters"]["properties"]["block"];
+    assert_eq!(prop["type"], "boolean");
+}
+
+#[test]
 fn agent_output_tool_parameters_type_is_object() {
     let def = get_agent_output_tool_definition();
     assert_eq!(def["function"]["parameters"]["type"], "object");
