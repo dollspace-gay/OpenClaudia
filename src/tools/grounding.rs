@@ -58,7 +58,7 @@ fn parse_obs_ids(args: &HashMap<String, Value>) -> Result<Vec<ObsId>, String> {
         return Err("Missing 'ids' argument".to_string());
     };
     let Some(raw_ids) = raw_ids.as_array() else {
-        return Err("'ids' must be an array of observation ID strings".to_string());
+        return Err("Invalid 'ids' argument: expected array".to_string());
     };
     if raw_ids.is_empty() {
         return Err("'ids' must contain at least one observation ID".to_string());
@@ -89,7 +89,7 @@ fn parse_include_stale(args: &HashMap<String, Value>) -> Result<bool, String> {
     args.get("include_stale").map_or(Ok(false), |value| {
         value
             .as_bool()
-            .ok_or_else(|| "'include_stale' must be a boolean".to_string())
+            .ok_or_else(|| "Invalid 'include_stale' argument: expected boolean".to_string())
     })
 }
 
@@ -351,9 +351,9 @@ mod tests {
         let (content, is_error) = execute_grounding_context(&args);
 
         assert!(is_error, "{content}");
-        assert!(
-            content.contains("'include_stale' must be a boolean"),
-            "unexpected error: {content}"
+        assert_eq!(
+            content,
+            "Invalid 'include_stale' argument: expected boolean"
         );
     }
 }
