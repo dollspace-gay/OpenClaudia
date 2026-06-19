@@ -183,13 +183,10 @@ pub fn execute_tool_search<S: BuildHasher>(args: &HashMap<String, Value, S>) -> 
         );
     };
 
-    let max_results = args
-        .get("max_results")
-        .and_then(Value::as_u64)
-        .map_or(DEFAULT_MAX_RESULTS, |v| {
-            usize::try_from(v).unwrap_or(DEFAULT_MAX_RESULTS)
-        })
-        .clamp(1, MAX_RESULTS_CEILING);
+    let max_results = match parse_max_results(args.get("max_results")) {
+        Ok(max_results) => max_results,
+        Err(err) => return (err, true),
+    };
 
     let matches = query
         .strip_prefix("select:")
@@ -203,6 +200,25 @@ pub fn execute_tool_search<S: BuildHasher>(args: &HashMap<String, Value, S>) -> 
     }
 
     (render_envelope(&matches), false)
+}
+
+fn parse_max_results(value: Option<&Value>) -> Result<usize, String> {
+    let Some(value) = value else {
+        return Ok(DEFAULT_MAX_RESULTS);
+    };
+    let Some(raw) = value.as_u64() else {
+        return Err(format!(
+            "tool_search max_results must be an integer between 1 and {MAX_RESULTS_CEILING}"
+        ));
+    };
+    if raw == 0 {
+        return Err(format!(
+            "tool_search max_results must be an integer between 1 and {MAX_RESULTS_CEILING}"
+        ));
+    }
+    Ok(usize::try_from(raw)
+        .unwrap_or(MAX_RESULTS_CEILING)
+        .min(MAX_RESULTS_CEILING))
 }
 
 #[cfg(test)]

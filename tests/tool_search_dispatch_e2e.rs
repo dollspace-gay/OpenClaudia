@@ -8,7 +8,7 @@
 //!   - `select:Read,Edit,Grep` → direct schema lookup.
 //!   - keyword search returns ranked matches.
 //!   - `+term` forces presence in name.
-//!   - `max_results` defaults to 5 and caps at 50.
+//!   - `max_results` defaults to 5, rejects invalid values, and caps at 50.
 //!   - missing query / wrong type returns error.
 //!   - no-match returns documented message (NOT an error).
 
@@ -247,11 +247,14 @@ fn max_results_above_ceiling_clamps_to_50() {
 }
 
 #[test]
-fn max_results_zero_falls_back_to_minimum_1() {
-    // PINS DOC: clamp(1, 50) — 0 raised to 1.
+fn max_results_zero_returns_validation_error() {
     let args = args_with(&[("query", json!("file")), ("max_results", json!(0))]);
-    let (_text, is_err) = dispatch_tool_search(&args);
-    assert!(!is_err);
+    let (text, is_err) = dispatch_tool_search(&args);
+    assert!(is_err);
+    assert!(
+        text.contains("tool_search max_results must be an integer between 1 and 50"),
+        "zero max_results MUST be rejected; got {text:?}"
+    );
 }
 
 #[test]
@@ -269,11 +272,25 @@ fn max_results_default_is_5_when_omitted() {
 }
 
 #[test]
-fn max_results_negative_falls_back_to_default() {
-    // u64::as_u64 returns None for negative → defaults to 5.
+fn max_results_negative_returns_validation_error() {
     let args = args_with(&[("query", json!("file")), ("max_results", json!(-1))]);
-    let (_text, _is_err) = dispatch_tool_search(&args);
-    // No panic.
+    let (text, is_err) = dispatch_tool_search(&args);
+    assert!(is_err);
+    assert!(
+        text.contains("tool_search max_results must be an integer between 1 and 50"),
+        "negative max_results MUST be rejected; got {text:?}"
+    );
+}
+
+#[test]
+fn max_results_string_returns_validation_error() {
+    let args = args_with(&[("query", json!("file")), ("max_results", json!("10"))]);
+    let (text, is_err) = dispatch_tool_search(&args);
+    assert!(is_err);
+    assert!(
+        text.contains("tool_search max_results must be an integer between 1 and 50"),
+        "string max_results MUST be rejected; got {text:?}"
+    );
 }
 
 #[test]
