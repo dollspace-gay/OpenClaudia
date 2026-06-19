@@ -2745,7 +2745,7 @@ fn required_acp_search_string_arg(
     key: &'static str,
 ) -> Result<String, String> {
     tool_args
-        .arg_str(key)
+        .arg_str_strict(key)
         .map(str::to_owned)
         .map_err(|e| e.to_string())
 }
@@ -3457,7 +3457,17 @@ mod search_security_tests {
 
         let tool_args = args_from_values(&[("pattern", json!(42))]);
         let err = build_search_argv("glob", &tool_args).expect_err("pattern must be a string");
-        assert!(err.contains("Missing 'pattern' argument"), "{err}");
+        assert!(
+            err.contains("Invalid 'pattern' argument: expected string"),
+            "{err}"
+        );
+
+        let tool_args = args_from_values(&[("pattern", json!(["needle"]))]);
+        let err = build_search_argv("grep", &tool_args).expect_err("pattern must be a string");
+        assert!(
+            err.contains("Invalid 'pattern' argument: expected string"),
+            "{err}"
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //! Sprint 149 of the verification effort. Sprint 26
 //! covered direct execute_* calls; this file pins the
 //! registry-dispatched path so the wire-facing contract
-//! matches, exercising the typed `arg_str` /
+//! matches, exercising the typed `arg_str_strict` /
 //! `arg_str_or_strict` accessors (#675) end to end.
 
 #![allow(clippy::missing_panics_doc)]
@@ -50,27 +50,27 @@ fn glob_missing_pattern_arg_returns_documented_error() {
 }
 
 #[test]
-fn glob_pattern_as_number_treated_as_missing() {
+fn glob_pattern_as_number_returns_validation_error() {
     let args = args_with(&[("pattern", json!(42))]);
     let (msg, is_err) = dispatch("glob", &args);
     assert!(is_err);
-    assert!(msg.contains("Missing 'pattern' argument"));
+    assert_eq!(msg, "Invalid 'pattern' argument: expected string");
 }
 
 #[test]
-fn glob_pattern_as_array_treated_as_missing() {
+fn glob_pattern_as_array_returns_validation_error() {
     let args = args_with(&[("pattern", json!(["*.rs"]))]);
     let (msg, is_err) = dispatch("glob", &args);
     assert!(is_err);
-    assert!(msg.contains("Missing 'pattern' argument"));
+    assert_eq!(msg, "Invalid 'pattern' argument: expected string");
 }
 
 #[test]
-fn glob_pattern_as_null_treated_as_missing() {
+fn glob_pattern_as_null_returns_validation_error() {
     let args = args_with(&[("pattern", Value::Null)]);
     let (msg, is_err) = dispatch("glob", &args);
     assert!(is_err);
-    assert!(msg.contains("Missing 'pattern' argument"));
+    assert_eq!(msg, "Invalid 'pattern' argument: expected string");
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -168,19 +168,19 @@ fn grep_missing_pattern_arg_returns_documented_error() {
 }
 
 #[test]
-fn grep_pattern_as_number_treated_as_missing() {
+fn grep_pattern_as_number_returns_validation_error() {
     let args = args_with(&[("pattern", json!(42))]);
     let (msg, is_err) = dispatch("grep", &args);
     assert!(is_err);
-    assert!(msg.contains("Missing 'pattern' argument"));
+    assert_eq!(msg, "Invalid 'pattern' argument: expected string");
 }
 
 #[test]
-fn grep_pattern_as_array_treated_as_missing() {
+fn grep_pattern_as_array_returns_validation_error() {
     let args = args_with(&[("pattern", json!(["foo"]))]);
     let (msg, is_err) = dispatch("grep", &args);
     assert!(is_err);
-    assert!(msg.contains("Missing 'pattern' argument"));
+    assert_eq!(msg, "Invalid 'pattern' argument: expected string");
 }
 
 // ───────────────────────────────────────────────────────────────────────────

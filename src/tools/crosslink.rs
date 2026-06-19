@@ -129,7 +129,7 @@ fn open_db() -> Result<Database, String> {
 #[must_use]
 pub fn execute_crosslink<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String, bool) {
     // crosslink #675: typed accessor.
-    let cmd_args = match args.arg_str("args") {
+    let cmd_args = match args.arg_str_strict("args") {
         Ok(c) => c,
         Err(e) => return e.into_tool_error(),
     };
