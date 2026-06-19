@@ -2100,10 +2100,6 @@ impl App {
             } else {
                 self.effort_level = self.effort_level.cycled();
             }
-            self.messages.add(DisplayMessage::system(format!(
-                "Effort level: {}",
-                self.effort_level
-            )));
             return true;
         }
         false
@@ -3220,11 +3216,7 @@ fn validate_agentic_final_response(session_id: &str, content: &str) -> Result<()
     crate::grounded_loop::validate_agentic_final_response(session_id, content)
 }
 
-fn validate_final_response_or_report(
-    session_id: &str,
-    content: &str,
-    tx: &std::sync::mpsc::Sender<super::events::AppEvent>,
-) -> bool {
+fn validate_final_response_for_history(session_id: &str, content: &str) -> bool {
     if content.trim().is_empty() {
         return true;
     }
@@ -3235,13 +3227,6 @@ fn validate_final_response_or_report(
                 session_id,
                 reason,
                 "final answer rejected by grounding gate"
-            );
-            send_or_warn(
-                tx,
-                super::events::AppEvent::ApiError(format!(
-                    "Final answer failed grounding gate: {reason}"
-                )),
-                session_id,
             );
             false
         }
@@ -3648,11 +3633,7 @@ async fn run_agentic_loop(ctx: &AgenticCtx<'_>, session_messages: &mut Vec<serde
                         .as_deref()
                         .filter(|text| !text.is_empty());
                     if !followup.content.is_empty() || reasoning.is_some() {
-                        if !validate_final_response_or_report(
-                            ctx.session_id,
-                            &followup.content,
-                            ctx.tx,
-                        ) {
+                        if !validate_final_response_for_history(ctx.session_id, &followup.content) {
                             break;
                         }
                         let mut message =
@@ -3861,7 +3842,12 @@ async fn handle_turn_result(
             ctx.session_id,
         );
     } else if !turn_result.content.is_empty() {
-        if !validate_final_response_or_report(ctx.session_id, &turn_result.content, ctx.tx) {
+        if !validate_final_response_for_history(ctx.session_id, &turn_result.content) {
+            send_or_warn(
+                ctx.tx,
+                super::events::AppEvent::ResponseDone,
+                ctx.session_id,
+            );
             return;
         }
         let mut message =
@@ -4360,6 +4346,19 @@ mod tests {
         assert!(app.next_turn_effort_level.is_none());
     }
 
+    #[test]
+    fn tui_effort_slash_updates_status_without_chat_message() {
+        let mut app = App::new("claude-sonnet-4-6", "anthropic");
+
+        assert!(app.handle_export_effort_slash("/effort high"));
+
+        assert_eq!(app.effort_level, EffortLevel::High);
+        assert!(
+            app.messages.is_empty(),
+            "/effort is already reflected in the status bar and must not add chat noise"
+        );
+    }
+
     fn provider_config_without_key(base_url: &str) -> crate::config::ProviderConfig {
         crate::config::ProviderConfig {
             api_key: None,
@@ -4418,7 +4417,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tui_direct_final_rejects_uncited_response() {
+    async fn tui_direct_final_rejects_uncited_response_without_user_visible_error() {
         let session_id = "tui-direct-final-denied";
         let ledger_path = reset_project_ledger(session_id);
         let (tx, rx) = mpsc::channel();
@@ -4455,19 +4454,23 @@ mod tests {
         .await;
 
         let mut saw_error = false;
+        let mut saw_done = false;
         let mut saw_sync = false;
         while let Ok(event) = rx.try_recv() {
             match event {
-                AppEvent::ApiError(msg) => {
-                    saw_error = msg.contains("Final answer failed grounding gate");
-                }
+                AppEvent::ApiError(_) => saw_error = true,
+                AppEvent::ResponseDone => saw_done = true,
                 AppEvent::SyncMessages(_) => saw_sync = true,
                 _ => {}
             }
         }
         let _ = std::fs::remove_file(ledger_path);
 
-        assert!(saw_error, "ungrounded direct final must surface an error");
+        assert!(
+            !saw_error,
+            "internal final-gate rejection must stay out of chat"
+        );
+        assert!(saw_done, "hidden rejection must still end the turn");
         assert!(
             !saw_sync,
             "ungrounded direct final must not be appended to history"

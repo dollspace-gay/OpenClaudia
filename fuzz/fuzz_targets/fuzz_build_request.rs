@@ -14,6 +14,7 @@ fuzz_target!(|data: &[u8]| {
                         &messages,
                         effort,
                         None,
+                        None,
                     );
                 }
             }

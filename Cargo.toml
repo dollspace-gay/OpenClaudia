@@ -12,7 +12,7 @@ categories = ["command-line-utilities", "development-tools"]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO"] }
 
 [dependencies]
 # Async runtime
@@ -22,7 +22,7 @@ tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["json", "ws"] }
 axum-extra = { version = "0.12", features = ["typed-header"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.7", features = ["cors", "trace"] }
 
 # HTTP client for upstream requests
 reqwest = { version = "0.13", features = ["json", "stream", "form", "query"] }
@@ -103,12 +103,12 @@ rusqlite = { version = "0.38", features = ["bundled"] }
 # notes. Deep integration replaces the legacy shell-out `chainlink`
 # tool: we call the library's `db::*` API directly (no subprocess)
 # and expose multiple OpenClaudia tools backed by the same store.
-# Pinned to a published version on crates.io
+# Pinned to the latest published version on crates.io
 # (https://crates.io/crates/crosslink). The native `sqlite3` link
 # is shared via `rusqlite = "0.38"` above — both crates must agree
-# (crosslink 0.8 still pins rusqlite ^0.38, which blocks rusqlite 0.40+)
+# (crosslink currently pins rusqlite ^0.38, which blocks rusqlite 0.40+)
 # on the libsqlite3-sys major version or cargo refuses to link.
-crosslink = "0.8"
+crosslink = "0.9.0-beta.1"
 
 # Headless browser for web scraping (optional, heavy dependency).
 # `fetch` enables auto-download of a vendored Chromium revision when no

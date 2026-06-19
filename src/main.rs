@@ -52,11 +52,7 @@ fn git_command() -> Result<Command, String> {
 }
 
 fn open_tui_log_file(dir: &Path, pid: u32) -> Option<std::fs::File> {
-    if let Err(e) = std::fs::create_dir_all(dir) {
-        eprintln!(
-            "Failed to create TUI log directory '{}': {e}",
-            dir.display()
-        );
+    if std::fs::create_dir_all(dir).is_err() {
         return None;
     }
 
@@ -67,11 +63,12 @@ fn open_tui_log_file(dir: &Path, pid: u32) -> Option<std::fs::File> {
         .open(&path)
     {
         Ok(file) => Some(file),
-        Err(e) => {
-            eprintln!("Failed to open TUI log file '{}': {e}", path.display());
-            None
-        }
+        Err(_) => None,
     }
+}
+
+fn should_redirect_tui_logs(cli: &Cli) -> bool {
+    cli.command.is_none() && !cli.tui_mode && cli.print.is_none()
 }
 
 #[derive(Parser)]
@@ -229,17 +226,16 @@ async fn main() -> anyhow::Result<()> {
 
     // Initialize logging. The full-screen ratatui TUI owns the terminal, so
     // writing log lines to stderr would smear them across the rendered frame.
-    // In that mode, once a project config exists, we redirect tracing to a
-    // per-run log file under .openclaudia/logs/; everywhere else we keep the
-    // stderr writer.
+    // In that mode we redirect tracing to a per-run log file under
+    // .openclaudia/logs/ even before project config has been created;
+    // everywhere else we keep the stderr writer.
     let filter = if cli.verbose {
         "openclaudia=debug,tower_http=debug"
     } else {
         "openclaudia=info,tower_http=warn"
     };
 
-    let tui_mode_active = cli.command.is_none() && !cli.tui_mode && cli.print.is_none();
-    let tui_file_logging_active = tui_mode_active && config::config_file_exists();
+    let tui_file_logging_active = should_redirect_tui_logs(&cli);
     let log_writer: tracing_subscriber::fmt::writer::BoxMakeWriter = if tui_file_logging_active {
         let file = open_tui_log_file(Path::new(".openclaudia/logs"), std::process::id());
         file.map_or_else(
@@ -1422,6 +1418,44 @@ mod tests {
         std::fs::write(&log_dir, b"not a directory").expect("write log-dir file");
 
         assert!(open_tui_log_file(&log_dir, 42).is_none());
+    }
+
+    #[test]
+    fn full_screen_tui_redirects_logs_without_requiring_config() {
+        let cli = Cli {
+            command: None,
+            model: None,
+            target: None,
+            resume: false,
+            session_id: None,
+            coordinator: false,
+            verbose: false,
+            dangerously_skip_permissions: false,
+            tui_mode: false,
+            mode: None,
+            print: None,
+        };
+
+        assert!(should_redirect_tui_logs(&cli));
+    }
+
+    #[test]
+    fn non_tui_commands_keep_stderr_logging() {
+        let cli = Cli {
+            command: Some(Commands::Config),
+            model: None,
+            target: None,
+            resume: false,
+            session_id: None,
+            coordinator: false,
+            verbose: false,
+            dangerously_skip_permissions: false,
+            tui_mode: false,
+            mode: None,
+            print: None,
+        };
+
+        assert!(!should_redirect_tui_logs(&cli));
     }
 
     #[test]
