@@ -472,6 +472,44 @@ fn parse_acp_bool_arg(
         })
 }
 
+fn parse_acp_read_offset_arg(value: Option<&Value>) -> Result<usize, AcpToolResult> {
+    let Some(value) = value else {
+        return Ok(0);
+    };
+    let Some(offset) = value.as_u64() else {
+        return Err(AcpToolResult {
+            content: "Error: offset must be a 1-indexed positive integer".to_string(),
+            is_error: true,
+        });
+    };
+    if offset == 0 {
+        return Err(AcpToolResult {
+            content: "Error: offset must be a 1-indexed positive integer".to_string(),
+            is_error: true,
+        });
+    }
+    Ok(usize::try_from(offset.saturating_sub(1)).unwrap_or(usize::MAX))
+}
+
+fn parse_acp_read_limit_arg(value: Option<&Value>) -> Result<Option<usize>, AcpToolResult> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let Some(limit) = value.as_u64() else {
+        return Err(AcpToolResult {
+            content: "Error: limit must be a positive integer".to_string(),
+            is_error: true,
+        });
+    };
+    if limit == 0 {
+        return Err(AcpToolResult {
+            content: "Error: limit must be a positive integer".to_string(),
+            is_error: true,
+        });
+    }
+    Ok(Some(usize::try_from(limit).unwrap_or(usize::MAX)))
+}
+
 const fn value_type_name(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
@@ -1952,6 +1990,18 @@ impl AcpServer {
             };
         };
 
+        // Match the registry read_file contract: offset is a 1-indexed
+        // positive line number, limit is a positive max-line count. Validate
+        // before asking the ACP client to read the file.
+        let offset = match parse_acp_read_offset_arg(args.get("offset")) {
+            Ok(offset) => offset,
+            Err(result) => return result,
+        };
+        let limit = match parse_acp_read_limit_arg(args.get("limit")) {
+            Ok(limit) => limit,
+            Err(result) => return result,
+        };
+
         match self
             .client_request("fs/read_text_file", Some(json!({"path": path})))
             .await
@@ -1962,19 +2012,6 @@ impl AcpServer {
                     .or_else(|| result.get("content"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-
-                // Apply offset/limit if specified
-                #[allow(clippy::cast_possible_truncation)]
-                // Line offsets/limits from JSON are always small; truncation is safe
-                let offset = args
-                    .get("offset")
-                    .and_then(serde_json::Value::as_u64)
-                    .unwrap_or(0) as usize;
-                #[allow(clippy::cast_possible_truncation)]
-                let limit = args
-                    .get("limit")
-                    .and_then(serde_json::Value::as_u64)
-                    .map(|v| v as usize);
 
                 let lines: Vec<&str> = text.lines().collect();
                 let start = offset.min(lines.len());
@@ -3727,6 +3764,106 @@ providers:
     fn next_response(rx: &mut mpsc::UnboundedReceiver<String>) -> Value {
         let line = rx.try_recv().expect("expected ACP response");
         serde_json::from_str(&line).expect("response must be JSON")
+    }
+
+    async fn respond_to_next_client_request(
+        server: &AcpServer,
+        rx: &mut mpsc::UnboundedReceiver<String>,
+        result: Value,
+    ) -> Value {
+        let line = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timed out waiting for ACP client request")
+            .expect("expected ACP client request");
+        let request: Value = serde_json::from_str(&line).expect("client request must be JSON");
+        let id = request["id"].as_u64().expect("client request id");
+        let tx = {
+            let mut pending = server.pending_responses.lock().await;
+            pending.remove(&id).expect("pending response channel")
+        };
+        tx.send(Ok(result)).expect("send fake client response");
+        request
+    }
+
+    #[tokio::test]
+    async fn acp_read_file_rejects_non_integer_offset_before_client_request() {
+        let (server, mut rx, _tmp) = test_server();
+        let args = HashMap::from([
+            ("path".to_string(), json!("src/lib.rs")),
+            ("offset".to_string(), json!("2")),
+        ]);
+
+        let result = server.acp_read_file("acp-bad-offset", &args).await;
+
+        assert!(result.is_error, "bad offset must error: {result:?}");
+        assert!(
+            result
+                .content
+                .contains("offset must be a 1-indexed positive integer"),
+            "unexpected error: {}",
+            result.content
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "bad offset must fail before fs/read_text_file request"
+        );
+    }
+
+    #[tokio::test]
+    async fn acp_read_file_rejects_zero_limit_before_client_request() {
+        let (server, mut rx, _tmp) = test_server();
+        let args = HashMap::from([
+            ("path".to_string(), json!("src/lib.rs")),
+            ("limit".to_string(), json!(0)),
+        ]);
+
+        let result = server.acp_read_file("acp-bad-limit", &args).await;
+
+        assert!(result.is_error, "zero limit must error: {result:?}");
+        assert!(
+            result.content.contains("limit must be a positive integer"),
+            "unexpected error: {}",
+            result.content
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "bad limit must fail before fs/read_text_file request"
+        );
+    }
+
+    #[tokio::test]
+    async fn acp_read_file_uses_one_indexed_offset_and_limit() {
+        let (server, mut rx, _tmp) = test_server();
+        let args = HashMap::from([
+            ("path".to_string(), json!("src/lib.rs")),
+            ("offset".to_string(), json!(2)),
+            ("limit".to_string(), json!(1)),
+        ]);
+
+        let read = server.acp_read_file("acp-window", &args);
+        let respond = async {
+            let request = respond_to_next_client_request(
+                &server,
+                &mut rx,
+                json!({"text": "first\nsecond\nthird"}),
+            )
+            .await;
+            assert_eq!(request["method"], "fs/read_text_file");
+            assert_eq!(request["params"]["path"], "src/lib.rs");
+        };
+        let (result, ()) = tokio::join!(read, respond);
+
+        assert!(!result.is_error, "valid window must succeed: {result:?}");
+        assert!(
+            result.content.contains("\tsecond"),
+            "offset=2 limit=1 must show line 2; got {}",
+            result.content
+        );
+        assert!(
+            !result.content.contains("\tfirst") && !result.content.contains("\tthird"),
+            "offset/limit window must only show one line; got {}",
+            result.content
+        );
     }
 
     #[tokio::test]
