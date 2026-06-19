@@ -1065,9 +1065,9 @@ impl PluginManager {
     ///   marketplace root or the plugin source, when the source path
     ///   is missing, or when the canonicalized plugin escapes the
     ///   marketplace boundary.
-    /// - [`PluginError::InvalidManifest`] when a `PluginSourceDef::Url`
-    ///   has no explicit `ref` (no-silent-HEAD rule, crosslink #249
-    ///   point 5) or when the source kind is `npm` / `pip`
+    /// - [`PluginError::InvalidManifest`] when a structured git
+    ///   source has no explicit `ref` (no-silent-HEAD rule, crosslink
+    ///   #249 point 5) or when the source kind is `npm` / `pip`
     ///   (unsupported).
     /// - Any error surfaced by [`git_clone`].
     fn fetch_plugin_archive(
@@ -1108,6 +1108,13 @@ impl PluginManager {
                         git_clone(url, dest, git_ref.as_deref())?
                     }
                     PluginSourceDef::GitHub(GitHubSource { repo, git_ref }) => {
+                        if git_ref.is_none() {
+                            return Err(PluginError::InvalidManifest(format!(
+                                "Plugin source GitHub repo '{repo}' has no `ref`; \
+                                 refusing to track upstream HEAD. Specify \
+                                 a tag, branch, or commit SHA in the manifest."
+                            )));
+                        }
                         let resolved_url = format!("https://github.com/{repo}.git");
                         fs::create_dir_all(plugins_dir)
                             .map_err(|e| PluginError::IoError(e.to_string()))?;
@@ -1941,13 +1948,39 @@ mod install_decomp_tests {
                     "error must call out the missing ref, got: {msg}"
                 );
             }
-            Err(PluginError::IoError(_)) => {
-                // The marketplace dir doesn't exist in this test
-                // environment, so canonicalize ran first. The guard
-                // we care about is still in place (covered by the
-                // direct code path); skip rather than fail here.
+            other => panic!("expected InvalidManifest (no `ref`), got {other:?}"),
+        }
+    }
+
+    /// `fetch_plugin_archive` applies the same no-silent-HEAD rule to
+    /// GitHub structured sources as raw URL sources.
+    #[test]
+    fn fetch_plugin_archive_rejects_github_source_without_explicit_ref() {
+        let tmp = TempDir::new().unwrap();
+        let plugins_dir = tmp.path().join("plugins");
+        let dest = plugins_dir.join("p");
+        let mp_plugin = MarketplacePlugin {
+            name: "p".to_string(),
+            source: PluginSource::Structured(PluginSourceDef::GitHub(GitHubSource {
+                repo: "owner/repo".to_string(),
+                git_ref: None,
+            })),
+            category: None,
+            tags: None,
+            strict: true,
+            description: None,
+            version: None,
+        };
+
+        let result = PluginManager::fetch_plugin_archive(&mp_plugin, "unused", &plugins_dir, &dest);
+        match result {
+            Err(PluginError::InvalidManifest(msg)) => {
+                assert!(
+                    msg.contains("owner/repo") && msg.contains("no `ref`"),
+                    "error must name the GitHub repo and missing ref, got: {msg}"
+                );
             }
-            other => panic!("expected InvalidManifest (no `ref`) or IoError, got {other:?}"),
+            other => panic!("expected InvalidManifest (no `ref`), got {other:?}"),
         }
     }
 
