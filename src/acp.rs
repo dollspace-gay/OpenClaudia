@@ -472,6 +472,59 @@ fn parse_acp_bool_arg(
         })
 }
 
+fn acp_arg_error(content: impl Into<String>) -> AcpToolResult {
+    AcpToolResult {
+        content: content.into(),
+        is_error: true,
+    }
+}
+
+fn parse_acp_required_string_arg<'a>(
+    args: &'a HashMap<String, Value>,
+    key: &'static str,
+) -> Result<&'a str, AcpToolResult> {
+    match args.get(key) {
+        None => Err(acp_arg_error(format!("Missing {key} argument"))),
+        Some(Value::String(value)) => Ok(value),
+        Some(_) => Err(acp_arg_error(format!(
+            "Invalid '{key}' argument: expected string"
+        ))),
+    }
+}
+
+fn parse_acp_required_alias_string_arg<'a>(
+    args: &'a HashMap<String, Value>,
+    primary: &'static str,
+    alias: &'static str,
+    missing_name: &'static str,
+) -> Result<&'a str, AcpToolResult> {
+    if let Some(value) = args.get(primary) {
+        return value.as_str().ok_or_else(|| {
+            acp_arg_error(format!("Invalid '{primary}' argument: expected string"))
+        });
+    }
+    if let Some(value) = args.get(alias) {
+        return value
+            .as_str()
+            .ok_or_else(|| acp_arg_error(format!("Invalid '{alias}' argument: expected string")));
+    }
+    Err(acp_arg_error(format!("Missing {missing_name} argument")))
+}
+
+fn parse_acp_optional_string_arg<'a>(
+    args: &'a HashMap<String, Value>,
+    key: &'static str,
+    default: &'a str,
+) -> Result<&'a str, AcpToolResult> {
+    match args.get(key) {
+        None => Ok(default),
+        Some(Value::String(value)) => Ok(value),
+        Some(_) => Err(acp_arg_error(format!(
+            "Invalid '{key}' argument: expected string"
+        ))),
+    }
+}
+
 fn parse_acp_read_offset_arg(value: Option<&Value>) -> Result<usize, AcpToolResult> {
     let Some(value) = value else {
         return Ok(0);
@@ -1979,15 +2032,10 @@ impl AcpServer {
         session_id: &str,
         args: &HashMap<String, Value>,
     ) -> AcpToolResult {
-        let Some(path) = args
-            .get("file_path")
-            .or_else(|| args.get("path"))
-            .and_then(|v| v.as_str())
-        else {
-            return AcpToolResult {
-                content: "Missing file_path argument".to_string(),
-                is_error: true,
-            };
+        let path = match parse_acp_required_alias_string_arg(args, "file_path", "path", "file_path")
+        {
+            Ok(path) => path,
+            Err(result) => return result,
         };
 
         // Match the registry read_file contract: offset is a 1-indexed
@@ -2043,22 +2091,15 @@ impl AcpServer {
         session_id: &str,
         args: &HashMap<String, Value>,
     ) -> AcpToolResult {
-        let Some(path) = args
-            .get("file_path")
-            .or_else(|| args.get("path"))
-            .and_then(|v| v.as_str())
-        else {
-            return AcpToolResult {
-                content: "Missing file_path argument".to_string(),
-                is_error: true,
-            };
+        let path = match parse_acp_required_alias_string_arg(args, "file_path", "path", "file_path")
+        {
+            Ok(path) => path,
+            Err(result) => return result,
         };
 
-        let Some(content) = args.get("content").and_then(|v| v.as_str()) else {
-            return AcpToolResult {
-                content: "Missing content argument".to_string(),
-                is_error: true,
-            };
+        let content = match parse_acp_required_string_arg(args, "content") {
+            Ok(content) => content,
+            Err(result) => return result,
         };
 
         let before = self
@@ -2108,29 +2149,20 @@ impl AcpServer {
         session_id: &str,
         args: &HashMap<String, Value>,
     ) -> AcpToolResult {
-        let Some(path) = args
-            .get("file_path")
-            .or_else(|| args.get("path"))
-            .and_then(|v| v.as_str())
-        else {
-            return AcpToolResult {
-                content: "Missing file_path argument".to_string(),
-                is_error: true,
-            };
+        let path = match parse_acp_required_alias_string_arg(args, "file_path", "path", "file_path")
+        {
+            Ok(path) => path,
+            Err(result) => return result,
         };
 
-        let Some(old_string) = args.get("old_string").and_then(|v| v.as_str()) else {
-            return AcpToolResult {
-                content: "Missing old_string argument".to_string(),
-                is_error: true,
-            };
+        let old_string = match parse_acp_required_string_arg(args, "old_string") {
+            Ok(old_string) => old_string,
+            Err(result) => return result,
         };
 
-        let Some(new_string) = args.get("new_string").and_then(|v| v.as_str()) else {
-            return AcpToolResult {
-                content: "Missing new_string argument".to_string(),
-                is_error: true,
-            };
+        let new_string = match parse_acp_required_string_arg(args, "new_string") {
+            Ok(new_string) => new_string,
+            Err(result) => return result,
         };
 
         let replace_all = match parse_acp_bool_arg(args, "replace_all", false) {
@@ -2217,11 +2249,9 @@ impl AcpServer {
     // -- Terminal operations via ACP client --
 
     async fn acp_bash(&self, session_id: &str, args: &HashMap<String, Value>) -> AcpToolResult {
-        let Some(command) = args.get("command").and_then(|v| v.as_str()) else {
-            return AcpToolResult {
-                content: "Missing command argument".to_string(),
-                is_error: true,
-            };
+        let command = match parse_acp_required_string_arg(args, "command") {
+            Ok(command) => command,
+            Err(result) => return result,
         };
 
         let run_in_background = match parse_acp_bool_arg(args, "run_in_background", false) {
@@ -2328,15 +2358,14 @@ impl AcpServer {
     }
 
     async fn acp_bash_output(&self, args: &HashMap<String, Value>) -> AcpToolResult {
-        let Some(terminal_id) = args
-            .get("shell_id")
-            .or_else(|| args.get("terminal_id"))
-            .and_then(|v| v.as_str())
-        else {
-            return AcpToolResult {
-                content: "Missing shell_id argument".to_string(),
-                is_error: true,
-            };
+        let terminal_id = match parse_acp_required_alias_string_arg(
+            args,
+            "shell_id",
+            "terminal_id",
+            "shell_id",
+        ) {
+            Ok(terminal_id) => terminal_id,
+            Err(result) => return result,
         };
 
         match self
@@ -2358,15 +2387,14 @@ impl AcpServer {
     }
 
     async fn acp_kill_shell(&self, args: &HashMap<String, Value>) -> AcpToolResult {
-        let Some(terminal_id) = args
-            .get("shell_id")
-            .or_else(|| args.get("terminal_id"))
-            .and_then(|v| v.as_str())
-        else {
-            return AcpToolResult {
-                content: "Missing shell_id argument".to_string(),
-                is_error: true,
-            };
+        let terminal_id = match parse_acp_required_alias_string_arg(
+            args,
+            "shell_id",
+            "terminal_id",
+            "shell_id",
+        ) {
+            Ok(terminal_id) => terminal_id,
+            Err(result) => return result,
         };
 
         match self
@@ -2389,7 +2417,10 @@ impl AcpServer {
         session_id: &str,
         args: &HashMap<String, Value>,
     ) -> AcpToolResult {
-        let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+        let path = match parse_acp_optional_string_arg(args, "path", ".") {
+            Ok(path) => path,
+            Err(result) => return result,
+        };
         let command = match acp_list_files_command(path) {
             Ok(command) => command,
             Err(content) => {
@@ -3922,6 +3953,13 @@ providers:
         serde_json::from_str(&line).expect("response must be JSON")
     }
 
+    fn assert_no_client_request(rx: &mut mpsc::UnboundedReceiver<String>, context: &str) {
+        assert!(
+            rx.try_recv().is_err(),
+            "{context} must fail before emitting an ACP client request"
+        );
+    }
+
     async fn respond_to_next_client_request(
         server: &AcpServer,
         rx: &mut mpsc::UnboundedReceiver<String>,
@@ -3939,6 +3977,24 @@ providers:
         };
         tx.send(Ok(result)).expect("send fake client response");
         request
+    }
+
+    #[tokio::test]
+    async fn acp_read_file_rejects_wrong_type_path_before_client_request() {
+        let (server, mut rx, _tmp) = test_server();
+        let args = HashMap::from([("path".to_string(), json!(["src/lib.rs"]))]);
+
+        let result = server.acp_read_file("acp-bad-path", &args).await;
+
+        assert!(result.is_error, "bad path must error: {result:?}");
+        assert!(
+            result
+                .content
+                .contains("Invalid 'path' argument: expected string"),
+            "unexpected error: {}",
+            result.content
+        );
+        assert_no_client_request(&mut rx, "bad read path");
     }
 
     #[tokio::test]
@@ -3988,6 +4044,48 @@ providers:
     }
 
     #[tokio::test]
+    async fn acp_write_file_rejects_wrong_type_content_before_client_request() {
+        let (server, mut rx, _tmp) = test_server();
+        let args = HashMap::from([
+            ("path".to_string(), json!("src/lib.rs")),
+            ("content".to_string(), json!({"text": "body"})),
+        ]);
+
+        let result = server.acp_write_file("acp-bad-content", &args).await;
+
+        assert!(result.is_error, "bad content must error: {result:?}");
+        assert!(
+            result
+                .content
+                .contains("Invalid 'content' argument: expected string"),
+            "unexpected error: {}",
+            result.content
+        );
+        assert_no_client_request(&mut rx, "bad write content");
+    }
+
+    #[tokio::test]
+    async fn acp_write_file_rejects_wrong_type_file_path_before_client_request() {
+        let (server, mut rx, _tmp) = test_server();
+        let args = HashMap::from([
+            ("file_path".to_string(), json!(42)),
+            ("content".to_string(), json!("body")),
+        ]);
+
+        let result = server.acp_write_file("acp-bad-write-path", &args).await;
+
+        assert!(result.is_error, "bad file_path must error: {result:?}");
+        assert!(
+            result
+                .content
+                .contains("Invalid 'file_path' argument: expected string"),
+            "unexpected error: {}",
+            result.content
+        );
+        assert_no_client_request(&mut rx, "bad write file_path");
+    }
+
+    #[tokio::test]
     async fn acp_read_file_uses_one_indexed_offset_and_limit() {
         let (server, mut rx, _tmp) = test_server();
         let args = HashMap::from([
@@ -4023,6 +4121,50 @@ providers:
     }
 
     #[tokio::test]
+    async fn acp_edit_file_rejects_wrong_type_old_string_before_client_request() {
+        let (server, mut rx, _tmp) = test_server();
+        let args = HashMap::from([
+            ("path".to_string(), json!("src/lib.rs")),
+            ("old_string".to_string(), json!(["old"])),
+            ("new_string".to_string(), json!("new")),
+        ]);
+
+        let result = server.acp_edit_file("acp-bad-old-string", &args).await;
+
+        assert!(result.is_error, "bad old_string must error: {result:?}");
+        assert!(
+            result
+                .content
+                .contains("Invalid 'old_string' argument: expected string"),
+            "unexpected error: {}",
+            result.content
+        );
+        assert_no_client_request(&mut rx, "bad edit old_string");
+    }
+
+    #[tokio::test]
+    async fn acp_edit_file_rejects_wrong_type_new_string_before_client_request() {
+        let (server, mut rx, _tmp) = test_server();
+        let args = HashMap::from([
+            ("path".to_string(), json!("src/lib.rs")),
+            ("old_string".to_string(), json!("old")),
+            ("new_string".to_string(), json!(["new"])),
+        ]);
+
+        let result = server.acp_edit_file("acp-bad-new-string", &args).await;
+
+        assert!(result.is_error, "bad new_string must error: {result:?}");
+        assert!(
+            result
+                .content
+                .contains("Invalid 'new_string' argument: expected string"),
+            "unexpected error: {}",
+            result.content
+        );
+        assert_no_client_request(&mut rx, "bad edit new_string");
+    }
+
+    #[tokio::test]
     async fn acp_edit_file_rejects_non_boolean_replace_all_before_client_request() {
         let (server, _rx, _tmp) = test_server();
         let args = HashMap::from([
@@ -4042,6 +4184,24 @@ providers:
             "unexpected error: {}",
             result.content
         );
+    }
+
+    #[tokio::test]
+    async fn acp_bash_rejects_wrong_type_command_before_client_request() {
+        let (server, mut rx, _tmp) = test_server();
+        let args = HashMap::from([("command".to_string(), json!(["echo nope"]))]);
+
+        let result = server.acp_bash("acp-bad-command", &args).await;
+
+        assert!(result.is_error, "bad command must error: {result:?}");
+        assert!(
+            result
+                .content
+                .contains("Invalid 'command' argument: expected string"),
+            "unexpected error: {}",
+            result.content
+        );
+        assert_no_client_request(&mut rx, "bad bash command");
     }
 
     #[tokio::test]
@@ -4065,6 +4225,60 @@ providers:
             "unexpected error: {}",
             result.content
         );
+    }
+
+    #[tokio::test]
+    async fn acp_bash_output_rejects_wrong_type_shell_id_before_client_request() {
+        let (server, mut rx, _tmp) = test_server();
+        let args = HashMap::from([("shell_id".to_string(), json!(42))]);
+
+        let result = server.acp_bash_output(&args).await;
+
+        assert!(result.is_error, "bad shell_id must error: {result:?}");
+        assert!(
+            result
+                .content
+                .contains("Invalid 'shell_id' argument: expected string"),
+            "unexpected error: {}",
+            result.content
+        );
+        assert_no_client_request(&mut rx, "bad bash_output shell_id");
+    }
+
+    #[tokio::test]
+    async fn acp_kill_shell_rejects_wrong_type_terminal_id_before_client_request() {
+        let (server, mut rx, _tmp) = test_server();
+        let args = HashMap::from([("terminal_id".to_string(), json!({"id": "term"}))]);
+
+        let result = server.acp_kill_shell(&args).await;
+
+        assert!(result.is_error, "bad terminal_id must error: {result:?}");
+        assert!(
+            result
+                .content
+                .contains("Invalid 'terminal_id' argument: expected string"),
+            "unexpected error: {}",
+            result.content
+        );
+        assert_no_client_request(&mut rx, "bad kill_shell terminal_id");
+    }
+
+    #[tokio::test]
+    async fn acp_list_files_rejects_wrong_type_path_before_client_request() {
+        let (server, mut rx, _tmp) = test_server();
+        let args = HashMap::from([("path".to_string(), json!(false))]);
+
+        let result = server.acp_list_files("acp-bad-list-path", &args).await;
+
+        assert!(result.is_error, "bad list path must error: {result:?}");
+        assert!(
+            result
+                .content
+                .contains("Invalid 'path' argument: expected string"),
+            "unexpected error: {}",
+            result.content
+        );
+        assert_no_client_request(&mut rx, "bad list_files path");
     }
 
     fn config_option<'a>(response: &'a Value, id: &str) -> &'a Value {
