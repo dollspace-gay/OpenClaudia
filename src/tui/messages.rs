@@ -192,6 +192,8 @@ impl FromStr for Mode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EffortLevel {
+    None,
+    Minimal,
     Low,
     Medium,
     High,
@@ -204,6 +206,8 @@ impl EffortLevel {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::None => "none",
+            Self::Minimal => "minimal",
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
@@ -216,6 +220,8 @@ impl EffortLevel {
     #[must_use]
     pub const fn symbol(self) -> &'static str {
         match self {
+            Self::None => "\u{25CC}",
+            Self::Minimal => "\u{25CB}",
             Self::Low => "\u{25CB}",
             Self::Medium => "\u{25D0}",
             Self::High => "\u{25CF}",
@@ -224,13 +230,67 @@ impl EffortLevel {
         }
     }
 
-    /// Cycle through Low → Medium → High → Low.
+    /// Cycle through the generic effort sequence used outside a provider
+    /// context.
     #[must_use]
     pub const fn cycled(self) -> Self {
         match self {
+            Self::None => Self::Minimal,
+            Self::Minimal => Self::Low,
             Self::Low => Self::Medium,
             Self::Medium => Self::High,
             Self::High | Self::Max | Self::Auto => Self::Low,
+        }
+    }
+
+    /// Cycle through only the effort levels that the active provider can
+    /// express without collapsing multiple choices to the same request shape.
+    #[must_use]
+    pub fn cycled_for_provider(self, provider: &str, model: &str) -> Self {
+        let options = Self::provider_options(provider, model);
+        let Some(index) = options.iter().position(|level| *level == self) else {
+            return options.first().copied().unwrap_or(Self::Medium);
+        };
+        options[(index + 1) % options.len()]
+    }
+
+    /// Return the selectable effort levels for a provider/model pair.
+    #[must_use]
+    pub fn provider_options(provider: &str, model: &str) -> &'static [Self] {
+        const OPENAI: &[EffortLevel] = &[
+            EffortLevel::None,
+            EffortLevel::Minimal,
+            EffortLevel::Low,
+            EffortLevel::Medium,
+            EffortLevel::High,
+            EffortLevel::Max,
+        ];
+        const ANTHROPIC_GEMINI: &[EffortLevel] = &[
+            EffortLevel::Low,
+            EffortLevel::Medium,
+            EffortLevel::High,
+            EffortLevel::Max,
+        ];
+        const DEEPSEEK: &[EffortLevel] = &[EffortLevel::High, EffortLevel::Max];
+        const GLM_REASONING: &[EffortLevel] = &[
+            EffortLevel::None,
+            EffortLevel::Minimal,
+            EffortLevel::High,
+            EffortLevel::Max,
+        ];
+        const THINKING_TOGGLE: &[EffortLevel] = &[EffortLevel::Auto, EffortLevel::High];
+        const LOCAL: &[EffortLevel] = &[EffortLevel::Auto];
+
+        match provider.to_ascii_lowercase().as_str() {
+            "openai" => OPENAI,
+            "anthropic" | "google" | "gemini" => ANTHROPIC_GEMINI,
+            "deepseek" => DEEPSEEK,
+            "zai" | "glm" | "zhipu" if model.eq_ignore_ascii_case("glm-5.2") => GLM_REASONING,
+            "qwen" | "alibaba" | "zai" | "glm" | "zhipu" | "kimi" | "moonshot" | "minimax" => {
+                THINKING_TOGGLE
+            }
+            "ollama" | "local" | "lmstudio" | "localai" | "text-generation-webui" => LOCAL,
+            _ => ANTHROPIC_GEMINI,
         }
     }
 }
@@ -246,6 +306,8 @@ impl FromStr for EffortLevel {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s.trim().to_ascii_lowercase().as_str() {
+            "none" | "off" => Self::None,
+            "minimal" | "min" => Self::Minimal,
             "low" | "l" => Self::Low,
             "high" | "h" => Self::High,
             "max" | "x" | "xhigh" => Self::Max,
@@ -338,8 +400,8 @@ pub struct MessageList {
     /// When the current thinking block started. Used to render elapsed
     /// seconds next to the `∴ Thinking…` indicator.
     thinking_start: Option<Instant>,
-    /// Hidden accumulator for the full thinking stream — not rendered,
-    /// but kept so callers could persist it alongside the assistant turn.
+    /// Accumulator for the full thinking stream. Rendered while live so the
+    /// user can see progress during long reasoning/tool-planning phases.
     pub thinking_buffer: String,
 }
 
@@ -357,10 +419,8 @@ impl MessageList {
         }
     }
 
-    /// Record a thinking-delta chunk. The text is accumulated into a
-    /// hidden buffer (for session persistence) and the `∴ Thinking…`
-    /// indicator is activated; the text itself is intentionally not
-    /// rendered — matching Claude Code's collapsed thinking UX.
+    /// Record a thinking-delta chunk. The text is accumulated and rendered
+    /// under the live `∴ Thinking…` indicator until the block finalizes.
     pub fn push_thinking(&mut self, text: &str) {
         if self.thinking_start.is_none() {
             self.thinking_start = Some(Instant::now());
@@ -601,12 +661,19 @@ impl MessageList {
             let elapsed = self
                 .thinking_start
                 .map_or(0.0, |s| s.elapsed().as_secs_f64());
+            let thinking_style = Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC);
             lines.push(Line::from(Span::styled(
                 format!("  \u{2234} Thinking\u{2026} ({elapsed:.1}s)"),
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::ITALIC),
+                thinking_style,
             )));
+            for line in self.thinking_buffer.lines() {
+                lines.push(Line::from(Span::styled(
+                    format!("    {line}"),
+                    thinking_style,
+                )));
+            }
             lines.push(Line::from(""));
         }
 
@@ -786,6 +853,8 @@ mod tests {
 
     #[test]
     fn effort_level_cycle_is_periodic() {
+        assert_eq!(EffortLevel::None.cycled(), EffortLevel::Minimal);
+        assert_eq!(EffortLevel::Minimal.cycled(), EffortLevel::Low);
         assert_eq!(EffortLevel::Low.cycled(), EffortLevel::Medium);
         assert_eq!(EffortLevel::Medium.cycled(), EffortLevel::High);
         assert_eq!(EffortLevel::High.cycled(), EffortLevel::Low);
@@ -795,6 +864,11 @@ mod tests {
 
     #[test]
     fn effort_level_round_trip_from_str() {
+        assert_eq!("none".parse::<EffortLevel>().unwrap(), EffortLevel::None);
+        assert_eq!(
+            "minimal".parse::<EffortLevel>().unwrap(),
+            EffortLevel::Minimal
+        );
         assert_eq!("low".parse::<EffortLevel>().unwrap(), EffortLevel::Low);
         assert_eq!(
             "medium".parse::<EffortLevel>().unwrap(),
@@ -816,6 +890,8 @@ mod tests {
     #[test]
     fn effort_level_display_matches_as_str() {
         for level in [
+            EffortLevel::None,
+            EffortLevel::Minimal,
             EffortLevel::Low,
             EffortLevel::Medium,
             EffortLevel::High,
@@ -824,6 +900,30 @@ mod tests {
         ] {
             assert_eq!(level.to_string(), level.as_str());
         }
+    }
+
+    #[test]
+    fn effort_level_provider_cycles_include_supported_extremes() {
+        assert_eq!(
+            EffortLevel::Medium.cycled_for_provider("openai", "gpt-5.5"),
+            EffortLevel::High
+        );
+        assert_eq!(
+            EffortLevel::High.cycled_for_provider("openai", "gpt-5.5"),
+            EffortLevel::Max
+        );
+        assert_eq!(
+            EffortLevel::Max.cycled_for_provider("openai", "gpt-5.5"),
+            EffortLevel::None
+        );
+        assert_eq!(
+            EffortLevel::High.cycled_for_provider("anthropic", "claude-sonnet-4-6"),
+            EffortLevel::Max
+        );
+        assert_eq!(
+            EffortLevel::Medium.cycled_for_provider("deepseek", "deepseek-v4-pro"),
+            EffortLevel::High
+        );
     }
 
     // ── MessageList integration tests ────────────────────────────────────────
@@ -870,6 +970,36 @@ mod tests {
         assert_eq!(ml.messages.len(), 1);
         assert_eq!(ml.messages[0].kind, MessageKind::Thinking);
         assert!(ml.messages[0].content.starts_with("Thought for "));
+    }
+
+    #[test]
+    fn live_thinking_renders_streamed_reasoning_text() {
+        let mut ml = MessageList::new();
+        ml.push_thinking("checking files\n");
+        ml.push_thinking("running tests");
+
+        let live_text = ml
+            .build_lines()
+            .into_iter()
+            .flat_map(|line| line.spans.into_iter().map(|span| span.content.into_owned()))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(live_text.contains("Thinking"));
+        assert!(live_text.contains("checking files"));
+        assert!(live_text.contains("running tests"));
+
+        ml.finish_thinking();
+        let finished_text = ml
+            .build_lines()
+            .into_iter()
+            .flat_map(|line| line.spans.into_iter().map(|span| span.content.into_owned()))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(finished_text.contains("Thought for "));
+        assert!(!finished_text.contains("checking files"));
+        assert!(!finished_text.contains("running tests"));
     }
 
     #[test]

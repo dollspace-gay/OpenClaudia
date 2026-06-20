@@ -146,6 +146,18 @@ fn accumulator_default_call_type_is_function() {
 }
 
 #[test]
+fn accumulator_empty_arguments_finalize_as_empty_object() {
+    let mut acc = ToolCallAccumulator::new();
+    acc.process_delta(&json!({
+        "tool_calls":[{"index":0,"id":"x","function":{"name":"todo_read","arguments":""}}]
+    }));
+
+    let finalized = acc.finalize();
+
+    assert_eq!(finalized[0].function.arguments, "{}");
+}
+
+#[test]
 fn accumulator_clear_resets_state_fully() {
     let mut acc = ToolCallAccumulator::new();
     acc.process_delta(&json!({
@@ -297,6 +309,27 @@ fn anthropic_acc_tool_use_block_assembles_input_json() {
     assert_eq!(tool_calls[0].id, "tu_1");
     assert_eq!(tool_calls[0].function.name, "bash");
     assert_eq!(tool_calls[0].function.arguments, "{\"command\":\"ls -la\"}");
+}
+
+#[test]
+fn anthropic_acc_no_input_json_finalizes_as_empty_object() {
+    let mut acc = AnthropicToolAccumulator::new();
+    acc.process_event(&json!({
+        "type": "content_block_start",
+        "index": 0,
+        "content_block": {"type": "tool_use", "id": "tu_empty", "name": "todo_read"}
+    }));
+    acc.process_event(&json!({"type": "content_block_stop", "index": 0}));
+    acc.process_event(&json!({
+        "type": "message_delta",
+        "delta": {"stop_reason": "tool_use"}
+    }));
+
+    let tool_calls = acc.finalize_tool_calls();
+    let openai_json = acc.to_openai_tool_calls_json();
+
+    assert_eq!(tool_calls[0].function.arguments, "{}");
+    assert_eq!(openai_json[0]["function"]["arguments"], "{}");
 }
 
 #[test]

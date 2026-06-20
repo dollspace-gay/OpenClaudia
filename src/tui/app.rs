@@ -577,6 +577,7 @@ fn lookup_tui_slash(text: &str) -> Option<TuiSlashHandler> {
 struct ProviderSwitchAuth {
     api_key: Option<crate::providers::ApiKey>,
     claude_code_token: Option<String>,
+    codex_responses_auth: Option<crate::codex_credentials::CodexResponsesAuth>,
 }
 
 fn missing_provider_auth_message(target: &str) -> String {
@@ -605,6 +606,7 @@ async fn resolve_provider_switch_auth(
         return Ok(ProviderSwitchAuth {
             api_key: None,
             claude_code_token: Some(creds.access_token),
+            codex_responses_auth: None,
         });
     }
 
@@ -612,13 +614,45 @@ async fn resolve_provider_switch_auth(
         return Ok(ProviderSwitchAuth {
             api_key: Some(api_key.clone()),
             claude_code_token: None,
+            codex_responses_auth: None,
         });
+    }
+
+    if target.eq_ignore_ascii_case("openai") {
+        match crate::codex_credentials::load_codex_auth() {
+            Ok(Some(crate::codex_credentials::CodexAuthMaterial::ApiKey { api_key, .. })) => {
+                let api_key = crate::providers::ApiKey::try_from_string(api_key)
+                    .map_err(|e| format!("Codex OpenAI API key is invalid: {e}"))?;
+                return Ok(ProviderSwitchAuth {
+                    api_key: Some(api_key),
+                    claude_code_token: None,
+                    codex_responses_auth: None,
+                });
+            }
+            Ok(Some(crate::codex_credentials::CodexAuthMaterial::Responses(auth))) => {
+                return Ok(ProviderSwitchAuth {
+                    api_key: None,
+                    claude_code_token: None,
+                    codex_responses_auth: Some(auth),
+                });
+            }
+            Ok(Some(crate::codex_credentials::CodexAuthMaterial::Unsupported { mode, source })) => {
+                return Err(format!(
+                    "Codex auth found via {}, but {} is not usable for OpenAI Responses in OpenClaudia.",
+                    source.display_name(),
+                    mode.display_name()
+                ));
+            }
+            Ok(None) => {}
+            Err(e) => return Err(format!("Codex credentials unusable: {e}")),
+        }
     }
 
     if crate::config::is_local_provider_name(target) {
         return Ok(ProviderSwitchAuth {
             api_key: None,
             claude_code_token: None,
+            codex_responses_auth: None,
         });
     }
 
@@ -651,26 +685,48 @@ async fn resolve_provider_switch(
         .iter()
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
-    let endpoint = crate::pipeline::resolve_endpoint(
-        &target,
-        &model,
-        &provider.base_url,
-        auth.claude_code_token.as_deref(),
-    )
-    .map_err(|e| e.to_string())?;
-    let headers = crate::pipeline::resolve_headers(
-        &target,
-        auth.api_key.as_ref(),
-        auth.claude_code_token.as_deref(),
-        &extra_headers,
-    )
-    .map_err(|e| e.to_string())?;
+    let wire_api = if auth.codex_responses_auth.is_some() {
+        crate::pipeline::WireApi::OpenAiResponses
+    } else {
+        crate::pipeline::WireApi::ChatCompletions
+    };
+    let (endpoint, headers) = if let Some(codex_auth) = auth.codex_responses_auth.as_ref() {
+        let endpoint = crate::pipeline::resolve_endpoint_for_wire(
+            wire_api,
+            &target,
+            &model,
+            crate::codex_credentials::CODEX_CHATGPT_BASE_URL,
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+        let mut headers = codex_auth.headers();
+        headers.extend(extra_headers);
+        (endpoint, headers)
+    } else {
+        let endpoint = crate::pipeline::resolve_endpoint_for_wire(
+            wire_api,
+            &target,
+            &model,
+            &provider.base_url,
+            auth.claude_code_token.as_deref(),
+        )
+        .map_err(|e| e.to_string())?;
+        let headers = crate::pipeline::resolve_headers(
+            &target,
+            auth.api_key.as_ref(),
+            auth.claude_code_token.as_deref(),
+            &extra_headers,
+        )
+        .map_err(|e| e.to_string())?;
+        (endpoint, headers)
+    };
 
     Ok(ProviderSwitch {
         provider: target,
         model,
         endpoint,
         headers,
+        wire_api,
         claude_code_token: auth.claude_code_token,
         prompt_blocks,
     })
@@ -706,6 +762,7 @@ enum KeyMode {
 /// * `client`          — the `reqwest::Client` shared across turns
 /// * `endpoint`        — the API URL the proxy/provider exposes
 /// * `headers`         — wire-level headers (auth, anthropic-version, …)
+/// * `wire_api`        — request/stream protocol selected for this provider
 /// * `claude_code_token` — OAuth bearer when running in claude-code-token mode
 /// * `prompt_blocks`   — pre-split system prompt blocks for Anthropic caching
 ///
@@ -726,6 +783,8 @@ pub struct ApiClient {
     pub endpoint: String,
     /// Wire-level headers carried on every request (auth, anthropic-version, …).
     pub headers: Vec<(String, String)>,
+    /// Wire protocol carried by the endpoint.
+    pub wire_api: crate::pipeline::WireApi,
     /// OAuth bearer used by the claude-code-token flow. `None` when the
     /// raw `ANTHROPIC_API_KEY` path is taken.
     pub claude_code_token: Option<String>,
@@ -746,6 +805,7 @@ impl ApiClient {
             client: reqwest::Client::new(),
             endpoint: String::new(),
             headers: Vec::new(),
+            wire_api: crate::pipeline::WireApi::ChatCompletions,
             claude_code_token: None,
             prompt_blocks: None,
         }
@@ -769,6 +829,10 @@ pub struct App {
     pub should_quit: bool,
     pub is_waiting: bool,
     spinner_frame: usize,
+    /// Full assistant text as received from streaming deltas. The visible
+    /// streaming text may be suppressed while a structured final envelope is
+    /// still incomplete.
+    streaming_raw_text: String,
     /// Sender for pushing API events into the event loop's channel.
     api_event_tx: Option<std::sync::mpsc::Sender<AppEvent>>,
 
@@ -784,6 +848,9 @@ pub struct App {
     pub system_prompt: String,
     /// Memory database for auto-learning from tool execution.
     pub memory_db: Option<std::sync::Arc<crate::memory::MemoryDb>>,
+    /// Loaded app configuration passed to tools that need provider/config state
+    /// (`task`, `web_fetch` prompt distillation, and future config-aware tools).
+    pub app_config: Option<std::sync::Arc<crate::config::AppConfig>>,
     /// Library-layer permission manager. When `Some`, every tool call routed
     /// through `pipeline::run_turn` consults this gate in addition to the
     /// UX-layer `PermissionResponse` flow — closes crosslink #505.
@@ -867,6 +934,7 @@ impl App {
             should_quit: false,
             is_waiting: false,
             spinner_frame: 0,
+            streaming_raw_text: String::new(),
             api_event_tx: None,
             api_client: ApiClient::new(),
             effort_level: EffortLevel::Medium,
@@ -875,6 +943,7 @@ impl App {
             next_turn_allowed_tool_rules: Vec::new(),
             system_prompt: String::new(),
             memory_db: None,
+            app_config: None,
             permission_mgr: None,
             session_messages: Vec::new(),
             runtime_handle: None,
@@ -906,6 +975,7 @@ impl App {
         self.model.clone_from(&loaded.model);
         self.provider.clone_from(&loaded.provider);
         self.mode = loaded.mode;
+        self.refresh_app_config_target();
         self.tokens = self.chat_session.estimate_tokens();
         self.transcript_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         self.transcript_watermark = self.session_messages.len();
@@ -1085,12 +1155,14 @@ impl App {
         &mut self,
         endpoint: String,
         headers: Vec<(String, String)>,
+        wire_api: crate::pipeline::WireApi,
         system_prompt: String,
         prompt_blocks: Option<crate::prompt::SystemPromptBlocks>,
         claude_code_token: Option<String>,
     ) {
         self.api_client.endpoint = endpoint;
         self.api_client.headers = headers;
+        self.api_client.wire_api = wire_api;
         self.system_prompt = system_prompt;
         self.api_client.prompt_blocks = prompt_blocks;
         self.api_client.claude_code_token = claude_code_token;
@@ -1102,6 +1174,7 @@ impl App {
             model,
             endpoint,
             headers,
+            wire_api,
             claude_code_token,
             prompt_blocks,
         } = switch;
@@ -1111,11 +1184,13 @@ impl App {
         self.chat_session.provider.clone_from(&self.provider);
         self.chat_session.model.clone_from(&self.model);
         self.chat_session.touch();
+        self.refresh_app_config_target();
 
         let system_prompt = self.system_prompt.clone();
         self.set_api_config(
             endpoint,
             headers,
+            wire_api,
             system_prompt,
             prompt_blocks,
             claude_code_token,
@@ -1126,6 +1201,18 @@ impl App {
             "Provider switched to {} ({})",
             self.provider, self.model
         )));
+    }
+
+    fn refresh_app_config_target(&mut self) {
+        let Some(app_config) = self.app_config.as_ref() else {
+            return;
+        };
+        let mut updated = (**app_config).clone();
+        updated.proxy.target.clone_from(&self.provider);
+        if let Some(provider_config) = updated.providers.get_mut(&self.provider) {
+            provider_config.model = Some(self.model.clone());
+        }
+        self.app_config = Some(std::sync::Arc::new(updated));
     }
 
     /// Get an event sender for pushing async API events into the TUI loop.
@@ -1272,7 +1359,7 @@ impl App {
             }
             Ok(AppEvent::StreamText(text)) => {
                 self.messages.finish_thinking();
-                self.messages.append_streaming(&text);
+                self.append_streaming_for_display(&text);
                 self.messages.scroll_to_bottom();
             }
             Ok(AppEvent::StreamThinking(text)) => {
@@ -1307,6 +1394,7 @@ impl App {
             Ok(AppEvent::ResponseDone) => self.handle_response_done(),
             Ok(AppEvent::ApiError(msg)) => {
                 self.messages.finish_streaming();
+                self.streaming_raw_text.clear();
                 self.messages
                     .add(DisplayMessage::error(format!("Error: {msg}")));
                 self.is_waiting = false;
@@ -1422,7 +1510,9 @@ impl App {
     /// Stop hook so external orchestrators get the round-trip signal.
     fn handle_response_done(&mut self) {
         self.messages.finish_thinking();
+        self.prepare_streaming_final_for_display();
         self.messages.finish_streaming();
+        self.streaming_raw_text.clear();
         self.is_waiting = false;
         self.chat_session
             .messages
@@ -1433,6 +1523,40 @@ impl App {
         self.persist_transcript_tail();
         self.tokens = self.chat_session.estimate_tokens();
         self.fire_stop_hook();
+    }
+
+    fn prepare_streaming_final_for_display(&mut self) {
+        if !self.messages.is_streaming
+            || (self.messages.streaming_text.trim().is_empty()
+                && self.streaming_raw_text.trim().is_empty())
+        {
+            return;
+        }
+        let content = if self.streaming_raw_text.is_empty() {
+            self.messages.streaming_text.clone()
+        } else {
+            self.streaming_raw_text.clone()
+        };
+        match render_live_final_response_for_display(&self.chat_session.id, &content) {
+            Some(rendered) => self.messages.streaming_text = rendered,
+            None => self.messages.streaming_text.clear(),
+        }
+    }
+
+    fn append_streaming_for_display(&mut self, text: &str) {
+        self.streaming_raw_text.push_str(text);
+        if may_be_structured_final_stream(&self.streaming_raw_text) {
+            if let Ok(Some(summary)) =
+                crate::grounded_loop::structured_final_summary(&self.streaming_raw_text)
+            {
+                self.messages.streaming_text = summary;
+            } else {
+                self.messages.streaming_text.clear();
+            }
+            self.messages.is_streaming = true;
+            return;
+        }
+        self.messages.append_streaming(text);
     }
 
     /// Render the result of a backgrounded shell call dispatched via
@@ -1655,6 +1779,7 @@ impl App {
         if key.code == KeyCode::Esc {
             self.is_waiting = false;
             self.messages.finish_streaming();
+            self.streaming_raw_text.clear();
             self.messages
                 .add(DisplayMessage::system("[Response interrupted]"));
         }
@@ -1892,6 +2017,7 @@ impl App {
             if key.code == KeyCode::Esc {
                 self.is_waiting = false;
                 self.messages.finish_streaming();
+                self.streaming_raw_text.clear();
                 self.messages
                     .add(DisplayMessage::system("[Response interrupted]"));
             }
@@ -2109,7 +2235,9 @@ impl App {
                 // FromStr for EffortLevel is Infallible; unknown strings map to Medium.
                 self.effort_level = level.parse().unwrap_or(EffortLevel::Medium);
             } else {
-                self.effort_level = self.effort_level.cycled();
+                self.effort_level = self
+                    .effort_level
+                    .cycled_for_provider(&self.provider, &self.model);
             }
             return true;
         }
@@ -2837,9 +2965,11 @@ impl App {
         let transient_allowed_tool_rules = std::mem::take(&mut self.next_turn_allowed_tool_rules);
         let claude_code_token = api.claude_code_token;
         let prompt_blocks = api.prompt_blocks;
+        let wire_api = api.wire_api;
         let hook_engine = self.hook_engine.clone();
         let session_id_for_task = self.chat_session.id.clone();
         let memory_db = self.memory_db.clone();
+        let app_config = self.app_config.clone();
         let permission_mgr = self.permission_mgr.clone();
         let policy_enforcer = std::sync::Arc::clone(&self.policy_enforcer);
         let task_mgr = self.task_mgr.clone();
@@ -2854,9 +2984,11 @@ impl App {
             provider,
             model,
             effort_level,
+            wire_api,
             claude_code_token,
             prompt_blocks,
             memory_db,
+            app_config,
             permission_mgr,
             transient_allowed_tool_rules,
             hook_engine,
@@ -3166,9 +3298,11 @@ struct ApiTurnParams {
     provider: String,
     model: String,
     effort_level: EffortLevel,
+    wire_api: crate::pipeline::WireApi,
     claude_code_token: Option<String>,
     prompt_blocks: Option<crate::prompt::SystemPromptBlocks>,
     memory_db: Option<std::sync::Arc<crate::memory::MemoryDb>>,
+    app_config: Option<std::sync::Arc<crate::config::AppConfig>>,
     permission_mgr: Option<std::sync::Arc<crate::permissions::PermissionManager>>,
     transient_allowed_tool_rules: Vec<crate::permissions::PermissionRule>,
     hook_engine: Option<std::sync::Arc<crate::hooks::HookEngine>>,
@@ -3186,9 +3320,11 @@ struct AgenticCtx<'a> {
     provider: &'a str,
     model: &'a str,
     effort_level: &'a str,
+    wire_api: crate::pipeline::WireApi,
     claude_code_token: Option<&'a str>,
     prompt_blocks: Option<&'a crate::prompt::SystemPromptBlocks>,
     memory_db: Option<std::sync::Arc<crate::memory::MemoryDb>>,
+    app_config: Option<std::sync::Arc<crate::config::AppConfig>>,
     permission_mgr: Option<std::sync::Arc<crate::permissions::PermissionManager>>,
     transient_allowed_tool_rules: &'a [crate::permissions::PermissionRule],
     hook_engine: Option<std::sync::Arc<crate::hooks::HookEngine>>,
@@ -3220,7 +3356,20 @@ fn request_messages_with_grounding(
     task_obs: Option<crate::ledger::ObsId>,
     session_messages: &[serde_json::Value],
 ) -> Result<Vec<serde_json::Value>, String> {
-    crate::grounded_loop::request_messages_with_grounding(session_id, task_obs, session_messages)
+    let mut messages = crate::grounded_loop::request_messages_with_grounding(
+        session_id,
+        task_obs,
+        session_messages,
+    )?;
+    let normalized = crate::pipeline::normalize_message_tool_arguments_for_history(&mut messages);
+    if normalized > 0 {
+        tracing::warn!(
+            normalized,
+            session_id,
+            "normalized malformed historical tool-call arguments before provider request"
+        );
+    }
+    Ok(messages)
 }
 
 fn validate_and_render_agentic_final_response(
@@ -3245,6 +3394,42 @@ fn render_final_response_for_history(session_id: &str, content: &str) -> Option<
             None
         }
     }
+}
+
+fn render_live_final_response_for_display(session_id: &str, content: &str) -> Option<String> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Some(String::new());
+    }
+    match crate::grounded_loop::structured_final_summary(trimmed) {
+        Ok(Some(summary)) => return Some(summary),
+        Ok(None) => {}
+        Err(reason) => {
+            tracing::warn!(
+                session_id,
+                reason,
+                "structured final answer rejected before display"
+            );
+            return None;
+        }
+    }
+    render_final_response_for_history(session_id, trimmed)
+}
+
+fn may_be_structured_final_stream(content: &str) -> bool {
+    let trimmed = content.trim_start();
+    if trimmed.starts_with('{') {
+        return true;
+    }
+    if let Some(fenced) = trimmed.strip_prefix("```") {
+        let fenced = fenced
+            .strip_prefix("json")
+            .or_else(|| fenced.strip_prefix("JSON"))
+            .unwrap_or(fenced)
+            .trim_start();
+        return fenced.starts_with('{');
+    }
+    false
 }
 
 fn check_provider_request_policy_for_messages(
@@ -3640,7 +3825,8 @@ async fn run_agentic_loop(ctx: &AgenticCtx<'_>, session_messages: &mut Vec<serde
         ) {
             break;
         }
-        let body = match crate::pipeline::build_request(
+        let body = match crate::pipeline::build_request_for_wire(
+            ctx.wire_api,
             ctx.provider,
             ctx.model,
             &request_messages,
@@ -3662,6 +3848,7 @@ async fn run_agentic_loop(ctx: &AgenticCtx<'_>, session_messages: &mut Vec<serde
             request_body: &body,
             provider: ctx.provider,
             memory_db: ctx.memory_db.clone(),
+            app_config: ctx.app_config.clone(),
             permission_mgr: ctx.permission_mgr.clone(),
             transient_allowed_tool_rules: ctx.transient_allowed_tool_rules,
             hook_engine: ctx.hook_engine.clone(),
@@ -3735,9 +3922,11 @@ async fn run_api_turn_async(p: ApiTurnParams) {
         provider,
         model,
         effort_level,
+        wire_api,
         claude_code_token,
         prompt_blocks,
         memory_db,
+        app_config,
         permission_mgr,
         transient_allowed_tool_rules,
         hook_engine,
@@ -3769,7 +3958,8 @@ async fn run_api_turn_async(p: ApiTurnParams) {
     ) {
         return;
     }
-    let request_body = match crate::pipeline::build_request(
+    let request_body = match crate::pipeline::build_request_for_wire(
+        wire_api,
         &provider,
         &model,
         &request_messages,
@@ -3790,6 +3980,7 @@ async fn run_api_turn_async(p: ApiTurnParams) {
         request_body: &request_body,
         provider: &provider,
         memory_db: memory_db.clone(),
+        app_config: app_config.clone(),
         permission_mgr: permission_mgr.clone(),
         transient_allowed_tool_rules: &transient_allowed_tool_rules,
         hook_engine: hook_engine.clone(),
@@ -3811,9 +4002,11 @@ async fn run_api_turn_async(p: ApiTurnParams) {
                     provider: &provider,
                     model: &model,
                     effort_level,
+                    wire_api,
                     claude_code_token: claude_code_token.as_deref(),
                     prompt_blocks: prompt_blocks.as_ref(),
                     memory_db,
+                    app_config,
                     permission_mgr,
                     transient_allowed_tool_rules: &transient_allowed_tool_rules,
                     hook_engine,
@@ -3842,9 +4035,11 @@ struct TurnContext<'a> {
     provider: &'a str,
     model: &'a str,
     effort_level: EffortLevel,
+    wire_api: crate::pipeline::WireApi,
     claude_code_token: Option<&'a str>,
     prompt_blocks: Option<&'a crate::prompt::SystemPromptBlocks>,
     memory_db: Option<std::sync::Arc<crate::memory::MemoryDb>>,
+    app_config: Option<std::sync::Arc<crate::config::AppConfig>>,
     permission_mgr: Option<std::sync::Arc<crate::permissions::PermissionManager>>,
     transient_allowed_tool_rules: &'a [crate::permissions::PermissionRule],
     hook_engine: Option<std::sync::Arc<crate::hooks::HookEngine>>,
@@ -3892,9 +4087,11 @@ async fn handle_turn_result(
             provider: ctx.provider,
             model: ctx.model,
             effort_level: ctx.effort_level.as_str(),
+            wire_api: ctx.wire_api,
             claude_code_token: ctx.claude_code_token,
             prompt_blocks: ctx.prompt_blocks,
             memory_db: ctx.memory_db,
+            app_config: ctx.app_config,
             permission_mgr: ctx.permission_mgr,
             transient_allowed_tool_rules: ctx.transient_allowed_tool_rules,
             hook_engine: ctx.hook_engine,
@@ -3955,6 +4152,8 @@ fn canonical_provider_name(provider: &str) -> &str {
 
 fn parse_prompt_effort_level(effort: &str) -> Option<EffortLevel> {
     match effort.trim().to_ascii_lowercase().as_str() {
+        "none" | "off" => Some(EffortLevel::None),
+        "minimal" | "min" => Some(EffortLevel::Minimal),
         "low" | "l" => Some(EffortLevel::Low),
         "medium" | "m" => Some(EffortLevel::Medium),
         "high" | "h" => Some(EffortLevel::High),
@@ -3971,8 +4170,8 @@ mod tests {
         current_exe_command, format_api_retry_delay, format_api_retry_message,
         format_init_command_output, format_review_command_output, format_stream_timeout_message,
         git_bin, handle_turn_result, list_sessions, lookup_tui_slash, resolve_provider_switch_auth,
-        save_session, ApiClient, App, AppEvent, EffortLevel, ProviderSwitch, SpawnTarget,
-        TuiSession, TurnContext, TEST_SESSIONS_DIR, TUI_SLASH_TABLE,
+        save_session, ApiClient, App, AppEvent, EffortLevel, MessageKind, ProviderSwitch,
+        SpawnTarget, TuiSession, TurnContext, TEST_SESSIONS_DIR, TUI_SLASH_TABLE,
     };
     use crate::slash_commands::all_tui_commands;
     use crate::tui::events::ApiRetryKind;
@@ -4230,15 +4429,15 @@ mod tests {
     #[test]
     fn stream_timeout_message_and_descriptor_are_structured() {
         assert_eq!(
-            format_stream_timeout_message(31, 30),
-            "Stream timed out after 31s without new data (timeout 30s)"
+            format_stream_timeout_message(301, 300),
+            "Stream timed out after 301s without new data (timeout 300s)"
         );
         assert_eq!(
             super::describe_event(&AppEvent::StreamTimeout {
-                elapsed_secs: 31,
-                timeout_secs: 30,
+                elapsed_secs: 301,
+                timeout_secs: 300,
             }),
-            "StreamTimeout(31/30s)"
+            "StreamTimeout(301/300s)"
         );
     }
 
@@ -4509,6 +4708,88 @@ mod tests {
         }
     }
 
+    #[test]
+    fn live_structured_final_display_renders_summary_only() {
+        let content = serde_json::json!({
+            "kind": "final",
+            "summary": "Hello - I'm Claudia. What would you like to work on?",
+            "evidence": ["a20e1686-5990-4f06-a09d-226c5e6778ac"],
+            "verification": []
+        })
+        .to_string();
+
+        let rendered = super::render_live_final_response_for_display(
+            "tui-live-structured-final-summary",
+            &content,
+        )
+        .expect("structured final summary should render");
+
+        assert_eq!(
+            rendered,
+            "Hello - I'm Claudia. What would you like to work on?"
+        );
+        assert!(!rendered.contains("\"evidence\""));
+        assert!(!rendered.contains("\"verification\""));
+    }
+
+    #[test]
+    fn response_done_sanitizes_streamed_structured_final() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _guard = SessionDirGuard::set(tmp.path().join("chat_sessions"));
+        let mut app = App::new("gpt-5.5", "openai");
+        app.is_waiting = true;
+        app.messages.append_streaming(
+            &serde_json::json!({
+                "kind": "final",
+                "summary": "Hello - I'm Claudia.",
+                "evidence": ["a20e1686-5990-4f06-a09d-226c5e6778ac"],
+                "verification": []
+            })
+            .to_string(),
+        );
+
+        app.handle_response_done();
+
+        let last = app.messages.messages.last().expect("assistant message");
+        assert_eq!(last.kind, MessageKind::Assistant);
+        assert_eq!(last.content, "Hello - I'm Claudia.");
+        assert!(!last.content.contains("\"kind\""));
+    }
+
+    #[test]
+    fn streamed_structured_final_never_displays_raw_json() {
+        let mut app = App::new("gpt-5.5", "openai");
+        app.append_streaming_for_display("{\"kind\"");
+
+        assert!(app.messages.is_streaming);
+        assert!(app.messages.streaming_text.is_empty());
+        assert!(app.streaming_raw_text.contains("\"kind\""));
+
+        app.append_streaming_for_display(
+            ":\"final\",\"summary\":\"Hello - I'm Claudia.\",\"evidence\":[\"a20e1686-5990-4f06-a09d-226c5e6778ac\"],\"verification\":[]}",
+        );
+
+        assert_eq!(app.messages.streaming_text, "Hello - I'm Claudia.");
+        assert!(!app.messages.streaming_text.contains("\"evidence\""));
+    }
+
+    #[test]
+    fn bare_effort_cycles_with_provider_capabilities() {
+        let mut app = App::new("gpt-5.5", "openai");
+        app.effort_level = EffortLevel::High;
+
+        assert!(app.handle_export_effort_slash("/effort"));
+        assert_eq!(app.effort_level, EffortLevel::Max);
+        assert!(app.handle_export_effort_slash("/effort"));
+        assert_eq!(app.effort_level, EffortLevel::None);
+
+        app.provider = "anthropic".to_string();
+        app.model = "claude-sonnet-4-6".to_string();
+        app.effort_level = EffortLevel::High;
+        assert!(app.handle_export_effort_slash("/effort"));
+        assert_eq!(app.effort_level, EffortLevel::Max);
+    }
+
     #[tokio::test]
     async fn tui_direct_final_rejects_uncited_response_without_user_visible_error() {
         let session_id = "tui-direct-final-denied";
@@ -4531,9 +4812,11 @@ mod tests {
                 provider: "openai",
                 model: "gpt-test",
                 effort_level: EffortLevel::Medium,
+                wire_api: crate::pipeline::WireApi::ChatCompletions,
                 claude_code_token: None,
                 prompt_blocks: None,
                 memory_db: None,
+                app_config: None,
                 permission_mgr: None,
                 transient_allowed_tool_rules: &[],
                 hook_engine: None,
@@ -4593,9 +4876,11 @@ mod tests {
                 provider: "openai",
                 model: "gpt-test",
                 effort_level: EffortLevel::Medium,
+                wire_api: crate::pipeline::WireApi::ChatCompletions,
                 claude_code_token: None,
                 prompt_blocks: None,
                 memory_db: None,
+                app_config: None,
                 permission_mgr: None,
                 transient_allowed_tool_rules: &[],
                 hook_engine: None,
@@ -4641,18 +4926,19 @@ mod tests {
 
         assert!(auth.api_key.is_none());
         assert!(auth.claude_code_token.is_none());
+        assert!(auth.codex_responses_auth.is_none());
     }
 
     #[tokio::test]
     async fn provider_switch_auth_rejects_keyless_remote_provider() {
-        let provider = provider_config_without_key("https://api.openai.com/v1");
+        let provider = provider_config_without_key("https://api.deepseek.com");
 
-        let err = resolve_provider_switch_auth("openai", &provider)
+        let err = resolve_provider_switch_auth("deepseek", &provider)
             .await
             .expect_err("remote provider should require an API key");
 
         assert!(
-            err.contains("OPENAI_API_KEY"),
+            err.contains("DEEPSEEK_API_KEY"),
             "remote provider auth error should name the env var; got {err:?}"
         );
     }
@@ -4667,6 +4953,7 @@ mod tests {
         app.set_api_config(
             "https://example.com/v1".to_string(),
             vec![("x-api-key".to_string(), "secret".to_string())],
+            crate::pipeline::WireApi::OpenAiResponses,
             "system prompt".to_string(),
             None,
             Some("oauth-token".to_string()),
@@ -4681,6 +4968,10 @@ mod tests {
             app.api_client.claude_code_token.as_deref(),
             Some("oauth-token")
         );
+        assert_eq!(
+            app.api_client.wire_api,
+            crate::pipeline::WireApi::OpenAiResponses
+        );
     }
 
     #[test]
@@ -4694,6 +4985,7 @@ mod tests {
         app.set_api_config(
             "https://old.example/v1/messages".to_string(),
             vec![("x-api-key".to_string(), "old-key".to_string())],
+            crate::pipeline::WireApi::ChatCompletions,
             "system prompt".to_string(),
             Some(blocks.clone()),
             Some("oauth-token".to_string()),
@@ -4704,6 +4996,7 @@ mod tests {
             model: "kimi-k2.7-code".to_string(),
             endpoint: "https://api.moonshot.ai/v1/chat/completions".to_string(),
             headers: vec![("Authorization".to_string(), "Bearer kimi-key".to_string())],
+            wire_api: crate::pipeline::WireApi::ChatCompletions,
             claude_code_token: None,
             prompt_blocks: Some(blocks.clone()),
         });
@@ -4722,6 +5015,10 @@ mod tests {
             vec![("Authorization".to_string(), "Bearer kimi-key".to_string())]
         );
         assert!(app.api_client.claude_code_token.is_none());
+        assert_eq!(
+            app.api_client.wire_api,
+            crate::pipeline::WireApi::ChatCompletions
+        );
         assert_eq!(
             app.api_client
                 .prompt_blocks

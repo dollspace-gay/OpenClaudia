@@ -387,6 +387,24 @@ pub fn validate_agentic_final_response(session_id: &str, content: &str) -> Resul
     validate_and_render_agentic_final_response(session_id, content).map(|_| ())
 }
 
+/// Extract the user-facing summary from a structured final decision.
+///
+/// This intentionally does not validate cited evidence. Callers that are only
+/// cleaning up live display can use it to avoid rendering the JSON envelope,
+/// while history/persistence paths should still call
+/// [`validate_and_render_agentic_final_response`].
+///
+/// # Errors
+///
+/// Returns a string error when a final-shaped JSON payload is malformed.
+pub fn structured_final_summary(content: &str) -> Result<Option<String>, String> {
+    match parse_structured_final_decision(content)? {
+        Some(crate::decision::AgentDecision::Final { summary, .. }) => Ok(Some(summary)),
+        Some(_) => Err("structured final decision validated as a non-final decision".to_string()),
+        None => Ok(None),
+    }
+}
+
 /// Validate a final model response and return the human-rendered final text.
 ///
 /// Structured final decisions are preferred. Plain text with observation-id

@@ -5,12 +5,13 @@
 //! goes through provider adapters so provider-specific envelopes stay aligned
 //! with the proxy and REPL paths.
 
+use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use openclaudia::providers::ProviderAdapter;
 use reqwest::header::CONTENT_TYPE;
 use std::io::Write as _;
 
-use crate::{resolve_chat_auth, resolve_model_name, ChatAuth};
+use crate::{resolve_chat_auth, resolve_model_name, ChatAuth, ChatAuthSelectionMode};
 
 /// Arguments for [`cmd_print`].
 pub struct PrintOptions {
@@ -141,6 +142,7 @@ fn resolve_print_endpoint(
     )
 }
 
+#[cfg(test)]
 fn sse_data_from_line(line: &str) -> Option<&str> {
     let trimmed = line.trim();
     if trimmed.is_empty() || trimmed.starts_with(':') {
@@ -171,6 +173,7 @@ fn extract_print_sse_text(json: &serde_json::Value, state: &mut PrintSseState) -
     }
 }
 
+#[cfg(test)]
 fn extract_print_sse_line(line: &str, state: &mut PrintSseState) -> anyhow::Result<Option<String>> {
     let Some(data) = sse_data_from_line(line) else {
         return Ok(None);
@@ -207,34 +210,18 @@ async fn print_json_response(
 }
 
 async fn print_sse_response(response: reqwest::Response) -> anyhow::Result<()> {
-    let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
+    let mut stream = response.bytes_stream().eventsource();
     let mut state = PrintSseState::new();
     let mut emitted_text = false;
 
-    while let Some(result) = stream.next().await {
-        let chunk = result?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-        if buffer.len() > openclaudia::proxy::MAX_SSE_LINE_BYTES {
-            anyhow::bail!(
-                "SSE line exceeded {} bytes without newline",
-                openclaudia::proxy::MAX_SSE_LINE_BYTES
-            );
+    while let Some(event) = stream.next().await {
+        let event = event.map_err(|err| anyhow::anyhow!("SSE stream error: {err}"))?;
+        if event.data == "[DONE]" {
+            break;
         }
-
-        while let Some(line_end) = buffer.find('\n') {
-            let line = buffer[..line_end].to_string();
-            buffer = buffer[line_end + 1..].to_string();
-            if let Some(text) = extract_print_sse_line(&line, &mut state)? {
-                emitted_text |= !text.is_empty();
-                print!("{text}");
-                std::io::stdout().flush()?;
-            }
-        }
-    }
-
-    if !buffer.trim().is_empty() {
-        if let Some(text) = extract_print_sse_line(&buffer, &mut state)? {
+        let json = serde_json::from_str::<serde_json::Value>(&event.data)
+            .map_err(|err| anyhow::anyhow!("invalid SSE data JSON: {err}"))?;
+        if let Some(text) = extract_print_sse_text(&json, &mut state) {
             emitted_text |= !text.is_empty();
             print!("{text}");
             std::io::stdout().flush()?;
@@ -271,13 +258,24 @@ pub async fn cmd_print(options: PrintOptions) -> anyhow::Result<()> {
     let Some(ChatAuth {
         api_key,
         claude_code_token,
-    }) = resolve_chat_auth(&config.proxy.target, provider).await?
+        codex_responses_auth,
+    }) = resolve_chat_auth(
+        &config.proxy.target,
+        provider,
+        ChatAuthSelectionMode::Automatic,
+    )
+    .await?
     else {
         anyhow::bail!(
             "could not resolve authentication for target '{}'",
             config.proxy.target
         );
     };
+    if codex_responses_auth.is_some() {
+        anyhow::bail!(
+            "Codex ChatGPT login currently requires the full-screen TUI Responses backend"
+        );
+    }
     let model = resolve_model_name(
         options.model_override,
         provider.model.clone(),

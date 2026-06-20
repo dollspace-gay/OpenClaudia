@@ -759,8 +759,17 @@ pub fn execute_lsp<S: BuildHasher>(args: &HashMap<String, Value, S>) -> (String,
             serde_json::to_string_pretty(&result).unwrap_or_default(),
             false,
         ),
-        Err(e) => (format!("LSP error: {e}"), true),
+        Err(e) => (format_lsp_error(server_cmd, &e), true),
     }
+}
+
+fn format_lsp_error(server_cmd: &str, error: &str) -> String {
+    if server_cmd == "rust-analyzer" && error.contains("Unknown binary 'rust-analyzer'") {
+        return "LSP server unavailable for rust: rust-analyzer is not installed in the active \
+                Rust toolchain. Run `rustup component add rust-analyzer` and retry."
+            .to_string();
+    }
+    format!("LSP error: {error}")
 }
 
 fn parse_lsp_file_path_arg(value: Option<&Value>) -> Result<&str, String> {
@@ -2631,6 +2640,17 @@ mod tests {
         // OC: read_line on empty stream returns 0 bytes → content_length stays 0
         // → Err("No content-length in response") or similar.
         assert!(result.is_err(), "empty stream should produce an error");
+    }
+
+    #[test]
+    fn rustup_proxy_error_is_reported_as_missing_rust_analyzer_component() {
+        let msg = format_lsp_error(
+            "rust-analyzer",
+            "initialize failed: No content-length in response\nServer stderr: error: Unknown binary 'rust-analyzer' in official toolchain",
+        );
+
+        assert!(msg.contains("rustup component add rust-analyzer"));
+        assert!(!msg.contains("No content-length"));
     }
 
     /// B6c — Production child stdout reads are deadline-bounded even when the

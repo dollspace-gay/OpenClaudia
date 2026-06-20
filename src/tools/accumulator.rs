@@ -1,6 +1,14 @@
 use super::{FunctionCall, ToolCall};
 use serde_json::Value;
 
+fn normalized_tool_arguments(arguments: &str) -> String {
+    if arguments.trim().is_empty() {
+        "{}".to_string()
+    } else {
+        arguments.to_string()
+    }
+}
+
 /// Hard cap on parallel tool-call slots in a single streaming response.
 ///
 /// The `OpenAI` Chat Completions API supports parallel tool calls keyed by
@@ -109,7 +117,7 @@ impl ToolCallAccumulator {
                 },
                 function: FunctionCall {
                     name: tc.function_name.clone(),
-                    arguments: tc.function_arguments.clone(),
+                    arguments: normalized_tool_arguments(&tc.function_arguments),
                 },
             })
             .collect()
@@ -301,7 +309,7 @@ impl AnthropicToolAccumulator {
                     call_type: "function".to_string(),
                     function: FunctionCall {
                         name: name.clone(),
-                        arguments: input_json.clone(),
+                        arguments: normalized_tool_arguments(input_json),
                     },
                 }),
                 AnthropicContentBlock::Text(_) => None,
@@ -325,7 +333,7 @@ impl AnthropicToolAccumulator {
                     "type": "function",
                     "function": {
                         "name": name,
-                        "arguments": input_json
+                        "arguments": normalized_tool_arguments(input_json)
                     }
                 })),
                 AnthropicContentBlock::Text(_) => None,

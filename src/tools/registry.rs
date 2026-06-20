@@ -669,7 +669,7 @@ impl ToolHandler for WebFetchHandler {
                         },
                         "prompt": {
                             "type": "string",
-                            "description": "Optional question to answer from the fetched page. Requires web_fetch.distillation_enabled=true; otherwise raw markdown is returned only when prompt is absent."
+                            "description": "Optional question to answer from the fetched page. Used when web_fetch.distillation_enabled=true; otherwise the fetched raw markdown is returned."
                         }
                     },
                     "required": ["url"]

@@ -294,10 +294,10 @@ fn build_openai_request_low_and_none_emit_reasoning_effort() {
 }
 
 #[test]
-fn build_openai_request_medium_does_not_emit_reasoning_effort() {
+fn build_openai_request_medium_emits_reasoning_effort() {
     let msgs = vec![json!({"role": "user", "content": "hi"})];
     let req = build_openai_request("gpt-4o", &msgs, "medium");
-    assert!(req.get("reasoning_effort").is_none());
+    assert_eq!(req["reasoning_effort"], "medium");
 }
 
 // ───────────────────────────────────────────────────────────────────────────

@@ -285,8 +285,8 @@ fn chat_message_includes_optional_fields_when_set() {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn sse_stream_timeout_constant_is_30_seconds() {
-    assert_eq!(SSE_STREAM_TIMEOUT_SECS, 30);
+fn sse_stream_timeout_constant_is_5_minutes() {
+    assert_eq!(SSE_STREAM_TIMEOUT_SECS, 300);
 }
 
 #[test]

@@ -3,7 +3,7 @@
 //! Extracted from the `cmd_chat` function in `main.rs` to enable reuse
 //! from both the rustyline REPL and the ratatui TUI.
 
-use crate::config::ThinkingConfig;
+use crate::config::{AppConfig, ThinkingConfig};
 use crate::memory::MemoryDb;
 use crate::permissions::{PermissionManager, PermissionRule};
 use crate::providers::{
@@ -16,6 +16,7 @@ use crate::services::policy::{PolicyEnforcer, PolicyError};
 use crate::session::TokenUsage;
 use crate::tools::{self, AnthropicToolAccumulator, ToolCall, ToolCallAccumulator};
 use crate::tui::events::{ApiRetryKind, AppEvent, PermissionResponse};
+use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use serde_json::Value;
 use std::sync::mpsc;
@@ -74,6 +75,23 @@ pub struct TurnResult {
 }
 
 // ─── Request building ───────────────────────────────────────────────────────
+
+/// Wire protocol used for the outbound provider request.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WireApi {
+    /// OpenAI-compatible Chat Completions (`messages`, `choices[].delta`).
+    #[default]
+    ChatCompletions,
+    /// OpenAI Responses (`input`, `response.output_text.delta`, response items).
+    OpenAiResponses,
+}
+
+impl WireApi {
+    #[must_use]
+    pub const fn is_responses(self) -> bool {
+        matches!(self, Self::OpenAiResponses)
+    }
+}
 
 /// Build an Anthropic-format request body.
 ///
@@ -175,7 +193,7 @@ pub fn build_openai_request(model: &str, messages: &[Value], effort_level: &str)
         "tools": tools::get_all_tool_definitions(true)
     });
     match effort_level {
-        "none" | "low" | "high" | "xhigh" => {
+        "none" | "minimal" | "low" | "medium" | "high" | "xhigh" => {
             req["reasoning_effort"] = serde_json::json!(effort_level);
         }
         "max" => {
@@ -184,6 +202,195 @@ pub fn build_openai_request(model: &str, messages: &[Value], effort_level: &str)
         _ => {}
     }
     req
+}
+
+fn text_from_message_content(content: &Value) -> Result<String, String> {
+    if let Some(text) = content.as_str() {
+        return Ok(text.to_string());
+    }
+    let Some(parts) = content.as_array() else {
+        return Err(format!(
+            "Responses message content must be string or array, got {}",
+            json_value_type_name(content)
+        ));
+    };
+    let mut text = String::new();
+    for part in parts {
+        if let Some(part_text) = part.get("text").and_then(Value::as_str) {
+            text.push_str(part_text);
+        }
+    }
+    Ok(text)
+}
+
+fn response_input_message(role: &str, text: String) -> Value {
+    let item_type = if role == "assistant" {
+        "output_text"
+    } else {
+        "input_text"
+    };
+    serde_json::json!({
+        "type": "message",
+        "role": role,
+        "content": [{"type": item_type, "text": text}]
+    })
+}
+
+fn responses_input_items(messages: &[Value]) -> Result<(String, Vec<Value>), String> {
+    let mut instructions = Vec::new();
+    let mut input = Vec::new();
+
+    for (index, msg) in messages.iter().enumerate() {
+        let role = msg
+            .get("role")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("message at index {index} missing string 'role': {msg}"))?;
+        let content = text_from_message_content(msg.get("content").unwrap_or(&Value::Null))?;
+        match role {
+            "system" => {
+                if !content.is_empty() {
+                    instructions.push(content);
+                }
+            }
+            "user" => input.push(response_input_message("user", content)),
+            "assistant" => {
+                if !content.is_empty() {
+                    input.push(response_input_message("assistant", content));
+                }
+                if let Some(tool_calls) = msg.get("tool_calls").and_then(Value::as_array) {
+                    for call in tool_calls {
+                        let func = call.get("function").ok_or_else(|| {
+                            format!("assistant tool call missing 'function': {call}")
+                        })?;
+                        let name = func
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .filter(|name| !name.is_empty())
+                            .ok_or_else(|| {
+                                format!("assistant tool call missing function.name: {call}")
+                            })?;
+                        let arguments =
+                            func.get("arguments")
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| {
+                                    format!(
+                                        "assistant tool call missing function.arguments: {call}"
+                                    )
+                                })?;
+                        let arguments = history_safe_tool_arguments(name, arguments);
+                        let call_id = call
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .filter(|id| !id.is_empty())
+                            .ok_or_else(|| format!("assistant tool call missing id: {call}"))?;
+                        input.push(serde_json::json!({
+                            "type": "function_call",
+                            "name": name,
+                            "arguments": arguments,
+                            "call_id": call_id
+                        }));
+                    }
+                }
+            }
+            "tool" => {
+                let call_id = msg
+                    .get("tool_call_id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                    .ok_or_else(|| format!("tool message missing tool_call_id: {msg}"))?;
+                input.push(serde_json::json!({
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": content
+                }));
+            }
+            other => {
+                return Err(format!(
+                    "Responses backend does not support message role '{other}' at index {index}"
+                ));
+            }
+        }
+    }
+
+    Ok((instructions.join("\n\n"), input))
+}
+
+fn responses_tools_from_openai_tools(openai_tools: &Value) -> Result<Vec<Value>, String> {
+    let tools = openai_tools
+        .as_array()
+        .ok_or_else(|| "built-in tool definitions must be a JSON array".to_string())?;
+    tools
+        .iter()
+        .enumerate()
+        .map(|(index, tool)| {
+            let func = tool
+                .get("function")
+                .ok_or_else(|| format!("Tool at index {index} missing 'function': {tool}"))?;
+            let name = func
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| format!("Tool at index {index} missing function.name: {tool}"))?;
+            let mut out = serde_json::Map::new();
+            out.insert("type".to_string(), Value::String("function".to_string()));
+            out.insert("name".to_string(), Value::String(name.to_string()));
+            if let Some(description) = func.get("description").and_then(Value::as_str) {
+                out.insert(
+                    "description".to_string(),
+                    Value::String(description.to_string()),
+                );
+            }
+            out.insert(
+                "parameters".to_string(),
+                func.get("parameters")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({})),
+            );
+            Ok(Value::Object(out))
+        })
+        .collect()
+}
+
+fn responses_reasoning(effort_level: &str) -> Option<Value> {
+    match effort_level {
+        "none" | "minimal" | "low" | "medium" | "high" | "xhigh" => {
+            Some(serde_json::json!({ "effort": effort_level }))
+        }
+        "max" => Some(serde_json::json!({ "effort": "xhigh" })),
+        _ => None,
+    }
+}
+
+/// Build an OpenAI Responses API request body.
+///
+/// # Errors
+///
+/// Returns an error when the chat-style session history cannot be represented
+/// as Responses input items.
+pub fn build_openai_responses_request(
+    model: &str,
+    messages: &[Value],
+    effort_level: &str,
+) -> Result<Value, String> {
+    let (instructions, input) = responses_input_items(messages)?;
+    let tools = responses_tools_from_openai_tools(&tools::get_all_tool_definitions(true))?;
+    let mut req = serde_json::json!({
+        "model": model,
+        "input": input,
+        "stream": true,
+        "store": false,
+        "tools": tools,
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "include": ["reasoning.encrypted_content"]
+    });
+    if !instructions.is_empty() {
+        req["instructions"] = Value::String(instructions);
+    }
+    if let Some(reasoning) = responses_reasoning(effort_level) {
+        req["reasoning"] = reasoning;
+    }
+    Ok(req)
 }
 
 /// Build the canonical chat-completions request used for policy accounting
@@ -222,9 +429,14 @@ fn thinking_config_for_pipeline_effort(
     provider: &str,
     effort_level: &str,
 ) -> Option<ThinkingConfig> {
+    let provider_lower = provider.to_ascii_lowercase();
+    let is_openai = provider_lower == "openai";
+    let is_glm_reasoning = matches!(provider_lower.as_str(), "zai" | "glm" | "zhipu");
+
     let effort = match effort_level {
         "high" | "max" | "xhigh" => Some(effort_level),
-        "low" | "none" if provider.eq_ignore_ascii_case("openai") => Some(effort_level),
+        "none" | "minimal" if is_openai || is_glm_reasoning => Some(effort_level),
+        "low" | "medium" if is_openai => Some(effort_level),
         _ => None,
     }?;
 
@@ -335,6 +547,32 @@ pub fn build_request(
     claude_code_token: Option<&str>,
     prompt_blocks: Option<&crate::prompt::SystemPromptBlocks>,
 ) -> Result<Value, String> {
+    build_request_for_wire(
+        WireApi::ChatCompletions,
+        provider,
+        model,
+        messages,
+        effort_level,
+        claude_code_token,
+        prompt_blocks,
+    )
+}
+
+/// Build the appropriate request body for the given provider and wire API.
+///
+/// # Errors
+///
+/// Returns an error when the selected request conversion rejects malformed
+/// message history.
+pub fn build_request_for_wire(
+    wire_api: WireApi,
+    provider: &str,
+    model: &str,
+    messages: &[Value],
+    effort_level: &str,
+    claude_code_token: Option<&str>,
+    prompt_blocks: Option<&crate::prompt::SystemPromptBlocks>,
+) -> Result<Value, String> {
     // Resolve ultrathink keyword / env override against the base effort
     // so every provider path sees the same effective level (Claude Code
     // does the same in `resolveAppliedEffort`). If env says `unset` /
@@ -342,6 +580,9 @@ pub fn build_request(
     // effort level, omitting provider effort hints.
     let resolved = crate::thinking::resolve_effort(effort_level, messages);
     let effective = resolved.as_deref().unwrap_or("medium");
+    if wire_api == WireApi::OpenAiResponses {
+        return build_openai_responses_request(model, messages, effective);
+    }
     match provider.to_ascii_lowercase().as_str() {
         "anthropic" => {
             build_anthropic_request(model, messages, effective, claude_code_token, prompt_blocks)
@@ -368,6 +609,31 @@ pub fn resolve_endpoint(
     base_url: &str,
     claude_code_token: Option<&str>,
 ) -> Result<String, crate::providers::ProviderError> {
+    resolve_endpoint_for_wire(
+        WireApi::ChatCompletions,
+        provider,
+        model,
+        base_url,
+        claude_code_token,
+    )
+}
+
+/// Resolve the API endpoint for the given provider and wire API.
+///
+/// # Errors
+///
+/// Returns [`crate::providers::ProviderError::UnknownProvider`] for unknown
+/// Chat Completions providers.
+pub fn resolve_endpoint_for_wire(
+    wire_api: WireApi,
+    provider: &str,
+    model: &str,
+    base_url: &str,
+    claude_code_token: Option<&str>,
+) -> Result<String, crate::providers::ProviderError> {
+    if wire_api == WireApi::OpenAiResponses {
+        return Ok(format!("{}/responses", normalize_base_url(base_url)));
+    }
     if claude_code_token.is_some() {
         Ok(crate::claude_credentials::get_oauth_endpoint(model))
     } else {
@@ -423,6 +689,7 @@ pub struct RunTurnParams<'a> {
     pub request_body: &'a Value,
     pub provider: &'a str,
     pub memory_db: Option<Arc<MemoryDb>>,
+    pub app_config: Option<Arc<AppConfig>>,
     pub permission_mgr: Option<Arc<PermissionManager>>,
     pub transient_allowed_tool_rules: &'a [PermissionRule],
     pub hook_engine: Option<Arc<crate::hooks::HookEngine>>,
@@ -719,6 +986,7 @@ pub async fn run_turn(p: RunTurnParams<'_>) -> Result<TurnResult, String> {
         request_body,
         provider,
         memory_db,
+        app_config,
         permission_mgr,
         transient_allowed_tool_rules,
         hook_engine,
@@ -757,6 +1025,7 @@ pub async fn run_turn(p: RunTurnParams<'_>) -> Result<TurnResult, String> {
         return handle_google_response(
             response,
             memory_db,
+            app_config,
             permission_mgr,
             transient_allowed_tool_rules,
             hook_engine.clone(),
@@ -768,11 +1037,29 @@ pub async fn run_turn(p: RunTurnParams<'_>) -> Result<TurnResult, String> {
         .await;
     }
 
+    if request_body.get("input").is_some() && request_body.get("messages").is_none() {
+        return stream_responses_sse_response(SseStreamParams {
+            response,
+            provider,
+            memory_db,
+            app_config,
+            permission_mgr,
+            transient_allowed_tool_rules,
+            hook_engine,
+            policy_enforcer,
+            task_mgr,
+            session_id,
+            tx: &tx,
+        })
+        .await;
+    }
+
     // Stream SSE response (Anthropic / OpenAI format)
     stream_sse_response(SseStreamParams {
         response,
         provider,
         memory_db,
+        app_config,
         permission_mgr,
         transient_allowed_tool_rules,
         hook_engine,
@@ -972,6 +1259,7 @@ fn extract_google_usage(gemini_json: &Value) -> (u64, u64) {
 async fn handle_google_response(
     response: reqwest::Response,
     memory_db: Option<Arc<MemoryDb>>,
+    app_config: Option<Arc<AppConfig>>,
     permission_mgr: Option<Arc<PermissionManager>>,
     transient_allowed_tool_rules: &[PermissionRule],
     hook_engine: Option<Arc<crate::hooks::HookEngine>>,
@@ -1023,6 +1311,7 @@ async fn handle_google_response(
     let (tool_results, needs_followup) = execute_tool_calls_for_tui(
         &tool_calls,
         memory_db,
+        app_config,
         permission_mgr,
         transient_allowed_tool_rules,
         hook_engine,
@@ -1093,35 +1382,6 @@ pub fn enforce_sse_line_cap(buffer: &mut String) -> SseLineCapOutcome {
     SseLineCapOutcome::Exceeded { discarded_bytes }
 }
 
-/// Enforce the SSE line cap and forward an `ApiError` event on overflow.
-///
-/// Thin wrapper around [`enforce_sse_line_cap`] that handles the
-/// side-effecting reporting path (tracing + channel emit). Keeps
-/// the streaming loop body small enough to satisfy clippy's
-/// `too_many_lines` ceiling.
-///
-/// Returns `Err` only when the channel is closed; otherwise `Ok(())`.
-fn enforce_sse_line_cap_with_report(
-    buffer: &mut String,
-    tx: &mpsc::Sender<AppEvent>,
-) -> Result<(), String> {
-    if let SseLineCapOutcome::Exceeded { discarded_bytes } = enforce_sse_line_cap(buffer) {
-        let cap = proxy::MAX_SSE_LINE_BYTES;
-        tracing::warn!(
-            discarded_bytes,
-            cap,
-            "SSE line exceeded {cap} bytes without newline; resetting accumulator (crosslink #695)"
-        );
-        send_event!(
-            tx,
-            AppEvent::ApiError(format!(
-                "SSE line exceeded {cap} bytes without newline; accumulator reset"
-            ))
-        );
-    }
-    Ok(())
-}
-
 /// Emit a structured timeout event for a stalled SSE stream.
 ///
 /// The timeout is runtime metadata, not provider-authored assistant text, so
@@ -1162,6 +1422,7 @@ struct SseStreamParams<'a> {
     response: reqwest::Response,
     provider: &'a str,
     memory_db: Option<Arc<MemoryDb>>,
+    app_config: Option<Arc<AppConfig>>,
     permission_mgr: Option<Arc<PermissionManager>>,
     transient_allowed_tool_rules: &'a [PermissionRule],
     hook_engine: Option<Arc<crate::hooks::HookEngine>>,
@@ -1176,6 +1437,7 @@ async fn stream_sse_response(p: SseStreamParams<'_>) -> Result<TurnResult, Strin
         response,
         provider,
         memory_db,
+        app_config,
         permission_mgr,
         transient_allowed_tool_rules,
         hook_engine,
@@ -1184,8 +1446,7 @@ async fn stream_sse_response(p: SseStreamParams<'_>) -> Result<TurnResult, Strin
         session_id,
         tx,
     } = p;
-    let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
+    let mut stream = response.bytes_stream().eventsource();
     let mut full_content = String::new();
     let mut reasoning_content = String::new();
     let mut tool_accumulator = ToolCallAccumulator::new();
@@ -1195,64 +1456,46 @@ async fn stream_sse_response(p: SseStreamParams<'_>) -> Result<TurnResult, Strin
     let mut last_data_time = std::time::Instant::now();
     let stream_timeout = std::time::Duration::from_secs(proxy::SSE_STREAM_TIMEOUT_SECS);
 
-    while let Some(chunk_result) = stream.next().await {
-        if last_data_time.elapsed() > stream_timeout {
-            handle_sse_timeout(last_data_time.elapsed().as_secs(), full_content.len(), tx)?;
-            break;
-        }
-
-        match chunk_result {
-            Ok(chunk) => {
-                last_data_time = std::time::Instant::now();
-                buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-                // Crosslink #695: cap the per-line accumulator. A hostile
-                // upstream that never emits `\n` would otherwise grow
-                // `buffer` unboundedly until OOM.
-                enforce_sse_line_cap_with_report(&mut buffer, tx)?;
-
-                while let Some(line_end) = buffer.find('\n') {
-                    let line = buffer[..line_end].trim().to_string();
-                    buffer = buffer[line_end + 1..].to_string();
-
-                    if line.is_empty() || line.starts_with(':') {
-                        continue;
-                    }
-
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        if data == "[DONE]" {
-                            break;
-                        }
-
-                        if let Ok(json) = serde_json::from_str::<Value>(data) {
-                            // Extract usage BEFORE the accumulator (both can process the same event)
-                            if let Some(usage) = proxy::extract_usage_from_sse_event(&json) {
-                                stream_usage.accumulate(&usage);
-                            }
-
-                            let action = process_sse_event(
-                                &json,
-                                in_thinking_block,
-                                &mut anthropic_accumulator,
-                                &mut tool_accumulator,
-                            );
-                            dispatch_sse_action(
-                                action,
-                                SseActionDispatch {
-                                    full_content: &mut full_content,
-                                    reasoning_content: &mut reasoning_content,
-                                    in_thinking_block: &mut in_thinking_block,
-                                    tx,
-                                },
-                            )?;
-                        }
-                    }
-                }
-            }
-            Err(e) => {
+    loop {
+        let sse = match tokio::time::timeout(stream_timeout, stream.next()).await {
+            Ok(Some(Ok(sse))) => sse,
+            Ok(Some(Err(e))) => {
                 send_event!(tx, AppEvent::ApiError(format!("Stream error: {e}")));
                 break;
             }
+            Ok(None) => break,
+            Err(_) => {
+                handle_sse_timeout(last_data_time.elapsed().as_secs(), full_content.len(), tx)?;
+                break;
+            }
+        };
+
+        last_data_time = std::time::Instant::now();
+        if sse.data == "[DONE]" {
+            break;
+        }
+
+        if let Ok(json) = serde_json::from_str::<Value>(&sse.data) {
+            // Extract usage BEFORE the accumulator (both can process the same event)
+            if let Some(usage) = proxy::extract_usage_from_sse_event(&json) {
+                stream_usage.accumulate(&usage);
+            }
+
+            let action = process_sse_event(
+                &json,
+                in_thinking_block,
+                &mut anthropic_accumulator,
+                &mut tool_accumulator,
+            );
+            dispatch_sse_action(
+                action,
+                SseActionDispatch {
+                    full_content: &mut full_content,
+                    reasoning_content: &mut reasoning_content,
+                    in_thinking_block: &mut in_thinking_block,
+                    tx,
+                },
+            )?;
         }
     }
 
@@ -1264,6 +1507,7 @@ async fn stream_sse_response(p: SseStreamParams<'_>) -> Result<TurnResult, Strin
         anthropic_accumulator,
         stream_usage,
         memory_db,
+        app_config,
         permission_mgr,
         transient_allowed_tool_rules,
         hook_engine,
@@ -1305,7 +1549,7 @@ fn dispatch_sse_action(action: SseAction, ctx: SseActionDispatch<'_>) -> Result<
         }
         SseAction::ThinkingStart => {
             *in_thinking_block = true;
-            send_event!(tx, AppEvent::StreamThinking("[thinking...]\n".to_string(),));
+            send_event!(tx, AppEvent::StreamThinking(String::new(),));
         }
         SseAction::ThinkingEnd => {
             *in_thinking_block = false;
@@ -1329,6 +1573,7 @@ struct SseFinalize<'a> {
     anthropic_accumulator: AnthropicToolAccumulator,
     stream_usage: TokenUsage,
     memory_db: Option<Arc<MemoryDb>>,
+    app_config: Option<Arc<AppConfig>>,
     permission_mgr: Option<Arc<PermissionManager>>,
     transient_allowed_tool_rules: &'a [PermissionRule],
     hook_engine: Option<Arc<crate::hooks::HookEngine>>,
@@ -1355,6 +1600,7 @@ async fn finalize_sse_stream(f: SseFinalize<'_>) -> Result<TurnResult, String> {
     let (tool_results, has_tools) = execute_tool_calls_for_tui(
         &tool_calls,
         f.memory_db,
+        f.app_config,
         f.permission_mgr,
         f.transient_allowed_tool_rules,
         f.hook_engine,
@@ -1471,6 +1717,267 @@ pub fn process_sse_event(
     }
 
     SseAction::None
+}
+
+#[derive(Debug)]
+enum ResponsesSseAction {
+    Text(String),
+    Reasoning(String),
+    ToolCall(ToolCall),
+    Usage(TokenUsage),
+    Error(String),
+    Done,
+    None,
+}
+
+fn parse_responses_usage(response: &Value) -> Option<TokenUsage> {
+    let usage = response.get("usage")?;
+    let input_tokens = usage
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output_tokens = usage
+        .get("output_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_read_tokens = usage
+        .get("input_tokens_details")
+        .and_then(|details| details.get("cached_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if input_tokens == 0 && output_tokens == 0 && cache_read_tokens == 0 {
+        return None;
+    }
+    Some(TokenUsage {
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_write_tokens: 0,
+    })
+}
+
+fn responses_error_message(json: &Value, fallback: &str) -> String {
+    json.get("response")
+        .and_then(|response| response.get("error"))
+        .or_else(|| json.get("error"))
+        .and_then(|error| {
+            error
+                .get("message")
+                .and_then(Value::as_str)
+                .or_else(|| error.as_str())
+        })
+        .filter(|message| !message.is_empty())
+        .map_or_else(|| fallback.to_string(), str::to_string)
+}
+
+fn parse_responses_function_call(item: &Value) -> Result<Option<ToolCall>, String> {
+    if item.get("type").and_then(Value::as_str) != Some("function_call") {
+        return Ok(None);
+    }
+    let call_id = item
+        .get("call_id")
+        .and_then(Value::as_str)
+        .or_else(|| item.get("id").and_then(Value::as_str))
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| format!("Responses function_call missing call_id: {item}"))?;
+    let name = item
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| format!("Responses function_call missing name: {item}"))?;
+    let arguments = item
+        .get("arguments")
+        .and_then(Value::as_str)
+        .unwrap_or("{}");
+    Ok(Some(ToolCall {
+        id: call_id.to_string(),
+        call_type: "function".to_string(),
+        function: tools::FunctionCall {
+            name: name.to_string(),
+            arguments: arguments.to_string(),
+        },
+    }))
+}
+
+fn process_responses_sse_event(json: &Value) -> Result<ResponsesSseAction, String> {
+    match json.get("type").and_then(Value::as_str).unwrap_or_default() {
+        "response.output_text.delta" => Ok(json
+            .get("delta")
+            .and_then(Value::as_str)
+            .filter(|delta| !delta.is_empty())
+            .map_or(ResponsesSseAction::None, |delta| {
+                ResponsesSseAction::Text(delta.to_string())
+            })),
+        "response.reasoning_text.delta" | "response.reasoning_summary_text.delta" => Ok(json
+            .get("delta")
+            .and_then(Value::as_str)
+            .filter(|delta| !delta.is_empty())
+            .map_or(ResponsesSseAction::None, |delta| {
+                ResponsesSseAction::Reasoning(delta.to_string())
+            })),
+        "response.output_item.done" => {
+            let Some(item) = json.get("item") else {
+                return Ok(ResponsesSseAction::None);
+            };
+            parse_responses_function_call(item)
+                .map(|call| call.map_or(ResponsesSseAction::None, ResponsesSseAction::ToolCall))
+        }
+        "response.completed" => {
+            if let Some(response) = json.get("response") {
+                if let Some(usage) = parse_responses_usage(response) {
+                    return Ok(ResponsesSseAction::Usage(usage));
+                }
+            }
+            Ok(ResponsesSseAction::Done)
+        }
+        "response.failed" => Ok(ResponsesSseAction::Error(responses_error_message(
+            json,
+            "Responses API request failed",
+        ))),
+        "response.incomplete" => Ok(ResponsesSseAction::Error(responses_error_message(
+            json,
+            "Responses API request returned incomplete",
+        ))),
+        _ => Ok(ResponsesSseAction::None),
+    }
+}
+
+fn dispatch_responses_action(
+    action: ResponsesSseAction,
+    full_content: &mut String,
+    reasoning_content: &mut String,
+    tool_calls: &mut Vec<ToolCall>,
+    usage: &mut TokenUsage,
+    tx: &mpsc::Sender<AppEvent>,
+) -> Result<bool, String> {
+    match action {
+        ResponsesSseAction::Text(text) => {
+            send_event!(tx, AppEvent::StreamText(text.clone()));
+            full_content.push_str(&text);
+        }
+        ResponsesSseAction::Reasoning(text) => {
+            let display_text = merge_reasoning_delta(reasoning_content, &text);
+            if !display_text.is_empty() {
+                send_event!(tx, AppEvent::StreamThinking(display_text));
+            }
+        }
+        ResponsesSseAction::ToolCall(call) => tool_calls.push(call),
+        ResponsesSseAction::Usage(observed) => {
+            usage.accumulate(&observed);
+            return Ok(true);
+        }
+        ResponsesSseAction::Error(message) => return Err(message),
+        ResponsesSseAction::Done => return Ok(true),
+        ResponsesSseAction::None => {}
+    }
+    Ok(false)
+}
+
+async fn stream_responses_sse_response(p: SseStreamParams<'_>) -> Result<TurnResult, String> {
+    let SseStreamParams {
+        response,
+        memory_db,
+        app_config,
+        permission_mgr,
+        transient_allowed_tool_rules,
+        hook_engine,
+        policy_enforcer,
+        task_mgr,
+        session_id,
+        tx,
+        ..
+    } = p;
+    let mut stream = response.bytes_stream().eventsource();
+    let mut full_content = String::new();
+    let mut reasoning_content = String::new();
+    let mut tool_calls = Vec::new();
+    let mut stream_usage = TokenUsage::default();
+    let mut last_data_time = std::time::Instant::now();
+    let stream_timeout = std::time::Duration::from_secs(proxy::SSE_STREAM_TIMEOUT_SECS);
+
+    loop {
+        let sse = match tokio::time::timeout(stream_timeout, stream.next()).await {
+            Ok(Some(Ok(sse))) => sse,
+            Ok(Some(Err(e))) => {
+                send_event!(tx, AppEvent::ApiError(format!("Stream error: {e}")));
+                break;
+            }
+            Ok(None) => break,
+            Err(_) => {
+                handle_sse_timeout(last_data_time.elapsed().as_secs(), full_content.len(), tx)?;
+                break;
+            }
+        };
+
+        last_data_time = std::time::Instant::now();
+        if sse.data == "[DONE]" {
+            break;
+        }
+
+        let json = serde_json::from_str::<Value>(&sse.data)
+            .map_err(|err| format!("Failed to parse Responses SSE event: {err}"))?;
+        let done = dispatch_responses_action(
+            process_responses_sse_event(&json)?,
+            &mut full_content,
+            &mut reasoning_content,
+            &mut tool_calls,
+            &mut stream_usage,
+            tx,
+        )?;
+        if done {
+            let (tool_results, needs_followup) = execute_tool_calls_for_tui(
+                &tool_calls,
+                memory_db.clone(),
+                app_config.clone(),
+                permission_mgr.clone(),
+                transient_allowed_tool_rules,
+                hook_engine.clone(),
+                policy_enforcer.clone(),
+                task_mgr.clone(),
+                session_id.as_deref(),
+                tx,
+            )
+            .await;
+            if !needs_followup {
+                send_event!(tx, AppEvent::ResponseDone);
+            }
+            return Ok(TurnResult {
+                content: full_content,
+                reasoning_content: (!reasoning_content.is_empty()).then_some(reasoning_content),
+                tool_calls,
+                tool_results,
+                usage: stream_usage,
+                needs_followup,
+                finish_reason: None,
+            });
+        }
+    }
+
+    let (tool_results, needs_followup) = execute_tool_calls_for_tui(
+        &tool_calls,
+        memory_db,
+        app_config,
+        permission_mgr,
+        transient_allowed_tool_rules,
+        hook_engine,
+        policy_enforcer,
+        task_mgr,
+        session_id.as_deref(),
+        tx,
+    )
+    .await;
+    if !needs_followup {
+        send_event!(tx, AppEvent::ResponseDone);
+    }
+    Ok(TurnResult {
+        content: full_content,
+        reasoning_content: (!reasoning_content.is_empty()).then_some(reasoning_content),
+        tool_calls,
+        tool_results,
+        usage: stream_usage,
+        needs_followup,
+        finish_reason: None,
+    })
 }
 
 fn openai_reasoning_delta_text(delta: &Value) -> Option<String> {
@@ -1853,6 +2360,7 @@ struct ToolPermissionDispatch {
 async fn execute_single_tool(
     tool_call: &ToolCall,
     memory_db: Option<Arc<MemoryDb>>,
+    app_config: Option<Arc<AppConfig>>,
     permission: ToolPermissionDispatch,
     policy_enforcer: Option<Arc<PolicyEnforcer>>,
     task_mgr: Arc<Mutex<crate::session::TaskManager>>,
@@ -1863,6 +2371,7 @@ async fn execute_single_tool(
     let tool_name = &tool_call.function.name;
     let tool_call_clone = tool_call.clone();
     let mem_db = memory_db;
+    let app_config_for_blocking = app_config;
     let perm_mgr = permission.mgr;
     let permission_already_checked_for_blocking = permission.already_checked;
     let session_for_blocking = session_id.map(str::to_string);
@@ -1881,7 +2390,7 @@ async fn execute_single_tool(
             crate::services::tool_executor::ToolExecutorRequest {
                 tool_call: &tool_call_clone,
                 memory_db: mem_db.as_deref(),
-                app_config: None,
+                app_config: app_config_for_blocking.as_deref(),
                 task_mgr: Some(&mut *task_guard),
                 permission_mgr: perm_mgr.as_deref(),
                 permission_already_checked: permission_already_checked_for_blocking,
@@ -1997,6 +2506,91 @@ fn malformed_tool_arguments_result(
     }))
 }
 
+/// Return a provider-history-safe JSON object string for a tool call's
+/// `function.arguments`.
+///
+/// Tool executors still receive the original model text and can report malformed
+/// JSON as a tool error. Conversation history is stricter: providers require
+/// historical assistant tool calls to carry valid JSON-object arguments so each
+/// following tool result can be paired with its call. When the model emitted an
+/// empty or malformed argument stream, `{}` is the only safe neutral object.
+#[must_use]
+pub fn history_safe_tool_arguments(tool_name: &str, arguments: &str) -> String {
+    match serde_json::from_str::<Value>(arguments) {
+        Ok(Value::Object(_)) => arguments.to_string(),
+        Ok(value) => {
+            tracing::warn!(
+                tool = tool_name,
+                json_type = json_value_type_name(&value),
+                "normalizing non-object tool arguments to empty object for provider history"
+            );
+            "{}".to_string()
+        }
+        Err(err) => {
+            tracing::warn!(
+                tool = tool_name,
+                error = %err,
+                "normalizing malformed tool arguments to empty object for provider history"
+            );
+            "{}".to_string()
+        }
+    }
+}
+
+/// Normalize historical assistant tool-call arguments in-place so provider
+/// adapters do not reject a turn solely because an earlier streamed tool call
+/// had empty or malformed arguments.
+///
+/// Returns the number of tool-call argument fields changed.
+pub fn normalize_message_tool_arguments_for_history(messages: &mut [Value]) -> usize {
+    let mut changed = 0;
+    for msg in messages {
+        if msg.get("role").and_then(Value::as_str) != Some("assistant") {
+            continue;
+        }
+        let Some(tool_calls) = msg.get_mut("tool_calls").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for call in tool_calls {
+            let Some(func) = call.get_mut("function").and_then(Value::as_object_mut) else {
+                continue;
+            };
+            let tool_name = func
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>")
+                .to_string();
+            match func.get_mut("arguments") {
+                Some(Value::String(arguments)) => {
+                    let safe = history_safe_tool_arguments(&tool_name, arguments);
+                    if safe != *arguments {
+                        *arguments = safe;
+                        changed += 1;
+                    }
+                }
+                Some(other) => {
+                    tracing::warn!(
+                        tool = tool_name,
+                        json_type = json_value_type_name(other),
+                        "normalizing non-string tool arguments to empty object for provider history"
+                    );
+                    *other = Value::String("{}".to_string());
+                    changed += 1;
+                }
+                None => {
+                    tracing::warn!(
+                        tool = tool_name,
+                        "normalizing missing tool arguments to empty object for provider history"
+                    );
+                    func.insert("arguments".to_string(), Value::String("{}".to_string()));
+                    changed += 1;
+                }
+            }
+        }
+    }
+    changed
+}
+
 /// Return the effective path that the pipeline should pre-check with
 /// guardrails before read/search tool execution.
 ///
@@ -2081,6 +2675,7 @@ fn record_quality_gate_verification(
 async fn execute_tool_calls_for_tui(
     tool_calls: &[ToolCall],
     memory_db: Option<Arc<MemoryDb>>,
+    app_config: Option<Arc<AppConfig>>,
     permission_mgr: Option<Arc<PermissionManager>>,
     transient_allowed_tool_rules: &[PermissionRule],
     hook_engine: Option<Arc<crate::hooks::HookEngine>>,
@@ -2217,6 +2812,7 @@ async fn execute_tool_calls_for_tui(
         let tool_result = execute_single_tool(
             tool_call,
             memory_db.clone(),
+            app_config.clone(),
             ToolPermissionDispatch {
                 mgr: permission_mgr.clone(),
                 already_checked: permission_already_checked,
@@ -2341,12 +2937,13 @@ pub fn build_assistant_message_with_tools(
     let tool_calls_json: Vec<Value> = tool_calls
         .iter()
         .map(|tc| {
+            let arguments = history_safe_tool_arguments(&tc.function.name, &tc.function.arguments);
             serde_json::json!({
                 "id": tc.id,
                 "type": tc.call_type,
                 "function": {
                     "name": tc.function.name,
-                    "arguments": tc.function.arguments
+                    "arguments": arguments
                 }
             })
         })
@@ -2524,6 +3121,7 @@ mod tests {
             &[tool_call],
             None,
             None,
+            None,
             &[],
             None,
             None,
@@ -2617,6 +3215,7 @@ mod tests {
                 execute_tool_calls_for_tui(
                     &tool_calls,
                     None,
+                    None,
                     Some(mgr),
                     &[],
                     None,
@@ -2687,6 +3286,7 @@ mod tests {
 
         let (results, has_tools) = execute_tool_calls_for_tui(
             &[tool_call],
+            None,
             None,
             Some(mgr),
             &[],
@@ -2760,6 +3360,7 @@ mod tests {
 
         let (results, has_tools) = execute_tool_calls_for_tui(
             &[tool_call],
+            None,
             None,
             Some(mgr),
             &[],
@@ -2856,6 +3457,7 @@ mod tests {
         let (results, has_tools) = execute_tool_calls_for_tui(
             &[tool_call],
             None,
+            None,
             Some(Arc::new(PermissionManager::unrestricted())),
             &[],
             Some(hook_engine),
@@ -2918,6 +3520,7 @@ mod tests {
 
         let (results, has_tools) = execute_tool_calls_for_tui(
             &[tool_call],
+            None,
             None,
             None,
             &[],
@@ -3119,13 +3722,120 @@ mod tests {
         assert_eq!(req["model"], "gpt-4");
         assert_eq!(req["stream"], true);
         assert!(req["tools"].is_array());
-        assert!(req.get("reasoning_effort").is_none());
+        assert_eq!(req["reasoning_effort"], "medium");
+
+        let minimal = build_openai_request("gpt-4", &messages, "minimal");
+        assert_eq!(minimal["reasoning_effort"], "minimal");
 
         let high = build_openai_request("gpt-4", &messages, "high");
         assert_eq!(high["reasoning_effort"], "high");
 
         let max = build_openai_request("gpt-4", &messages, "max");
         assert_eq!(max["reasoning_effort"], "xhigh");
+    }
+
+    #[test]
+    fn build_openai_responses_request_translates_chat_history() {
+        let messages = vec![
+            serde_json::json!({"role": "system", "content": "You are useful."}),
+            serde_json::json!({"role": "user", "content": "hello"}),
+            serde_json::json!({
+                "role": "assistant",
+                "content": "I'll check.",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "bash",
+                        "arguments": "{\"command\":\"pwd\"}"
+                    }
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "/home/doll/OpenClaudia"
+            }),
+        ];
+
+        let req = build_request_for_wire(
+            WireApi::OpenAiResponses,
+            "openai",
+            "gpt-5.5",
+            &messages,
+            "high",
+            None,
+            None,
+        )
+        .expect("Responses request should build");
+
+        assert_eq!(req["model"], "gpt-5.5");
+        assert_eq!(req["instructions"], "You are useful.");
+        assert!(req.get("messages").is_none());
+        assert!(req.get("max_output_tokens").is_none());
+        assert_eq!(req["stream"], true);
+        assert_eq!(req["store"], false);
+        assert_eq!(req["reasoning"]["effort"], "high");
+        assert_eq!(req["input"][0]["type"], "message");
+        assert_eq!(req["input"][0]["role"], "user");
+        assert_eq!(req["input"][0]["content"][0]["type"], "input_text");
+        assert_eq!(req["input"][1]["role"], "assistant");
+        assert_eq!(req["input"][1]["content"][0]["type"], "output_text");
+        assert_eq!(req["input"][2]["type"], "function_call");
+        assert_eq!(req["input"][2]["call_id"], "call_1");
+        assert_eq!(req["input"][3]["type"], "function_call_output");
+        assert_eq!(req["input"][3]["call_id"], "call_1");
+        assert_eq!(req["tools"][0]["type"], "function");
+        assert!(req["tools"][0].get("function").is_none());
+    }
+
+    #[test]
+    fn process_responses_sse_event_extracts_text_tool_calls_and_usage() {
+        let text_event = serde_json::json!({
+            "type": "response.output_text.delta",
+            "delta": "hello"
+        });
+        match process_responses_sse_event(&text_event).expect("text event") {
+            ResponsesSseAction::Text(text) => assert_eq!(text, "hello"),
+            other => panic!("expected text event, got {other:?}"),
+        }
+
+        let tool_event = serde_json::json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "function_call",
+                "call_id": "call_abc",
+                "name": "bash",
+                "arguments": "{\"command\":\"pwd\"}"
+            }
+        });
+        match process_responses_sse_event(&tool_event).expect("tool event") {
+            ResponsesSseAction::ToolCall(call) => {
+                assert_eq!(call.id, "call_abc");
+                assert_eq!(call.function.name, "bash");
+                assert_eq!(call.function.arguments, "{\"command\":\"pwd\"}");
+            }
+            other => panic!("expected tool event, got {other:?}"),
+        }
+
+        let usage_event = serde_json::json!({
+            "type": "response.completed",
+            "response": {
+                "usage": {
+                    "input_tokens": 12,
+                    "output_tokens": 7,
+                    "input_tokens_details": {"cached_tokens": 5}
+                }
+            }
+        });
+        match process_responses_sse_event(&usage_event).expect("usage event") {
+            ResponsesSseAction::Usage(usage) => {
+                assert_eq!(usage.input_tokens, 12);
+                assert_eq!(usage.output_tokens, 7);
+                assert_eq!(usage.cache_read_tokens, 5);
+            }
+            other => panic!("expected usage event, got {other:?}"),
+        }
     }
 
     #[test]
@@ -3396,6 +4106,40 @@ mod tests {
     }
 
     #[test]
+    fn build_assistant_message_with_tools_normalizes_bad_arguments_for_history() {
+        let tool_calls = vec![ToolCall {
+            id: "call_bad".to_string(),
+            call_type: "function".to_string(),
+            function: tools::FunctionCall {
+                name: "todo_read".to_string(),
+                arguments: String::new(),
+            },
+        }];
+
+        let msg = build_assistant_message_with_tools("", None, &tool_calls, "anthropic");
+
+        assert_eq!(msg["tool_calls"][0]["function"]["arguments"], "{}");
+    }
+
+    #[test]
+    fn normalize_message_tool_arguments_repairs_existing_bad_history() {
+        let mut messages = vec![serde_json::json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_bad",
+                "type": "function",
+                "function": {"name": "todo_read", "arguments": ""}
+            }]
+        })];
+
+        let changed = normalize_message_tool_arguments_for_history(&mut messages);
+
+        assert_eq!(changed, 1);
+        assert_eq!(messages[0]["tool_calls"][0]["function"]["arguments"], "{}");
+    }
+
+    #[test]
     fn merge_reasoning_delta_deduplicates_cumulative_chunks() {
         let mut buffer = String::new();
 
@@ -3652,16 +4396,16 @@ mod tests {
         );
     }
 
-    /// B6 - `SSE_STREAM_TIMEOUT_SECS` is pinned at 30 seconds.
+    /// B6 - `SSE_STREAM_TIMEOUT_SECS` is long enough for tool-heavy turns.
     ///
     /// Increasing this without a gap issue would silently change user-visible
     /// latency characteristics.
     #[test]
-    fn b6_stream_timeout_constant_is_30s() {
+    fn b6_stream_timeout_constant_is_5_minutes() {
         assert_eq!(
             crate::proxy::SSE_STREAM_TIMEOUT_SECS,
-            30,
-            "SSE_STREAM_TIMEOUT_SECS must stay at 30s unless timeout UX is revalidated"
+            300,
+            "SSE_STREAM_TIMEOUT_SECS must stay at 5 minutes unless timeout UX is revalidated"
         );
     }
 
@@ -3669,7 +4413,7 @@ mod tests {
     fn stream_timeout_emits_event_without_mutating_content() {
         let (tx, rx) = std::sync::mpsc::channel();
 
-        handle_sse_timeout(31, "partial provider text".len(), &tx)
+        handle_sse_timeout(301, "partial provider text".len(), &tx)
             .expect("timeout event should send while receiver is alive");
 
         match rx.recv().expect("timeout event should be queued") {
@@ -3677,7 +4421,7 @@ mod tests {
                 elapsed_secs,
                 timeout_secs,
             } => {
-                assert_eq!(elapsed_secs, 31);
+                assert_eq!(elapsed_secs, 301);
                 assert_eq!(timeout_secs, crate::proxy::SSE_STREAM_TIMEOUT_SECS);
             }
             _ => panic!("timeout must be represented as a structured event"),

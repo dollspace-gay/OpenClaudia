@@ -122,7 +122,7 @@ pub fn env_effort_override() -> Option<Option<String>> {
     let lower = raw.to_lowercase();
     match lower.as_str() {
         "unset" | "auto" => Some(None),
-        "low" | "medium" | "high" | "max" => Some(Some(lower)),
+        "none" | "minimal" | "low" | "medium" | "high" | "max" => Some(Some(lower)),
         "xhigh" => Some(Some("max".to_string())),
         _ => None,
     }

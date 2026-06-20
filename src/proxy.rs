@@ -2174,7 +2174,11 @@ pub fn extract_usage_from_sse_event(json: &Value) -> Option<TokenUsage> {
 
 /// SSE stream timeout duration: if no data arrives within this window,
 /// the stream is considered stalled.
-pub const SSE_STREAM_TIMEOUT_SECS: u64 = 30;
+///
+/// Tool-heavy agent turns can legitimately spend minutes with no provider
+/// bytes while the model reasons about the next action. Keep this long enough
+/// that normal agentic turns do not abort between tool batches.
+pub const SSE_STREAM_TIMEOUT_SECS: u64 = 300;
 
 /// Maximum bytes the SSE per-line accumulator may hold without a `\n`.
 ///
@@ -3204,12 +3208,12 @@ mod tests {
         );
     }
 
-    /// Spec - `SSE_STREAM_TIMEOUT_SECS` constant is 30.
+    /// Spec - `SSE_STREAM_TIMEOUT_SECS` constant is 5 minutes.
     #[test]
-    fn sse_stream_timeout_constant_pinned_at_30() {
+    fn sse_stream_timeout_constant_pinned_at_5_minutes() {
         assert_eq!(
-            SSE_STREAM_TIMEOUT_SECS, 30,
-            "SSE_STREAM_TIMEOUT_SECS must stay at 30s unless timeout UX is revalidated"
+            SSE_STREAM_TIMEOUT_SECS, 300,
+            "SSE_STREAM_TIMEOUT_SECS must stay at 5 minutes unless timeout UX is revalidated"
         );
     }
 

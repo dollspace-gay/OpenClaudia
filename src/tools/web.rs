@@ -177,7 +177,8 @@ pub fn format_fetch_output(title: Option<&str>, url: &str, content: &str) -> Str
 ///
 /// When `prompt` is supplied and `app_config.web_fetch.distillation_enabled`
 /// is true, the fetched markdown is sent to the configured secondary model and
-/// the model's answer is returned instead of raw markdown.
+/// the model's answer is returned instead of raw markdown. Without enabled
+/// distillation the prompt is ignored and raw markdown is returned.
 pub fn execute_web_fetch_with_config(
     args: &HashMap<String, Value>,
     app_config: Option<&AppConfig>,
@@ -200,24 +201,6 @@ pub fn execute_web_fetch_with_config(
         Ok(prompt) => prompt,
         Err(e) => return (e, true),
     };
-    if let Some(_prompt) = prompt {
-        let Some(config) = app_config else {
-            return (
-                "web_fetch prompt distillation requires application configuration; call without \
-                 `prompt` to fetch raw markdown."
-                    .to_string(),
-                true,
-            );
-        };
-        if !config.web_fetch.distillation_enabled {
-            return (
-                "web_fetch prompt distillation is disabled. Set \
-                 web_fetch.distillation_enabled=true or omit `prompt` to fetch raw markdown."
-                    .to_string(),
-                true,
-            );
-        }
-    }
 
     // Drive the async fetch on `SHARED_RUNTIME` via `run_blocking`.
     // The spawned future is `'static` — capture an owned `String` so
@@ -230,39 +213,34 @@ pub fn execute_web_fetch_with_config(
 
     match result {
         Ok(fetch_result) => {
-            let Some(prompt) = prompt else {
-                return (
-                    format_fetch_output(
-                        fetch_result.title.as_deref(),
-                        &fetch_result.url,
-                        &fetch_result.content,
-                    ),
-                    false,
-                );
-            };
-            let Some(config) = app_config else {
-                return (
-                    "web_fetch prompt distillation requires application configuration; call without \
-                     `prompt` to fetch raw markdown."
-                        .to_string(),
-                    true,
-                );
-            };
-            if !config.web_fetch.distillation_enabled {
-                return (
-                    "web_fetch prompt distillation is disabled. Set \
-                     web_fetch.distillation_enabled=true or omit `prompt` to fetch raw markdown."
-                        .to_string(),
-                    true,
-                );
+            if let (Some(prompt), Some(config)) =
+                (prompt, distillation_config_for_prompt(app_config))
+            {
+                return match distill_fetch_result(
+                    prompt,
+                    &fetch_result.url,
+                    &fetch_result.content,
+                    config,
+                ) {
+                    Ok(answer) => (answer, false),
+                    Err(e) => (format!("Failed to distill fetched page: {e}"), true),
+                };
             }
-            match distill_fetch_result(prompt, &fetch_result.url, &fetch_result.content, config) {
-                Ok(answer) => (answer, false),
-                Err(e) => (format!("Failed to distill fetched page: {e}"), true),
-            }
+            (
+                format_fetch_output(
+                    fetch_result.title.as_deref(),
+                    &fetch_result.url,
+                    &fetch_result.content,
+                ),
+                false,
+            )
         }
         Err(e) => (format!("Failed to fetch URL: {e}"), true),
     }
+}
+
+fn distillation_config_for_prompt(app_config: Option<&AppConfig>) -> Option<&AppConfig> {
+    app_config.filter(|config| config.web_fetch.distillation_enabled)
 }
 
 fn optional_web_fetch_prompt(args: &HashMap<String, Value>) -> Result<Option<&str>, String> {
@@ -936,40 +914,21 @@ mod tests {
     }
 
     #[test]
-    fn web_fetch_prompt_without_config_errors_before_network() {
-        let mut args = HashMap::new();
-        args.insert(
-            "url".to_string(),
-            Value::String("https://example.invalid/".to_string()),
-        );
-        args.insert("prompt".to_string(), Value::String("Summarize".to_string()));
-
-        let (msg, is_err) = execute_web_fetch_with_config(&args, None);
-
-        assert!(is_err);
+    fn web_fetch_prompt_without_config_uses_raw_fetch_path() {
         assert!(
-            msg.contains("application configuration"),
-            "prompt without app config must fail before network fetch; got {msg:?}"
+            distillation_config_for_prompt(None).is_none(),
+            "prompt without app config should fall back to raw markdown"
         );
     }
 
     #[test]
-    fn web_fetch_prompt_with_disabled_distillation_errors_before_network() {
-        let mut args = HashMap::new();
-        args.insert(
-            "url".to_string(),
-            Value::String("https://example.invalid/".to_string()),
-        );
-        args.insert("prompt".to_string(), Value::String("Summarize".to_string()));
+    fn web_fetch_prompt_with_disabled_distillation_uses_raw_fetch_path() {
         let mut config = distillation_test_config("https://api.example.invalid");
         config.web_fetch.distillation_enabled = false;
 
-        let (msg, is_err) = execute_web_fetch_with_config(&args, Some(&config));
-
-        assert!(is_err);
         assert!(
-            msg.contains("distillation is disabled"),
-            "disabled distillation must fail before network fetch; got {msg:?}"
+            distillation_config_for_prompt(Some(&config)).is_none(),
+            "disabled distillation should fall back to raw markdown"
         );
     }
 

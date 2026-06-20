@@ -213,7 +213,7 @@ fn to_openai_tool_calls_json_preserves_call_order() {
 #[test]
 fn to_openai_tool_calls_json_handles_empty_input_json() {
     // A tool_use block that received no input deltas (no
-    // arguments). The accumulator stores empty string.
+    // arguments). The history format must still carry a valid JSON object.
     let events = vec![
         json!({
             "type": "content_block_start",
@@ -225,7 +225,7 @@ fn to_openai_tool_calls_json_handles_empty_input_json() {
     let acc = drive(&events);
     let calls = acc.to_openai_tool_calls_json();
     assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0]["function"]["arguments"], "");
+    assert_eq!(calls[0]["function"]["arguments"], "{}");
 }
 
 #[test]

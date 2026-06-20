@@ -56,6 +56,8 @@ pub struct ProviderSwitch {
     pub endpoint: String,
     /// Fully resolved request headers, including auth and custom provider headers.
     pub headers: Vec<(String, String)>,
+    /// Wire protocol used for subsequent API turns.
+    pub wire_api: crate::pipeline::WireApi,
     /// Claude Code OAuth bearer for Anthropic subscription auth.
     pub claude_code_token: Option<String>,
     /// Existing split system prompt blocks, preserved for Anthropic cache efficiency.

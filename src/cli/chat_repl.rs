@@ -42,9 +42,10 @@ use crate::{
     init_rustyline_with_history, init_vdd_engine_if_enabled, maybe_auto_compact,
     maybe_resume_session, parse_initial_behavior_mode, read_multiline_continuation,
     render_welcome_or_fallback, resolve_chat_auth, resolve_model_name, run_vdd_review, ChatAuth,
-    ToolPermissionResult,
+    ChatAuthSelectionMode, ToolPermissionResult,
 };
 
+use eventsource_stream::Eventsource;
 use openclaudia::providers::{
     convert_messages_to_anthropic_checked, convert_tool_definitions_to_anthropic_checked,
     convert_tools_to_gemini_functions, extract_gemini_text_content,
@@ -231,8 +232,8 @@ struct OpenAiLoopState {
 }
 
 /// Mutable borrows threaded through SSE frame routing during initial
-/// streaming. Bundled into one context so `route_sse_frame` and
-/// `drain_sse_buffer` stay under clippy's argument-count ceiling.
+/// streaming. Bundled into one context so `route_sse_frame` stays under
+/// clippy's argument-count ceiling.
 struct SseFrameCtx<'a> {
     full_content: &'a mut String,
     reasoning_content: &'a mut String,
@@ -418,13 +419,24 @@ impl ChatRepl {
         let Some(ChatAuth {
             api_key,
             claude_code_token,
-        }) = resolve_chat_auth(&config.proxy.target, provider).await?
+            codex_responses_auth,
+        }) = resolve_chat_auth(
+            &config.proxy.target,
+            provider,
+            ChatAuthSelectionMode::Automatic,
+        )
+        .await?
         else {
             anyhow::bail!(
                 "could not resolve authentication for target '{}'",
                 config.proxy.target
             );
         };
+        if codex_responses_auth.is_some() {
+            anyhow::bail!(
+                "Codex ChatGPT login currently requires the full-screen TUI Responses backend"
+            );
+        }
 
         let model = resolve_model_name(
             args.model_override,
@@ -1257,11 +1269,21 @@ impl ChatRepl {
     }
 
     fn request_messages_with_grounding(&self) -> Result<Vec<serde_json::Value>, String> {
-        request_messages_with_cli_grounding(
+        let mut messages = request_messages_with_cli_grounding(
             &self.chat_session.id,
             self.current_task_obs,
             &self.chat_session.messages,
-        )
+        )?;
+        let normalized =
+            openclaudia::pipeline::normalize_message_tool_arguments_for_history(&mut messages);
+        if normalized > 0 {
+            tracing::warn!(
+                normalized,
+                session_id = %self.chat_session.id,
+                "normalized malformed historical tool-call arguments before provider request"
+            );
+        }
+        Ok(messages)
     }
 
     fn followup_request_policy_allows(&self, context: &'static str) -> bool {
@@ -2364,8 +2386,7 @@ impl ChatRepl {
 
         let mut full_content = String::new();
         let mut reasoning_content = String::new();
-        let mut stream = response.bytes_stream();
-        let mut buffer = String::new();
+        let mut stream = response.bytes_stream().eventsource();
         let mut cancelled = false;
         let mut pending_action: Option<SlashCommandResult> = None;
 
@@ -2373,42 +2394,44 @@ impl ChatRepl {
         let mut thinking_start_time: Option<std::time::Instant> = None;
         let mut reasoning_started = false;
         let mut md_state = tui::StreamingMarkdownRenderer::new().into_state();
-        let mut last_data_time = std::time::Instant::now();
         let stream_timeout = std::time::Duration::from_secs(proxy::SSE_STREAM_TIMEOUT_SECS);
 
-        while let Some(chunk_result) = stream.next().await {
-            let mut md_renderer = tui::StreamingMarkdownRenderer::from_state(md_state);
-            if last_data_time.elapsed() > stream_timeout {
-                Self::handle_stream_timeout(&full_content);
-                md_state = md_renderer.into_state();
-                break;
-            }
+        loop {
             if self.poll_stream_keybinding(&mut cancelled, &mut pending_action) {
-                md_state = md_renderer.into_state();
                 break;
             }
-            match chunk_result {
-                Ok(chunk) => {
-                    last_data_time = std::time::Instant::now();
-                    buffer.push_str(&String::from_utf8_lossy(&chunk));
-                    let mut ctx = SseFrameCtx {
-                        full_content: &mut full_content,
-                        reasoning_content: &mut reasoning_content,
-                        md_renderer: &mut md_renderer,
-                        tool_accumulator,
-                        anthropic_accumulator,
-                        stream_usage,
-                        in_thinking_block: &mut in_thinking_block,
-                        thinking_start_time: &mut thinking_start_time,
-                        reasoning_started: &mut reasoning_started,
-                    };
-                    Self::drain_sse_buffer(&mut buffer, &mut ctx);
-                }
-                Err(e) => {
+
+            let sse = match tokio::time::timeout(stream_timeout, stream.next()).await {
+                Ok(Some(Ok(sse))) => sse,
+                Ok(Some(Err(e))) => {
                     eprintln!("\nStream error: {e}");
-                    md_state = md_renderer.into_state();
                     break;
                 }
+                Ok(None) => break,
+                Err(_) => {
+                    Self::handle_stream_timeout(&full_content);
+                    break;
+                }
+            };
+            let mut md_renderer = tui::StreamingMarkdownRenderer::from_state(md_state);
+            if sse.data == "[DONE]" {
+                md_state = md_renderer.into_state();
+                break;
+            }
+
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&sse.data) {
+                let mut ctx = SseFrameCtx {
+                    full_content: &mut full_content,
+                    reasoning_content: &mut reasoning_content,
+                    md_renderer: &mut md_renderer,
+                    tool_accumulator,
+                    anthropic_accumulator,
+                    stream_usage,
+                    in_thinking_block: &mut in_thinking_block,
+                    thinking_start_time: &mut thinking_start_time,
+                    reasoning_started: &mut reasoning_started,
+                };
+                Self::route_sse_frame(&json, &mut ctx);
             }
             md_state = md_renderer.into_state();
         }
@@ -2480,28 +2503,6 @@ impl ChatRepl {
             *pending_action = Some(result);
         }
         false
-    }
-
-    /// Drain newline-delimited SSE frames out of `buffer`, routing each
-    /// frame's content into `ctx`.
-    fn drain_sse_buffer(buffer: &mut String, ctx: &mut SseFrameCtx<'_>) {
-        while let Some(line_end) = buffer.find('\n') {
-            let line = buffer[..line_end].trim().to_string();
-            *buffer = buffer[line_end + 1..].to_string();
-            if line.is_empty() || line.starts_with(':') {
-                continue;
-            }
-            let Some(data) = line.strip_prefix("data: ") else {
-                continue;
-            };
-            if data == "[DONE]" {
-                break;
-            }
-            let Ok(json) = serde_json::from_str::<serde_json::Value>(data) else {
-                continue;
-            };
-            Self::route_sse_frame(&json, ctx);
-        }
     }
 
     /// Route a single decoded SSE frame: usage extraction, thinking
@@ -2662,7 +2663,6 @@ impl ChatRepl {
     ) -> Option<Vec<tools::ToolCall>> {
         let text = anthropic_accumulator.get_text();
         let tool_calls = anthropic_accumulator.finalize_tool_calls();
-        let tool_calls_json = anthropic_accumulator.to_openai_tool_calls_json();
 
         if !tool_calls.is_empty() && all_signatures_seen(&tool_calls, executed_tool_sigs) {
             eprintln!("\n\x1b[33m⚠ Detected duplicate tool calls - breaking agentic loop\x1b[0m");
@@ -2674,11 +2674,12 @@ impl ChatRepl {
 
         push_chat_session_message_and_persist(
             &mut self.chat_session,
-            serde_json::json!({
-                "role": "assistant",
-                "content": serde_json::Value::String(text),
-                "tool_calls": tool_calls_json
-            }),
+            openclaudia::pipeline::build_assistant_message_with_tools(
+                &text,
+                None,
+                &tool_calls,
+                "anthropic",
+            ),
             "anthropic tool-call assistant turn",
         );
         Some(tool_calls)
@@ -2942,40 +2943,30 @@ impl ChatRepl {
         }
         match req.send().await {
             Ok(response) if response.status().is_success() => {
-                let mut stream = response.bytes_stream();
-                let mut buffer = String::new();
+                let mut stream = response.bytes_stream().eventsource();
+                let stream_timeout = std::time::Duration::from_secs(proxy::SSE_STREAM_TIMEOUT_SECS);
                 println!();
-                while let Some(chunk_result) = stream.next().await {
-                    match chunk_result {
-                        Ok(chunk) => {
-                            buffer.push_str(&String::from_utf8_lossy(&chunk));
-                            while let Some(line_end) = buffer.find('\n') {
-                                let line = buffer[..line_end].trim().to_string();
-                                buffer = buffer[line_end + 1..].to_string();
-                                if line.is_empty() || line.starts_with(':') {
-                                    continue;
-                                }
-                                if let Some(data) = line.strip_prefix("data: ") {
-                                    if data == "[DONE]" {
-                                        break;
-                                    }
-                                    if let Ok(json) =
-                                        serde_json::from_str::<serde_json::Value>(data)
-                                    {
-                                        if let Some(text) =
-                                            anthropic_accumulator.process_event(&json)
-                                        {
-                                            print!("{text}");
-                                            std::io::stdout().flush().ok();
-                                            full_content.push_str(&text);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
+                loop {
+                    let sse = match tokio::time::timeout(stream_timeout, stream.next()).await {
+                        Ok(Some(Ok(sse))) => sse,
+                        Ok(Some(Err(e))) => {
                             eprintln!("\nStream error: {e}");
                             break;
+                        }
+                        Ok(None) => break,
+                        Err(_) => {
+                            Self::handle_stream_timeout(full_content);
+                            break;
+                        }
+                    };
+                    if sse.data == "[DONE]" {
+                        break;
+                    }
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&sse.data) {
+                        if let Some(text) = anthropic_accumulator.process_event(&json) {
+                            print!("{text}");
+                            std::io::stdout().flush().ok();
+                            full_content.push_str(&text);
                         }
                     }
                 }
@@ -3228,46 +3219,37 @@ impl ChatRepl {
         }
         match req.send().await {
             Ok(response) if response.status().is_success() => {
-                let mut stream = response.bytes_stream();
-                let mut buffer = String::new();
+                let mut stream = response.bytes_stream().eventsource();
+                let stream_timeout = std::time::Duration::from_secs(proxy::SSE_STREAM_TIMEOUT_SECS);
                 let mut followup_content = String::new();
-                while let Some(chunk_result) = stream.next().await {
-                    match chunk_result {
-                        Ok(chunk) => {
-                            buffer.push_str(&String::from_utf8_lossy(&chunk));
-                            while let Some(line_end) = buffer.find('\n') {
-                                let line = buffer[..line_end].trim().to_string();
-                                buffer = buffer[line_end + 1..].to_string();
-                                if line.is_empty() || line.starts_with(':') {
-                                    continue;
-                                }
-                                if let Some(data) = line.strip_prefix("data: ") {
-                                    if data == "[DONE]" {
-                                        break;
-                                    }
-                                    if let Ok(json) =
-                                        serde_json::from_str::<serde_json::Value>(data)
-                                    {
-                                        if json.get("type").and_then(|t| t.as_str())
-                                            == Some("content_block_delta")
-                                        {
-                                            if let Some(text) = json
-                                                .get("delta")
-                                                .and_then(|d| d.get("text"))
-                                                .and_then(|t| t.as_str())
-                                            {
-                                                print!("{text}");
-                                                std::io::stdout().flush().ok();
-                                                followup_content.push_str(text);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
+                loop {
+                    let sse = match tokio::time::timeout(stream_timeout, stream.next()).await {
+                        Ok(Some(Ok(sse))) => sse,
+                        Ok(Some(Err(e))) => {
                             eprintln!("\nStream error: {e}");
                             break;
+                        }
+                        Ok(None) => break,
+                        Err(_) => {
+                            Self::handle_stream_timeout(&followup_content);
+                            break;
+                        }
+                    };
+                    if sse.data == "[DONE]" {
+                        break;
+                    }
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&sse.data) {
+                        if json.get("type").and_then(|t| t.as_str()) == Some("content_block_delta")
+                        {
+                            if let Some(text) = json
+                                .get("delta")
+                                .and_then(|d| d.get("text"))
+                                .and_then(|t| t.as_str())
+                            {
+                                print!("{text}");
+                                std::io::stdout().flush().ok();
+                                followup_content.push_str(text);
+                            }
                         }
                     }
                 }
@@ -3382,24 +3364,12 @@ impl ChatRepl {
         current_content: &str,
         reasoning_content: &str,
     ) {
-        let tool_calls_json: Vec<serde_json::Value> = tool_calls
-            .iter()
-            .map(|tc| {
-                serde_json::json!({
-                    "id": tc.id,
-                    "type": tc.call_type,
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments
-                    }
-                })
-            })
-            .collect();
-        let mut message = serde_json::json!({
-            "role": "assistant",
-            "content": serde_json::Value::String(current_content.to_string()),
-            "tool_calls": tool_calls_json
-        });
+        let mut message = openclaudia::pipeline::build_assistant_message_with_tools(
+            current_content,
+            None,
+            tool_calls,
+            "openai",
+        );
         attach_reasoning_content(&mut message, reasoning_content);
         push_chat_session_message_and_persist(
             &mut self.chat_session,
@@ -3554,77 +3524,77 @@ impl ChatRepl {
         if !response.status().is_success() {
             return;
         }
-        let mut stream = response.bytes_stream();
-        let mut buffer = String::new();
+        let mut stream = response.bytes_stream().eventsource();
+        let stream_timeout = std::time::Duration::from_secs(proxy::SSE_STREAM_TIMEOUT_SECS);
         let mut anthropic_accumulator = tools::AnthropicToolAccumulator::new();
         let mut in_thinking_block = false;
         let mut thinking_start_time: Option<std::time::Instant> = None;
         let mut reasoning_started = false;
-        while let Some(chunk_result) = stream.next().await {
-            if let Ok(chunk) = chunk_result {
-                buffer.push_str(&String::from_utf8_lossy(&chunk));
-                while let Some(line_end) = buffer.find('\n') {
-                    let line = buffer[..line_end].trim().to_string();
-                    buffer = buffer[line_end + 1..].to_string();
-                    if line.is_empty() || line.starts_with(':') {
-                        continue;
-                    }
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        if data == "[DONE]" {
-                            break;
+        loop {
+            let sse = match tokio::time::timeout(stream_timeout, stream.next()).await {
+                Ok(Some(Ok(sse))) => sse,
+                Ok(Some(Err(e))) => {
+                    eprintln!("\nStream error: {e}");
+                    break;
+                }
+                Ok(None) => break,
+                Err(_) => {
+                    Self::handle_stream_timeout(current_content);
+                    break;
+                }
+            };
+            if sse.data == "[DONE]" {
+                break;
+            }
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&sse.data) {
+                match openclaudia::pipeline::process_sse_event(
+                    &json,
+                    in_thinking_block,
+                    &mut anthropic_accumulator,
+                    tool_accumulator,
+                ) {
+                    openclaudia::pipeline::SseAction::Text(text) => {
+                        if reasoning_started {
+                            let elapsed = thinking_start_time
+                                .map_or(0.0, |started| started.elapsed().as_secs_f64());
+                            tui::print_thinking_end(elapsed);
+                            reasoning_started = false;
+                            thinking_start_time = None;
                         }
-                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                            match openclaudia::pipeline::process_sse_event(
-                                &json,
-                                in_thinking_block,
-                                &mut anthropic_accumulator,
-                                tool_accumulator,
-                            ) {
-                                openclaudia::pipeline::SseAction::Text(text) => {
-                                    if reasoning_started {
-                                        let elapsed = thinking_start_time
-                                            .map_or(0.0, |started| started.elapsed().as_secs_f64());
-                                        tui::print_thinking_end(elapsed);
-                                        reasoning_started = false;
-                                        thinking_start_time = None;
-                                    }
-                                    print!("{text}");
-                                    std::io::stdout().flush().ok();
-                                    current_content.push_str(&text);
-                                }
-                                openclaudia::pipeline::SseAction::Thinking(text) => {
-                                    tui::print_thinking_chunk(&text);
-                                }
-                                openclaudia::pipeline::SseAction::Reasoning(text) => {
-                                    let display_text = openclaudia::pipeline::merge_reasoning_delta(
-                                        current_reasoning_content,
-                                        &text,
-                                    );
-                                    if !display_text.is_empty() {
-                                        if !reasoning_started {
-                                            reasoning_started = true;
-                                            thinking_start_time = Some(std::time::Instant::now());
-                                            tui::print_thinking_start();
-                                        }
-                                        tui::print_thinking_chunk(&display_text);
-                                    }
-                                }
-                                openclaudia::pipeline::SseAction::ThinkingStart => {
-                                    in_thinking_block = true;
-                                    thinking_start_time = Some(std::time::Instant::now());
-                                    tui::print_thinking_start();
-                                }
-                                openclaudia::pipeline::SseAction::ThinkingEnd => {
-                                    let elapsed = thinking_start_time
-                                        .map_or(0.0, |started| started.elapsed().as_secs_f64());
-                                    tui::print_thinking_end(elapsed);
-                                    in_thinking_block = false;
-                                    thinking_start_time = None;
-                                }
-                                openclaudia::pipeline::SseAction::None => {}
+                        print!("{text}");
+                        std::io::stdout().flush().ok();
+                        current_content.push_str(&text);
+                    }
+                    openclaudia::pipeline::SseAction::Thinking(text) => {
+                        tui::print_thinking_chunk(&text);
+                    }
+                    openclaudia::pipeline::SseAction::Reasoning(text) => {
+                        let display_text = openclaudia::pipeline::merge_reasoning_delta(
+                            current_reasoning_content,
+                            &text,
+                        );
+                        if !display_text.is_empty() {
+                            if !reasoning_started {
+                                reasoning_started = true;
+                                thinking_start_time = Some(std::time::Instant::now());
+                                tui::print_thinking_start();
                             }
+                            tui::print_thinking_chunk(&display_text);
                         }
                     }
+                    openclaudia::pipeline::SseAction::ThinkingStart => {
+                        in_thinking_block = true;
+                        thinking_start_time = Some(std::time::Instant::now());
+                        tui::print_thinking_start();
+                    }
+                    openclaudia::pipeline::SseAction::ThinkingEnd => {
+                        let elapsed = thinking_start_time
+                            .map_or(0.0, |started| started.elapsed().as_secs_f64());
+                        tui::print_thinking_end(elapsed);
+                        in_thinking_block = false;
+                        thinking_start_time = None;
+                    }
+                    openclaudia::pipeline::SseAction::None => {}
                 }
             }
         }
