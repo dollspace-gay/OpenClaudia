@@ -465,11 +465,21 @@ async fn cmd_tui(options: TuiStartupOptions) -> anyhow::Result<()> {
 
     let vdd_adversary_auth = startup_auth
         .as_ref()
-        .and_then(|selection| selection.vdd.as_ref())
-        .map(|selection| {
-            config.vdd.adversary.provider.clone_from(&selection.target);
-            config.vdd.adversary.api_key = selection.auth.api_key.clone();
-            selection.auth.to_vdd_provider_auth()
+        .and_then(|selection| match &selection.vdd {
+            TuiStartupVddChoice::Disabled => {
+                config.vdd.enabled = false;
+                None
+            }
+            TuiStartupVddChoice::Adversary(vdd_selection) => {
+                config.vdd.enabled = true;
+                config
+                    .vdd
+                    .adversary
+                    .provider
+                    .clone_from(&vdd_selection.target);
+                config.vdd.adversary.api_key = vdd_selection.auth.api_key.clone();
+                Some(vdd_selection.auth.to_vdd_provider_auth())
+            }
         });
 
     config
@@ -1244,23 +1254,34 @@ struct TuiStartupVddSelection {
     auth: ChatAuth,
 }
 
+enum TuiStartupVddChoice {
+    Disabled,
+    Adversary(TuiStartupVddSelection),
+}
+
+enum TuiStartupVddPromptChoice {
+    Disabled,
+    Candidate(usize),
+}
+
 struct TuiStartupSelections {
     chat: TuiStartupAuthSelection,
-    vdd: Option<TuiStartupVddSelection>,
+    vdd: TuiStartupVddChoice,
 }
 
 enum TuiStartupAuthCandidate {
     AnthropicClaudeCode,
-    AnthropicApiKey {
-        api_key: openclaudia::providers::ApiKey,
-    },
     OpenAi(OpenAiAuthCandidate),
     CurrentProviderApiKey {
         target: String,
         api_key: openclaudia::providers::ApiKey,
+        source_label: String,
     },
     CurrentLocalProvider {
         target: String,
+    },
+    EnterProviderApiKey {
+        allowed_targets: Vec<String>,
     },
 }
 
@@ -1309,30 +1330,37 @@ impl OpenAiAuthCandidate {
 impl TuiStartupAuthCandidate {
     fn label(&self) -> String {
         match self {
-            Self::AnthropicClaudeCode => "Anthropic: Claude Code login".to_string(),
-            Self::AnthropicApiKey { .. } => "Anthropic: configured API key".to_string(),
+            Self::AnthropicClaudeCode => {
+                "Use existing provider login: Anthropic via Claude Code".to_string()
+            }
             Self::OpenAi(candidate) => format!("OpenAI: {}", candidate.label()),
-            Self::CurrentProviderApiKey { target, .. } => {
-                format!("{target}: configured API key")
+            Self::CurrentProviderApiKey {
+                target,
+                source_label,
+                ..
+            } => {
+                format!("Use API key: {target} via {source_label}")
             }
             Self::CurrentLocalProvider { target } => {
                 format!("{target}: local provider (no API key)")
             }
+            Self::EnterProviderApiKey { .. } => "Enter an API key...".to_string(),
         }
     }
 
-    fn target(&self) -> &str {
+    fn target(&self) -> Option<&str> {
         match self {
-            Self::AnthropicClaudeCode | Self::AnthropicApiKey { .. } => "anthropic",
-            Self::OpenAi(_) => "openai",
+            Self::AnthropicClaudeCode => Some("anthropic"),
+            Self::OpenAi(_) => Some("openai"),
             Self::CurrentProviderApiKey { target, .. } | Self::CurrentLocalProvider { target } => {
-                target
+                Some(target)
             }
+            Self::EnterProviderApiKey { .. } => None,
         }
     }
 
     async fn into_selection(self) -> anyhow::Result<TuiStartupAuthSelection> {
-        let target = self.target().to_string();
+        let target = self.target().map(str::to_string);
         let auth = match self {
             Self::AnthropicClaudeCode => {
                 let creds = openclaudia::claude_credentials::load_credentials()
@@ -1344,21 +1372,33 @@ impl TuiStartupAuthCandidate {
                     codex_responses_auth: None,
                 }
             }
-            Self::AnthropicApiKey { api_key } | Self::CurrentProviderApiKey { api_key, .. } => {
-                ChatAuth {
-                    api_key: Some(api_key),
-                    claude_code_token: None,
-                    codex_responses_auth: None,
-                }
-            }
+            Self::CurrentProviderApiKey { api_key, .. } => ChatAuth {
+                api_key: Some(api_key),
+                claude_code_token: None,
+                codex_responses_auth: None,
+            },
             Self::OpenAi(candidate) => candidate.into_chat_auth()?,
             Self::CurrentLocalProvider { .. } => ChatAuth {
                 api_key: None,
                 claude_code_token: None,
                 codex_responses_auth: None,
             },
+            Self::EnterProviderApiKey { allowed_targets } => {
+                let target =
+                    prompt_provider_target_choice("Provider for API key:", &allowed_targets)?;
+                let api_key = prompt_provider_api_key(&target)?;
+                return Ok(TuiStartupAuthSelection {
+                    target,
+                    auth: ChatAuth {
+                        api_key: Some(api_key),
+                        claude_code_token: None,
+                        codex_responses_auth: None,
+                    },
+                });
+            }
         };
 
+        let target = target.expect("non-manual startup candidate must have a provider target");
         Ok(TuiStartupAuthSelection { target, auth })
     }
 
@@ -1372,14 +1412,51 @@ impl TuiStartupAuthCandidate {
 }
 
 fn prompt_openai_api_key() -> anyhow::Result<openclaudia::providers::ApiKey> {
+    prompt_provider_api_key("OpenAI")
+}
+
+fn prompt_provider_api_key(target: &str) -> anyhow::Result<openclaudia::providers::ApiKey> {
     use std::io::Write as _;
 
-    eprint!("OpenAI API key: ");
+    eprint!("{target} API key: ");
     std::io::stderr().flush()?;
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
     openclaudia::providers::ApiKey::try_from_string(input.trim().to_string())
-        .map_err(|e| anyhow::anyhow!("OpenAI API key is invalid: {e}"))
+        .map_err(|e| anyhow::anyhow!("{target} API key is invalid: {e}"))
+}
+
+fn prompt_provider_target_choice(prompt: &str, targets: &[String]) -> anyhow::Result<String> {
+    use std::io::Write as _;
+
+    if targets.is_empty() {
+        anyhow::bail!("No provider targets are available for API-key entry");
+    }
+
+    eprintln!("{prompt}");
+    for (index, target) in targets.iter().enumerate() {
+        eprintln!("  {}. {}", index + 1, target);
+    }
+
+    for _ in 0..3 {
+        eprint!("Select provider [1]: ");
+        std::io::stderr().flush()?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return Ok(targets[0].clone());
+        }
+        if let Ok(selection) = trimmed.parse::<usize>() {
+            if (1..=targets.len()).contains(&selection) {
+                return Ok(targets[selection - 1].clone());
+            }
+        }
+        eprintln!("Enter a number from 1 to {}.", targets.len());
+    }
+
+    anyhow::bail!("provider selection cancelled")
 }
 
 fn prompt_openai_auth_choice(candidates: &[OpenAiAuthCandidate]) -> anyhow::Result<usize> {
@@ -1466,24 +1543,14 @@ fn collect_current_target_startup_auth_candidate(
         .map(|api_key| TuiStartupAuthCandidate::CurrentProviderApiKey {
             target: target.to_string(),
             api_key: api_key.clone(),
+            source_label: "configured/environment".to_string(),
         })
 }
 
 fn collect_openai_startup_auth_candidates(
-    config: &config::AppConfig,
+    _config: &config::AppConfig,
     candidates: &mut Vec<TuiStartupAuthCandidate>,
 ) -> anyhow::Result<()> {
-    if let Some(provider) = config.get_provider("openai") {
-        if let Some(api_key) = &provider.api_key {
-            candidates.push(TuiStartupAuthCandidate::OpenAi(
-                OpenAiAuthCandidate::ApiKey {
-                    api_key: api_key.clone(),
-                    label: "configured OpenAI API key".to_string(),
-                },
-            ));
-        }
-    }
-
     match openclaudia::codex_credentials::load_codex_auth() {
         Ok(Some(openclaudia::codex_credentials::CodexAuthMaterial::ApiKey { api_key, source })) => {
             let api_key = openclaudia::providers::ApiKey::try_from_string(api_key)
@@ -1573,17 +1640,83 @@ fn push_configured_provider_startup_candidate(
             TuiStartupAuthCandidate::CurrentProviderApiKey {
                 target: target.to_string(),
                 api_key: api_key.clone(),
+                source_label: "configured/environment".to_string(),
             },
         );
     }
+}
+
+fn provider_uses_api_key_for_startup(target: &str) -> bool {
+    !openclaudia::config::is_local_provider_name(target)
+        && openclaudia::providers::get_adapter(target).is_ok()
+}
+
+fn sorted_provider_targets(config: &config::AppConfig) -> Vec<String> {
+    let mut targets = config.providers.keys().cloned().collect::<Vec<_>>();
+    targets.sort_by_key(|target| target.to_ascii_lowercase());
+    targets
+}
+
+fn collect_configured_provider_api_key_candidates(
+    config: &config::AppConfig,
+    candidates: &mut Vec<TuiStartupAuthCandidate>,
+    excluded_target: Option<&str>,
+) {
+    for target in sorted_provider_targets(config) {
+        if excluded_target.is_some_and(|excluded| same_startup_provider(&target, excluded))
+            || !provider_uses_api_key_for_startup(&target)
+        {
+            continue;
+        }
+        push_configured_provider_startup_candidate(config, candidates, &target);
+    }
+}
+
+fn manual_api_key_targets(
+    config: &config::AppConfig,
+    excluded_target: Option<&str>,
+) -> Vec<String> {
+    let mut targets: Vec<String> = Vec::new();
+    for target in sorted_provider_targets(config) {
+        if excluded_target.is_some_and(|excluded| same_startup_provider(&target, excluded))
+            || !provider_uses_api_key_for_startup(&target)
+        {
+            continue;
+        }
+        if !targets
+            .iter()
+            .any(|existing| same_startup_provider(existing.as_str(), &target))
+        {
+            targets.push(target);
+        }
+    }
+    targets
+}
+
+fn push_manual_api_key_candidate(
+    config: &config::AppConfig,
+    candidates: &mut Vec<TuiStartupAuthCandidate>,
+    excluded_target: Option<&str>,
+) {
+    use std::io::IsTerminal as _;
+
+    if !std::io::stdin().is_terminal() {
+        return;
+    }
+    let allowed_targets = manual_api_key_targets(config, excluded_target);
+    if allowed_targets.is_empty() {
+        return;
+    }
+    push_unique_startup_candidate(
+        candidates,
+        TuiStartupAuthCandidate::EnterProviderApiKey { allowed_targets },
+    );
 }
 
 fn collect_tui_startup_vdd_auth_candidates(
     config: &config::AppConfig,
     chat_target: &str,
 ) -> anyhow::Result<Vec<TuiStartupAuthCandidate>> {
-    use std::io::IsTerminal as _;
-
     let mut candidates = Vec::new();
 
     let preferred = config.vdd.adversary.provider.trim();
@@ -1595,17 +1728,9 @@ fn collect_tui_startup_vdd_auth_candidates(
         push_configured_provider_startup_candidate(config, &mut candidates, preferred);
     }
 
+    collect_configured_provider_api_key_candidates(config, &mut candidates, Some(chat_target));
+
     if !same_startup_provider("anthropic", chat_target) {
-        if let Some(provider) = config.get_provider("anthropic") {
-            if let Some(api_key) = &provider.api_key {
-                push_unique_startup_candidate(
-                    &mut candidates,
-                    TuiStartupAuthCandidate::AnthropicApiKey {
-                        api_key: api_key.clone(),
-                    },
-                );
-            }
-        }
         if openclaudia::claude_credentials::has_claude_code_credentials() {
             push_unique_startup_candidate(
                 &mut candidates,
@@ -1616,25 +1741,9 @@ fn collect_tui_startup_vdd_auth_candidates(
 
     if !same_startup_provider("openai", chat_target) {
         collect_openai_startup_auth_candidates(config, &mut candidates)?;
-        if std::io::stdin().is_terminal() {
-            push_unique_startup_candidate(
-                &mut candidates,
-                TuiStartupAuthCandidate::OpenAi(OpenAiAuthCandidate::EnterApiKey),
-            );
-        }
     }
 
-    let mut provider_names = config.providers.keys().cloned().collect::<Vec<_>>();
-    provider_names.sort();
-    for target in provider_names {
-        if same_startup_provider(&target, chat_target)
-            || target.eq_ignore_ascii_case("anthropic")
-            || target.eq_ignore_ascii_case("openai")
-        {
-            continue;
-        }
-        push_configured_provider_startup_candidate(config, &mut candidates, &target);
-    }
+    push_manual_api_key_candidate(config, &mut candidates, Some(chat_target));
 
     Ok(candidates)
 }
@@ -1642,32 +1751,24 @@ fn collect_tui_startup_vdd_auth_candidates(
 fn collect_tui_startup_auth_candidates(
     config: &config::AppConfig,
 ) -> anyhow::Result<Vec<TuiStartupAuthCandidate>> {
-    use std::io::IsTerminal as _;
-
     let mut candidates = Vec::new();
 
     if let Some(candidate) = collect_current_target_startup_auth_candidate(config) {
-        candidates.push(candidate);
+        push_unique_startup_candidate(&mut candidates, candidate);
     }
 
-    if let Some(provider) = config.get_provider("anthropic") {
-        if let Some(api_key) = &provider.api_key {
-            candidates.push(TuiStartupAuthCandidate::AnthropicApiKey {
-                api_key: api_key.clone(),
-            });
-        }
-    }
+    collect_configured_provider_api_key_candidates(config, &mut candidates, None);
+
     if openclaudia::claude_credentials::has_claude_code_credentials() {
-        candidates.push(TuiStartupAuthCandidate::AnthropicClaudeCode);
+        push_unique_startup_candidate(
+            &mut candidates,
+            TuiStartupAuthCandidate::AnthropicClaudeCode,
+        );
     }
 
     collect_openai_startup_auth_candidates(config, &mut candidates)?;
 
-    if std::io::stdin().is_terminal() {
-        candidates.push(TuiStartupAuthCandidate::OpenAi(
-            OpenAiAuthCandidate::EnterApiKey,
-        ));
-    }
+    push_manual_api_key_candidate(config, &mut candidates, None);
 
     Ok(candidates)
 }
@@ -1708,18 +1809,33 @@ fn prompt_tui_startup_auth_choice(candidates: &[TuiStartupAuthCandidate]) -> any
 fn prompt_tui_startup_vdd_auth_choice(
     candidates: &[TuiStartupAuthCandidate],
     chat_target: &str,
-) -> anyhow::Result<usize> {
+    configured_enabled: bool,
+) -> anyhow::Result<TuiStartupVddPromptChoice> {
     use std::io::{IsTerminal as _, Write as _};
 
     if !std::io::stdin().is_terminal() {
-        return Ok(0);
+        if configured_enabled && !candidates.is_empty() {
+            return Ok(TuiStartupVddPromptChoice::Candidate(0));
+        }
+        return Ok(TuiStartupVddPromptChoice::Disabled);
     }
 
-    eprintln!("Select VDD adversary login (chat provider: {chat_target}):");
-    for (index, candidate) in candidates.iter().enumerate() {
-        eprintln!("  {}. {}", index + 1, candidate.label());
+    if configured_enabled {
+        eprintln!("Select VDD adversary login (chat provider: {chat_target}):");
+        for (index, candidate) in candidates.iter().enumerate() {
+            eprintln!("  {}. {}", index + 1, candidate.label());
+        }
+        eprintln!("  {}. Disable VDD for this session", candidates.len() + 1);
+    } else {
+        eprintln!("VDD adversarial review is disabled for this project.");
+        eprintln!("Select VDD adversary login, or skip for this session:");
+        eprintln!("  1. Skip VDD for this session");
+        for (index, candidate) in candidates.iter().enumerate() {
+            eprintln!("  {}. {}", index + 2, candidate.label());
+        }
     }
 
+    let max_selection = candidates.len() + 1;
     for _ in 0..3 {
         eprint!("Select VDD login [1]: ");
         std::io::stderr().flush()?;
@@ -1728,14 +1844,26 @@ fn prompt_tui_startup_vdd_auth_choice(
         std::io::stdin().read_line(&mut input)?;
         let trimmed = input.trim();
         if trimmed.is_empty() {
-            return Ok(0);
+            if configured_enabled && !candidates.is_empty() {
+                return Ok(TuiStartupVddPromptChoice::Candidate(0));
+            }
+            return Ok(TuiStartupVddPromptChoice::Disabled);
         }
         if let Ok(selection) = trimmed.parse::<usize>() {
-            if (1..=candidates.len()).contains(&selection) {
-                return Ok(selection - 1);
+            if (1..=max_selection).contains(&selection) {
+                if configured_enabled {
+                    if selection <= candidates.len() {
+                        return Ok(TuiStartupVddPromptChoice::Candidate(selection - 1));
+                    }
+                    return Ok(TuiStartupVddPromptChoice::Disabled);
+                }
+                if selection == 1 {
+                    return Ok(TuiStartupVddPromptChoice::Disabled);
+                }
+                return Ok(TuiStartupVddPromptChoice::Candidate(selection - 2));
             }
         }
-        eprintln!("Enter a number from 1 to {}.", candidates.len());
+        eprintln!("Enter a number from 1 to {max_selection}.");
     }
 
     anyhow::bail!("VDD login selection cancelled")
@@ -1760,23 +1888,22 @@ async fn select_tui_startup_auth(
     let chat = candidates.remove(selected).into_selection().await?;
     eprintln!("✓ Starting with {label}");
 
-    let vdd = if config.vdd.enabled {
-        let mut vdd_candidates = collect_tui_startup_vdd_auth_candidates(config, &chat.target)?;
-        if vdd_candidates.is_empty() {
-            eprintln!(
-                "VDD is enabled, but no alternate adversary login was found for chat provider '{}'.",
-                chat.target
-            );
-            None
-        } else {
-            let selected = prompt_tui_startup_vdd_auth_choice(&vdd_candidates, &chat.target)?;
+    let mut vdd_candidates = collect_tui_startup_vdd_auth_candidates(config, &chat.target)?;
+    let vdd = match prompt_tui_startup_vdd_auth_choice(
+        &vdd_candidates,
+        &chat.target,
+        config.vdd.enabled,
+    )? {
+        TuiStartupVddPromptChoice::Disabled => {
+            eprintln!("✓ VDD disabled for this session");
+            TuiStartupVddChoice::Disabled
+        }
+        TuiStartupVddPromptChoice::Candidate(selected) => {
             let label = vdd_candidates[selected].label();
             let selection = vdd_candidates.remove(selected).into_vdd_selection().await?;
             eprintln!("✓ VDD adversary will use {label}");
-            Some(selection)
+            TuiStartupVddChoice::Adversary(selection)
         }
-    } else {
-        None
     };
 
     Ok(Some(TuiStartupSelections { chat, vdd }))
@@ -2326,16 +2453,54 @@ mod tests {
             collect_tui_startup_vdd_auth_candidates(&config, "anthropic").expect("candidates");
 
         assert!(
-            candidates
-                .iter()
-                .any(|candidate| candidate.target().eq_ignore_ascii_case("openai")),
+            candidates.iter().any(|candidate| candidate
+                .target()
+                .is_some_and(|target| target.eq_ignore_ascii_case("openai"))),
             "OpenAI should be available as VDD adversary when chat uses Anthropic"
         );
         assert!(
-            candidates
-                .iter()
-                .all(|candidate| !candidate.target().eq_ignore_ascii_case("anthropic")),
+            candidates.iter().all(|candidate| candidate
+                .target()
+                .is_none_or(|target| !target.eq_ignore_ascii_case("anthropic"))),
             "VDD candidates must not include the selected chat provider"
+        );
+    }
+
+    #[test]
+    fn startup_candidates_include_configured_provider_api_keys() {
+        let config = startup_vdd_config();
+        let candidates = collect_tui_startup_auth_candidates(&config).expect("candidates");
+
+        assert!(
+            candidates.iter().any(|candidate| candidate
+                .target()
+                .is_some_and(|target| target.eq_ignore_ascii_case("google"))),
+            "startup auth should include detected Google API key candidates, not only Anthropic/OpenAI"
+        );
+    }
+
+    #[test]
+    fn manual_vdd_api_key_targets_exclude_selected_chat_provider() {
+        let config = startup_vdd_config();
+        let targets = manual_api_key_targets(&config, Some("anthropic"));
+
+        assert!(
+            targets
+                .iter()
+                .any(|target| target.eq_ignore_ascii_case("openai")),
+            "OpenAI should be a manual VDD API-key target when chat uses Anthropic"
+        );
+        assert!(
+            targets
+                .iter()
+                .any(|target| target.eq_ignore_ascii_case("google")),
+            "Google should be a manual VDD API-key target when chat uses Anthropic"
+        );
+        assert!(
+            targets
+                .iter()
+                .all(|target| !target.eq_ignore_ascii_case("anthropic")),
+            "manual VDD API-key targets must exclude the selected chat provider"
         );
     }
 

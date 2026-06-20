@@ -219,6 +219,19 @@ impl Default for VddTracking {
 }
 
 impl VddConfig {
+    /// Validate VDD settings that do not depend on the active builder provider.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if thresholds or adversary request parameters are invalid.
+    pub fn validate_settings(&self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        self.validate_non_provider_settings()
+    }
+
     /// Validate VDD configuration. Returns error message if invalid.
     ///
     /// # Errors
@@ -239,7 +252,10 @@ impl VddConfig {
             ));
         }
 
-        // Threshold validation
+        self.validate_non_provider_settings()
+    }
+
+    fn validate_non_provider_settings(&self) -> Result<(), String> {
         if self.thresholds.false_positive_rate < 0.0 || self.thresholds.false_positive_rate > 1.0 {
             return Err(format!(
                 "VDD false_positive_rate must be between 0.0 and 1.0, got {}",
@@ -355,6 +371,21 @@ mod tests {
         let result = config.validate("anthropic");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("must differ"));
+    }
+
+    #[test]
+    fn test_vdd_settings_validation_allows_runtime_provider_choice() {
+        let config = VddConfig {
+            enabled: true,
+            adversary: VddAdversaryConfig {
+                provider: "anthropic".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(config.validate_settings().is_ok());
+        assert!(config.validate("anthropic").is_err());
     }
 
     #[test]

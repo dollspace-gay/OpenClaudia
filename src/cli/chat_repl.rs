@@ -360,6 +360,11 @@ fn load_repl_config(
         apply_model_provider_override(&mut config, model);
     }
 
+    if let Err(err) = config.vdd.validate(&config.proxy.target) {
+        eprintln!("VDD configuration error: {err}");
+        return None;
+    }
+
     Some(config)
 }
 

@@ -272,8 +272,10 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
     // refuses to exist in an invalid state. See crosslink #256.
     let mut config: AppConfig = builder.build()?.try_deserialize()?;
 
-    // Validate VDD config (adversary must differ from builder provider, etc.)
-    if let Err(e) = config.vdd.validate(&config.proxy.target) {
+    // Validate VDD settings that do not depend on the final runtime target.
+    // Provider-pair validation runs after CLI/TUI target overrides and startup
+    // auth selection have resolved the actual builder/adversary providers.
+    if let Err(e) = config.vdd.validate_settings() {
         return Err(ConfigError::Message(e));
     }
 
