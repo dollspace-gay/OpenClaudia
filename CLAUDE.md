@@ -15,7 +15,7 @@ OpenClaudia is an open-source universal agent harness that provides Claude Code-
                     │                                     │                                 │
                     ▼                                     ▼                                 ▼
             ┌───────────────┐                    ┌───────────────┐                 ┌───────────────┐
-            │    main.rs    │                    │    tui.rs     │                 │    web.rs     │
+            │    main.rs    │                    │    tui/       │                 │    web.rs     │
             │  CLI Entry    │                    │  Terminal UI  │                 │  Web Scraping │
             │  (clap)       │                    │  (ratatui)    │                 │  (headless)   │
             └───────┬───────┘                    └───────────────┘                 └───────────────┘
@@ -24,14 +24,14 @@ OpenClaudia is an open-source universal agent harness that provides Claude Code-
         │           │           │                       │                       │
         ▼           ▼           ▼                       ▼                       ▼
 ┌───────────┐ ┌───────────┐ ┌───────────┐       ┌───────────────┐       ┌───────────────┐
-│ config.rs │ │ proxy.rs  │ │ session.rs│       │   hooks.rs    │       │   rules.rs    │
+│ config/   │ │ proxy.rs  │ │ session/  │       │   hooks/      │       │   rules.rs    │
 │ YAML +    │ │ HTTP Proxy│ │ State Mgmt│       │ Pre/Post Tool │       │ CLAUDE.md     │
 │ Env Vars  │ │ (axum)    │ │ Turns     │       │ Lifecycle     │       │ .clauderules  │
 └─────┬─────┘ └─────┬─────┘ └───────────┘       └───────────────┘       └───────────────┘
       │             │
       │             ▼
       │     ┌───────────────────────────────────────────────────────────────────────────┐
-      │     │                           providers.rs                                    │
+      │     │                           providers/                                     │
       │     │                    ProviderAdapter trait + Implementations                │
       │     └───────────────────────────────────────────────────────────────────────────┘
       │                                         │
@@ -44,8 +44,8 @@ OpenClaudia is an open-source universal agent harness that provides Claude Code-
       │
       ▼
 ┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│                                     tools.rs                                            │
-│        bash | read | write | edit | glob | grep | web_fetch | memory_* | chainlink     │
+│                                     tools/                                              │
+│        bash | read | write | edit | glob | grep | web_fetch | memory_* | crosslink     │
 └─────────────────────────────────────────────────────────────────────────────────────────┘
               │                                           │
               ▼                                           ▼
@@ -57,30 +57,41 @@ OpenClaudia is an open-source universal agent harness that provides Claude Code-
               │
               ▼
       ┌───────────────┐       ┌───────────────┐
-      │   mcp.rs      │       │  plugins.rs   │
-      │ MCP Protocol  │       │ Future Ext    │
+      │   mcp.rs      │       │  plugins/     │
+      │ MCP Protocol  │       │ Extension     │
       │ (stdio/http)  │       │ Framework     │
       └───────────────┘       └───────────────┘
 ```
 
 ## Module Responsibilities
 
+Most subsystems are directory modules (e.g. `config/mod.rs`), not single
+files. Single-file modules keep the `.rs` suffix below.
+
 | Module          | Purpose                                                    |
 |-----------------|-----------------------------------------------------------|
 | `main.rs`       | CLI entry point, subcommands (init, start, chat, loop)    |
-| `config.rs`     | YAML config + env var loading, provider/hook definitions  |
+| `cli/`          | Subcommand implementations (auth, init, start, etc.)      |
+| `config/`       | YAML config + env var loading, provider/hook definitions  |
 | `proxy.rs`      | HTTP server (axum), request/response translation          |
-| `providers.rs`  | Provider adapters (Anthropic, OpenAI, Google, etc.)       |
-| `tools.rs`      | Tool definitions and execution (bash, read, write, edit)  |
+| `providers/`    | Provider adapters (Anthropic, OpenAI, Google, etc.)       |
+| `tools/`        | Tool definitions and execution (bash, read, write, edit)  |
 | `memory.rs`     | SQLite-based archival + core memory (MemGPT-style)        |
-| `session.rs`    | Conversation state, turn management                        |
-| `hooks.rs`      | Lifecycle hooks (pre/post tool, session start/end)        |
+| `memdir/`       | MEMORY.md entrypoint discovery, loading, and truncation    |
+| `session/`      | Conversation state, turn management                        |
+| `state/`        | Shared runtime/session state types                         |
+| `hooks/`        | Lifecycle hooks (pre/post tool, session start/end)        |
 | `rules.rs`      | CLAUDE.md and .clauderules parsing                         |
-| `tui.rs`        | Terminal UI with ratatui                                   |
+| `tui/`          | Terminal UI with ratatui                                   |
 | `web.rs`        | Web scraping with headless Chrome                          |
 | `compaction.rs` | Context window management, automatic summarization         |
 | `mcp.rs`        | Model Context Protocol server support                      |
-| `plugins.rs`    | Future plugin/extension framework                          |
+| `plugins/`      | Plugin/extension framework                                 |
+| `coordinator/`  | Multi-agent / subagent coordination                        |
+| `vdd/`          | Verification-driven development workflow                   |
+| `modes/`        | Agency/quality/scope prompt axes                           |
+| `services/`     | Background and shared services                             |
+| `speculation/`  | Speculative execution support                              |
 | `context.rs`    | System prompt and context construction                     |
 | `prompt.rs`     | Prompt templates and formatting                            |
 
@@ -180,7 +191,9 @@ providers:
 ```
 
 ### `.chainlink/` Directory
-Issue tracking database and metadata for VDD workflow.
+Issue-tracking SQLite database (`issues.db`) and metadata for the VDD
+workflow, managed via the `crosslink` crate/CLI (the `chainlink` name is
+legacy; the current tool is `crosslink`).
 
 ### `.claude/` Directory
 Custom slash commands and project-specific prompts.
@@ -216,7 +229,8 @@ User Input → TUI/CLI → Session → Proxy → Provider Adapter → External A
 
 ## Thinking Mode Support
 
-All 6 providers support thinking/reasoning modes:
+Providers support thinking/reasoning modes where the underlying model
+allows. The primary parameters per provider:
 
 | Provider  | Thinking Parameter                | Notes                        |
 |-----------|-----------------------------------|------------------------------|
@@ -230,17 +244,16 @@ All 6 providers support thinking/reasoning modes:
 ## Common Tasks
 
 ### Adding a New Provider
-1. Add adapter struct in `providers.rs`
-2. Implement `ProviderAdapter` trait
+1. Add an adapter struct in `providers/` (e.g. a new `providers/foo.rs`)
+2. Implement the `ProviderAdapter` trait (defined in `providers/mod.rs`)
 3. Add thinking support via `transform_request_with_thinking()`
-4. Register in `get_adapter()` function
-5. Add default config in `config.rs`
+4. Register the singleton in `get_adapter()` and `SUPPORTED_PROVIDERS` in `providers/mod.rs`
+5. Add default `base_url`/config defaults in `config/mod.rs`
 
 ### Adding a New Tool
-1. Add tool definition in `get_tool_definitions()`
-2. Add execution branch in `execute_tool()`
-3. Update system prompt if needed
-4. Add tests
+1. Add the tool definition and execution in `tools/` (see `tools/registry.rs`)
+2. Update the system prompt if needed
+3. Add tests
 
 ### Modifying Hooks
 1. Edit hook configuration in `config.yaml`
