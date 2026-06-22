@@ -407,8 +407,9 @@ pub fn structured_final_summary(content: &str) -> Result<Option<String>, String>
 
 /// Validate a final model response and return the human-rendered final text.
 ///
-/// Structured final decisions are preferred. Plain text with observation-id
-/// citations remains accepted as a compatibility fallback.
+/// Plain assistant text is accepted directly, matching Codex-style typed
+/// message handling. Structured final decisions remain available when a turn
+/// explicitly needs grounded evidence and verification IDs.
 ///
 /// # Errors
 ///
@@ -735,7 +736,8 @@ mod tests {
         assert!(rendered.contains(&format!("TaskSpec [{task}]")));
         assert!(rendered.contains("navigation aids"));
         assert!(rendered.contains("\"kind\":\"final\""));
-        assert!(rendered.contains("compatibility fallback"));
+        assert!(rendered.contains("Final answers should be plain assistant text"));
+        assert!(rendered.contains("explicitly grounded decision"));
     }
 
     #[test]
