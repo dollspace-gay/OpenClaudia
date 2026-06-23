@@ -79,10 +79,10 @@ pub struct TurnResult {
 /// Wire protocol used for the outbound provider request.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum WireApi {
-    /// OpenAI-compatible Chat Completions (`messages`, `choices[].delta`).
+    /// `OpenAI`-compatible Chat Completions (`messages`, `choices[].delta`).
     #[default]
     ChatCompletions,
-    /// OpenAI Responses (`input`, `response.output_text.delta`, response items).
+    /// `OpenAI` Responses (`input`, `response.output_text.delta`, response items).
     OpenAiResponses,
 }
 
@@ -223,7 +223,7 @@ fn text_from_message_content(content: &Value) -> Result<String, String> {
     Ok(text)
 }
 
-fn response_input_message(role: &str, text: String) -> Value {
+fn response_input_message(role: &str, text: &str) -> Value {
     let item_type = if role == "assistant" {
         "output_text"
     } else {
@@ -252,10 +252,10 @@ fn responses_input_items(messages: &[Value]) -> Result<(String, Vec<Value>), Str
                     instructions.push(content);
                 }
             }
-            "user" => input.push(response_input_message("user", content)),
+            "user" => input.push(response_input_message("user", &content)),
             "assistant" => {
                 if !content.is_empty() {
-                    input.push(response_input_message("assistant", content));
+                    input.push(response_input_message("assistant", &content));
                 }
                 if let Some(tool_calls) = msg.get("tool_calls").and_then(Value::as_array) {
                     for call in tool_calls {
@@ -361,7 +361,7 @@ fn responses_reasoning(effort_level: &str) -> Option<Value> {
     }
 }
 
-/// Build an OpenAI Responses API request body.
+/// Build an `OpenAI` Responses API request body.
 ///
 /// # Errors
 ///
@@ -395,6 +395,11 @@ pub fn build_openai_responses_request(
 
 /// Build the canonical chat-completions request used for policy accounting
 /// before provider-specific adapter transformation.
+///
+/// # Errors
+///
+/// Returns an error if a session message cannot be converted into a typed chat
+/// message or if the built-in tool definitions are not represented as an array.
 pub fn build_chat_completion_request(
     model: &str,
     messages: &[Value],
@@ -1925,31 +1930,7 @@ async fn stream_responses_sse_response(p: SseStreamParams<'_>) -> Result<TurnRes
             tx,
         )?;
         if done {
-            let (tool_results, needs_followup) = execute_tool_calls_for_tui(
-                &tool_calls,
-                memory_db.clone(),
-                app_config.clone(),
-                permission_mgr.clone(),
-                transient_allowed_tool_rules,
-                hook_engine.clone(),
-                policy_enforcer.clone(),
-                task_mgr.clone(),
-                session_id.as_deref(),
-                tx,
-            )
-            .await;
-            if !needs_followup {
-                send_event!(tx, AppEvent::ResponseDone);
-            }
-            return Ok(TurnResult {
-                content: full_content,
-                reasoning_content: (!reasoning_content.is_empty()).then_some(reasoning_content),
-                tool_calls,
-                tool_results,
-                usage: stream_usage,
-                needs_followup,
-                finish_reason: None,
-            });
+            break;
         }
     }
 
@@ -2354,20 +2335,33 @@ struct ToolPermissionDispatch {
     already_checked: bool,
 }
 
-/// Execute one tool call on a blocking thread, fire `PostToolUse` hooks, and
-/// return the JSON result to append to conversation history.
-/// Returns `None` when the event channel is broken (caller should `break`).
-async fn execute_single_tool(
-    tool_call: &ToolCall,
+struct SingleToolExecution<'a> {
+    tool_call: &'a ToolCall,
     memory_db: Option<Arc<MemoryDb>>,
     app_config: Option<Arc<AppConfig>>,
     permission: ToolPermissionDispatch,
     policy_enforcer: Option<Arc<PolicyEnforcer>>,
     task_mgr: Arc<Mutex<crate::session::TaskManager>>,
-    session_id: Option<&str>,
-    hook_context: Option<(&crate::hooks::HookEngine, Value)>,
-    tx: &mpsc::Sender<AppEvent>,
-) -> Option<Value> {
+    session_id: Option<&'a str>,
+    hook_context: Option<(&'a crate::hooks::HookEngine, Value)>,
+    tx: &'a mpsc::Sender<AppEvent>,
+}
+
+/// Execute one tool call on a blocking thread, fire `PostToolUse` hooks, and
+/// return the JSON result to append to conversation history.
+/// Returns `None` when the event channel is broken (caller should `break`).
+async fn execute_single_tool(p: SingleToolExecution<'_>) -> Option<Value> {
+    let SingleToolExecution {
+        tool_call,
+        memory_db,
+        app_config,
+        permission,
+        policy_enforcer,
+        task_mgr,
+        session_id,
+        hook_context,
+        tx,
+    } = p;
     let tool_name = &tool_call.function.name;
     let tool_call_clone = tool_call.clone();
     let mem_db = memory_db;
@@ -2809,20 +2803,20 @@ async fn execute_tool_calls_for_tui(
             }
         );
 
-        let tool_result = execute_single_tool(
+        let tool_result = execute_single_tool(SingleToolExecution {
             tool_call,
-            memory_db.clone(),
-            app_config.clone(),
-            ToolPermissionDispatch {
+            memory_db: memory_db.clone(),
+            app_config: app_config.clone(),
+            permission: ToolPermissionDispatch {
                 mgr: permission_mgr.clone(),
                 already_checked: permission_already_checked,
             },
-            policy_enforcer.clone(),
-            task_mgr.clone(),
+            policy_enforcer: policy_enforcer.clone(),
+            task_mgr: task_mgr.clone(),
             session_id,
             hook_context,
             tx,
-        )
+        })
         .await;
         match tool_result {
             None => break, // channel broken

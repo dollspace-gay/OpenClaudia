@@ -462,7 +462,7 @@ pub fn validate_and_render_final_against_ledger(
     content: &str,
 ) -> Result<String, String> {
     match parse_structured_final_decision(content) {
-        Ok(Some(decision)) => return validate_and_render_structured_final(ledger, decision),
+        Ok(Some(decision)) => return validate_and_render_structured_final(ledger, &decision),
         Ok(None) => {}
         Err(reason) => {
             append_final_policy_decision(ledger, false, &reason);
@@ -476,21 +476,18 @@ pub fn validate_and_render_final_against_ledger(
 
 fn validate_and_render_structured_final(
     ledger: &mut RealityLedger,
-    decision: crate::decision::AgentDecision,
+    decision: &crate::decision::AgentDecision,
 ) -> Result<String, String> {
-    let summary = match &decision {
-        crate::decision::AgentDecision::Final { summary, .. } => summary.clone(),
-        _ => {
-            let reason = "structured final decision must have kind 'final'".to_string();
-            append_final_policy_decision(ledger, false, &reason);
-            return Err(reason);
-        }
+    let crate::decision::AgentDecision::Final { summary, .. } = decision else {
+        let reason = "structured final decision must have kind 'final'".to_string();
+        append_final_policy_decision(ledger, false, &reason);
+        return Err(reason);
     };
 
-    match crate::decision::validate_decision(&decision, ledger) {
+    match crate::decision::validate_decision(decision, ledger) {
         Ok(crate::decision::DecisionValidation::Final(_)) => {
             append_final_policy_decision(ledger, true, "structured final decision grounded");
-            Ok(summary)
+            Ok(summary.clone())
         }
         Ok(_) => {
             let reason = "structured final decision validated as a non-final decision".to_string();

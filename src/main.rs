@@ -57,17 +57,14 @@ fn open_tui_log_file(dir: &Path, pid: u32) -> Option<std::fs::File> {
     }
 
     let path = dir.join(format!("tui-{pid}.log"));
-    match std::fs::OpenOptions::new()
+    std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
-    {
-        Ok(file) => Some(file),
-        Err(_) => None,
-    }
+        .ok()
 }
 
-fn should_redirect_tui_logs(cli: &Cli) -> bool {
+const fn should_redirect_tui_logs(cli: &Cli) -> bool {
     cli.command.is_none() && !cli.tui_mode && cli.print.is_none()
 }
 
@@ -422,20 +419,13 @@ struct TuiStartupOptions {
     mode_arg: Option<String>,
 }
 
-async fn cmd_tui(options: TuiStartupOptions) -> anyhow::Result<()> {
-    chdir_to_git_root();
+struct PreparedTuiStartup {
+    config: config::AppConfig,
+    startup_auth: Option<TuiStartupSelections>,
+    vdd_adversary_auth: Option<openclaudia::vdd::VddProviderAuth>,
+}
 
-    let behavior_mode =
-        parse_initial_behavior_mode(options.mode_arg.as_deref()).map_err(|e| anyhow::anyhow!(e))?;
-
-    // Crosslink #797: every configuration-load / provider-resolve /
-    // auth-resolve failure path used to print to stderr and return
-    // `Ok(())`, giving exit code 0 even on a broken setup. `set -e`
-    // wrappers and orchestration that branches on exit status saw success
-    // and continued. Each failure now propagates as `anyhow::Error` so
-    // main() exits non-zero; the human-readable `eprintln!` messages stay
-    // for friendly framing, but the error-vs-non-error distinction is no
-    // longer collapsed at the exit boundary.
+async fn prepare_tui_startup(options: &TuiStartupOptions) -> anyhow::Result<PreparedTuiStartup> {
     let mut config = config::load_config().map_err(|e| {
         if config::config_file_exists() {
             eprintln!("Failed to parse configuration: {e}");
@@ -446,7 +436,7 @@ async fn cmd_tui(options: TuiStartupOptions) -> anyhow::Result<()> {
         }
     })?;
 
-    let startup_auth = if should_prompt_tui_startup_auth(&options) {
+    let startup_auth = if should_prompt_tui_startup_auth(options) {
         select_tui_startup_auth(&config).await?
     } else {
         None
@@ -477,7 +467,11 @@ async fn cmd_tui(options: TuiStartupOptions) -> anyhow::Result<()> {
                     .adversary
                     .provider
                     .clone_from(&vdd_selection.target);
-                config.vdd.adversary.api_key = vdd_selection.auth.api_key.clone();
+                config
+                    .vdd
+                    .adversary
+                    .api_key
+                    .clone_from(&vdd_selection.auth.api_key);
                 Some(vdd_selection.auth.to_vdd_provider_auth())
             }
         });
@@ -486,6 +480,25 @@ async fn cmd_tui(options: TuiStartupOptions) -> anyhow::Result<()> {
         .vdd
         .validate(&config.proxy.target)
         .map_err(|e| anyhow::anyhow!("VDD configuration error: {e}"))?;
+
+    Ok(PreparedTuiStartup {
+        config,
+        startup_auth,
+        vdd_adversary_auth,
+    })
+}
+
+async fn cmd_tui(options: TuiStartupOptions) -> anyhow::Result<()> {
+    chdir_to_git_root();
+
+    let behavior_mode =
+        parse_initial_behavior_mode(options.mode_arg.as_deref()).map_err(|e| anyhow::anyhow!(e))?;
+
+    let PreparedTuiStartup {
+        config,
+        startup_auth,
+        vdd_adversary_auth,
+    } = prepare_tui_startup(&options).await?;
 
     let Some(provider) = config.active_provider() else {
         eprintln!(
@@ -1220,20 +1233,25 @@ struct ChatAuth {
     /// `~/.claude/.credentials.json` store.
     claude_code_token: Option<String>,
     /// Codex ChatGPT/PAT bearer auth. This must be sent to the Codex
-    /// Responses backend, not OpenAI Chat Completions.
+    /// Responses backend, not `OpenAI` Chat Completions.
     codex_responses_auth: Option<openclaudia::codex_credentials::CodexResponsesAuth>,
 }
 
 impl ChatAuth {
     fn to_vdd_provider_auth(&self) -> openclaudia::vdd::VddProviderAuth {
-        if let Some(auth) = &self.codex_responses_auth {
-            openclaudia::vdd::VddProviderAuth::codex_responses(auth.clone())
-        } else if let Some(token) = &self.claude_code_token {
-            openclaudia::vdd::VddProviderAuth::claude_code_token(token.clone())
-        } else if let Some(api_key) = &self.api_key {
-            openclaudia::vdd::VddProviderAuth::api_key(api_key.clone())
-        } else {
-            openclaudia::vdd::VddProviderAuth::None
+        match (
+            self.codex_responses_auth.as_ref(),
+            self.claude_code_token.as_ref(),
+            self.api_key.as_ref(),
+        ) {
+            (Some(auth), _, _) => openclaudia::vdd::VddProviderAuth::codex_responses(auth.clone()),
+            (None, Some(token), _) => {
+                openclaudia::vdd::VddProviderAuth::claude_code_token(token.clone())
+            }
+            (None, None, Some(api_key)) => {
+                openclaudia::vdd::VddProviderAuth::api_key(api_key.clone())
+            }
+            (None, None, None) => openclaudia::vdd::VddProviderAuth::None,
         }
     }
 }
@@ -1517,7 +1535,7 @@ fn select_openai_auth_candidate(
     Ok(auth)
 }
 
-fn should_prompt_tui_startup_auth(options: &TuiStartupOptions) -> bool {
+const fn should_prompt_tui_startup_auth(options: &TuiStartupOptions) -> bool {
     options.target_override.is_none() && options.model_override.is_none()
 }
 
@@ -1586,21 +1604,16 @@ fn collect_openai_startup_auth_candidates(
 
 fn canonical_startup_provider(provider: &str) -> &str {
     match provider.trim().to_ascii_lowercase().as_str() {
-        "gemini" => "google",
-        "alibaba" => "qwen",
-        "zhipu" | "glm" => "zai",
-        "moonshot" => "kimi",
-        "lmstudio" | "localai" | "text-generation-webui" => "local",
+        "gemini" | "google" => "google",
+        "alibaba" | "qwen" => "qwen",
+        "zhipu" | "glm" | "zai" => "zai",
+        "moonshot" | "kimi" => "kimi",
+        "lmstudio" | "localai" | "text-generation-webui" | "local" => "local",
         "anthropic" => "anthropic",
         "openai" => "openai",
-        "google" => "google",
-        "qwen" => "qwen",
-        "zai" => "zai",
-        "kimi" => "kimi",
         "deepseek" => "deepseek",
         "minimax" => "minimax",
         "ollama" => "ollama",
-        "local" => "local",
         _ => provider.trim(),
     }
 }
@@ -1730,13 +1743,13 @@ fn collect_tui_startup_vdd_auth_candidates(
 
     collect_configured_provider_api_key_candidates(config, &mut candidates, Some(chat_target));
 
-    if !same_startup_provider("anthropic", chat_target) {
-        if openclaudia::claude_credentials::has_claude_code_credentials() {
-            push_unique_startup_candidate(
-                &mut candidates,
-                TuiStartupAuthCandidate::AnthropicClaudeCode,
-            );
-        }
+    if !same_startup_provider("anthropic", chat_target)
+        && openclaudia::claude_credentials::has_claude_code_credentials()
+    {
+        push_unique_startup_candidate(
+            &mut candidates,
+            TuiStartupAuthCandidate::AnthropicClaudeCode,
+        );
     }
 
     if !same_startup_provider("openai", chat_target) {
@@ -1921,6 +1934,79 @@ async fn resolve_tui_chat_auth(
     resolve_chat_auth(target, provider, ChatAuthSelectionMode::Interactive).await
 }
 
+fn select_openai_auth_if_available(
+    candidates: Vec<OpenAiAuthCandidate>,
+    selection_mode: ChatAuthSelectionMode,
+) -> anyhow::Result<Option<ChatAuth>> {
+    if selection_mode == ChatAuthSelectionMode::Interactive || !candidates.is_empty() {
+        return Ok(Some(select_openai_auth_candidate(
+            candidates,
+            selection_mode,
+        )?));
+    }
+    Ok(None)
+}
+
+fn resolve_openai_chat_auth(
+    target: &str,
+    provider: &openclaudia::config::ProviderConfig,
+    selection_mode: ChatAuthSelectionMode,
+) -> anyhow::Result<Option<ChatAuth>> {
+    let mut candidates = Vec::new();
+    if let Some(k) = &provider.api_key {
+        candidates.push(OpenAiAuthCandidate::ApiKey {
+            api_key: k.clone(),
+            label: "configured OpenAI API key".to_string(),
+        });
+    }
+
+    match openclaudia::codex_credentials::load_codex_auth() {
+        Ok(Some(openclaudia::codex_credentials::CodexAuthMaterial::ApiKey { api_key, source })) => {
+            let api_key = openclaudia::providers::ApiKey::try_from_string(api_key)
+                .map_err(|e| anyhow::anyhow!("Codex OpenAI API key is invalid: {e}"))?;
+            candidates.push(OpenAiAuthCandidate::ApiKey {
+                api_key,
+                label: format!("OpenAI API key via {}", source.display_name()),
+            });
+        }
+        Ok(Some(openclaudia::codex_credentials::CodexAuthMaterial::Responses(auth))) => {
+            candidates.push(OpenAiAuthCandidate::CodexResponses(auth));
+        }
+        Ok(Some(openclaudia::codex_credentials::CodexAuthMaterial::Unsupported {
+            mode,
+            source,
+        })) => {
+            if let Some(auth) = select_openai_auth_if_available(candidates, selection_mode)? {
+                return Ok(Some(auth));
+            }
+            eprintln!(
+                "Codex auth found via {}, but {} is not usable for OpenAI Responses in OpenClaudia.",
+                source.display_name(),
+                mode.display_name()
+            );
+            eprintln!("Set OPENAI_API_KEY, or log in to Codex with ChatGPT/PAT auth.");
+            return Ok(None);
+        }
+        Ok(None) => {}
+        Err(e) => {
+            if let Some(auth) = select_openai_auth_if_available(candidates, selection_mode)? {
+                return Ok(Some(auth));
+            }
+            eprintln!("Error: Codex credentials unusable: {e}");
+            eprintln!("Set OPENAI_API_KEY, or run `codex login`.");
+            return Ok(None);
+        }
+    }
+
+    if let Some(auth) = select_openai_auth_if_available(candidates, selection_mode)? {
+        return Ok(Some(auth));
+    }
+
+    let env_var = openclaudia::providers::api_key_env_var_for_target(target);
+    eprintln!("No API key configured for '{target}'. Set {env_var} or add to config.");
+    Ok(None)
+}
+
 /// Resolve which authentication mechanism the chat session should use.
 ///
 /// Priority for Anthropic:
@@ -1969,74 +2055,7 @@ async fn resolve_chat_auth(
     }
 
     if target.eq_ignore_ascii_case("openai") {
-        let mut candidates = Vec::new();
-        if let Some(k) = &provider.api_key {
-            candidates.push(OpenAiAuthCandidate::ApiKey {
-                api_key: k.clone(),
-                label: "configured OpenAI API key".to_string(),
-            });
-        }
-
-        match openclaudia::codex_credentials::load_codex_auth() {
-            Ok(Some(openclaudia::codex_credentials::CodexAuthMaterial::ApiKey {
-                api_key,
-                source,
-            })) => {
-                let api_key = openclaudia::providers::ApiKey::try_from_string(api_key)
-                    .map_err(|e| anyhow::anyhow!("Codex OpenAI API key is invalid: {e}"))?;
-                candidates.push(OpenAiAuthCandidate::ApiKey {
-                    api_key,
-                    label: format!("OpenAI API key via {}", source.display_name()),
-                });
-            }
-            Ok(Some(openclaudia::codex_credentials::CodexAuthMaterial::Responses(auth))) => {
-                candidates.push(OpenAiAuthCandidate::CodexResponses(auth));
-            }
-            Ok(Some(openclaudia::codex_credentials::CodexAuthMaterial::Unsupported {
-                mode,
-                source,
-            })) => {
-                if selection_mode == ChatAuthSelectionMode::Interactive || !candidates.is_empty() {
-                    return Ok(Some(select_openai_auth_candidate(
-                        candidates,
-                        selection_mode,
-                    )?));
-                }
-                eprintln!(
-                    "Codex auth found via {}, but {} is not usable for OpenAI Responses in OpenClaudia.",
-                    source.display_name(),
-                    mode.display_name()
-                );
-                eprintln!("Set OPENAI_API_KEY, or log in to Codex with ChatGPT/PAT auth.");
-                return Ok(None);
-            }
-            Ok(None) => {
-                if selection_mode == ChatAuthSelectionMode::Interactive || !candidates.is_empty() {
-                    return Ok(Some(select_openai_auth_candidate(
-                        candidates,
-                        selection_mode,
-                    )?));
-                }
-            }
-            Err(e) => {
-                if selection_mode == ChatAuthSelectionMode::Interactive || !candidates.is_empty() {
-                    return Ok(Some(select_openai_auth_candidate(
-                        candidates,
-                        selection_mode,
-                    )?));
-                }
-                eprintln!("Error: Codex credentials unusable: {e}");
-                eprintln!("Set OPENAI_API_KEY, or run `codex login`.");
-                return Ok(None);
-            }
-        }
-
-        if selection_mode == ChatAuthSelectionMode::Interactive || !candidates.is_empty() {
-            return Ok(Some(select_openai_auth_candidate(
-                candidates,
-                selection_mode,
-            )?));
-        }
+        return resolve_openai_chat_auth(target, provider, selection_mode);
     }
 
     if let Some(k) = &provider.api_key {

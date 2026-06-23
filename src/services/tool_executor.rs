@@ -1,6 +1,6 @@
 //! Shared local tool execution service.
 //!
-//! This centralizes the common "run an OpenClaudia tool locally" mechanics
+//! This centralizes the common "run an `OpenClaudia` tool locally" mechanics
 //! that were duplicated across TUI, legacy REPL, ACP local tools, subagents,
 //! and intercepted XML tools: optional enterprise tool cap, session id guard,
 //! active ledger installation, permission checked-vs-unchecked dispatch, and

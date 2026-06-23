@@ -139,7 +139,7 @@ impl TextInput {
     }
 }
 
-fn wrapped_rows(char_count: usize, width: usize) -> usize {
+const fn wrapped_rows(char_count: usize, width: usize) -> usize {
     if char_count == 0 {
         1
     } else {

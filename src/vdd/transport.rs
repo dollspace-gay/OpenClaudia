@@ -5,7 +5,7 @@ use serde_json::Value;
 use tracing::{debug, info, warn};
 
 use crate::config::{AppConfig, ProviderConfig, VddConfig};
-use crate::providers::{get_adapter, ApiKey};
+use crate::providers::{get_adapter, ApiKey, ProviderAdapter};
 use crate::proxy::ChatCompletionRequest;
 use crate::session::TokenUsage;
 
@@ -41,17 +41,17 @@ impl std::fmt::Debug for VddProviderAuth {
 
 impl VddProviderAuth {
     #[must_use]
-    pub fn api_key(api_key: ApiKey) -> Self {
+    pub const fn api_key(api_key: ApiKey) -> Self {
         Self::ApiKey(api_key)
     }
 
     #[must_use]
-    pub fn claude_code_token(token: String) -> Self {
+    pub const fn claude_code_token(token: String) -> Self {
         Self::ClaudeCodeToken(token)
     }
 
     #[must_use]
-    pub fn codex_responses(auth: crate::codex_credentials::CodexResponsesAuth) -> Self {
+    pub const fn codex_responses(auth: crate::codex_credentials::CodexResponsesAuth) -> Self {
         Self::CodexResponses(auth)
     }
 }
@@ -275,6 +275,54 @@ async fn send_to_codex_responses(
     ))
 }
 
+fn adversary_headers_and_endpoint(
+    config: &VddConfig,
+    provider_config: &ProviderConfig,
+    adapter: &dyn ProviderAdapter,
+    request: &ChatCompletionRequest,
+    transformed: &mut Value,
+    runtime_auth: Option<&VddProviderAuth>,
+) -> Result<(Vec<(String, String)>, String), VddError> {
+    match runtime_auth {
+        Some(VddProviderAuth::ApiKey(api_key)) => Ok((
+            adapter.get_headers(api_key),
+            adapter.chat_endpoint(&request.model),
+        )),
+        Some(VddProviderAuth::ClaudeCodeToken(token)) => {
+            if !config.adversary.provider.eq_ignore_ascii_case("anthropic") {
+                return Err(VddError::ConfigError(format!(
+                    "Claude Code auth can only be used with Anthropic VDD adversary, got '{}'",
+                    config.adversary.provider
+                )));
+            }
+            crate::claude_credentials::inject_system_prompt(transformed);
+            Ok((
+                crate::claude_credentials::get_oauth_headers(token),
+                crate::claude_credentials::get_oauth_endpoint(&request.model),
+            ))
+        }
+        Some(VddProviderAuth::None) => Ok((Vec::new(), adapter.chat_endpoint(&request.model))),
+        None => {
+            let api_key = config
+                .adversary
+                .api_key
+                .as_ref()
+                .or(provider_config.api_key.as_ref())
+                .ok_or_else(|| {
+                    VddError::ConfigError(format!(
+                        "No API key for adversary provider '{}'",
+                        config.adversary.provider
+                    ))
+                })?;
+            Ok((
+                adapter.get_headers(api_key),
+                adapter.chat_endpoint(&request.model),
+            ))
+        }
+        Some(VddProviderAuth::CodexResponses(_)) => unreachable!("handled above"),
+    }
+}
+
 /// Send a request to the adversary provider. Returns (`response_text`, `token_usage`).
 ///
 /// Per-request timeout — crosslink #496 — wraps both the HTTP send and the
@@ -319,44 +367,14 @@ pub async fn send_to_adversary(
         .transform_request(request)
         .map_err(|e| VddError::AdversaryRequestFailed(e.to_string()))?;
 
-    let (headers, endpoint) = match runtime_auth {
-        Some(VddProviderAuth::ApiKey(api_key)) => (
-            adapter.get_headers(api_key),
-            adapter.chat_endpoint(&request.model),
-        ),
-        Some(VddProviderAuth::ClaudeCodeToken(token)) => {
-            if !config.adversary.provider.eq_ignore_ascii_case("anthropic") {
-                return Err(VddError::ConfigError(format!(
-                    "Claude Code auth can only be used with Anthropic VDD adversary, got '{}'",
-                    config.adversary.provider
-                )));
-            }
-            crate::claude_credentials::inject_system_prompt(&mut transformed);
-            (
-                crate::claude_credentials::get_oauth_headers(token),
-                crate::claude_credentials::get_oauth_endpoint(&request.model),
-            )
-        }
-        Some(VddProviderAuth::None) => (Vec::new(), adapter.chat_endpoint(&request.model)),
-        None => {
-            let api_key = config
-                .adversary
-                .api_key
-                .as_ref()
-                .or(provider_config.api_key.as_ref())
-                .ok_or_else(|| {
-                    VddError::ConfigError(format!(
-                        "No API key for adversary provider '{}'",
-                        config.adversary.provider
-                    ))
-                })?;
-            (
-                adapter.get_headers(api_key),
-                adapter.chat_endpoint(&request.model),
-            )
-        }
-        Some(VddProviderAuth::CodexResponses(_)) => unreachable!("handled above"),
-    };
+    let (headers, endpoint) = adversary_headers_and_endpoint(
+        config,
+        provider_config,
+        adapter,
+        request,
+        &mut transformed,
+        runtime_auth,
+    )?;
 
     let provider_name = adapter.name().to_string();
 

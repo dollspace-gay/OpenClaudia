@@ -747,14 +747,17 @@ async fn resolve_provider_switch(
 }
 
 fn provider_switch_auth_to_vdd_auth(auth: &ProviderSwitchAuth) -> crate::vdd::VddProviderAuth {
-    if let Some(codex_auth) = &auth.codex_responses_auth {
-        crate::vdd::VddProviderAuth::codex_responses(codex_auth.clone())
-    } else if let Some(token) = &auth.claude_code_token {
-        crate::vdd::VddProviderAuth::claude_code_token(token.clone())
-    } else if let Some(api_key) = &auth.api_key {
-        crate::vdd::VddProviderAuth::api_key(api_key.clone())
-    } else {
-        crate::vdd::VddProviderAuth::None
+    match (
+        auth.codex_responses_auth.as_ref(),
+        auth.claude_code_token.as_ref(),
+        auth.api_key.as_ref(),
+    ) {
+        (Some(codex_auth), _, _) => {
+            crate::vdd::VddProviderAuth::codex_responses(codex_auth.clone())
+        }
+        (None, Some(token), _) => crate::vdd::VddProviderAuth::claude_code_token(token.clone()),
+        (None, None, Some(api_key)) => crate::vdd::VddProviderAuth::api_key(api_key.clone()),
+        (None, None, None) => crate::vdd::VddProviderAuth::None,
     }
 }
 
@@ -1429,7 +1432,7 @@ impl App {
     fn handle_app_event(&mut self, event: Result<AppEvent, std::sync::mpsc::RecvError>) -> bool {
         match event {
             Ok(AppEvent::Key(key)) => self.handle_key(key),
-            Ok(AppEvent::Paste(text)) => self.handle_paste(text),
+            Ok(AppEvent::Paste(text)) => self.handle_paste(&text),
             Ok(AppEvent::Tick) => {
                 self.spinner_frame = (self.spinner_frame + 1) % SPINNER_FRAMES.len();
             }
@@ -1815,7 +1818,7 @@ impl App {
         }
     }
 
-    fn handle_paste(&mut self, text: String) {
+    fn handle_paste(&mut self, text: &str) {
         if self.overlay.is_some()
             || self.is_waiting
             || self.pending_permission.is_some()
@@ -1824,7 +1827,7 @@ impl App {
             return;
         }
 
-        self.input.insert_str(&text);
+        self.input.insert_str(text);
     }
 
     /// Handle the universal Ctrl+C interrupt. Distinct from the per-mode
@@ -3526,6 +3529,24 @@ struct ApiTurnParams {
     tx: std::sync::mpsc::Sender<super::events::AppEvent>,
 }
 
+struct InitialTurnRequest<'a> {
+    session_id: &'a str,
+    session_messages: &'a [serde_json::Value],
+    policy_enforcer: &'a std::sync::Arc<crate::services::policy::PolicyEnforcer>,
+    model: &'a str,
+    wire_api: crate::pipeline::WireApi,
+    provider: &'a str,
+    effort_level: EffortLevel,
+    claude_code_token: Option<&'a str>,
+    prompt_blocks: Option<&'a crate::prompt::SystemPromptBlocks>,
+    tx: &'a std::sync::mpsc::Sender<super::events::AppEvent>,
+}
+
+struct PreparedInitialTurn {
+    task_obs: Option<crate::ledger::ObsId>,
+    request_body: serde_json::Value,
+}
+
 /// Shared context threaded through the agentic follow-up loop.
 struct AgenticCtx<'a> {
     client: &'a reqwest::Client,
@@ -4147,6 +4168,45 @@ async fn run_agentic_loop(ctx: &AgenticCtx<'_>, session_messages: &mut Vec<serde
     }
 }
 
+fn build_initial_turn_request(p: &InitialTurnRequest<'_>) -> Option<PreparedInitialTurn> {
+    let task_obs = observe_turn_user_task(p.session_id, p.session_messages);
+    let request_messages =
+        match request_messages_with_grounding(p.session_id, task_obs, p.session_messages) {
+            Ok(messages) => messages,
+            Err(e) => {
+                send_or_warn(p.tx, super::events::AppEvent::ApiError(e), p.session_id);
+                return None;
+            }
+        };
+    if !check_provider_request_policy_for_messages(
+        p.policy_enforcer,
+        p.model,
+        &request_messages,
+        p.tx,
+        p.session_id,
+    ) {
+        return None;
+    }
+    match crate::pipeline::build_request_for_wire(
+        p.wire_api,
+        p.provider,
+        p.model,
+        &request_messages,
+        p.effort_level.as_str(),
+        p.claude_code_token,
+        p.prompt_blocks,
+    ) {
+        Ok(request_body) => Some(PreparedInitialTurn {
+            task_obs,
+            request_body,
+        }),
+        Err(e) => {
+            send_or_warn(p.tx, super::events::AppEvent::ApiError(e), p.session_id);
+            None
+        }
+    }
+}
+
 /// Run a complete API turn: pre-turn hooks, first `run_turn`, and an agentic
 /// follow-up loop when tool calls are present.
 async fn run_api_turn_async(p: ApiTurnParams) {
@@ -4178,44 +4238,26 @@ async fn run_api_turn_async(p: ApiTurnParams) {
             return;
         }
     }
-    let task_obs = observe_turn_user_task(&session_id, &session_messages);
-    let request_messages =
-        match request_messages_with_grounding(&session_id, task_obs, &session_messages) {
-            Ok(messages) => messages,
-            Err(e) => {
-                send_or_warn(&tx, super::events::AppEvent::ApiError(e), &session_id);
-                return;
-            }
-        };
-    if !check_provider_request_policy_for_messages(
-        &policy_enforcer,
-        &model,
-        &request_messages,
-        &tx,
-        &session_id,
-    ) {
-        return;
-    }
-    let request_body = match crate::pipeline::build_request_for_wire(
+    let initial_request = InitialTurnRequest {
+        session_id: &session_id,
+        session_messages: &session_messages,
+        policy_enforcer: &policy_enforcer,
+        model: &model,
         wire_api,
-        &provider,
-        &model,
-        &request_messages,
-        effort_level.as_str(),
-        claude_code_token.as_deref(),
-        prompt_blocks.as_ref(),
-    ) {
-        Ok(request_body) => request_body,
-        Err(e) => {
-            send_or_warn(&tx, super::events::AppEvent::ApiError(e), &session_id);
-            return;
-        }
+        provider: &provider,
+        effort_level,
+        claude_code_token: claude_code_token.as_deref(),
+        prompt_blocks: prompt_blocks.as_ref(),
+        tx: &tx,
+    };
+    let Some(initial_turn) = build_initial_turn_request(&initial_request) else {
+        return;
     };
     match crate::pipeline::run_turn(crate::pipeline::RunTurnParams {
         client: &client,
         endpoint: &endpoint,
         headers: &headers,
-        request_body: &request_body,
+        request_body: &initial_turn.request_body,
         provider: &provider,
         memory_db: memory_db.clone(),
         app_config: app_config.clone(),
@@ -4253,7 +4295,7 @@ async fn run_api_turn_async(p: ApiTurnParams) {
                     policy_enforcer,
                     task_mgr,
                     session_id: &session_id,
-                    task_obs,
+                    task_obs: initial_turn.task_obs,
                     tx: &tx,
                 },
             )

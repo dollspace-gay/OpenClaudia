@@ -1537,7 +1537,7 @@ async fn run_subagent_inner(
                 };
             }
         };
-        if let Err(e) = check_provider_request_policy(&app_config, &typed_request) {
+        if let Err(e) = check_provider_request_policy(app_config, &typed_request) {
             let message = format!("Blocked by policy: {e}");
             BACKGROUND_AGENTS.fail(&agent_id, message.clone());
             store_transcript(&agent_id, messages, config.agent_type);
@@ -2028,10 +2028,10 @@ fn subagent_command_decision_matches(command: &str, argv: &[String]) -> bool {
         || argv.join(" ") == command
 }
 
-fn patch_mentions_tool_path(patch: &str, path: &str) -> bool {
-    let normalized = path.trim_start_matches("./");
+fn patch_mentions_tool_path(patch_text: &str, tool_path: &str) -> bool {
+    let normalized = tool_path.trim_start_matches("./");
     !normalized.is_empty()
-        && patch.lines().any(|line| {
+        && patch_text.lines().any(|line| {
             let line = line.trim_start_matches("./");
             line.contains(normalized)
         })
@@ -3010,7 +3010,7 @@ mod tests {
         );
     }
 
-    fn subagent_test_tool_call(name: &str, args: Value) -> ToolCall {
+    fn subagent_test_tool_call(name: &str, args: &Value) -> ToolCall {
         ToolCall {
             id: "call_1".to_string(),
             call_type: "function".to_string(),
@@ -3198,7 +3198,7 @@ mod tests {
     fn strip_subagent_decision_argument_removes_decision_before_dispatch() {
         let tool_call = subagent_test_tool_call(
             "bash",
-            json!({
+            &json!({
                 "command": "cargo test",
                 "decision": {
                     "kind": "run_command",

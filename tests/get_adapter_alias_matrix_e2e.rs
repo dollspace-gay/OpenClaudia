@@ -263,6 +263,10 @@ fn unknown_provider_error_carries_documented_supported_list() {
         "lmstudio",
         "localai",
         "text-generation-webui",
+        "openrouter",
+        "opencode",
+        "opencode-go",
+        "openai-compatible",
     ] {
         assert!(
             supported.iter().any(|s| s == name),
@@ -272,8 +276,8 @@ fn unknown_provider_error_carries_documented_supported_list() {
 }
 
 #[test]
-fn unknown_provider_supported_list_has_exactly_18_entries() {
-    // PINS COUNT: 18 documented names (9 canonical + 9 aliases).
+fn unknown_provider_supported_list_has_exactly_22_entries() {
+    // PINS COUNT: documented names accepted by runtime provider dispatch.
     let outcome = get_adapter("xyz");
     let Err(err) = outcome else {
         panic!("expected Err")
@@ -283,8 +287,8 @@ fn unknown_provider_supported_list_has_exactly_18_entries() {
     };
     assert_eq!(
         supported.len(),
-        18,
-        "MUST list exactly 18 supported names; got {supported:?}"
+        22,
+        "MUST list exactly 22 supported names; got {supported:?}"
     );
 }
 
