@@ -159,7 +159,7 @@ providers:
     # api_key: ${OPENCODE_API_KEY}
   # Generic OpenAI-compatible endpoint
   openai-compatible:
-    base_url: https://api.example.com/v1
+    base_url: https://example.com/v1
     # api_key: ${OPENAI_COMPATIBLE_API_KEY}
     # model: my-model-name
   # Ollama for local LLM inference

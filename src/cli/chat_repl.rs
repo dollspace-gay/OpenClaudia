@@ -379,6 +379,30 @@ fn apply_model_provider_override(config: &mut config::AppConfig, model: &str) {
     }
 }
 
+async fn resolve_repl_chat_auth(
+    config: &config::AppConfig,
+    provider: &config::ProviderConfig,
+) -> anyhow::Result<ChatAuth> {
+    let Some(auth) = resolve_chat_auth(
+        &config.proxy.target,
+        provider,
+        ChatAuthSelectionMode::Automatic,
+    )
+    .await?
+    else {
+        anyhow::bail!(
+            "could not resolve authentication for target '{}'",
+            config.proxy.target
+        );
+    };
+    if auth.codex_responses_auth.is_some() {
+        anyhow::bail!(
+            "Codex ChatGPT login currently requires the full-screen TUI Responses backend"
+        );
+    }
+    Ok(auth)
+}
+
 impl ChatRepl {
     /// Resolve config + auth + provider + session and return a fully
     /// initialized REPL. Setup failures return an error after printing the
@@ -421,27 +445,11 @@ impl ChatRepl {
             }
         };
 
-        let Some(ChatAuth {
+        let ChatAuth {
             api_key,
             claude_code_token,
-            codex_responses_auth,
-        }) = resolve_chat_auth(
-            &config.proxy.target,
-            provider,
-            ChatAuthSelectionMode::Automatic,
-        )
-        .await?
-        else {
-            anyhow::bail!(
-                "could not resolve authentication for target '{}'",
-                config.proxy.target
-            );
-        };
-        if codex_responses_auth.is_some() {
-            anyhow::bail!(
-                "Codex ChatGPT login currently requires the full-screen TUI Responses backend"
-            );
-        }
+            codex_responses_auth: _,
+        } = resolve_repl_chat_auth(&config, provider).await?;
 
         let model = resolve_model_name(
             args.model_override,
@@ -4281,7 +4289,7 @@ providers: {}
         let mut ledger = openclaudia::ledger::RealityLedger::new();
         let content = "Verified with cargo test.";
 
-        openclaudia::grounded_loop::validate_final_against_ledger(&mut ledger, &content)
+        openclaudia::grounded_loop::validate_final_against_ledger(&mut ledger, content)
             .expect("plain assistant text should render");
 
         assert!(ledger

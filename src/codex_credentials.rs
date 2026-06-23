@@ -1,9 +1,9 @@
-//! Codex credential discovery for OpenAI auth.
+//! Codex credential discovery for `OpenAI` auth.
 //!
 //! Codex stores login material in `$CODEX_HOME/auth.json` (or
 //! `~/.codex/auth.json`) with the same logical shape as its open-source Rust
 //! client. We read only enough of that shape to reuse supported credentials:
-//! OpenAI API keys can feed the existing Chat Completions path, while ChatGPT
+//! `OpenAI` API keys can feed the existing Chat Completions path, while `ChatGPT`
 //! and Codex personal access tokens must use the Responses backend.
 
 use base64::Engine as _;
@@ -198,7 +198,7 @@ fn trimmed_nonempty(value: Option<String>) -> Option<String> {
     })
 }
 
-fn raw_id_token(id_token: &Option<IdToken>) -> Option<&str> {
+fn raw_id_token(id_token: Option<&IdToken>) -> Option<&str> {
     match id_token {
         Some(IdToken::Raw(raw)) => Some(raw.as_str()),
         Some(IdToken::Object { raw_jwt, .. }) => raw_jwt.as_deref(),
@@ -206,7 +206,7 @@ fn raw_id_token(id_token: &Option<IdToken>) -> Option<&str> {
     }
 }
 
-fn id_token_claims(id_token: &Option<IdToken>) -> JwtClaims {
+fn id_token_claims(id_token: Option<&IdToken>) -> JwtClaims {
     let mut claims = raw_id_token(id_token)
         .and_then(parse_jwt_claims)
         .unwrap_or_default();
@@ -282,40 +282,38 @@ fn resolved_mode(auth: &AuthDotJson) -> Option<CodexAuthMode> {
     None
 }
 
-fn load_from_auth_json(auth: AuthDotJson) -> Result<Option<CodexAuthMaterial>, String> {
-    let Some(mode) = resolved_mode(&auth) else {
-        return Ok(None);
-    };
+fn load_from_auth_json(auth: AuthDotJson) -> Option<CodexAuthMaterial> {
+    let mode = resolved_mode(&auth)?;
     match mode {
         CodexAuthMode::ApiKey => {
             let Some(api_key) = trimmed_nonempty(auth.openai_api_key) else {
-                return Ok(Some(CodexAuthMaterial::Unsupported {
+                return Some(CodexAuthMaterial::Unsupported {
                     mode,
                     source: CodexAuthSource::AuthJson,
-                }));
+                });
             };
-            Ok(Some(CodexAuthMaterial::ApiKey {
+            Some(CodexAuthMaterial::ApiKey {
                 api_key,
                 source: CodexAuthSource::AuthJson,
-            }))
+            })
         }
         CodexAuthMode::Chatgpt | CodexAuthMode::ChatgptAuthTokens => {
             let Some(tokens) = auth.tokens else {
-                return Ok(Some(CodexAuthMaterial::Unsupported {
+                return Some(CodexAuthMaterial::Unsupported {
                     mode,
                     source: CodexAuthSource::AuthJson,
-                }));
+                });
             };
             let access_token = tokens.access_token.trim().to_string();
             if access_token.is_empty() {
-                return Ok(Some(CodexAuthMaterial::Unsupported {
+                return Some(CodexAuthMaterial::Unsupported {
                     mode,
                     source: CodexAuthSource::AuthJson,
-                }));
+                });
             }
-            let claims = id_token_claims(&tokens.id_token);
+            let claims = id_token_claims(tokens.id_token.as_ref());
             let token_claims = parse_jwt_claims(&access_token).unwrap_or_default();
-            Ok(Some(CodexAuthMaterial::Responses(CodexResponsesAuth {
+            Some(CodexAuthMaterial::Responses(CodexResponsesAuth {
                 access_token,
                 account_id: tokens
                     .account_id
@@ -324,29 +322,29 @@ fn load_from_auth_json(auth: AuthDotJson) -> Result<Option<CodexAuthMaterial>, S
                 is_fedramp_account: claims.is_fedramp_account || token_claims.is_fedramp_account,
                 source: CodexAuthSource::AuthJson,
                 mode,
-            })))
+            }))
         }
         CodexAuthMode::PersonalAccessToken => {
             let Some(access_token) = trimmed_nonempty(auth.personal_access_token) else {
-                return Ok(Some(CodexAuthMaterial::Unsupported {
+                return Some(CodexAuthMaterial::Unsupported {
                     mode,
                     source: CodexAuthSource::AuthJson,
-                }));
+                });
             };
             let claims = parse_jwt_claims(&access_token).unwrap_or_default();
-            Ok(Some(CodexAuthMaterial::Responses(CodexResponsesAuth {
+            Some(CodexAuthMaterial::Responses(CodexResponsesAuth {
                 access_token,
                 account_id: claims.account_id,
                 is_fedramp_account: claims.is_fedramp_account,
                 source: CodexAuthSource::AuthJson,
                 mode,
-            })))
+            }))
         }
         CodexAuthMode::AgentIdentity | CodexAuthMode::BedrockApiKey => {
-            Ok(Some(CodexAuthMaterial::Unsupported {
+            Some(CodexAuthMaterial::Unsupported {
                 mode,
                 source: CodexAuthSource::AuthJson,
-            }))
+            })
         }
     }
 }
@@ -373,6 +371,11 @@ pub fn has_codex_auth_json() -> bool {
 ///
 /// This intentionally does not inspect OS keyrings or refresh tokens; those are
 /// owned by Codex proper. Stale cached tokens surface as upstream auth errors.
+///
+/// # Errors
+///
+/// Returns an error if auth.json exists but cannot be read, is symlinked, or
+/// cannot be parsed as Codex auth material.
 pub fn load_codex_auth() -> Result<Option<CodexAuthMaterial>, String> {
     if let Ok(token) = std::env::var(CODEX_ACCESS_TOKEN_ENV_VAR) {
         let token = token.trim();
@@ -394,6 +397,12 @@ pub fn load_codex_auth() -> Result<Option<CodexAuthMaterial>, String> {
     load_codex_auth_from_path(&path)
 }
 
+/// Load Codex auth material from a specific auth.json path.
+///
+/// # Errors
+///
+/// Returns an error if `path` is a symlink, cannot be read, or does not contain
+/// valid JSON in the expected auth.json shape.
 pub fn load_codex_auth_from_path(path: &Path) -> Result<Option<CodexAuthMaterial>, String> {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -407,7 +416,7 @@ pub fn load_codex_auth_from_path(path: &Path) -> Result<Option<CodexAuthMaterial
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     let auth: AuthDotJson = serde_json::from_str(&raw)
         .map_err(|err| format!("failed to parse {}: {err}", path.display()))?;
-    load_from_auth_json(auth)
+    Ok(load_from_auth_json(auth))
 }
 
 #[cfg(test)]
@@ -415,16 +424,16 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn write_auth_json(value: Value) -> (tempfile::TempDir, PathBuf) {
+    fn write_auth_json(value: &Value) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("auth.json");
-        std::fs::write(&path, serde_json::to_vec(&value).expect("json")).expect("write auth");
+        std::fs::write(&path, serde_json::to_vec(value).expect("json")).expect("write auth");
         (dir, path)
     }
 
     #[test]
     fn loads_api_key_from_auth_json() {
-        let (_dir, path) = write_auth_json(json!({
+        let (_dir, path) = write_auth_json(&json!({
             "auth_mode": "api_key",
             "OPENAI_API_KEY": "sk-test"
         }));
@@ -444,7 +453,7 @@ mod tests {
 
     #[test]
     fn loads_chatgpt_tokens_for_responses_backend() {
-        let (_dir, path) = write_auth_json(json!({
+        let (_dir, path) = write_auth_json(&json!({
             "auth_mode": "chatgpt",
             "tokens": {
                 "access_token": "access-token",

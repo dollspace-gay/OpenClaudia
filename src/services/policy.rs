@@ -90,7 +90,7 @@ pub struct EnterprisePolicy {
     /// The enforced value is:
     /// `cumulative_session_tokens + estimated_input_tokens + output_token_budget`.
     /// `output_token_budget` is the request's `max_tokens` when set, otherwise
-    /// OpenClaudia's default output budget. `None` disables this check.
+    /// `OpenClaudia`'s default output budget. `None` disables this check.
     #[serde(default)]
     pub max_session_tokens: Option<usize>,
     /// Per-tool invocation caps. Tools not present in the map are
@@ -128,7 +128,7 @@ pub struct ProviderRequestPolicyInput<'a> {
 }
 
 impl<'a> ProviderRequestPolicyInput<'a> {
-    /// Build input for request paths that use OpenClaudia's default output
+    /// Build input for request paths that use `OpenClaudia`'s default output
     /// token budget when no explicit `max_tokens` is present.
     #[must_use]
     pub fn new(

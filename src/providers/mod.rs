@@ -473,7 +473,7 @@ pub fn api_key_env_var_for_target(provider_name: &str) -> &'static str {
 /// Targets that should keep the selected provider even when a model ID looks
 /// like another vendor's namespace.
 ///
-/// Aggregators such as OpenRouter intentionally use slugs like
+/// Aggregators such as `OpenRouter` intentionally use slugs like
 /// `anthropic/claude-...`; local OpenAI-compatible servers often expose
 /// arbitrary names too. Prefix-based provider inference would otherwise route
 /// those requests to a different configured provider.

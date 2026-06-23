@@ -123,9 +123,12 @@ fn default_tui_auth_failure_does_not_create_project_state_without_config() {
             .collect::<Vec<_>>();
         assert!(
             !log_entries.is_empty()
-                && log_entries
-                    .iter()
-                    .all(|name| name.starts_with("tui-") && name.ends_with(".log")),
+                && log_entries.iter().all(|name| {
+                    name.starts_with("tui-")
+                        && std::path::Path::new(name)
+                            .extension()
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("log"))
+                }),
             "default startup without config must only create TUI log files; got {log_entries:?}"
         );
     }

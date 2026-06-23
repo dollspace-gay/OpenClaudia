@@ -1,12 +1,10 @@
 //! Scrollable message list for the TUI.
 
+use std::collections::VecDeque;
 use std::str::FromStr;
 use std::time::Instant;
 
-use ratatui::{
-    prelude::*,
-    widgets::{Paragraph, Wrap},
-};
+use ratatui::{buffer::CellWidth, prelude::*, widgets::Paragraph};
 
 use super::{GOLD, PURPLE, USER_BLUE};
 
@@ -221,8 +219,7 @@ impl EffortLevel {
     pub const fn symbol(self) -> &'static str {
         match self {
             Self::None => "\u{25CC}",
-            Self::Minimal => "\u{25CB}",
-            Self::Low => "\u{25CB}",
+            Self::Minimal | Self::Low => "\u{25CB}",
             Self::Medium => "\u{25D0}",
             Self::High => "\u{25CF}",
             Self::Max => "\u{25C6}",
@@ -236,10 +233,9 @@ impl EffortLevel {
     pub const fn cycled(self) -> Self {
         match self {
             Self::None => Self::Minimal,
-            Self::Minimal => Self::Low,
+            Self::Minimal | Self::High | Self::Max | Self::Auto => Self::Low,
             Self::Low => Self::Medium,
             Self::Medium => Self::High,
-            Self::High | Self::Max | Self::Auto => Self::Low,
         }
     }
 
@@ -283,7 +279,6 @@ impl EffortLevel {
 
         match provider.to_ascii_lowercase().as_str() {
             "openai" => OPENAI,
-            "anthropic" | "google" | "gemini" => ANTHROPIC_GEMINI,
             "deepseek" => DEEPSEEK,
             "zai" | "glm" | "zhipu" if model.eq_ignore_ascii_case("glm-5.2") => GLM_REASONING,
             "qwen" | "alibaba" | "zai" | "glm" | "zhipu" | "kimi" | "moonshot" | "minimax" => {
@@ -403,6 +398,13 @@ pub struct MessageList {
     /// Accumulator for the full thinking stream. Rendered while live so the
     /// user can see progress during long reasoning/tool-planning phases.
     pub thinking_buffer: String,
+}
+
+struct VisualGrapheme {
+    symbol: String,
+    style: Style,
+    width: u16,
+    is_whitespace: bool,
 }
 
 impl MessageList {
@@ -696,33 +698,167 @@ impl MessageList {
         lines
     }
 
+    fn saturating_u16(value: usize) -> u16 {
+        u16::try_from(value).unwrap_or(u16::MAX)
+    }
+
+    fn visual_line_from_graphemes(
+        graphemes: Vec<VisualGrapheme>,
+        alignment: Option<Alignment>,
+    ) -> Line<'static> {
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        for grapheme in graphemes {
+            if let Some(last) = spans.last_mut() {
+                if last.style == grapheme.style {
+                    last.content.to_mut().push_str(&grapheme.symbol);
+                    continue;
+                }
+            }
+            spans.push(Span::styled(grapheme.symbol, grapheme.style));
+        }
+
+        let mut line = Line::from(spans);
+        line.alignment = alignment;
+        line
+    }
+
+    const fn empty_visual_line(source: &Line<'_>) -> Line<'static> {
+        Line {
+            style: source.style,
+            alignment: source.alignment,
+            spans: Vec::new(),
+        }
+    }
+
+    fn wrap_line(source: &Line<'_>, width: u16) -> Vec<Line<'static>> {
+        let mut wrapped = Vec::new();
+        let mut pending_line = Vec::new();
+        let mut pending_word = Vec::new();
+        let mut pending_whitespace = VecDeque::new();
+        let mut line_width = 0;
+        let mut word_width = 0;
+        let mut whitespace_width = 0;
+        let mut non_whitespace_previous = false;
+
+        for styled in source.styled_graphemes(Style::default()) {
+            let grapheme = VisualGrapheme {
+                symbol: styled.symbol.to_string(),
+                style: styled.style,
+                width: styled.symbol.cell_width(),
+                is_whitespace: styled.is_whitespace(),
+            };
+
+            if grapheme.width > width {
+                continue;
+            }
+
+            let is_whitespace = grapheme.is_whitespace;
+            let word_found = non_whitespace_previous && grapheme.is_whitespace;
+            let untrimmed_overflow =
+                pending_line.is_empty() && word_width + whitespace_width + grapheme.width > width;
+
+            if word_found || untrimmed_overflow {
+                pending_line.extend(std::mem::take(&mut pending_whitespace));
+                line_width += whitespace_width;
+                pending_line.append(&mut pending_word);
+                line_width += word_width;
+                whitespace_width = 0;
+                word_width = 0;
+            }
+
+            let line_full = line_width >= width;
+            let pending_word_overflow =
+                grapheme.width > 0 && line_width + whitespace_width + word_width >= width;
+
+            if line_full || pending_word_overflow {
+                let mut remaining_width = width.saturating_sub(line_width);
+                wrapped.push(Self::visual_line_from_graphemes(
+                    std::mem::take(&mut pending_line),
+                    source.alignment,
+                ));
+                line_width = 0;
+
+                while let Some(grapheme) = pending_whitespace.front() {
+                    if grapheme.width > remaining_width {
+                        break;
+                    }
+
+                    whitespace_width -= grapheme.width;
+                    remaining_width -= grapheme.width;
+                    pending_whitespace.pop_front();
+                }
+
+                if grapheme.is_whitespace && pending_whitespace.is_empty() {
+                    continue;
+                }
+            }
+
+            if grapheme.is_whitespace {
+                whitespace_width += grapheme.width;
+                pending_whitespace.push_back(grapheme);
+            } else {
+                word_width += grapheme.width;
+                pending_word.push(grapheme);
+            }
+
+            non_whitespace_previous = !is_whitespace;
+        }
+
+        pending_line.extend(pending_whitespace);
+        pending_line.append(&mut pending_word);
+
+        if !pending_line.is_empty() {
+            wrapped.push(Self::visual_line_from_graphemes(
+                pending_line,
+                source.alignment,
+            ));
+        }
+        if wrapped.is_empty() {
+            wrapped.push(Self::empty_visual_line(source));
+        }
+
+        wrapped
+    }
+
+    fn wrap_lines(lines: &[Line<'_>], width: u16) -> Vec<Line<'static>> {
+        if width == 0 {
+            return Vec::new();
+        }
+
+        lines
+            .iter()
+            .flat_map(|line| Self::wrap_line(line, width))
+            .collect()
+    }
+
     /// Render the message list into a frame area.
     /// Content is anchored to the bottom — empty space is at the top, not below.
     pub fn render(&self, frame: &mut Frame, area: Rect) {
-        let mut lines = self.build_lines();
-        #[allow(clippy::cast_possible_truncation)] // line count bounded by terminal height
-        let total = lines.len() as u16;
-        let visible = area.height;
+        if area.is_empty() {
+            return;
+        }
+
+        let logical_lines = self.build_lines();
+        let mut lines = Self::wrap_lines(&logical_lines, area.width);
+        let mut total = lines.len();
+        let visible = usize::from(area.height);
 
         // Pad the top with empty lines so content anchors to the bottom
         if total < visible {
-            let pad = (visible - total) as usize;
+            let pad = visible - total;
             let mut padded = vec![Line::from(""); pad];
             padded.append(&mut lines);
             lines = padded;
+            total = visible;
         }
 
-        #[allow(clippy::cast_possible_truncation)]
-        let total = lines.len() as u16;
         let scroll = if total > visible {
-            (total - visible).saturating_sub(self.scroll_offset)
+            (total - visible).saturating_sub(usize::from(self.scroll_offset))
         } else {
             0
         };
 
-        let paragraph = Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .scroll((scroll, 0));
+        let paragraph = Paragraph::new(lines).scroll((Self::saturating_u16(scroll), 0));
 
         frame.render_widget(paragraph, area);
     }
@@ -737,6 +873,24 @@ impl Default for MessageList {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    fn rendered_rows(backend: &TestBackend) -> Vec<String> {
+        let area = *backend.buffer().area();
+        let mut rows = Vec::with_capacity(usize::from(area.height));
+        for y in 0..area.height {
+            let mut row = String::new();
+            for x in 0..area.width {
+                let cell = backend
+                    .buffer()
+                    .cell((x, y))
+                    .expect("test coordinates are inside the buffer");
+                row.push_str(cell.symbol());
+            }
+            rows.push(row);
+        }
+        rows
+    }
 
     // ── MessageKind tests ────────────────────────────────────────────────────
 
@@ -1040,6 +1194,30 @@ mod tests {
         assert_eq!(ml.scroll_offset, 2);
         ml.scroll_to_bottom();
         assert_eq!(ml.scroll_offset, 0);
+    }
+
+    #[test]
+    fn render_bottom_anchor_counts_wrapped_visual_rows() {
+        let mut ml = MessageList::new();
+        ml.add(DisplayMessage::assistant(
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet",
+        ));
+
+        let backend = TestBackend::new(16, 4);
+        let mut terminal = Terminal::new(backend).expect("test backend should initialize");
+        terminal
+            .draw(|frame| ml.render(frame, frame.area()))
+            .expect("message list should render");
+
+        let rows = rendered_rows(terminal.backend());
+        assert!(
+            rows.iter().any(|row| row.contains("juliet")),
+            "bottom-anchored viewport should include the final wrapped row; rows={rows:?}"
+        );
+        assert!(
+            !rows.iter().any(|row| row.contains("Claudia")),
+            "wrapped content taller than the viewport should scroll past the header; rows={rows:?}"
+        );
     }
 
     // ── crosslink #482: scroll_offset semantics contract ────────────────────
